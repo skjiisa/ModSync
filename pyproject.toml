@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "modsync"
+version = "0.1.0.dev0"
+description = "Sync Mod Organizer 2 setups across Steam Deck and other Linux/Windows machines"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "ModSync contributors" }]
+keywords = ["mod-organizer", "steam-deck", "syncthing", "skyrim", "modding"]
+
+# NOTE: the discovery layer (`modsync doctor`) deliberately uses only the Python
+# standard library, so it runs without any of these installed. They are needed
+# for the GUI and the sync engine integration.
+dependencies = [
+    "PySide6>=6.7",
+    "httpx>=0.27",
+    "platformdirs>=4",
+]
+
+[project.optional-dependencies]
+qr = ["qrcode>=7.4"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+modsync = "modsync.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["modsync"]
