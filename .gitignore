@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Bundled / downloaded binaries (fetched at build time)
+/vendor/syncthing*
+/vendor/*.bin
+
+# Local scratch
+*.local
+/scratch/
