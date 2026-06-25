@@ -88,6 +88,28 @@ class SyncthingClient:
             json={"ignore": patterns},
         ).raise_for_status()
 
+    # --- status ---
+    def connections(self) -> dict[str, Any]:
+        return self._http.get("/rest/system/connections").raise_for_status().json()
+
+    def folder_status(self, folder_id: str) -> dict[str, Any]:
+        return (
+            self._http.get("/rest/db/status", params={"folder": folder_id})
+            .raise_for_status()
+            .json()
+        )
+
+    def completion(self, folder_id: str, device_id: str | None = None) -> dict[str, Any]:
+        params = {"folder": folder_id}
+        if device_id:
+            params["device"] = device_id
+        return (
+            self._http.get("/rest/db/completion", params=params).raise_for_status().json()
+        )
+
+    def rescan(self, folder_id: str) -> None:
+        self._http.post("/rest/db/scan", params={"folder": folder_id}).raise_for_status()
+
     # --- system ---
     def restart(self) -> None:
         self._http.post("/rest/system/restart").raise_for_status()
