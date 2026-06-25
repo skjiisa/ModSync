@@ -1,93 +1,107 @@
-"""The main window. For now a single-window dashboard showing the "this machine"
-discovery report; the onboarding wizard and sync controls arrive in later phases.
+"""Main window: hosts the ModSync service and swaps between the onboarding wizard
+(when no vault is configured) and the dashboard (once one is).
 
-Designed against Steam Deck Gaming-Mode constraints: single window, self-maximizing,
-no system tray, standard input widgets only.
-"""
+Single, self-maximizing window with no modal dialogs for the main flow, per Steam
+Deck Gaming-Mode constraints."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QFont
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QLabel,
     QMainWindow,
-    QPlainTextEdit,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from modsync import __version__
+from modsync.pairing_code import PairingCode
+from modsync.service import ModSyncService
+from modsync.ui.dashboard import Dashboard
+from modsync.ui.wizard import WizardWidget
+from modsync.ui.worker import run_async
+
+
+def _centered(text: str, button: QPushButton | None = None) -> QWidget:
+    widget = QWidget()
+    layout = QVBoxLayout(widget)
+    layout.addStretch(1)
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    layout.addWidget(label)
+    if button is not None:
+        layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignCenter)
+    layout.addStretch(1)
+    return widget
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"ModSync {__version__}")
-        self.resize(1100, 720)
+        self.resize(1120, 780)
 
-        root = QWidget()
-        outer = QVBoxLayout(root)
-        outer.setContentsMargins(24, 24, 24, 24)
-        outer.setSpacing(12)
+        self.service = ModSyncService()
+        self._stack = QStackedWidget()
+        self.setCentralWidget(self._stack)
 
-        title = QLabel("ModSync")
-        title_font = QFont()
-        title_font.setPointSize(22)
-        title_font.setWeight(QFont.Weight.DemiBold)
-        title.setFont(title_font)
+        if self.service.state.configured:
+            self._show_dashboard()
+        else:
+            self._show_wizard()
 
-        subtitle = QLabel("Sync your Mod Organizer 2 setup across machines")
-        subtitle.setStyleSheet("color: palette(mid);")
+    def _set(self, widget: QWidget) -> None:
+        while self._stack.count():
+            old = self._stack.widget(0)
+            self._stack.removeWidget(old)
+            old.deleteLater()
+        self._stack.addWidget(widget)
+        self._stack.setCurrentWidget(widget)
 
-        section = QLabel("This machine")
-        section_font = QFont()
-        section_font.setPointSize(13)
-        section_font.setWeight(QFont.Weight.DemiBold)
-        section.setFont(section_font)
+    def _show_wizard(self) -> None:
+        wizard = WizardWidget()
+        wizard.completed.connect(self._on_wizard_completed)
+        self._set(wizard)
 
-        self.report_view = QPlainTextEdit()
-        self.report_view.setReadOnly(True)
-        self.report_view.setPlainText("Scanning this machine…")
-        mono = QFont("monospace")
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        self.report_view.setFont(mono)
+    def _on_wizard_completed(self, data: dict) -> None:
+        path = data.get("instance_path")
+        if not path:
+            return
+        mode = data.get("mode")
+        code_text = data.get("pairing_code") or ""
+        label = Path(path).name or "Mod Organizer 2"
 
-        buttons = QHBoxLayout()
-        self.rescan_btn = QPushButton("Rescan")
-        self.rescan_btn.clicked.connect(self.refresh)
-        self.setup_btn = QPushButton("Set up sync…")
-        self.setup_btn.setEnabled(False)
-        self.setup_btn.setToolTip("Coming in a later phase (Syncthing setup).")
-        buttons.addWidget(self.rescan_btn)
-        buttons.addStretch(1)
-        buttons.addWidget(self.setup_btn)
+        self._set(_centered("Setting up sync and starting Syncthing…"))
 
-        outer.addWidget(title)
-        outer.addWidget(subtitle)
-        outer.addSpacing(8)
-        outer.addWidget(section)
-        outer.addWidget(self.report_view, stretch=1)
-        outer.addLayout(buttons)
+        def work() -> object:
+            if mode == "join":
+                return self.service.join_vault(PairingCode.decode(code_text), path)
+            return self.service.create_vault(path, label=label)
 
-        self.setCentralWidget(root)
+        run_async(work, on_done=lambda _: self._show_dashboard(), on_failed=self._on_setup_failed)
 
-        # Populate after the window paints so it appears instantly.
-        QTimer.singleShot(0, self.refresh)
+    def _on_setup_failed(self, message: str) -> None:
+        back = QPushButton("Back to setup")
+        back.clicked.connect(self._show_wizard)
+        self._set(_centered(f"Setup failed:\n{message}", back))
 
-    def refresh(self) -> None:
-        self.report_view.setPlainText("Scanning this machine…")
-        # Defer the (blocking) filesystem walk so the label repaints first.
-        # TODO: move discovery to a worker thread once the walk grows.
-        QTimer.singleShot(0, self._do_scan)
+    def _show_dashboard(self) -> None:
+        self._set(Dashboard(self.service))
 
-    def _do_scan(self) -> None:
-        from modsync.report import build
-
+    def closeEvent(self, event) -> None:  # noqa: ANN001 (Qt signature)
+        # Order matters: stop polling, let in-flight worker jobs finish (so none
+        # emit back into widgets being torn down), then stop the daemon.
+        current = self._stack.currentWidget()
+        if isinstance(current, Dashboard):
+            current.shutdown()
+        QThreadPool.globalInstance().waitForDone(5000)
         try:
-            report = build()
-            self.report_view.setPlainText(report.text)
-        except Exception as exc:  # defensive: never let a scan error blank the UI
-            self.report_view.setPlainText(f"Discovery failed:\n{exc!r}")
+            self.service.shutdown()
+        except Exception:
+            pass
+        super().closeEvent(event)

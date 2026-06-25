@@ -15,6 +15,8 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from modsync.pairing_code import PairingCode
+from modsync.service import ModSyncService
 from modsync.sync import pairing, stignore
 from modsync.sync.binary import ensure_syncthing
 from modsync.sync.manager import SyncthingManager
@@ -176,6 +178,43 @@ class SyncthingIntegration(unittest.TestCase):
                     cb.close()
                 a.stop()
                 b.stop()
+
+    def test_service_create_vault(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            os.environ["XDG_CONFIG_HOME"] = str(tmp / "cfg")
+            os.environ["XDG_DATA_HOME"] = str(tmp / "data")
+            try:
+                instance = tmp / "MO2"
+                (instance / "mods").mkdir(parents=True)
+                (instance / "ModOrganizer.ini").write_text("[General]\n")
+
+                mgr = SyncthingManager(
+                    tmp / "home",
+                    binary=self.binary,
+                    gui_address=f"127.0.0.1:{_free_port()}",
+                )
+                svc = ModSyncService(manager=mgr)
+                try:
+                    code = svc.create_vault(instance, "Skyrim SE")
+                    self.assertTrue(svc.state.configured)
+                    self.assertEqual(Path(svc.state.instance_path), instance)
+                    self.assertEqual(PairingCode.decode(code.encode()), code)
+
+                    with mgr.client() as client:
+                        self.assertEqual(
+                            Path(client.get_folder(code.folder_id)["path"]), instance
+                        )
+
+                    status = svc.status()
+                    self.assertEqual(status.folder_id, code.folder_id)
+                    self.assertTrue(status.configured)
+                    self.assertTrue((instance / ".stignore").exists())
+                finally:
+                    svc.shutdown()
+            finally:
+                os.environ.pop("XDG_CONFIG_HOME", None)
+                os.environ.pop("XDG_DATA_HOME", None)
 
 
 if __name__ == "__main__":
