@@ -1,36 +1,39 @@
 """Generate the ``.stignore`` for an MO2 instance.
 
-The single most important line is ``/ModOrganizer.ini``: it holds every
-machine-specific absolute path (game path, prefix, tool executables), so it must
-never sync — each machine keeps its own. We also drop logs/caches/crash dumps and
-the per-machine nxm handler registration. Everything else (mods/, profiles/,
-downloads/, overwrite/) syncs as content.
+ModSync syncs **only MO2 content** — the mod list, load order, profiles, and (if
+enabled) downloads. Everything else at the instance root is excluded, because a
+guided-installed instance dir also contains:
 
-Syncthing ``.stignore`` syntax: one glob per line, ``//`` for comments, a leading
-``/`` anchors to the folder (instance) root.
+* the MO2 program binaries (ModOrganizer.exe, usvfs/Qt DLLs, ...) — machine-local,
+  installed separately on each machine;
+* ``ModOrganizer.ini`` — holds machine-specific absolute paths (game, prefix, tools);
+* ``nexusApiKey`` — a per-user secret that must never sync;
+* logs, caches, and crash dumps.
+
+Syncthing ``.stignore``: one glob per line, ``//`` for comments, a leading ``/``
+anchors to the folder (instance) root, and first match wins. We negate the content
+dirs, then ignore everything else with ``/*`` (ignoring a top-level dir ignores its
+whole subtree, so the program/cache folders are skipped entirely).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+# The MO2 content directories we sync (default portable-instance layout).
+CONTENT_DIRS = ("mods", "profiles", "downloads", "overwrite")
+
 PATTERNS: list[str] = [
-    "// Managed by ModSync. Excludes machine-specific config and ephemera so the",
-    "// same instance can sync across machines (incl. Steam Deck <-> Windows).",
+    "// Managed by ModSync. Syncs ONLY Mod Organizer 2 content — never the MO2",
+    "// program binaries, the machine-specific ModOrganizer.ini, or nexusApiKey.",
     "",
-    "// Holds all machine-specific absolute paths — must stay local to each machine:",
-    "/ModOrganizer.ini",
-    "/nxmhandler.ini",
+    "// Content to keep in sync:",
+    *(f"!/{name}" for name in CONTENT_DIRS),
+    "!/categories.dat",
     "",
-    "// Logs, caches, crash dumps — per-machine noise:",
-    "/logs",
-    "/webcache",
-    "/crashDumps",
-    "*.log",
-    "*.tmp",
-    "",
-    "// ModSync's own per-machine state, if any:",
-    "/.modsync",
+    "// Exclude everything else at the instance root (program files, ModOrganizer.ini,",
+    "// nexusApiKey, logs, webcache, crashDumps, ...). Ignoring a dir skips its subtree.",
+    "/*",
 ]
 
 

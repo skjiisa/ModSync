@@ -104,15 +104,16 @@ class SyncthingIntegration(unittest.TestCase):
                     self.assertIn(my_id, shared)
                     self.assertIn(peer_id, shared)
 
-                    # .stignore written and parsed by Syncthing
+                    # .stignore written and parsed by Syncthing (content-only policy)
                     self.assertTrue((instance / ".stignore").exists())
                     ignores: list[str] = []
                     for _ in range(20):
                         ignores = client.get_ignores("modsync-sse").get("ignore", [])
-                        if "/ModOrganizer.ini" in ignores:
+                        if "/*" in ignores:
                             break
                         time.sleep(0.25)
-                    self.assertIn("/ModOrganizer.ini", ignores)
+                    self.assertIn("/*", ignores)
+                    self.assertIn("!/mods", ignores)
             finally:
                 mgr.stop()
             self.assertFalse(mgr.running)

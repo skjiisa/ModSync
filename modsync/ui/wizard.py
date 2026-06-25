@@ -1,19 +1,22 @@
 """In-window onboarding wizard (custom, not QWizard — single window, no modal
 dialogs, per Steam Deck Gaming-Mode constraints).
 
-Collects: the MO2 instance to sync, and whether to create a new vault or join an
-existing one (with a pairing code). Emits ``completed(dict)`` for the main window
-to act on. The actual service calls happen in the main window (off-thread)."""
+Collects: the MO2 instance to sync (an existing one, or a fresh one installed via
+a guided MO2-LINT install), and whether to create a new vault or join an existing
+one. Emits ``completed(dict)`` for the main window to act on."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from pathlib import Path
+
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QRadioButton,
     QStackedWidget,
@@ -22,13 +25,22 @@ from PySide6.QtWidgets import (
 )
 
 from modsync import platforms
+from modsync.games import SKYRIM_SE, Game
 from modsync.mo2 import discover as mo2_discover
+from modsync.mo2.installers import InstallerBackend, InstallResult, Mo2LintBackend
 from modsync.pairing_code import PairingCode
 from modsync.ui.worker import run_async
 
 
+class _LineEmitter(QObject):
+    """Marshals installer output lines from a worker thread to the UI thread."""
+
+    line = Signal(str)
+
+
 class Page(QWidget):
     completenessChanged = Signal()
+    busyChanged = Signal(bool)
     title = ""
     subtitle = ""
 
@@ -59,13 +71,18 @@ class WelcomePage(Page):
 
 class ChooseInstancePage(Page):
     title = "Choose your Mod Organizer 2 instance"
-    subtitle = "Pick the portable MO2 instance to sync, or browse to its folder."
+    subtitle = "Pick an existing MO2 instance, browse to one, or install a fresh one here."
 
-    def __init__(self) -> None:
+    def __init__(self, installer: InstallerBackend, game: Game) -> None:
         super().__init__()
+        self._installer = installer
+        self._game = game
         self._path: str | None = None
+        self._installing = False
         self._buttons = QButtonGroup(self)
         self._scanned = False
+
+        self._emitter = _LineEmitter()
 
         layout = QVBoxLayout(self)
         self._status = QLabel("Scanning for MO2 instances…")
@@ -75,9 +92,20 @@ class ChooseInstancePage(Page):
         self._radios = QVBoxLayout()
         layout.addLayout(self._radios)
 
+        row = QHBoxLayout()
         browse = QPushButton("Browse…")
         browse.clicked.connect(self._browse)
-        layout.addWidget(browse, alignment=Qt.AlignmentFlag.AlignLeft)
+        self._install_btn = QPushButton(f"Set up MO2 for {game.name} here…")
+        self._install_btn.clicked.connect(self._toggle_install_panel)
+        row.addWidget(browse)
+        row.addWidget(self._install_btn)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        # Guided-install panel (hidden until requested).
+        self._panel = self._build_install_panel()
+        self._panel.setVisible(False)
+        layout.addWidget(self._panel)
 
         self._chosen = QLabel("")
         self._chosen.setWordWrap(True)
@@ -85,6 +113,42 @@ class ChooseInstancePage(Page):
         layout.addWidget(self._chosen)
         layout.addStretch(1)
 
+        self._emitter.line.connect(self._append_log)
+
+    def _build_install_panel(self) -> QWidget:
+        panel = QWidget()
+        v = QVBoxLayout(panel)
+        v.setContentsMargins(0, 8, 0, 0)
+
+        dest_row = QHBoxLayout()
+        dest_row.addWidget(QLabel("Install to:"))
+        self._dest_edit = QLineEdit(str(Path.home() / "ModOrganizer2-SkyrimSE"))
+        choose = QPushButton("Choose…")
+        choose.clicked.connect(self._choose_dest)
+        self._run_btn = QPushButton("Install")
+        self._run_btn.clicked.connect(self._start_install)
+        dest_row.addWidget(self._dest_edit, stretch=1)
+        dest_row.addWidget(choose)
+        dest_row.addWidget(self._run_btn)
+        v.addLayout(dest_row)
+
+        note = QLabel(
+            "Close Steam before installing. This downloads Mod Organizer 2 and "
+            "configures the game's Proton prefix (can take several minutes). "
+            "SKSE is not installed automatically yet."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: palette(mid);")
+        v.addWidget(note)
+
+        self._log = QPlainTextEdit()
+        self._log.setReadOnly(True)
+        self._log.setVisible(False)
+        self._log.setMaximumBlockCount(2000)
+        v.addWidget(self._log)
+        return panel
+
+    # --- discovery ---
     def on_show(self) -> None:
         if self._scanned:
             return
@@ -106,7 +170,7 @@ class ChooseInstancePage(Page):
     def _populate(self, paths: list[str]) -> None:
         if not paths:
             self._status.setText(
-                "No MO2 instances found automatically. Use Browse to select one."
+                "No MO2 instances found automatically. Browse to one, or set one up here."
             )
             return
         self._status.setText("Found these MO2 instances:")
@@ -118,6 +182,7 @@ class ChooseInstancePage(Page):
             self._buttons.addButton(radio)
             self._radios.addWidget(radio)
 
+    # --- existing-instance selection ---
     def _browse(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select MO2 instance folder")
         if folder:
@@ -132,8 +197,62 @@ class ChooseInstancePage(Page):
         self._chosen.setText(f"Selected: {path}")
         self.completenessChanged.emit()
 
+    # --- guided install ---
+    def _toggle_install_panel(self) -> None:
+        self._panel.setVisible(not self._panel.isVisible())
+
+    def _choose_dest(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Choose install location")
+        if folder:
+            self._dest_edit.setText(str(Path(folder) / f"ModOrganizer2-{self._game.mo2lint_key}"))
+
+    def _append_log(self, line: str) -> None:
+        self._log.appendPlainText(line)
+
+    def _start_install(self) -> None:
+        ok, reason = self._installer.available()
+        if not ok:
+            self._log.setVisible(True)
+            self._log.appendPlainText(f"Cannot install: {reason}")
+            return
+        dest = self._dest_edit.text().strip()
+        if not dest:
+            return
+        self._set_installing(True)
+        self._log.clear()
+        self._log.setVisible(True)
+        self._log.appendPlainText(f"Installing MO2 for {self._game.name} to {dest} …")
+        run_async(
+            self._installer.install,
+            self._game,
+            dest,
+            script_extender=False,
+            on_output=self._emitter.line.emit,
+            on_done=self._on_install_done,
+            on_failed=self._on_install_failed,
+        )
+
+    def _on_install_done(self, result: InstallResult) -> None:
+        self._set_installing(False)
+        if result.success and result.instance_path:
+            self._select(str(result.instance_path))
+            self._log.appendPlainText(f"\n✓ Installed to {result.instance_path}")
+        else:
+            self._log.appendPlainText(f"\n✗ Install failed: {result.message}")
+
+    def _on_install_failed(self, message: str) -> None:
+        self._set_installing(False)
+        self._log.appendPlainText(f"\n✗ {message}")
+
+    def _set_installing(self, installing: bool) -> None:
+        self._installing = installing
+        self._run_btn.setEnabled(not installing)
+        self._dest_edit.setEnabled(not installing)
+        self.busyChanged.emit(installing)
+        self.completenessChanged.emit()
+
     def is_complete(self) -> bool:
-        return self._path is not None
+        return self._path is not None and not self._installing
 
     @property
     def instance_path(self) -> str | None:
@@ -189,9 +308,7 @@ class VaultPage(Page):
 
     def is_complete(self) -> bool:
         if self.mode == "create":
-            self._hint.setText(
-                "You'll get a pairing code to share with your other machines."
-            )
+            self._hint.setText("You'll get a pairing code to share with your other machines.")
             return True
         try:
             PairingCode.decode(self.pairing_code)
@@ -205,9 +322,16 @@ class VaultPage(Page):
 class WizardWidget(QWidget):
     completed = Signal(dict)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        installer: InstallerBackend | None = None,
+        game: Game = SKYRIM_SE,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
-        self._pages: list[Page] = [WelcomePage(), ChooseInstancePage(), VaultPage()]
+        self._choose = ChooseInstancePage(installer or Mo2LintBackend(), game)
+        self._vault = VaultPage()
+        self._pages: list[Page] = [WelcomePage(), self._choose, self._vault]
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 24, 28, 20)
@@ -228,6 +352,7 @@ class WizardWidget(QWidget):
         self._stack = QStackedWidget()
         for page in self._pages:
             page.completenessChanged.connect(self._update_nav)
+            page.busyChanged.connect(self._set_busy)
             self._stack.addWidget(page)
         outer.addWidget(self._stack, stretch=1)
 
@@ -242,9 +367,9 @@ class WizardWidget(QWidget):
         outer.addLayout(footer)
 
         self._index = 0
+        self._busy = False
         self._go_to(0)
 
-    # navigation
     def _go_to(self, index: int) -> None:
         self._index = max(0, min(index, len(self._pages) - 1))
         page = self._pages[self._index]
@@ -256,10 +381,14 @@ class WizardWidget(QWidget):
 
     def _update_nav(self) -> None:
         page = self._pages[self._index]
-        self._back.setEnabled(self._index > 0)
         is_last = self._index == len(self._pages) - 1
+        self._back.setEnabled(self._index > 0 and not self._busy)
         self._next.setText("Finish" if is_last else "Next")
-        self._next.setEnabled(page.is_complete())
+        self._next.setEnabled(page.is_complete() and not self._busy)
+
+    def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self._update_nav()
 
     def _on_back(self) -> None:
         self._go_to(self._index - 1)
@@ -268,15 +397,10 @@ class WizardWidget(QWidget):
         if self._index < len(self._pages) - 1:
             self._go_to(self._index + 1)
         else:
-            self._finish()
-
-    def _finish(self) -> None:
-        choose: ChooseInstancePage = self._pages[1]  # type: ignore[assignment]
-        vault: VaultPage = self._pages[2]  # type: ignore[assignment]
-        self.completed.emit(
-            {
-                "instance_path": choose.instance_path,
-                "mode": vault.mode,
-                "pairing_code": vault.pairing_code,
-            }
-        )
+            self.completed.emit(
+                {
+                    "instance_path": self._choose.instance_path,
+                    "mode": self._vault.mode,
+                    "pairing_code": self._vault.pairing_code,
+                }
+            )
