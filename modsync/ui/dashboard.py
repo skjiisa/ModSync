@@ -23,8 +23,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from modsync import background
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService, SyncStatus
+from modsync.steam import shortcuts
 from modsync.ui.qr import pairing_pixmap
 from modsync.ui.worker import run_async
 
@@ -59,6 +61,7 @@ class Dashboard(QWidget):
 
         outer.addWidget(self._build_status_group())
         outer.addLayout(self._build_buttons())
+        outer.addLayout(self._build_integration_buttons())
 
         self._status_line = QLabel("")
         self._status_line.setStyleSheet("color: palette(mid);")
@@ -68,7 +71,9 @@ class Dashboard(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
 
+        self._bg_installed = False
         self._load_code()
+        self._refresh_bg_status()
         self.refresh()
         self._timer.start(_POLL_MS)
 
@@ -134,6 +139,23 @@ class Dashboard(QWidget):
         row.addWidget(open_ui)
         row.addStretch(1)
         row.addWidget(refresh)
+        return row
+
+    def _build_integration_buttons(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        self._bg_button = QPushButton("Run in background")
+        self._bg_button.setToolTip(
+            "Keep syncing via a systemd --user service after you close ModSync"
+        )
+        self._bg_button.clicked.connect(self._toggle_bg)
+        self._steam_button = QPushButton("Add to Steam")
+        self._steam_button.setToolTip(
+            "Add ModSync as a non-Steam game so it's launchable from Gaming Mode"
+        )
+        self._steam_button.clicked.connect(self._add_to_steam)
+        row.addWidget(self._bg_button)
+        row.addWidget(self._steam_button)
+        row.addStretch(1)
         return row
 
     # --- data flow ---
@@ -214,6 +236,59 @@ class Dashboard(QWidget):
             on_done=lambda u: QDesktopServices.openUrl(QUrl(u)),
             on_failed=self._on_error,
         )
+
+    def _toggle_bg(self) -> None:
+        if self._bg_installed:
+            run_async(
+                background.uninstall,
+                on_done=lambda _: self._after_bg("Background sync turned off."),
+                on_failed=self._on_error,
+            )
+        else:
+            run_async(
+                background.install,
+                on_done=lambda _: self._after_bg(
+                    "Background sync is on — ModSync keeps syncing after you close it."
+                ),
+                on_failed=self._on_error,
+            )
+
+    def _after_bg(self, message: str) -> None:
+        self._status_line.setText(message)
+        self._refresh_bg_status()
+
+    def _refresh_bg_status(self) -> None:
+        run_async(background.status, on_done=self._on_bg_status, on_failed=self._on_error)
+
+    def _on_bg_status(self, st: dict) -> None:
+        self._bg_installed = bool(st.get("installed"))
+        self._bg_button.setText(
+            "Turn off background sync" if self._bg_installed else "Run in background"
+        )
+
+    def _add_to_steam(self) -> None:
+        if shortcuts.steam_is_running():
+            self._status_line.setText(
+                "⚠ Close Steam first (it rewrites its shortcuts on exit), "
+                "then click “Add to Steam” again."
+            )
+            return
+        run_async(
+            shortcuts.add_modsync_to_steam,
+            on_done=self._on_steam_added,
+            on_failed=self._on_error,
+        )
+
+    def _on_steam_added(self, paths: list) -> None:
+        if paths:
+            self._status_line.setText(
+                f"Added ModSync to Steam ({len(paths)} user(s)). Start Steam to find it "
+                "in your library / Gaming Mode."
+            )
+        else:
+            self._status_line.setText(
+                "No Steam users found — is Steam installed and run at least once?"
+            )
 
     def _on_error(self, message: str) -> None:
         self._status_line.setText(f"⚠ {message}")

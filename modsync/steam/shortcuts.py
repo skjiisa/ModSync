@@ -172,6 +172,23 @@ def modsync_target(flatpak_id: str | None = MODSYNC_FLATPAK_ID) -> tuple[str, st
     return f'"{sys.executable}"', f'"{Path(sys.executable).parent}"', "-m modsync"
 
 
+def steam_is_running() -> bool:
+    """Best-effort (Linux) check: editing shortcuts.vdf while Steam is running is
+    unsafe because Steam rewrites the file from memory when it exits."""
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return False
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if (entry / "comm").read_text().strip() == "steam":
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def add_modsync_to_steam(
     flatpak_id: str | None = MODSYNC_FLATPAK_ID,
     *,
