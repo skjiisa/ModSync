@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.skjiisa.ModSync</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>ModSync</name>
+  <summary>Sync your Mod Organizer 2 setup across machines</summary>
+  <description>
+    <p>
+      ModSync keeps a Mod Organizer 2 portable instance in sync across your Steam
+      Deck and other Linux machines using Syncthing, so the same mod list, load
+      order and downloads are available everywhere you play.
+    </p>
+    <p>
+      It pairs your machines directly (peer to peer), excludes the machine-specific
+      files so each install keeps its own correct paths, and never touches your
+      Nexus API key.
+    </p>
+  </description>
+  <developer id="io.github.skjiisa">
+    <name>skjiisa</name>
+  </developer>
+  <launchable type="desktop-id">io.github.skjiisa.ModSync.desktop</launchable>
+  <provides>
+    <binary>modsync</binary>
+  </provides>
+  <categories>
+    <category>Game</category>
+    <category>Utility</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <url type="homepage">https://github.com/skjiisa/ModSync</url>
+  <url type="bugtracker">https://github.com/skjiisa/ModSync/issues</url>
+  <releases>
+    <release version="0.1.0" date="2026-06-26">
+      <description>
+        <p>Early development build: Syncthing core, device pairing, guided MO2 install, and the wizard/dashboard UI.</p>
+      </description>
+    </release>
+  </releases>
+</component>

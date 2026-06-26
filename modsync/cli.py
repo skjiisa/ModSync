@@ -34,10 +34,13 @@ def vault(args: list[str]) -> int:
         return _vault_create(rest)
     if sub == "join":
         return _vault_join(rest)
+    if sub == "serve":
+        return _vault_serve(rest)
     print(
         "usage:\n"
         "  modsync vault create <instance-dir> [--label NAME]\n"
-        "  modsync vault join <pairing-code> <instance-dir>"
+        "  modsync vault join <pairing-code> <instance-dir>\n"
+        "  modsync vault serve"
     )
     return 2
 
@@ -89,6 +92,24 @@ def _vault_join(args: list[str]) -> int:
     return _run_until_interrupt(service)
 
 
+def _vault_serve(args: list[str]) -> int:
+    """Resume an already-configured vault and keep syncing. This is what the
+    background service runs; it can also be used for a manual long-running sync."""
+    from modsync.service import ModSyncService
+
+    service = ModSyncService()
+    if not service.state.configured:
+        print(
+            "No vault is configured on this machine yet.\n"
+            "Run 'modsync vault create <instance-dir>' or\n"
+            "    'modsync vault join <pairing-code> <instance-dir>' first."
+        )
+        return 1
+    print(f"Serving vault {service.state.folder_id} for {service.state.instance_path}")
+    service.ensure_running()
+    return _run_until_interrupt(service)
+
+
 def _run_until_interrupt(service) -> int:
     import time
 
@@ -112,3 +133,60 @@ def _run_until_interrupt(service) -> int:
     finally:
         service.shutdown()
     return 0
+
+
+def service(args: list[str]) -> int:
+    """Install/manage the optional systemd --user background sync service."""
+    from modsync import background
+
+    sub = args[0] if args else ""
+    if sub == "install":
+        print(background.install(enable_linger="--linger" in args))
+        return 0
+    if sub == "uninstall":
+        background.uninstall()
+        print("Removed the ModSync background sync service.")
+        return 0
+    if sub == "status":
+        st = background.status()
+        print(f"unit:      {st['unit_path']}")
+        print(f"installed: {'yes' if st['installed'] else 'no'}")
+        print(f"enabled:   {st['enabled']}")
+        print(f"active:    {st['active']}")
+        return 0
+    print(
+        "usage:\n"
+        "  modsync service install [--linger]   sync in the background (systemd --user)\n"
+        "  modsync service status\n"
+        "  modsync service uninstall"
+    )
+    return 2
+
+
+def steam(args: list[str]) -> int:
+    """Steam integration helpers (currently: add ModSync as a non-Steam game)."""
+    from modsync.steam import shortcuts
+
+    sub = args[0] if args else ""
+    if sub in {"shortcut", "add-shortcut"}:
+        native = "--native" in args
+        paths = shortcuts.add_modsync_to_steam(
+            flatpak_id=None if native else shortcuts.MODSYNC_FLATPAK_ID
+        )
+        if not paths:
+            print(
+                "No Steam users found — make sure Steam is installed and has been "
+                "run at least once on this machine."
+            )
+            return 1
+        for p in paths:
+            print(f"  ✓ added/updated 'ModSync' in {p}")
+        print("\nRestart Steam, then find ModSync in your library (it appears as a")
+        print("non-Steam game). On the Deck you can then launch it from Gaming Mode.")
+        return 0
+    print(
+        "usage:\n"
+        "  modsync steam shortcut [--native]   add ModSync as a non-Steam game\n"
+        "        (--native uses the local command instead of the Flatpak)"
+    )
+    return 2

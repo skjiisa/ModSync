@@ -8,6 +8,7 @@ own Syncthing install. Linux/amd64 (and arm64) for now; other platforms later.
 from __future__ import annotations
 
 import json
+import os
 import platform as _platform
 import stat
 import tarfile
@@ -61,7 +62,18 @@ def _pick_asset(release: dict, os_name: str, arch: str) -> tuple[str, str] | Non
 
 
 def ensure_syncthing(force: bool = False) -> Path:
-    """Return the path to a usable syncthing binary, downloading it if needed."""
+    """Return the path to a usable syncthing binary.
+
+    Prefers an explicitly configured (``MODSYNC_SYNCTHING_BIN``) or bundled
+    binary — e.g. the one a Flatpak ships at ``/app/bin/syncthing`` — and only
+    downloads into the data dir as a fallback.
+    """
+    override = os.environ.get("MODSYNC_SYNCTHING_BIN")
+    if override and Path(override).exists():
+        return Path(override)
+    if Path("/app/bin/syncthing").exists():  # bundled inside a Flatpak
+        return Path("/app/bin/syncthing")
+
     dest = syncthing_path()
     if dest.exists() and not force:
         return dest
