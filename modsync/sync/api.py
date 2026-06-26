@@ -92,6 +92,12 @@ class SyncthingClient:
     def connections(self) -> dict[str, Any]:
         return self._http.get("/rest/system/connections").raise_for_status().json()
 
+    def pending_devices(self) -> dict[str, Any]:
+        """Devices that have tried to connect but aren't configured yet."""
+        return (
+            self._http.get("/rest/cluster/pending/devices").raise_for_status().json()
+        )
+
     def folder_status(self, folder_id: str) -> dict[str, Any]:
         return (
             self._http.get("/rest/db/status", params={"folder": folder_id})

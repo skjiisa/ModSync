@@ -96,6 +96,8 @@ def _run_until_interrupt(service) -> int:
     try:
         while True:
             try:
+                for device_id in service.accept_pending():
+                    print(f"  ✓ accepted new device {device_id[:13]}…", flush=True)
                 status = service.status()
                 connected = sum(1 for d in status.devices if d.connected)
                 line = f"  devices {connected}/{len(status.devices)} connected"
