@@ -20,6 +20,7 @@ dependencies = [
     "httpx>=0.27",
     "platformdirs>=4",
     "qrcode>=7.4",
+    "spake2>=0.8",  # PIN-authenticated LAN pairing (pulls in cryptography)
 ]
 
 [project.optional-dependencies]

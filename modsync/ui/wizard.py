@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
@@ -24,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from modsync import platforms
+from modsync import pairing_lan, platforms
 from modsync.games import SKYRIM_SE, Game
 from modsync.mo2 import discover as mo2_discover
 from modsync.mo2.installers import InstallerBackend, InstallResult, Mo2LintBackend
@@ -265,27 +266,56 @@ class VaultPage(Page):
 
     def __init__(self) -> None:
         super().__init__()
+        self._announcements: list = []
+        self._selected = None
+
         layout = QVBoxLayout(self)
 
         self.create_radio = QRadioButton(
             "Create a new vault  (this machine has my current mod setup)"
         )
+        self.network_radio = QRadioButton(
+            "Find a machine on my network  (easiest for Steam Deck ↔ PC — no code to type)"
+        )
         self.join_radio = QRadioButton(
-            "Join an existing vault  (I already set one up on another machine)"
+            "Join with a pairing code  (paste a code from another machine)"
         )
         self.create_radio.setChecked(True)
         group = QButtonGroup(self)
-        group.addButton(self.create_radio)
-        group.addButton(self.join_radio)
+        for radio in (self.create_radio, self.network_radio, self.join_radio):
+            group.addButton(radio)
+            layout.addWidget(radio)
 
-        layout.addWidget(self.create_radio)
-        layout.addWidget(self.join_radio)
+        # network discovery panel (hidden unless its radio is selected)
+        self._net_panel = QWidget()
+        nv = QVBoxLayout(self._net_panel)
+        nv.setContentsMargins(24, 4, 0, 0)
+        scan_row = QHBoxLayout()
+        scan_row.addWidget(QLabel("Machines offering to pair:"))
+        scan_row.addStretch(1)
+        self._scan_btn = QPushButton("Scan")
+        self._scan_btn.clicked.connect(self._scan)
+        scan_row.addWidget(self._scan_btn)
+        nv.addLayout(scan_row)
+        self._net_list = QListWidget()
+        self._net_list.itemSelectionChanged.connect(self._on_select)
+        nv.addWidget(self._net_list)
+        pin_row = QHBoxLayout()
+        pin_row.addWidget(QLabel("PIN shown on that machine:"))
+        self._pin_edit = QLineEdit()
+        self._pin_edit.setMaxLength(7)
+        self._pin_edit.setPlaceholderText("042 815")
+        self._pin_edit.textChanged.connect(lambda *_: self.completenessChanged.emit())
+        pin_row.addWidget(self._pin_edit, stretch=1)
+        nv.addLayout(pin_row)
+        self._net_panel.setVisible(False)
+        layout.addWidget(self._net_panel)
 
         self.code_edit = QLineEdit()
         self.code_edit.setPlaceholderText(
             "Paste the pairing code from the other machine (MODSYNC1-…)"
         )
-        self.code_edit.setEnabled(False)
+        self.code_edit.setVisible(False)
         layout.addWidget(self.code_edit)
 
         self._hint = QLabel("")
@@ -294,21 +324,82 @@ class VaultPage(Page):
         layout.addWidget(self._hint)
         layout.addStretch(1)
 
-        self.join_radio.toggled.connect(self.code_edit.setEnabled)
-        self.join_radio.toggled.connect(lambda *_: self.completenessChanged.emit())
+        self.network_radio.toggled.connect(self._net_panel.setVisible)
+        self.network_radio.toggled.connect(lambda on: self._scan() if on else None)
+        self.join_radio.toggled.connect(self.code_edit.setVisible)
+        for radio in (self.create_radio, self.network_radio, self.join_radio):
+            radio.toggled.connect(lambda *_: self.completenessChanged.emit())
         self.code_edit.textChanged.connect(lambda *_: self.completenessChanged.emit())
 
+    # --- network discovery ---
+    def _scan(self) -> None:
+        self._scan_btn.setEnabled(False)
+        self._selected = None
+        self._net_list.clear()
+        self._net_list.addItem("Scanning…")
+        run_async(
+            pairing_lan.discover,
+            on_done=self._on_scanned,
+            on_failed=self._on_scan_failed,
+            timeout=3.0,
+        )
+
+    def _on_scanned(self, anns: list) -> None:
+        self._scan_btn.setEnabled(True)
+        self._announcements = anns
+        self._net_list.clear()
+        if not anns:
+            self._net_list.addItem(
+                "No machines found — start pairing on the other machine, then Scan again."
+            )
+        else:
+            for a in anns:
+                self._net_list.addItem(f"{a.name}   ({a.host})")
+        self.completenessChanged.emit()
+
+    def _on_scan_failed(self, message: str) -> None:
+        self._scan_btn.setEnabled(True)
+        self._announcements = []
+        self._net_list.clear()
+        self._net_list.addItem(f"Scan failed: {message}")
+        self.completenessChanged.emit()
+
+    def _on_select(self) -> None:
+        row = self._net_list.currentRow()
+        self._selected = self._announcements[row] if 0 <= row < len(self._announcements) else None
+        self.completenessChanged.emit()
+
+    # --- exposed to the wizard ---
     @property
     def mode(self) -> str:
+        if self.network_radio.isChecked():
+            return "network"
         return "join" if self.join_radio.isChecked() else "create"
 
     @property
     def pairing_code(self) -> str:
         return self.code_edit.text().strip()
 
+    @property
+    def pin(self) -> str:
+        return self._pin_edit.text().replace(" ", "").strip()
+
+    @property
+    def announcement(self):
+        return self._selected
+
     def is_complete(self) -> bool:
         if self.mode == "create":
             self._hint.setText("You'll get a pairing code to share with your other machines.")
+            return True
+        if self.mode == "network":
+            if self._selected is None:
+                self._hint.setText("Pick the machine you're pairing with, then enter its PIN.")
+                return False
+            if len(self.pin) != 6 or not self.pin.isdigit():
+                self._hint.setText("Enter the 6-digit PIN shown on the other machine.")
+                return False
+            self._hint.setText(f"Will pair with {self._selected.name}.")
             return True
         try:
             PairingCode.decode(self.pairing_code)
@@ -402,5 +493,7 @@ class WizardWidget(QWidget):
                     "instance_path": self._choose.instance_path,
                     "mode": self._vault.mode,
                     "pairing_code": self._vault.pairing_code,
+                    "announcement": self._vault.announcement,
+                    "pin": self._vault.pin,
                 }
             )
