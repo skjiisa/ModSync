@@ -66,6 +66,9 @@ modules:
   # --- ModSync itself ----------------------------------------------------------
   - name: modsync
     buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network  # fetch the hatchling build backend (pin wheels for Flathub)
     build-commands:
       - pip3 install --prefix=${FLATPAK_DEST} --no-deps --no-warn-script-location .
       - install -Dm644 packaging/flatpak/io.github.skjiisa.ModSync.desktop ${FLATPAK_DEST}/share/applications/io.github.skjiisa.ModSync.desktop

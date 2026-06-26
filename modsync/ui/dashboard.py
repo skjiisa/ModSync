@@ -70,11 +70,13 @@ class Dashboard(QWidget):
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
+        self._timer.timeout.connect(self._accept_pending)
 
         self._bg_installed = False
         self._load_code()
         self._refresh_bg_status()
         self.refresh()
+        self._accept_pending()
         self._timer.start(_POLL_MS)
 
     # --- construction helpers ---
@@ -189,6 +191,23 @@ class Dashboard(QWidget):
         pct = int(round((status.completion or 0)))
         self._folder_state.setText(f"Folder: {state}   ·   {pct}% in sync")
         self._progress.setValue(max(0, min(100, pct)))
+
+    def _accept_pending(self) -> None:
+        # Mirrors what the headless `vault` loop does: auto-accept a machine that
+        # joined with our pairing code, so pairing needs only one code, one way.
+        run_async(
+            self.service.accept_pending,
+            on_done=self._on_accepted,
+            on_failed=lambda _: None,
+        )
+
+    def _on_accepted(self, accepted: list) -> None:
+        if accepted:
+            n = len(accepted)
+            self._status_line.setText(
+                f"Paired with {n} new device{'' if n == 1 else 's'}."
+            )
+            self.refresh()
 
     # --- actions ---
     def _copy_code(self) -> None:

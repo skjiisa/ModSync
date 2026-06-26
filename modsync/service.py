@@ -111,6 +111,7 @@ class ModSyncService:
         """
         if not self.state.folder_id:
             return []
+        self.ensure_running()
         accepted: list[str] = []
         with self.manager.client() as client:
             pending = client.pending_devices() or {}
