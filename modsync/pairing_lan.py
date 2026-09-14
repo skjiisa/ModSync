@@ -117,29 +117,39 @@ def _mac(key: bytes, label: bytes, *parts: bytes) -> bytes:
 
 
 def _handshake(sock: socket.socket, pin: str, payload: PairPayload, *, is_host: bool) -> PairPayload:
-    from spake2 import SPAKE2_A, SPAKE2_B
+    from spake2 import SPAKE2_A, SPAKE2_B, SPAKEError
 
     party = (SPAKE2_A if is_host else SPAKE2_B)(pin.encode())
     my_msg = party.start()
     _send(sock, my_msg)
     their_msg = _recv(sock)
-    key = party.finish(their_msg)
+    try:
+        key = party.finish(their_msg)
+    except SPAKEError as exc:  # malformed / wrong-side message: a bad peer, not a crash
+        raise PairError(f"invalid pairing message: {exc}") from exc
 
     # Bind the transcript to both SPAKE2 messages, ordered host-first on both ends.
     transcript = (my_msg + b"|" + their_msg) if is_host else (their_msg + b"|" + my_msg)
 
+    # Every MAC is bound to the sender's role. Without this a peer that doesn't
+    # know the PIN could simply reflect our own confirm/payload frames back at us
+    # and pass both checks (the expected values would be exactly what we sent).
+    mine, theirs = (b"host", b"joiner") if is_host else (b"joiner", b"host")
+
     # Key confirmation: catches a wrong PIN (or a MITM) before any identity is sent.
-    _send(sock, _mac(key, b"modsync-confirm", transcript))
-    if not hmac.compare_digest(_recv(sock), _mac(key, b"modsync-confirm", transcript)):
+    _send(sock, _mac(key, b"modsync-confirm-" + mine, transcript))
+    if not hmac.compare_digest(_recv(sock), _mac(key, b"modsync-confirm-" + theirs, transcript)):
         raise PairError("PIN did not match")
 
     # Authenticated identity exchange (device ids aren't secret, so MAC not encrypt).
     body = payload.to_bytes()
     _send(sock, body)
-    _send(sock, _mac(key, b"modsync-payload", transcript, body))
+    _send(sock, _mac(key, b"modsync-payload-" + mine, transcript, body))
     their_body = _recv(sock)
     their_mac = _recv(sock)
-    if not hmac.compare_digest(their_mac, _mac(key, b"modsync-payload", transcript, their_body)):
+    if not hmac.compare_digest(
+        their_mac, _mac(key, b"modsync-payload-" + theirs, transcript, their_body)
+    ):
         raise PairError("peer failed authentication")
     return PairPayload.from_bytes(their_body)
 
