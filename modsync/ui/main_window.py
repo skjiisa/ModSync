@@ -79,6 +79,8 @@ class MainWindow(QMainWindow):
         self._set(_centered("Setting up sync and starting Syncthing…"))
 
         def work() -> object:
+            if mode == "network":
+                return self.service.join_via_network(data["announcement"], data["pin"], path)
             if mode == "join":
                 return self.service.join_vault(PairingCode.decode(code_text), path)
             return self.service.create_vault(path, label=label)

@@ -11,7 +11,7 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
-from modsync import config
+from modsync import config, pairing_lan
 from modsync.pairing_code import PairingCode
 from modsync.state import State
 from modsync.sync import pairing
@@ -128,6 +128,51 @@ class ModSyncService:
                 client.put_folder(folder)
                 accepted.append(device_id)
         return accepted
+
+    # --- LAN pairing (no code typing) ---
+    def host_network_pairing(
+        self,
+        name: str,
+        pin: str,
+        *,
+        on_ready=None,
+        stop=None,
+        timeout: float = 120.0,
+    ) -> pairing_lan.PairPayload:
+        """Offer this machine's vault on the LAN and wait for a peer to pair with
+        the PIN, then add it to the vault. Requires a vault here already. Blocks."""
+        self.ensure_running()
+        if not self.state.folder_id:
+            raise RuntimeError("create a vault on this machine first")
+        payload = pairing_lan.PairPayload(
+            self.device_id(), self.state.folder_id, self.state.instance_label
+        )
+        peer = pairing_lan.host_pairing(
+            payload, name, pin, on_ready=on_ready, stop=stop, timeout=timeout
+        )
+        self.add_peer(PairingCode(peer.device_id, self.state.folder_id, peer.label or name))
+        return peer
+
+    def discover_hosts(self, timeout: float = 3.0) -> list[pairing_lan.Announcement]:
+        """List ModSync machines currently offering to pair on the LAN."""
+        return pairing_lan.discover(timeout)
+
+    def join_via_network(
+        self,
+        announcement: pairing_lan.Announcement,
+        pin: str,
+        instance_path: Path | str,
+        *,
+        timeout: float = 15.0,
+    ) -> pairing_lan.PairPayload:
+        """Pair with a discovered host via PIN and join its vault. Blocks."""
+        self.ensure_running()
+        payload = pairing_lan.PairPayload(self.device_id())
+        peer = pairing_lan.join_pairing(announcement, payload, pin, timeout=timeout)
+        if not peer.folder_id:
+            raise RuntimeError("that machine isn't offering a vault to join")
+        self.join_vault(PairingCode(peer.device_id, peer.folder_id, peer.label), instance_path)
+        return peer
 
     def my_pairing_code(self) -> PairingCode | None:
         if not self.state.configured or not self.state.folder_id:

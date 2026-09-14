@@ -8,6 +8,9 @@ Status is polled off the UI thread on a timer.
 
 from __future__ import annotations
 
+import socket
+import threading
+
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
@@ -23,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from modsync import background
+from modsync import background, pairing_lan
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService, SyncStatus
 from modsync.steam import shortcuts
@@ -73,6 +76,8 @@ class Dashboard(QWidget):
         self._timer.timeout.connect(self._accept_pending)
 
         self._bg_installed = False
+        self._pairing = False
+        self._pair_stop: threading.Event | None = None
         self._load_code()
         self._refresh_bg_status()
         self.refresh()
@@ -84,7 +89,7 @@ class Dashboard(QWidget):
         box = QGroupBox("Share this machine")
         layout = QVBoxLayout(box)
         hint = QLabel(
-            "On another machine, choose “Join an existing vault” and paste this code:"
+            "On another machine, use “Find a machine on my network” — or paste this code:"
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -110,9 +115,17 @@ class Dashboard(QWidget):
         layout = QVBoxLayout(box)
         self._devices = QListWidget()
         layout.addWidget(self._devices, stretch=1)
-        add = QPushButton("Add device…")
+        btn_row = QHBoxLayout()
+        self._pair_btn = QPushButton("Pair over network…")
+        self._pair_btn.setToolTip("Find another ModSync machine on your network and pair with a PIN")
+        self._pair_btn.clicked.connect(self._pair_network)
+        add = QPushButton("Add code…")
+        add.setToolTip("Add a machine by pasting its pairing code")
         add.clicked.connect(self._add_device)
-        layout.addWidget(add, alignment=Qt.AlignmentFlag.AlignLeft)
+        btn_row.addWidget(self._pair_btn)
+        btn_row.addWidget(add)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
         return box
 
     def _build_status_group(self) -> QGroupBox:
@@ -233,6 +246,46 @@ class Dashboard(QWidget):
             on_failed=self._on_error,
         )
 
+    def _pair_network(self) -> None:
+        if self._pairing:  # button doubles as Cancel while waiting
+            if self._pair_stop is not None:
+                self._pair_stop.set()
+            self._end_pairing("Network pairing cancelled.")
+            return
+        pin = pairing_lan.make_pin()
+        self._pair_stop = threading.Event()
+        self._pairing = True
+        self._pair_btn.setText("Cancel pairing")
+        name = socket.gethostname() or "this machine"
+        self._status_line.setText(
+            "On the other machine choose “Find on network”, then enter PIN "
+            f"<b style='font-size:15pt'>{pin[:3]} {pin[3:]}</b>. Waiting…"
+        )
+        run_async(
+            self.service.host_network_pairing,
+            name,
+            pin,
+            stop=self._pair_stop,
+            on_done=self._on_paired,
+            on_failed=self._on_pair_failed,
+        )
+
+    def _on_paired(self, peer: object) -> None:
+        if not self._pairing:
+            return
+        self._end_pairing("Paired with a new machine over the network!")
+        self.refresh()
+
+    def _on_pair_failed(self, message: str) -> None:
+        if not self._pairing:  # already cancelled
+            return
+        self._end_pairing(f"⚠ Pairing: {message}")
+
+    def _end_pairing(self, message: str) -> None:
+        self._pairing = False
+        self._pair_btn.setText("Pair over network…")
+        self._status_line.setText(message)
+
     def _rescan(self) -> None:
         run_async(
             self.service.rescan,
@@ -315,3 +368,5 @@ class Dashboard(QWidget):
     def shutdown(self) -> None:
         """Stop polling so no new worker jobs are queued during teardown."""
         self._timer.stop()
+        if self._pairing and self._pair_stop is not None:
+            self._pair_stop.set()  # unblock the host_network_pairing worker
