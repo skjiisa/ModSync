@@ -37,6 +37,7 @@ class SyncthingManager:
         self.api_key: str | None = None
         self.address: str | None = None
         self._proc: subprocess.Popen | None = None
+        self._attached = False  # true when using a Syncthing we didn't start
 
     # --- configuration / identity ---
     def ensure_config(self) -> None:
@@ -65,6 +66,16 @@ class SyncthingManager:
     # --- lifecycle ---
     def start(self, timeout: float = 30.0) -> None:
         self.ensure_config()
+        # If a Syncthing is already serving this home — our own background
+        # service, or another ModSync window — attach to it instead of spawning
+        # a second process that would fail to bind the same ports.
+        try:
+            with self.client() as client:
+                if client.ping():
+                    self._attached = True
+                    return
+        except Exception:
+            pass
         args = [
             str(self.binary),
             "serve",
@@ -98,6 +109,10 @@ class SyncthingManager:
         raise SyncthingError("timed out waiting for the Syncthing REST API")
 
     def stop(self, timeout: float = 10.0) -> None:
+        if self._attached:
+            # We attached to a Syncthing we didn't start; leave it running.
+            self._attached = False
+            return
         if self._proc is None:
             return
         self._proc.terminate()
@@ -113,6 +128,8 @@ class SyncthingManager:
 
     @property
     def running(self) -> bool:
+        if self._attached:
+            return True
         return self._proc is not None and self._proc.poll() is None
 
     @property

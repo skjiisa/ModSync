@@ -15,6 +15,9 @@ usage:
   modsync doctor                         inspect this machine (Steam, Skyrim SE, MO2)
   modsync vault create <instance-dir>    create a sync vault and print a pairing code
   modsync vault join <code> <instance>   join a vault from another machine's code
+  modsync vault serve                    resume an existing vault and keep syncing
+  modsync service install [--linger]     run sync in the background (systemd --user)
+  modsync steam shortcut                 add ModSync as a non-Steam game (Gaming Mode)
   modsync                                launch the GUI (requires PySide6)
 
 vault commands run headless and keep Syncthing alive until Ctrl-C.
@@ -34,6 +37,16 @@ def main(argv: list[str] | None = None) -> int:
         from modsync.cli import vault
 
         return vault(argv[1:])
+
+    if cmd == "service":
+        from modsync.cli import service
+
+        return service(argv[1:])
+
+    if cmd == "steam":
+        from modsync.cli import steam
+
+        return steam(argv[1:])
 
     if cmd in {"-h", "--help", "help"}:
         print(_USAGE)
