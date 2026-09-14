@@ -64,6 +64,10 @@ class SyncthingClient:
             f"/rest/config/folders/{folder['id']}", json=folder
         ).raise_for_status()
 
+    def delete_folder(self, folder_id: str) -> None:
+        """Stop syncing a folder. Does NOT delete any files on disk."""
+        self._http.delete(f"/rest/config/folders/{folder_id}").raise_for_status()
+
     # --- devices ---
     def devices(self) -> list[dict[str, Any]]:
         return self._http.get("/rest/config/devices").raise_for_status().json()
@@ -72,6 +76,9 @@ class SyncthingClient:
         self._http.put(
             f"/rest/config/devices/{device['deviceID']}", json=device
         ).raise_for_status()
+
+    def delete_device(self, device_id: str) -> None:
+        self._http.delete(f"/rest/config/devices/{device_id}").raise_for_status()
 
     # --- ignores (.stignore) ---
     def get_ignores(self, folder_id: str) -> dict[str, Any]:
