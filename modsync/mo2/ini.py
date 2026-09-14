@@ -97,3 +97,44 @@ def expand_tokens(value: str, base_dir: str | None) -> str:
         return m.group(0)
 
     return _TOKEN_RE.sub(repl, value)
+
+
+def _wine_path(local: Path | str, *, sep: str = "\\") -> str:
+    """A Linux path as Wine/Proton sees it: ``/home/x`` -> ``Z:\\home\\x``."""
+    s = str(local)
+    return "Z:" + (s.replace("/", sep) if sep != "/" else s)
+
+
+def write_local_ini(
+    instance_dir: Path | str,
+    *,
+    game_name: str,
+    game_path: Path | str,
+    profile: str = "Default",
+    base_dir: Path | str | None = None,
+) -> Path:
+    """Generate a machine-local ``ModOrganizer.ini`` for a synced instance.
+
+    ModSync deliberately excludes ModOrganizer.ini from sync (it holds the
+    machine-specific paths), so each machine needs its own. This writes the
+    minimal set MO2 needs to open the synced instance against this machine's game
+    install and Proton prefix. ``gamePath`` is ``@ByteArray``-wrapped with doubled
+    backslashes (as MO2 writes it); ``[Settings]`` paths use forward slashes.
+    """
+    instance_dir = Path(instance_dir)
+    base = Path(base_dir) if base_dir else instance_dir
+    game_wine = _wine_path(game_path).replace("\\", "\\\\")  # @ByteArray doubles them
+    base_wine = _wine_path(base, sep="/")
+    text = (
+        "[General]\n"
+        f"gameName={game_name}\n"
+        f"gamePath=@ByteArray({game_wine})\n"
+        f"selected_profile={profile}\n"
+        "first_start=false\n"
+        "\n"
+        "[Settings]\n"
+        f"base_directory={base_wine}\n"
+    )
+    ini = instance_dir / "ModOrganizer.ini"
+    ini.write_text(text, encoding="utf-8")
+    return ini
