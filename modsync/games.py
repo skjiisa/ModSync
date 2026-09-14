@@ -11,6 +11,7 @@ class Game:
     name: str
     mo2_game_name: str  # MO2's internal gameName / plugin name
     nexus_slug: str
+    mo2lint_key: str  # MO2-LINT's game key (see its configs/game_info.yml)
 
 
 SKYRIM_SE = Game(
@@ -18,6 +19,7 @@ SKYRIM_SE = Game(
     name="Skyrim Special Edition",
     mo2_game_name="Skyrim Special Edition",
     nexus_slug="skyrimspecialedition",
+    mo2lint_key="skyrim_se",
 )
 
 # Keyed by Steam AppID for quick lookup; extend over time.

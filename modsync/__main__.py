@@ -12,8 +12,12 @@ _USAGE = """\
 modsync — sync Mod Organizer 2 setups across machines
 
 usage:
-  modsync doctor      inspect this machine: Steam libraries, Skyrim SE, MO2 instances
-  modsync             launch the GUI (requires PySide6)
+  modsync doctor                         inspect this machine (Steam, Skyrim SE, MO2)
+  modsync vault create <instance-dir>    create a sync vault and print a pairing code
+  modsync vault join <code> <instance>   join a vault from another machine's code
+  modsync                                launch the GUI (requires PySide6)
+
+vault commands run headless and keep Syncthing alive until Ctrl-C.
 """
 
 
@@ -25,6 +29,11 @@ def main(argv: list[str] | None = None) -> int:
         from modsync.cli import doctor
 
         return doctor(argv[1:])
+
+    if cmd == "vault":
+        from modsync.cli import vault
+
+        return vault(argv[1:])
 
     if cmd in {"-h", "--help", "help"}:
         print(_USAGE)

@@ -101,6 +101,33 @@ class ModSyncService:
             ]
             client.put_folder(folder)
 
+    def accept_pending(self) -> list[str]:
+        """Add any devices that have tried to connect, sharing the vault with them.
+
+        This is what lets the side that *created* the vault accept the side that
+        *joined* it without a second round of code-pasting. Returns the accepted
+        device ids. Only a device that knows our device id (i.e. has our pairing
+        code) can become pending, and accepting it only grants this one vault.
+        """
+        if not self.state.folder_id:
+            return []
+        accepted: list[str] = []
+        with self.manager.client() as client:
+            pending = client.pending_devices() or {}
+            for device_id, info in pending.items():
+                name = (info or {}).get("name") or "ModSync peer"
+                pairing.add_peer_device(client, device_id, name)
+                folder = client.get_folder(self.state.folder_id)
+                ids = {d["deviceID"] for d in folder.get("devices", [])}
+                ids.add(device_id)
+                folder["devices"] = [
+                    {"deviceID": d, "introducedBy": "", "encryptionPassword": ""}
+                    for d in ids
+                ]
+                client.put_folder(folder)
+                accepted.append(device_id)
+        return accepted
+
     def my_pairing_code(self) -> PairingCode | None:
         if not self.state.configured or not self.state.folder_id:
             return None

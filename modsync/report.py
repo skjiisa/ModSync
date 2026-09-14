@@ -60,9 +60,18 @@ def build() -> Report:
     line()
 
     line("Mod Organizer 2 instances:")
-    instances = mo2_discover.discover_instances(
-        plat.mo2_broad_roots(), plat.mo2_known_roots()
+    instances = list(
+        mo2_discover.discover_instances(plat.mo2_broad_roots(), plat.mo2_known_roots())
     )
+    seen = {p.resolve() for p in instances}
+    for p in mo2_discover.mo2lint_instances():  # known via MO2-LINT, even pre-launch
+        try:
+            rp = p.resolve()
+        except OSError:
+            continue
+        if rp not in seen and rp.exists():
+            seen.add(rp)
+            instances.append(rp)
     if not instances:
         line("  (none found — run the guided setup to create one)")
     for path in instances:

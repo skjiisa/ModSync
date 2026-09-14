@@ -8,6 +8,7 @@ specific install locations, possibly hidden, e.g. the Steam Tinker Launch path);
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Iterable
@@ -70,3 +71,29 @@ def discover_instances(
     for br in broad_roots:
         _walk(Path(br), broad_depth, prune_hidden=True, found=found, seen=seen)
     return found
+
+
+def _mo2lint_state_path() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "mo2-lint" / "state.json"
+
+
+def mo2lint_instances() -> list[Path]:
+    """Instance paths recorded by MO2-LINT's state.json.
+
+    These are known right after a guided install, *before* MO2 has been launched
+    (so the dir may hold only the MO2 program, with content created on first run).
+    """
+    state = _mo2lint_state_path()
+    if not state.exists():
+        return []
+    try:
+        data = json.loads(state.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out: list[Path] = []
+    for inst in data.get("instances", []):
+        path = inst.get("instance_path")
+        if path:
+            out.append(Path(path))
+    return out

@@ -28,8 +28,8 @@ Early development. Working toward the MVP described in the plan.
 - [x] Phase 1 — Steam library + MO2 instance discovery
 - [x] Phase 2 — Syncthing core (bundled, REST-controlled, pairing) — *two-node sync verified*
 - [x] Phase 4 — PySide6 wizard + dashboard — *full wizard→daemon→dashboard flow verified*
-- [ ] Phase 3 — guided MO2 install (MO2-LINT / Jackify backends)  ← *next*
-- [ ] Phase 5 — Flatpak + Steam Deck
+- [x] Phase 3 — guided MO2 install (MO2-LINT backend) — *real Skyrim SE install verified*
+- [ ] Phase 5 — Flatpak + Steam Deck  ← *next*
 - [ ] Post-1.0 — Windows target
 
 ## Try the discovery report
