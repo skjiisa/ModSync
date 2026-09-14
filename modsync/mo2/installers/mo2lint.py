@@ -8,9 +8,11 @@ endpoint skips them). Requires ``protontricks`` on the system.
 
 from __future__ import annotations
 
+import os
 import shutil
 import stat
 import subprocess
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -18,7 +20,7 @@ from modsync.config import data_dir
 from modsync.games import Game
 from modsync.mo2.installers.base import InstallerBackend, InstallResult, OnOutput
 
-MO2LINT_VERSION = "7.0.0-rc5"
+MO2LINT_VERSION = "7.0.0-rc7"
 MO2LINT_URL = (
     "https://github.com/Furglitch/modorganizer2-linux-installer"
     f"/releases/download/{MO2LINT_VERSION}/mo2-lint"
@@ -35,10 +37,18 @@ def ensure_mo2lint(force: bool = False) -> Path:
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
     req = urllib.request.Request(MO2LINT_URL, headers={"User-Agent": "ModSync"})
-    with urllib.request.urlopen(req, timeout=180) as resp:  # noqa: S310 (trusted host)
-        blob = resp.read()
-    dest.write_bytes(blob)
-    dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    # Download to a temp file and rename into place so an interrupted download
+    # never leaves a truncated binary that `dest.exists()` would then trust.
+    fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=".mo2-lint.")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as out, urllib.request.urlopen(req, timeout=180) as resp:  # noqa: S310 (trusted host)
+            shutil.copyfileobj(resp, out)
+        tmp.chmod(tmp.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        tmp.replace(dest)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return dest
 
 
@@ -64,7 +74,7 @@ class Mo2LintBackend(InstallerBackend):
         game: Game,
         dest_dir: Path | str,
         *,
-        script_extender: bool = False,  # mo2-lint rc5 auto-SKSE is broken; opt-in only
+        script_extender: bool = False,  # see InstallerBackend.install
         on_output: OnOutput | None = None,
     ) -> InstallResult:
         dest_dir = Path(dest_dir)

@@ -39,7 +39,9 @@ class InstallerBackend(abc.ABC):
     ) -> InstallResult:
         """Install a portable MO2 instance for ``game`` into ``dest_dir``.
 
-        ``script_extender`` defaults off: MO2-LINT v7.0.0-rc5's auto-SKSE step
-        crashes for Skyrim SE (KeyError matching the game version). The core
-        instance install is unaffected, so we leave SKSE as a later/manual step.
+        ``script_extender`` defaults off: MO2-LINT's unattended auto-SKSE step
+        picks the *first* listed script extender rather than the one matching the
+        installed game version (Skyrim SE lists several), so it can install the
+        wrong SKSE. The core instance install is unaffected; SKSE stays a
+        later/manual step until that's version-aware upstream.
         """
