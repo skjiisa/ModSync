@@ -169,6 +169,10 @@ def steam(args: list[str]) -> int:
 
     sub = args[0] if args else ""
     if sub in {"shortcut", "add-shortcut"}:
+        if shortcuts.steam_is_running():
+            print("Close Steam first — it rewrites shortcuts.vdf from memory on exit,")
+            print("which would discard the shortcut. Then run this again.")
+            return 1
         native = "--native" in args
         paths = shortcuts.add_modsync_to_steam(
             flatpak_id=None if native else shortcuts.MODSYNC_FLATPAK_ID

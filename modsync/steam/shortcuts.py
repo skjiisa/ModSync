@@ -219,6 +219,10 @@ def add_modsync_to_steam(
                 launch_options=opts,
             )
             cfg.mkdir(parents=True, exist_ok=True)
+            if vdf_path.exists():
+                # Steam has no recovery for a bad shortcuts.vdf: keep the
+                # previous file next to it so a user can always roll back.
+                shutil.copy2(vdf_path, vdf_path.with_suffix(".vdf.modsync-bak"))
             dump(vdf_path, root_obj)
             written.append(vdf_path)
     return written
