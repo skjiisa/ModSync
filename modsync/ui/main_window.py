@@ -1,5 +1,8 @@
-"""Main window: hosts the ModSync service and swaps between the onboarding wizard
-(when no vault is configured) and the dashboard (once one is).
+"""Main window: hosts the ModSync service.
+
+The **dashboard is always the home screen** — even before anything is set up, where
+it shows an inline setup section. The linear wizard is opt-in from there (and can
+be cancelled back out), so the user is never trapped in a one-way flow.
 
 Single, self-maximizing window with no modal dialogs for the main flow, per Steam
 Deck Gaming-Mode constraints."""
@@ -50,10 +53,7 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
-        if self.service.state.configured:
-            self._show_dashboard()
-        else:
-            self._show_wizard()
+        self._show_dashboard()  # always — it handles the not-set-up case itself
 
     def _set(self, widget: QWidget) -> None:
         while self._stack.count():
@@ -66,6 +66,7 @@ class MainWindow(QMainWindow):
     def _show_wizard(self) -> None:
         wizard = WizardWidget()
         wizard.completed.connect(self._on_wizard_completed)
+        wizard.cancelled.connect(self._show_dashboard)
         self._set(wizard)
 
     def _on_wizard_completed(self, data: dict) -> None:
@@ -88,12 +89,15 @@ class MainWindow(QMainWindow):
         run_async(work, on_done=lambda _: self._show_dashboard(), on_failed=self._on_setup_failed)
 
     def _on_setup_failed(self, message: str) -> None:
-        back = QPushButton("Back to setup")
-        back.clicked.connect(self._show_wizard)
+        back = QPushButton("Back to dashboard")
+        back.clicked.connect(self._show_dashboard)
         self._set(_centered(f"Setup failed:\n{message}", back))
 
     def _show_dashboard(self) -> None:
-        self._set(Dashboard(self.service))
+        dashboard = Dashboard(self.service)
+        dashboard.wizardRequested.connect(self._show_wizard)
+        dashboard.stateChanged.connect(self._show_dashboard)  # rebuild after setup/reset
+        self._set(dashboard)
 
     def closeEvent(self, event) -> None:  # noqa: ANN001 (Qt signature)
         # Order matters: stop polling, let in-flight worker jobs finish (so none

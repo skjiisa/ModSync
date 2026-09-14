@@ -174,6 +174,37 @@ class ModSyncService:
         self.join_vault(PairingCode(peer.device_id, peer.folder_id, peer.label), instance_path)
         return peer
 
+    # --- undo ---
+    def reset(self, *, forget_devices: bool = True) -> None:
+        """Forget this machine's setup so it can be set up differently.
+
+        Stops syncing the vault folder, drops paired devices, and clears our
+        state. **Your mods are never touched** — removing a Syncthing folder only
+        stops syncing it; every file stays on disk.
+        """
+        folder_id = self.state.folder_id
+        try:
+            self.ensure_running()
+            with self.manager.client() as client:
+                if folder_id:
+                    try:
+                        client.delete_folder(folder_id)
+                    except Exception:
+                        pass
+                if forget_devices:
+                    me = client.my_id()
+                    for dev in client.devices():
+                        did = dev.get("deviceID")
+                        if did and did != me:
+                            try:
+                                client.delete_device(did)
+                            except Exception:
+                                pass
+        except Exception:
+            pass  # daemon may be down; clearing our own state is what matters
+        self.state = State()
+        self.state.save()
+
     def my_pairing_code(self) -> PairingCode | None:
         if not self.state.configured or not self.state.folder_id:
             return None

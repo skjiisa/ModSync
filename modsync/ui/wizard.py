@@ -412,6 +412,7 @@ class VaultPage(Page):
 
 class WizardWidget(QWidget):
     completed = Signal(dict)
+    cancelled = Signal()  # backing out of the first page returns to the dashboard
 
     def __init__(
         self,
@@ -473,7 +474,8 @@ class WizardWidget(QWidget):
     def _update_nav(self) -> None:
         page = self._pages[self._index]
         is_last = self._index == len(self._pages) - 1
-        self._back.setEnabled(self._index > 0 and not self._busy)
+        self._back.setText("Cancel" if self._index == 0 else "Back")
+        self._back.setEnabled(not self._busy)
         self._next.setText("Finish" if is_last else "Next")
         self._next.setEnabled(page.is_complete() and not self._busy)
 
@@ -482,6 +484,9 @@ class WizardWidget(QWidget):
         self._update_nav()
 
     def _on_back(self) -> None:
+        if self._index == 0:  # nothing to go back to — leave the wizard
+            self.cancelled.emit()
+            return
         self._go_to(self._index - 1)
 
     def _on_next(self) -> None:
