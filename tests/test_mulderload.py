@@ -27,6 +27,8 @@ SectionGroup /e "Downgrade Steam version (v1.7.104) to" version
     Section /o "v1.5.97 (November 2019)" version_1_5_97
         AddSize 3000000
         SetOutPath "$INSTDIR"
+        Delete "Data\_ResourcePack.bsa"
+        Delete "bink2w64.dll"
         !insertmacro DOWNLOAD_RANGE "https://cdn.example/1.7.104_to_1.5.97/489831.7z.001" "489831.7z.001" "9212ac317ee76c1e4d994a2704a23436431613ca" 3
         !insertmacro NSIS7Z_EXTRACT "489831.7z.001" ".\" ""
         !insertmacro DOWNLOAD_1 "https://cdn.example/1.7.104_to_1.5.97/489833.7z" "489833.7z" "9ffed35a7c9356a8697c576c1abb5e9365a05fd3"
@@ -99,6 +101,16 @@ class ParseTests(unittest.TestCase):
         for t in self.recipe.targets.values():
             self.assertTrue(all(k.isdigit() for k in t.depots))
 
+    def test_deletions_are_target_specific_and_serialized(self):
+        targets = self.recipe.as_dict()["targets"]
+        self.assertEqual(targets["1.5.97"]["delete"], ["Data/_ResourcePack.bsa", "bink2w64.dll"])
+        self.assertEqual(targets["1.6.1170"]["delete"], [])
+
+    def test_unsafe_deletions_rejected(self):
+        for name in ("../outside", "/outside", "Data/*.bsa"):
+            with self.subTest(name=name), self.assertRaises(mulderload.RecipeParseError):
+                mulderload.parse(NSI.replace("bink2w64.dll", name))
+
     def test_errors(self):
         with self.assertRaises(mulderload.RecipeParseError):
             mulderload.parse("Section \"x\" version_1_2_3\nSectionEnd\n")
@@ -109,7 +121,7 @@ class ParseTests(unittest.TestCase):
     def test_build_index_shape(self):
         static = json.loads(STATIC.read_text())
         idx = mulderload.build_index(self.recipe, static, source_commit="abc123", generated_at="2026-09-14T00:00:00+00:00")
-        self.assertEqual(idx["schema"], 1)
+        self.assertEqual(idx["schema"], 2)
         self.assertEqual(idx["game"]["appid"], 489830)
         self.assertEqual(idx["from"]["version"], "1.7.104")
         self.assertIn("1.6.1170", idx["targets"])
@@ -128,7 +140,7 @@ class GeneratedIndexTests(unittest.TestCase):
         self.idx = json.loads(INDEX.read_text(encoding="utf-8"))
 
     def test_basic_shape(self):
-        self.assertEqual(self.idx["schema"], 1)
+        self.assertEqual(self.idx["schema"], 2)
         self.assertEqual(self.idx["game"]["appid"], 489830)
         self.assertRegex(self.idx["from"]["version"], r"^\d+\.\d+\.\d+$")
         self.assertRegex(self.idx["from"]["exe_sha1"], r"^[0-9a-f]{40}$")
@@ -148,6 +160,17 @@ class GeneratedIndexTests(unittest.TestCase):
             for depot, entry in target["depots"].items():
                 if entry["language"] is not None:
                     self.assertEqual(langs.get(depot), entry["language"], depot)
+
+    def test_older_targets_include_upstream_deletions(self):
+        targets = self.idx["targets"]
+        self.assertEqual(len(targets["1.5.97"]["delete"]), 12)
+        self.assertIn("bink2w64.dll", targets["1.5.97"]["delete"])
+        self.assertIn("Data/ccBGSSSE001-Fish.esm", targets["1.5.97"]["delete"])
+        self.assertEqual(targets["1.6.640"]["delete"], [
+            "Data/_ResourcePack.bsa", "Data/_ResourcePack.esl", "Data/MarketplaceTextures.bsa",
+        ])
+        self.assertEqual(targets["1.6.1170"]["delete"], [])
+        self.assertEqual(targets["1.7.99"]["delete"], [])
 
 
 if __name__ == "__main__":
