@@ -1,0 +1,50 @@
+# Keeps modsync/downgrade/recipes/skyrim-se.json in step with Mulderland's
+# recipe. ModSync reads that file from raw.githubusercontent.com at runtime, so
+# a Bethesda patch followed by a Mulderland update reaches users without a
+# ModSync release. Only commits when the recipe content actually changed.
+name: Refresh downgrade recipe index
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/build_recipe_index.py
+      - modsync/downgrade/mulderload.py
+      - modsync/downgrade/recipes/*.static.json
+      - .github/workflows/recipe-index.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: recipe-index
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Regenerate index
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/build_recipe_index.py
+      - name: Validate
+        run: python3 -m unittest tests.test_mulderload -v
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- modsync/downgrade/recipes/skyrim-se.json; then
+            echo "index unchanged"; exit 0
+          fi
+          src=$(python3 -c "import json;print(json.load(open('modsync/downgrade/recipes/skyrim-se.json'))['from']['version'])")
+          git config user.name "modsync-recipe-bot"
+          git config user.email "modsync-recipe-bot@users.noreply.github.com"
+          git add modsync/downgrade/recipes/skyrim-se.json
+          git commit -m "recipes: refresh Skyrim SE downgrade index (from ${src})"
+          git push
