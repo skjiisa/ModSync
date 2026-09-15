@@ -152,6 +152,17 @@ class AppManifestTests(unittest.TestCase):
             self.assertEqual(m.installed_depots, {489831: "8442952117333549665", 489833: "1914580699073641964"})
             self.assertFalse(m.is_current(self._info()))
 
+    def test_pin_is_noop_when_steam_already_agrees(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._manifest(tmp)
+            m.state["StateFlags"] = "4"
+            m.state["buildid"] = "24914197"
+            m.state["InstalledDepots"]["489831"]["manifest"] = "4940892828028256588"
+            m.state["InstalledDepots"]["489833"]["manifest"] = "4886117324142477814"
+            self.assertTrue(m.is_current(self._info()))
+            self.assertEqual(m.pin_to(self._info()), [])
+            self.assertEqual(m.state["TargetBuildID"], "24604991")  # untouched
+
     def test_pin_rewrites_update_fields_and_saves_in_steam_layout(self):
         with tempfile.TemporaryDirectory() as tmp:
             m = self._manifest(tmp)

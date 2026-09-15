@@ -115,6 +115,8 @@ class AppManifest:
         build as installed. Returns what changed (empty if already pinned)."""
         if info.public_buildid is None:
             raise ValueError("appinfo has no public build id for this app")
+        if self.is_current(info):
+            return []  # Steam already agrees; leave its bookkeeping alone
         changes: list[PinChange] = []
 
         def setf(key: str, value: str) -> None:
