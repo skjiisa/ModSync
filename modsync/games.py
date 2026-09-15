@@ -12,6 +12,7 @@ class Game:
     mo2_game_name: str  # MO2's internal gameName / plugin name
     nexus_slug: str
     mo2lint_key: str  # MO2-LINT's game key (see its configs/game_info.yml)
+    exe_name: str  # main game executable — its version resource is the runtime version
 
 
 SKYRIM_SE = Game(
@@ -20,6 +21,7 @@ SKYRIM_SE = Game(
     mo2_game_name="Skyrim Special Edition",
     nexus_slug="skyrimspecialedition",
     mo2lint_key="skyrim_se",
+    exe_name="SkyrimSE.exe",  # not the launcher, which reports 1.0.0.0
 )
 
 # Keyed by Steam AppID for quick lookup; extend over time.

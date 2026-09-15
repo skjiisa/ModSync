@@ -6,11 +6,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import StringIO
 
-from modsync import platforms
+from modsync import gameversion, platforms
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import discover as mo2_discover
 from modsync.mo2 import instance as mo2_instance
 from modsync.steam import libraries as libs
+from modsync.state import State
 from modsync.steam import prefixes
 
 
@@ -50,6 +51,8 @@ def build() -> Report:
     line(f"{SKYRIM_SE.name} ({SKYRIM_SE.appid}):")
     if app:
         line(f"  ✓ installed: {app.install_path}")
+        version = gameversion.installed_version(app.install_path)
+        line(f"  • runtime version: {version or '(not detected)'}")
         pfx = prefixes.compat_prefix(app.library, SKYRIM_SE.appid)
         if pfx:
             line(f"  • Proton prefix: {pfx}")
@@ -88,5 +91,14 @@ def build() -> Report:
             line(f"      profiles: {', '.join(info.profiles)}")
         for issue in info.issues:
             line(f"      ! {issue}")
+
+    state = State.load()
+    if state.configured:
+        line()
+        line("Vault:")
+        line(f"  • instance: {state.instance_path}")
+        vc = gameversion.check(state.instance_path)
+        mark = "!" if vc.mismatch else "•"
+        line(f"  {mark} {vc.summary()}")
 
     return Report(out.getvalue(), True)

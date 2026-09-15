@@ -30,6 +30,7 @@ PATTERNS: list[str] = [
     "// Content to keep in sync:",
     *(f"!/{name}" for name in CONTENT_DIRS),
     "!/categories.dat",
+    "!/modsync-vault.json",  # ModSync's own record of the game runtime the vault targets
     "",
     "// Exclude everything else at the instance root (program files, ModOrganizer.ini,",
     "// nexusApiKey, logs, webcache, crashDumps, ...). Ignoring a dir skips its subtree.",

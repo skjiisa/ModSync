@@ -20,6 +20,18 @@ its own correct `ModOrganizer.ini` (written once by the installer), and everythi
 else syncs. This also makes Steam Deck ↔ Windows sync work cleanly, because the files
 that differ between OSes are exactly the ones that never sync.
 
+### Game version check
+
+SKSE and every native DLL mod are compiled against one exact Skyrim runtime
+(1.5.97, 1.6.1170, 1.7.104, …), and Steam updates the game silently. A vault that
+works on the desktop can stop working on the Deck the day Steam updates one of them.
+So when a vault is created, ModSync records the installed runtime in
+`modsync-vault.json` inside the instance (the one ModSync-owned file that *does*
+sync). Every machine reads its own `SkyrimSE.exe` version and the dashboard,
+`modsync doctor`, and `modsync vault serve` all warn when it differs from the vault.
+After an intentional upgrade or downgrade, "Use this machine's version" on the
+dashboard re-records it.
+
 ## Status
 
 Early development. Working toward the MVP described in the plan.

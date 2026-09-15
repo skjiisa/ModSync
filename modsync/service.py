@@ -11,10 +11,10 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
-from modsync import config, pairing_lan
+from modsync import config, gameversion, pairing_lan
 from modsync.pairing_code import PairingCode
 from modsync.state import State
-from modsync.sync import pairing
+from modsync.sync import pairing, stignore
 from modsync.sync.manager import SyncthingManager
 
 
@@ -47,6 +47,26 @@ class ModSyncService:
     def ensure_running(self, timeout: float = 40.0) -> None:
         if not self.manager.running:
             self.manager.start(timeout=timeout)
+        self._refresh_stignore()
+
+    def _refresh_stignore(self) -> None:
+        """Keep an existing vault's .stignore current with this version of ModSync
+        (e.g. so a vault created before the game-version record whitelisted
+        ``modsync-vault.json`` starts syncing it). Syncthing watches the file, so
+        no restart is needed. Only rewrites when the content actually differs."""
+        path = self.state.instance_path
+        if not self.state.configured or not path or not Path(path).is_dir():
+            return
+        target = Path(path) / ".stignore"
+        try:
+            if target.read_text(encoding="utf-8") == stignore.stignore_text():
+                return
+        except OSError:
+            pass
+        try:
+            stignore.write_stignore(path)
+        except OSError:
+            pass  # read-only instance dir etc.; not worth failing startup over
 
     def shutdown(self) -> None:
         self.manager.stop()
@@ -69,6 +89,10 @@ class ModSyncService:
             pairing.share_instance_folder(client, folder_id, instance_path, [], label=label)
             device_id = client.my_id()
         self._remember(instance_path, folder_id, label)
+        # The creating machine defines which game runtime the vault is built for;
+        # joiners receive this file through sync and compare against it.
+        if gameversion.VaultMeta.load(instance_path) is None:
+            self.adopt_local_game_version()
         return PairingCode(device_id, folder_id, label)
 
     def join_vault(self, code: PairingCode, instance_path: Path | str) -> PairingCode:
@@ -216,6 +240,25 @@ class ModSyncService:
         self.ensure_running()
         with self.manager.client() as client:
             client.rescan(self.state.folder_id)
+
+    # --- game runtime version ---
+    def game_version_check(self) -> gameversion.VersionCheck:
+        """Compare the game runtime installed here with the one the vault records."""
+        return gameversion.check(self.state.instance_path)
+
+    def adopt_local_game_version(self) -> gameversion.VaultMeta | None:
+        """Record this machine's installed runtime as the vault's expected version.
+
+        Used when the vault is created, and explicitly by the user after they
+        upgrade or downgrade the game on purpose. Returns None if there is no
+        instance or the runtime cannot be detected."""
+        if not self.state.instance_path:
+            return None
+        game_dir = gameversion.find_game_dir(self.state.instance_path)
+        installed = gameversion.installed_version(game_dir) if game_dir else None
+        if installed is None:
+            return None
+        return gameversion.record_vault_version(self.state.instance_path, installed)
 
     # --- status ---
     def status(self) -> SyncStatus:
