@@ -3,9 +3,10 @@
 When nothing is set up yet it shows a **setup section** you can fill in right
 here (choose an instance, then create or join a vault); the linear wizard stays
 available as an option for anyone who prefers it. Once a vault exists, the live
-sync view takes over: pairing code + QR, devices, folder progress, and the
-background/Steam integrations. "Reset setup…" undoes it all without touching a
-single mod file.
+sync view takes over: pairing code + QR, devices, folder progress, the
+background/Steam integrations, and a **game version** check that warns when this
+machine's Skyrim runtime differs from the one the vault was set up for. "Reset
+setup…" undoes it all without touching a single mod file.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from modsync import background, pairing_lan
+from modsync.gameversion import VersionCheck
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService, SyncStatus
 from modsync.steam import shortcuts
@@ -76,6 +78,7 @@ class Dashboard(QWidget):
             columns.addWidget(self._build_devices_group(), stretch=1)
             outer.addLayout(columns, stretch=1)
             outer.addWidget(self._build_status_group())
+            outer.addWidget(self._build_game_version_group())
             outer.addLayout(self._build_buttons())
             outer.addLayout(self._build_integration_buttons())
         else:
@@ -92,6 +95,7 @@ class Dashboard(QWidget):
             self._timer.timeout.connect(self._accept_pending)
             self._load_code()
             self._refresh_bg_status()
+            self._refresh_game_version()
             self.refresh()
             self._accept_pending()
             self._timer.start(_POLL_MS)
@@ -403,6 +407,25 @@ class Dashboard(QWidget):
         layout.addWidget(self._progress)
         return box
 
+    def _build_game_version_group(self) -> QGroupBox:
+        box = QGroupBox("Game version")
+        layout = QVBoxLayout(box)
+        self._gv_label = QLabel("checking…")
+        self._gv_label.setWordWrap(True)
+        layout.addWidget(self._gv_label)
+        row = QHBoxLayout()
+        self._gv_adopt = QPushButton("Use this machine's version")
+        self._gv_adopt.setToolTip(
+            "Record the runtime installed here as the version this vault is built for. "
+            "Do this after you upgrade or downgrade the game on purpose."
+        )
+        self._gv_adopt.clicked.connect(self._adopt_game_version)
+        self._gv_adopt.setVisible(False)
+        row.addWidget(self._gv_adopt)
+        row.addStretch(1)
+        layout.addLayout(row)
+        return box
+
     def _build_buttons(self) -> QHBoxLayout:
         row = QHBoxLayout()
         rescan = QPushButton("Rescan")
@@ -468,6 +491,44 @@ class Dashboard(QWidget):
         pct = int(round((status.completion or 0)))
         self._folder_state.setText(f"Folder: {state}   ·   {pct}% in sync")
         self._progress.setValue(max(0, min(100, pct)))
+
+    def _refresh_game_version(self) -> None:
+        run_async(
+            self.service.game_version_check,
+            on_done=self._on_game_version,
+            on_failed=lambda m: self._gv_label.setText(f"⚠ Version check failed: {m}"),
+        )
+
+    def _on_game_version(self, vc: VersionCheck) -> None:
+        if vc.mismatch:
+            self._gv_label.setText(f"⚠  {vc.summary()}")
+            self._gv_label.setStyleSheet("color: palette(text);")
+        elif vc.ok:
+            self._gv_label.setText(f"✅  {vc.summary()}")
+            self._gv_label.setStyleSheet("color: palette(mid);")
+        else:
+            self._gv_label.setText(f"•  {vc.summary()}")
+            self._gv_label.setStyleSheet("color: palette(mid);")
+        # Offer to (re)record only when there is something to record and it
+        # would change what the vault says.
+        self._gv_adopt.setVisible(vc.installed is not None and not vc.ok)
+
+    def _adopt_game_version(self) -> None:
+        run_async(
+            self.service.adopt_local_game_version,
+            on_done=self._on_game_version_adopted,
+            on_failed=self._on_error,
+        )
+
+    def _on_game_version_adopted(self, meta: object) -> None:
+        if meta is None:
+            self._on_error("Could not detect the game version on this machine.")
+            return
+        self._status_line.setText(
+            "Recorded this machine's game version as the vault's expected version. "
+            "Other machines will be warned if theirs differs."
+        )
+        self._refresh_game_version()
 
     def _accept_pending(self) -> None:
         # Auto-accept a machine that joined with our code, so pairing needs only

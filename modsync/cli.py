@@ -106,6 +106,9 @@ def _vault_serve(args: list[str]) -> int:
         )
         return 1
     print(f"Serving vault {service.state.folder_id} for {service.state.instance_path}")
+    vc = service.game_version_check()
+    if vc.mismatch:
+        print(f"\n  ! {vc.summary()}\n")
     service.ensure_running()
     return _run_until_interrupt(service)
 
