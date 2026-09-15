@@ -1,0 +1,809 @@
+{
+  "schema": 1,
+  "generated_at": "2026-09-15T01:15:11+00:00",
+  "game": {
+    "appid": 489830,
+    "name": "Skyrim Special Edition",
+    "exe": "SkyrimSE.exe"
+  },
+  "source": {
+    "provider": "mulderload",
+    "repo": "Mulderland/MulderLoad",
+    "path": "games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader.nsi",
+    "ref": "main",
+    "commit": "8a9ba0b2076c106b596bd4c33c6896cae28c2e44",
+    "url": "https://github.com/Mulderland/MulderLoad/blob/8a9ba0b2076c106b596bd4c33c6896cae28c2e44/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader.nsi",
+    "homepage": "https://www.mulderland.com/en/games/the-elder-scrolls-5-skyrim-special-edition"
+  },
+  "from": {
+    "version": "1.7.104",
+    "exe": "SkyrimSE.exe",
+    "exe_sha1": "2f784a183f884067a9a41338664b55f6dc198a48"
+  },
+  "targets": {
+    "1.5.97": {
+      "title": "v1.5.97 (November 2019)",
+      "estimated_kib": 4687135,
+      "depots": {
+        "489831": {
+          "archive": "489831.7z.001",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.5.97/489831.7z.001",
+              "sha1": "9212ac317ee76c1e4d994a2704a23436431613ca"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.5.97/489831.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.5.97/489831.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489832": {
+          "archive": "489832.7z.001",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.5.97/489832.7z.001",
+              "sha1": "f22b559b0c6fe8b54c8daccaa0015a00c51856a8"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.5.97/489832.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.5.97/489832.7z.003",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.5.97/489832.7z.004",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.5.97/489832.7z.005",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.5.97/489832.7z.006",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.5.97/489832.7z.007",
+              "sha1": null
+            }
+          ]
+        },
+        "489833": {
+          "archive": "489833.7z",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.5.97/489833.7z",
+              "sha1": "9ffed35a7c9356a8697c576c1abb5e9365a05fd3"
+            }
+          ]
+        },
+        "489834": {
+          "archive": "489834.7z.001",
+          "language": "french",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489834.7z.001",
+              "sha1": "e642aea4240a3b06b0dfc960e67130d1d31dd39f"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489834.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489834.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489835": {
+          "archive": "489835.7z.001",
+          "language": "italian",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489835.7z.001",
+              "sha1": "283370d2a720a35cb86539f0358e02ae4ccaf603"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489835.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489835.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489836": {
+          "archive": "489836.7z.001",
+          "language": "german",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489836.7z.001",
+              "sha1": "93786aff0ac2c120e5146586bd55c2b171393d29"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489836.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489836.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489837": {
+          "archive": "489837.7z.001",
+          "language": "spanish",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489837.7z.001",
+              "sha1": "b3672116409c7da72a6c27c9669bd1357059bfe4"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489837.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489837.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489838": {
+          "archive": "489838.7z.001",
+          "language": "russian",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489838.7z.001",
+              "sha1": "4f1eb5c2d882f224cac0559fd1bdf6e1d10f48c1"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489838.7z.002",
+              "sha1": null
+            }
+          ]
+        },
+        "489839": {
+          "archive": "489839.7z.001",
+          "language": "polish",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489839.7z.001",
+              "sha1": "54c0aacd96de17b119e8e3ae80ef34d8b945a8bf"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/489839.7z.002",
+              "sha1": null
+            }
+          ]
+        },
+        "544860": {
+          "archive": "544860.7z",
+          "language": "tchinese",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/544860.7z",
+              "sha1": "d561af144e244bddcda57fd764494cb42508420b"
+            }
+          ]
+        },
+        "544861": {
+          "archive": "544861.7z.001",
+          "language": "japanese",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/544861.7z.001",
+              "sha1": "df9040eeb7df9c8fe9a073b7221a081622f087fb"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/544861.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.5.97/544861.7z.003",
+              "sha1": null
+            }
+          ]
+        }
+      }
+    },
+    "1.6.640": {
+      "title": "v1.6.640 (September 2022)",
+      "estimated_kib": 1195377,
+      "depots": {
+        "489831": {
+          "archive": "489831.7z.001",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.6.640/489831.7z.001",
+              "sha1": "a49e144a118dd5083de43a17f87089e4e3f2ac49"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.6.640/489831.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.6.640/489831.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489832": {
+          "archive": "489832.7z",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.6.640/489832.7z",
+              "sha1": "a8da59d88b28f5ef23a3e0e70dee2106d96f1ade"
+            }
+          ]
+        },
+        "489833": {
+          "archive": "489833.7z",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.6.640/489833.7z",
+              "sha1": "88e03298687cf95ba7fec5910bbbd2c19595cdde"
+            }
+          ]
+        },
+        "489834": {
+          "archive": "489834.7z.001",
+          "language": "french",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489834.7z.001",
+              "sha1": "537743eca56cbabecefd3fa5e3ce89f986e24754"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489834.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489834.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489835": {
+          "archive": "489835.7z.001",
+          "language": "italian",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489835.7z.001",
+              "sha1": "5931e49806c7d42a11865f88e31136df6daca9a6"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489835.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489835.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489836": {
+          "archive": "489836.7z.001",
+          "language": "german",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489836.7z.001",
+              "sha1": "903b69bddcc4fe83676772fbf8c487e9d55a14e4"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489836.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489836.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489837": {
+          "archive": "489837.7z.001",
+          "language": "spanish",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489837.7z.001",
+              "sha1": "d348cde03f344cd770d001fedb5eaa10c061427a"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489837.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489837.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489838": {
+          "archive": "489838.7z.001",
+          "language": "russian",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489838.7z.001",
+              "sha1": "f2fb33c7746ec220a88dbb3f8bc47c0ffb457cbd"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489838.7z.002",
+              "sha1": null
+            }
+          ]
+        },
+        "489839": {
+          "archive": "489839.7z.001",
+          "language": "polish",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489839.7z.001",
+              "sha1": "331c499e35053f0b6183cbae8672f43598ab3eae"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489839.7z.002",
+              "sha1": null
+            }
+          ]
+        },
+        "544860": {
+          "archive": "544860.7z",
+          "language": "tchinese",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544860.7z",
+              "sha1": "313fbaee08f670badf79d5e4934768c9333fc3db"
+            }
+          ]
+        },
+        "544861": {
+          "archive": "544861.7z.001",
+          "language": "japanese",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544861.7z.001",
+              "sha1": "b8a6754b383892b460dc4e4e5811ba688039c386"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544861.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544861.7z.003",
+              "sha1": null
+            }
+          ]
+        }
+      }
+    },
+    "1.6.1170": {
+      "title": "v1.6.1170 (January 2024)",
+      "estimated_kib": 1132462,
+      "depots": {
+        "489831": {
+          "archive": "489831.7z.001",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.6.1170/489831.7z.001",
+              "sha1": "0adfa48883116c088f172f51c34f56070ffcdf80"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.6.1170/489831.7z.002",
+              "sha1": null
+            }
+          ]
+        },
+        "489832": {
+          "archive": "489832.7z",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.6.1170/489832.7z",
+              "sha1": "c2e1c9e57ad823a59477f942c86575388a13dbff"
+            }
+          ]
+        },
+        "489833": {
+          "archive": "489833.7z",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.6.1170/489833.7z",
+              "sha1": "486c9d908b8ab444e28d9d577f6fbde61d4992e9"
+            }
+          ]
+        },
+        "489834": {
+          "archive": "489834.7z.001",
+          "language": "french",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489834.7z.001",
+              "sha1": "537743eca56cbabecefd3fa5e3ce89f986e24754"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489834.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489834.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489835": {
+          "archive": "489835.7z.001",
+          "language": "italian",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489835.7z.001",
+              "sha1": "5931e49806c7d42a11865f88e31136df6daca9a6"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489835.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489835.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489836": {
+          "archive": "489836.7z.001",
+          "language": "german",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489836.7z.001",
+              "sha1": "903b69bddcc4fe83676772fbf8c487e9d55a14e4"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489836.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489836.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489837": {
+          "archive": "489837.7z.001",
+          "language": "spanish",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489837.7z.001",
+              "sha1": "d348cde03f344cd770d001fedb5eaa10c061427a"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489837.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489837.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489838": {
+          "archive": "489838.7z.001",
+          "language": "russian",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489838.7z.001",
+              "sha1": "f2fb33c7746ec220a88dbb3f8bc47c0ffb457cbd"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489838.7z.002",
+              "sha1": null
+            }
+          ]
+        },
+        "489839": {
+          "archive": "489839.7z.001",
+          "language": "polish",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489839.7z.001",
+              "sha1": "331c499e35053f0b6183cbae8672f43598ab3eae"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489839.7z.002",
+              "sha1": null
+            }
+          ]
+        },
+        "544860": {
+          "archive": "544860.7z",
+          "language": "tchinese",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544860.7z",
+              "sha1": "313fbaee08f670badf79d5e4934768c9333fc3db"
+            }
+          ]
+        },
+        "544861": {
+          "archive": "544861.7z.001",
+          "language": "japanese",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544861.7z.001",
+              "sha1": "b8a6754b383892b460dc4e4e5811ba688039c386"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544861.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544861.7z.003",
+              "sha1": null
+            }
+          ]
+        }
+      }
+    },
+    "1.7.99": {
+      "title": "v1.7.99 (August 20, 2026)",
+      "estimated_kib": 12035,
+      "depots": {
+        "489831": {
+          "archive": "489831.7z",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.7.99/489831.7z",
+              "sha1": "460a85ff459c23e67d141c61409e162fb54e70c4"
+            }
+          ]
+        },
+        "489832": {
+          "archive": "489832.7z",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.7.99/489832.7z",
+              "sha1": "880722795bdf6fe4f25bc62997be151f4394523c"
+            }
+          ]
+        },
+        "489833": {
+          "archive": "489833.7z",
+          "language": null,
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.104_to_1.7.99/489833.7z",
+              "sha1": "46ad4e59480efee5ae4e42fca266d0a08dc76fa5"
+            }
+          ]
+        },
+        "489834": {
+          "archive": "489834.7z.001",
+          "language": "french",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489834.7z.001",
+              "sha1": "537743eca56cbabecefd3fa5e3ce89f986e24754"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489834.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489834.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489835": {
+          "archive": "489835.7z.001",
+          "language": "italian",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489835.7z.001",
+              "sha1": "5931e49806c7d42a11865f88e31136df6daca9a6"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489835.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489835.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489836": {
+          "archive": "489836.7z.001",
+          "language": "german",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489836.7z.001",
+              "sha1": "903b69bddcc4fe83676772fbf8c487e9d55a14e4"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489836.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489836.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489837": {
+          "archive": "489837.7z.001",
+          "language": "spanish",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489837.7z.001",
+              "sha1": "d348cde03f344cd770d001fedb5eaa10c061427a"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489837.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489837.7z.003",
+              "sha1": null
+            }
+          ]
+        },
+        "489838": {
+          "archive": "489838.7z.001",
+          "language": "russian",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489838.7z.001",
+              "sha1": "f2fb33c7746ec220a88dbb3f8bc47c0ffb457cbd"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489838.7z.002",
+              "sha1": null
+            }
+          ]
+        },
+        "489839": {
+          "archive": "489839.7z.001",
+          "language": "polish",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489839.7z.001",
+              "sha1": "331c499e35053f0b6183cbae8672f43598ab3eae"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/489839.7z.002",
+              "sha1": null
+            }
+          ]
+        },
+        "544860": {
+          "archive": "544860.7z",
+          "language": "tchinese",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544860.7z",
+              "sha1": "313fbaee08f670badf79d5e4934768c9333fc3db"
+            }
+          ]
+        },
+        "544861": {
+          "archive": "544861.7z.001",
+          "language": "japanese",
+          "parts": [
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544861.7z.001",
+              "sha1": "b8a6754b383892b460dc4e4e5811ba688039c386"
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544861.7z.002",
+              "sha1": null
+            },
+            {
+              "url": "https://cdn.mulderload.eu/games/the-elder-scrolls-5-skyrim-special-edition/steam-downgrader/1.7.99_to_1.6.640/544861.7z.003",
+              "sha1": null
+            }
+          ]
+        }
+      }
+    }
+  },
+  "post_steps": [
+    "remove_shader_cache",
+    "reset_content_catalog"
+  ],
+  "steam": {
+    "_comment": "Depot -> Steam language code, as in appinfo.vdf depots/<id>/config/language. Base depots 489831-489833 hold all-language content plus English.",
+    "depot_languages": {
+      "489834": "french",
+      "489835": "italian",
+      "489836": "german",
+      "489837": "spanish",
+      "489838": "russian",
+      "489839": "polish",
+      "544860": "tchinese",
+      "544861": "japanese"
+    },
+    "_manifests_comment": "Depot manifest IDs per game version, for depot-download fallbacks and for recognising an install. Sources: Nexus 'Steam Manifest List for Skyrim' (article 6536) for 1.5.97..1.6.1170; 1.7.99 and 1.7.104 inferred from a Steam client's depotcache/appinfo in Sep 2026 (build 24604991 dated 2026-08-20 and build 24914197 dated 2026-08-27).",
+    "manifests": {
+      "1.5.97": {
+        "489831": "7848722008564294070",
+        "489832": "8702665189575304780",
+        "489833": "2289561010626853674"
+      },
+      "1.6.317": {
+        "489831": "8893533186410323048",
+        "489832": "7231497621745539234",
+        "489833": "5887811902658527321"
+      },
+      "1.6.318": {
+        "489831": "1985552842565684891",
+        "489832": "5260954425794414274",
+        "489833": "6964426252826681862"
+      },
+      "1.6.323": {
+        "489831": "6913241376784585188",
+        "489832": "6077137133470860357",
+        "489833": "2414608533287116506"
+      },
+      "1.6.342": {
+        "489831": "349141704917442044",
+        "489832": "2337986449035143556",
+        "489833": "5357951305619261097"
+      },
+      "1.6.353": {
+        "489831": "7089166303853251347",
+        "489832": "1476684358338706955",
+        "489833": "4570833277049890269"
+      },
+      "1.6.629": {
+        "489831": "3660787314279169352",
+        "489832": "2756691988703496654",
+        "489833": "8453224879269405640"
+      },
+      "1.6.640": {
+        "489831": "3660787314279169352",
+        "489832": "2756691988703496654",
+        "489833": "5291801952219815735"
+      },
+      "1.6.1130": {
+        "489831": "3737743381894105176",
+        "489832": "4341968404481569190",
+        "489833": "2442187225363891157"
+      },
+      "1.6.1170": {
+        "489831": "8442952117333549665",
+        "489832": "8042843504692938467",
+        "489833": "1914580699073641964"
+      },
+      "1.7.99": {
+        "489831": "3552311541133526669",
+        "489832": "1885196179801530198",
+        "489833": "8156748093655676596",
+        "_inferred": true,
+        "buildid": 24604991
+      },
+      "1.7.104": {
+        "489831": "4940892828028256588",
+        "489832": "5728778377666085157",
+        "489833": "4886117324142477814",
+        "_inferred": true,
+        "buildid": 24914197
+      }
+    }
+  }
+}
