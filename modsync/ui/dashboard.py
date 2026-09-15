@@ -799,7 +799,12 @@ class Dashboard(QWidget):
         self._refresh_bg_status()
 
     def _refresh_bg_status(self) -> None:
-        run_async(background.status, on_done=self._on_bg_status, on_failed=self._on_error)
+        # Polled by the timer: fail into the label, not the shared status line.
+        run_async(
+            background.status,
+            on_done=self._on_bg_status,
+            on_failed=lambda _: self._bg_status.setText("Background service: unknown"),
+        )
 
     def _on_bg_status(self, st: dict) -> None:
         self._bg_installed = bool(st.get("installed"))
