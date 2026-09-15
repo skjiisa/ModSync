@@ -14,9 +14,11 @@ import time
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest.mock import patch
 
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService
+from modsync.state import State
 from modsync.sync import pairing, stignore
 from modsync.sync.binary import ensure_syncthing
 from modsync.sync.manager import SyncthingManager
@@ -83,6 +85,8 @@ class SyncthingIntegration(unittest.TestCase):
             mgr = SyncthingManager(
                 tmp / "home", binary=self.binary, gui_address=f"127.0.0.1:{_free_port()}"
             )
+            mgr.ensure_config()
+            _isolate_config(mgr.home / "config.xml", _free_port())
             mgr.start(timeout=40)
             try:
                 self.assertTrue(mgr.running)
@@ -154,6 +158,7 @@ class SyncthingIntegration(unittest.TestCase):
             a.start(40)
             b.start(40)
             ca = cb = None
+            background = None
             try:
                 ca, cb = a.client(), b.client()
                 id_a, id_b = ca.my_id(), cb.my_id()
@@ -172,6 +177,41 @@ class SyncthingIntegration(unittest.TestCase):
                 # the crucial guarantee — neither machine's ModOrganizer.ini changed:
                 self.assertEqual((inst_b / "ModOrganizer.ini").read_text(), ini_b)
                 self.assertEqual((inst_a / "ModOrganizer.ini").read_text(), ini_a)
+
+                # Enable background sync while the app owns the daemon, then
+                # close the app. The next service poll must recover and keep
+                # serving the same vault and identity.
+                background = SyncthingManager(
+                    a.home, binary=self.binary, gui_address=a.address,
+                    log_file=tmp / "background.log",
+                )
+                background.start(40)
+                self.assertTrue(background.running)
+                a.stop()
+                self.assertFalse(background.running)
+                with patch("modsync.service.State.load", return_value=State(
+                    instance_path=str(inst_a), folder_id="modsync-sse"
+                )):
+                    service = ModSyncService(manager=background)
+                service.ensure_running(timeout=40)
+                with background.client() as client:
+                    self.assertEqual(client.my_id(), id_a)
+                    client.rescan("modsync-sse")
+
+                (inst_b / "mods" / "from-deck.txt").write_text("new mod")
+                cb.rescan("modsync-sse")
+                received = inst_a / "mods" / "from-deck.txt"
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline and not received.exists():
+                    time.sleep(0.5)
+                self.assertTrue(received.exists(), "background did not resume syncing B->A")
+                self.assertEqual(received.read_text(), "new mod")
+
+                # Reopening and closing the app must leave the service's
+                # replacement daemon alive.
+                a.start(40)
+                a.stop()
+                self.assertTrue(background.running)
             finally:
                 if ca is not None:
                     ca.close()
@@ -179,6 +219,8 @@ class SyncthingIntegration(unittest.TestCase):
                     cb.close()
                 a.stop()
                 b.stop()
+                if background is not None:
+                    background.stop()
 
     def test_service_create_vault(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -195,6 +237,8 @@ class SyncthingIntegration(unittest.TestCase):
                     binary=self.binary,
                     gui_address=f"127.0.0.1:{_free_port()}",
                 )
+                mgr.ensure_config()
+                _isolate_config(mgr.home / "config.xml", _free_port())
                 svc = ModSyncService(manager=mgr)
                 try:
                     code = svc.create_vault(instance, "Skyrim SE")

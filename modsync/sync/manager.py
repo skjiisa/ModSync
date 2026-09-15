@@ -9,6 +9,7 @@ to come up.
 from __future__ import annotations
 
 import subprocess
+import threading
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -38,6 +39,7 @@ class SyncthingManager:
         self.address: str | None = None
         self._proc: subprocess.Popen | None = None
         self._attached = False  # true when using a Syncthing we didn't start
+        self._lifecycle_lock = threading.RLock()
 
     # --- configuration / identity ---
     def ensure_config(self) -> None:
@@ -65,6 +67,17 @@ class SyncthingManager:
 
     # --- lifecycle ---
     def start(self, timeout: float = 30.0) -> None:
+        # Dashboard jobs can notice the same dead daemon concurrently.
+        with self._lifecycle_lock:
+            if self.running:
+                return
+            self._start(timeout)
+
+    def _start(self, timeout: float) -> None:
+        self._attached = False
+        if self._log_handle is not None:
+            self._log_handle.close()
+            self._log_handle = None
         self.ensure_config()
         # If a Syncthing is already serving this home — our own background
         # service, or another ModSync window — attach to it instead of spawning
@@ -109,6 +122,10 @@ class SyncthingManager:
         raise SyncthingError("timed out waiting for the Syncthing REST API")
 
     def stop(self, timeout: float = 10.0) -> None:
+        with self._lifecycle_lock:
+            self._stop(timeout)
+
+    def _stop(self, timeout: float) -> None:
         if self._attached:
             # We attached to a Syncthing we didn't start; leave it running.
             self._attached = False
@@ -129,7 +146,10 @@ class SyncthingManager:
     @property
     def running(self) -> bool:
         if self._attached:
-            return True
+            # The app or service that started this daemon may have exited.
+            # Let ensure_running() start a replacement on its next poll.
+            with self.client() as client:
+                return client.ping()
         return self._proc is not None and self._proc.poll() is None
 
     @property

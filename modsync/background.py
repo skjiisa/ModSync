@@ -68,18 +68,22 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess:
     return _run_host(["systemctl", "--user", *args])
 
 
+def _checked_systemctl(*args: str) -> None:
+    result = _systemctl(*args)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(f"Background service: {' '.join(args)} failed: {detail}")
+
+
 def install(enable_linger: bool = False) -> str:
     path = unit_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(unit_text(), encoding="utf-8")
-    _systemctl("daemon-reload")
-    res = _systemctl("enable", "--now", UNIT_NAME)
+    _checked_systemctl("daemon-reload")
+    _checked_systemctl("enable", "--now", UNIT_NAME)
+    _checked_systemctl("is-active", UNIT_NAME)
 
-    lines = [f"Installed {path}"]
-    if res.returncode == 0:
-        lines.append("Enabled and started modsync-sync.service.")
-    else:
-        lines.append(f"Wrote the unit, but enabling it failed:\n  {res.stderr.strip()}")
+    lines = [f"Installed {path}", "Enabled and started modsync-sync.service."]
 
     if enable_linger:
         linger = _run_host(["loginctl", "enable-linger"])
@@ -96,11 +100,11 @@ def install(enable_linger: bool = False) -> str:
 
 
 def uninstall() -> None:
-    _systemctl("disable", "--now", UNIT_NAME)
+    _checked_systemctl("disable", "--now", UNIT_NAME)
     path = unit_path()
     if path.exists():
         path.unlink()
-    _systemctl("daemon-reload")
+    _checked_systemctl("daemon-reload")
 
 
 def status() -> dict:
