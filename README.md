@@ -82,6 +82,20 @@ Early development. Working toward the MVP described in the plan.
 - [ ] Phase 5 — Flatpak + Steam Deck  ← *next*
 - [ ] Post-1.0 — Windows target
 
+### Background sync
+
+By default, closing ModSync stops the Syncthing process it started. **Run in
+background** installs a user service that starts at login and keeps the vault
+available without the app window. If the service initially shares the app's
+process, it starts a replacement on its next poll after the app closes; transfers
+resume automatically. Both machines still need to be awake and connected.
+
+The dashboard shows **Background service: running / inactive / failed / off**
+separately from folder sync progress. Open the ModSync Steam shortcut to check it
+in Gaming Mode. The service is independent of the desktop, but Steam Deck mode
+transitions still need testing on hardware. **Turn off background sync** stops
+and removes the service without deleting mods; an open app can continue syncing.
+
 ## Try the discovery report
 
 The discovery layer uses only the Python standard library, so no install is needed:

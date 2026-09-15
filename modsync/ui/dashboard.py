@@ -102,6 +102,7 @@ class Dashboard(QWidget):
             self._timer.timeout.connect(self.refresh)
             self._timer.timeout.connect(self._accept_pending)
             self._timer.timeout.connect(self._apply_pending_pin)
+            self._timer.timeout.connect(self._refresh_bg_status)
             self._load_code()
             self._refresh_bg_status()
             self._refresh_game_version()
@@ -484,12 +485,15 @@ class Dashboard(QWidget):
             "Keep syncing via a systemd --user service after you close ModSync"
         )
         self._bg_button.clicked.connect(self._toggle_bg)
+        self._bg_status = QLabel("Background service: checking…")
+        self._bg_status.setWordWrap(True)
         self._steam_button = QPushButton("Add to Steam")
         self._steam_button.setToolTip(
             "Add ModSync as a non-Steam game so it's launchable from Gaming Mode"
         )
         self._steam_button.clicked.connect(self._add_to_steam)
         row.addWidget(self._bg_button)
+        row.addWidget(self._bg_status)
         row.addWidget(self._steam_button)
         row.addStretch(1)
         return row
@@ -770,30 +774,49 @@ class Dashboard(QWidget):
         run_async(url, on_done=lambda u: QDesktopServices.openUrl(QUrl(u)), on_failed=self._on_error)
 
     def _toggle_bg(self) -> None:
+        self._bg_button.setEnabled(False)
         if self._bg_installed:
             run_async(
                 background.uninstall,
                 on_done=lambda _: self._after_bg("Background sync turned off."),
-                on_failed=self._on_error,
+                on_failed=self._on_bg_failed,
             )
         else:
             run_async(
                 background.install,
-                on_done=lambda _: self._after_bg(
-                    "Background sync is on — ModSync keeps syncing after you close it."
-                ),
-                on_failed=self._on_error,
+                on_done=self._after_bg,
+                on_failed=self._on_bg_failed,
             )
 
     def _after_bg(self, message: str) -> None:
+        self._bg_button.setEnabled(True)
         self._status_line.setText(message)
         self._refresh_bg_status()
 
+    def _on_bg_failed(self, message: str) -> None:
+        self._bg_button.setEnabled(True)
+        self._on_error(message)
+        self._refresh_bg_status()
+
     def _refresh_bg_status(self) -> None:
-        run_async(background.status, on_done=self._on_bg_status, on_failed=self._on_error)
+        # Polled by the timer: fail into the label, not the shared status line.
+        run_async(
+            background.status,
+            on_done=self._on_bg_status,
+            on_failed=lambda _: self._bg_status.setText("Background service: unknown"),
+        )
 
     def _on_bg_status(self, st: dict) -> None:
         self._bg_installed = bool(st.get("installed"))
+        active = st.get("active", "unknown")
+        if active == "active":
+            label = "running"
+        elif self._bg_installed:
+            label = str(active)
+        else:
+            label = "off" if active == "inactive" else str(active)
+        self._bg_status.setText(f"Background service: {label}")
+        self._bg_status.setToolTip(f"Start at login: {st.get('enabled', 'unknown')}")
         self._bg_button.setText(
             "Turn off background sync" if self._bg_installed else "Run in background"
         )

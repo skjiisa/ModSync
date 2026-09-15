@@ -25,6 +25,8 @@ finish-args:
   - --device=dri
   # Syncthing needs the network for device discovery, relays and transfers:
   - --share=network
+  # Background service management uses flatpak-spawn --host to reach systemd.
+  - --talk-name=org.freedesktop.Flatpak
   # Discover Steam libraries + Proton prefixes (internal install + SD card):
   - --filesystem=xdg-data/Steam:rw
   - --filesystem=~/.steam:ro
