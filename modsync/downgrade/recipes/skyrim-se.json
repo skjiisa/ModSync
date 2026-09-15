@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "generated_at": "2026-09-15T01:15:11+00:00",
   "game": {
     "appid": 489830,
@@ -24,6 +24,20 @@
     "1.5.97": {
       "title": "v1.5.97 (November 2019)",
       "estimated_kib": 4687135,
+      "delete": [
+        "Data/_ResourcePack.bsa",
+        "Data/_ResourcePack.esl",
+        "Data/ccBGSSSE001-Fish.bsa",
+        "Data/ccBGSSSE001-Fish.esm",
+        "Data/ccBGSSSE025-AdvDSGS.bsa",
+        "Data/ccBGSSSE025-AdvDSGS.esm",
+        "Data/ccBGSSSE037-Curios.bsa",
+        "Data/ccBGSSSE037-Curios.esl",
+        "Data/ccQDRSSE001-SurvivalMode.bsa",
+        "Data/ccQDRSSE001-SurvivalMode.esl",
+        "Data/MarketplaceTextures.bsa",
+        "bink2w64.dll"
+      ],
       "depots": {
         "489831": {
           "archive": "489831.7z.001",
@@ -220,6 +234,11 @@
     "1.6.640": {
       "title": "v1.6.640 (September 2022)",
       "estimated_kib": 1195377,
+      "delete": [
+        "Data/_ResourcePack.bsa",
+        "Data/_ResourcePack.esl",
+        "Data/MarketplaceTextures.bsa"
+      ],
       "depots": {
         "489831": {
           "archive": "489831.7z.001",
@@ -392,6 +411,7 @@
     "1.6.1170": {
       "title": "v1.6.1170 (January 2024)",
       "estimated_kib": 1132462,
+      "delete": [],
       "depots": {
         "489831": {
           "archive": "489831.7z.001",
@@ -560,6 +580,7 @@
     "1.7.99": {
       "title": "v1.7.99 (August 20, 2026)",
       "estimated_kib": 12035,
+      "delete": [],
       "depots": {
         "489831": {
           "archive": "489831.7z",

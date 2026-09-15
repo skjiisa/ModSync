@@ -23,7 +23,9 @@ What we extract from the script:
   file (SHA1 of the whole file) and ``DOWNLOAD_RANGE`` for split archives
   (``.001``…``.NNN``; the SHA1 covers the first part only, as in the script's
   ``DownloadRange`` function);
-* the ``${If} $Game_Language == "…"`` blocks that select language depots.
+* the ``${If} $Game_Language == "…"`` blocks that select language depots;
+* plain ``Delete "relative/path"`` lines inside a target section — files the
+  target version must not have (e.g. 1.5.97 predates the bundled Creations).
 
 The parser is deliberately line-oriented and tolerant: it only needs the
 handful of constructs above and ignores everything else.
@@ -71,6 +73,9 @@ _SOURCE_SHA1_RE = re.compile(
 )
 _DEPOT_FROM_FILENAME_RE = re.compile(r"^(\d+)\.7z(?:\.\d{3})?$")
 _ADDSIZE_RE = re.compile(r"^\s*AddSize\s+(\d+)")
+# Only game-relative deletions (the recipe does SetOutPath "$INSTDIR" first);
+# anything with a $variable or drive letter is not ours to interpret.
+_DELETE_RE = re.compile(r'^\s*Delete\s+"([^"$:]+)"\s*$')
 
 
 class RecipeParseError(ValueError):
@@ -107,11 +112,13 @@ class Target:
     title: str
     depots: dict[str, DepotPatch] = field(default_factory=dict)
     estimated_kib: int | None = None  # the installer's AddSize (KiB), if given
+    deletes: list[str] = field(default_factory=list)  # game-relative, '/'-separated
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "title": self.title,
             "estimated_kib": self.estimated_kib,
+            "delete": list(self.deletes),
             "depots": {k: v.as_dict() for k, v in sorted(self.depots.items())},
         }
 
@@ -198,6 +205,14 @@ def parse(text: str) -> Recipe:
         if m:
             current.estimated_kib = int(m.group(1))
             continue
+        m = _DELETE_RE.match(raw)
+        if m:
+            rel = m.group(1).replace("\\", "/")
+            if rel.startswith("/") or ".." in rel.split("/") or any(c in rel for c in "*?"):
+                raise RecipeParseError(f"refusing deletion outside the game dir: {rel}")
+            if rel not in current.deletes:
+                current.deletes.append(rel)
+            continue
 
         m = _LANG_IF_RE.search(line)
         if m:
@@ -259,7 +274,7 @@ def build_index(
     """Merge the parsed recipe with ModSync's static Steam knowledge into the
     JSON document ModSync consumes at runtime."""
     index: dict[str, Any] = {
-        "schema": 1,
+        "schema": 2,
         "generated_at": generated_at,
         "game": static["game"],
         "source": {

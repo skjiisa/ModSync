@@ -44,9 +44,13 @@ loading until the runtime matches again. ModSync can downgrade the game itself:
   fetches at runtime (falling back to the bundled copy), so new recipes reach
   users without a ModSync release.
 - **Applying** is native: download + SHA1 check, unpack the 7z, `xdelta3 -d` every
-  file into a staging dir on the same drive, then swap all files at once. xdelta3
-  verifies the source checksum, so a wrong source version fails cleanly. Downloads
-  are cached (about 1.1 GB for 1.7.104 → 1.6.1170) so a repeat is offline.
+  file into a staging dir on the same drive, then install with backups and rollback
+  on replacement failure. Files excluded by the target recipe are backed up and
+  removed too. If recovery fails or the process is killed, originals remain in
+  `.modsync-downgrade/backup`; restore them before retrying. xdelta3 verifies the
+  source checksum, so a wrong source version fails cleanly. Interrupted downloads
+  resume from temporary files; only completed downloads enter the cache (about
+  1.1 GB for 1.7.104 → 1.6.1170), so a repeat is offline.
 - **Steam keeps working.** Steam decides whether to update purely from
   `appmanifest_489830.acf` (state flags, build id, depot manifest ids), never by
   hashing files. Right after a Steam update the manifest already claims the

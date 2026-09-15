@@ -1,9 +1,12 @@
 import json
+import io
 import shutil
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest.mock import patch
 
 from modsync.downgrade import engine, recipe, tools
 from tests.test_gameversion import fake_pe
@@ -49,10 +52,85 @@ class RecipeIndexTests(unittest.TestCase):
         self.assertEqual(a.stem, "489831.7z")
         self.assertEqual(recipe.Archive("1", None, "489833.7z", ()).stem, "489833.7z")
 
+    def test_old_remote_index_falls_back_to_complete_bundled_recipe(self):
+        old = json.loads(recipe.BUNDLED.read_text())
+        old["schema"] = 1
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(recipe.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(old).encode())):
+                with patch.object(recipe, "cache_path", return_value=Path(tmp) / "index.json"):
+                    idx = recipe.load_index()
+        self.assertEqual(idx.origin, "bundled")
+        self.assertIn("bink2w64.dll", idx.deletes_for("1.5.97"))
+
+
+class DownloadTests(unittest.TestCase):
+    def test_unhashed_interrupted_part_resumes_then_becomes_offline_cache_hit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = recipe.Archive("1", None, "1.7z.001", (
+                recipe.Part("https://example.test/001", None),
+                recipe.Part("https://example.test/002", None),
+            ))
+            plan = engine.Plan(root, "new", "sha", "old", "english", [archive], "SkyrimSE.exe")
+            first = engine._part_cache_path(root, archive, 0)
+            first.parent.mkdir(parents=True)
+            first.write_bytes(b"first")
+            dest = engine._part_cache_path(root, archive, 1)
+            short = io.BytesIO(b"abc")
+            short.status = 200
+            short.headers = {"Content-Length": "6"}
+            with patch.object(engine.urllib.request, "urlopen", return_value=short):
+                with self.assertRaisesRegex(engine.DowngradeError, "resume"):
+                    engine.download_all(plan, root)
+            self.assertFalse(dest.exists())
+            resumed = io.BytesIO(b"def")
+            resumed.status = 206
+            resumed.headers = {"Content-Length": "3", "Content-Range": "bytes 3-5/6"}
+            with patch.object(engine.urllib.request, "urlopen", return_value=resumed) as request:
+                joined, moved = engine.download_all(plan, root)
+            self.assertEqual(request.call_args.args[0].get_header("Range"), "bytes=3-")
+            self.assertEqual(moved, 3)
+            self.assertEqual(joined[0].read_bytes(), b"firstabcdef")
+            with patch.object(engine.urllib.request, "urlopen", side_effect=AssertionError("network used")):
+                self.assertEqual(engine.download_all(plan, root)[1], 0)
+
+    def test_416_only_promotes_an_exact_complete_partial(self):
+        for length, succeeds in ((6, True), (4, False)):
+            with self.subTest(length=length), tempfile.TemporaryDirectory() as tmp:
+                dest = Path(tmp) / "archive"
+                partial = dest.with_name("archive.part")
+                partial.write_bytes(b"abcdef")
+                error = urllib.error.HTTPError("https://example.test", 416, "range", {"Content-Range": f"bytes */{length}"}, None)
+                with patch.object(engine.urllib.request, "urlopen", side_effect=error):
+                    if succeeds:
+                        self.assertEqual(engine._download(error.url, dest, None, "test"), 0)
+                        self.assertEqual(dest.read_bytes(), b"abcdef")
+                    else:
+                        with self.assertRaises(engine.DowngradeError):
+                            engine._download(error.url, dest, None, "test")
+                        self.assertFalse(dest.exists())
+
+    def test_legacy_unhashed_cache_is_not_trusted(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            source.write_bytes(b"complete")
+            part = recipe.Part(source.as_uri(), None)
+            archive = recipe.Archive("1", None, "1.7z", (part,))
+            legacy = root / hashlib.sha1(part.url.encode()).hexdigest() / "1.7z"
+            legacy.parent.mkdir()
+            legacy.write_bytes(b"incomplete")
+            plan = engine.Plan(root, "new", "sha", "old", "english", [archive], "SkyrimSE.exe")
+            paths, moved = engine.download_all(plan, root)
+            self.assertEqual(paths[0].read_bytes(), b"complete")
+            self.assertEqual(moved, 8)
+
 
 def _write_index(path: Path, from_sha1: str, url: str, sha1: str) -> None:
     doc = {
-        "schema": 1,
+        "schema": 2,
         "game": {"appid": 489830, "exe": "SkyrimSE.exe"},
         "from": {"version": "1.7.104", "exe": "SkyrimSE.exe", "exe_sha1": from_sha1},
         "targets": {"1.6.1170": {"estimated_kib": 1, "depots": {
@@ -157,6 +235,76 @@ class EngineTests(unittest.TestCase):
             engine.apply(plan, archives, prefix_dir=self.prefix)
         self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), self.new_exe)
         self.assertFalse((self.game / ".modsync-downgrade").exists())
+
+    def test_swap_failure_restores_originals_and_can_retry(self):
+        plan = engine.make_plan(self.index, self.game, "1.6.1170", "english")
+        archives, _ = engine.download_all(plan, self.cache)
+        replace = engine._replace
+
+        def fail_exe(src, dst):
+            if src.parent.name == "out" and src.name == "SkyrimSE.exe":
+                raise PermissionError("locked executable")
+            replace(src, dst)
+
+        with patch.object(engine, "_replace", side_effect=fail_exe):
+            with self.assertRaisesRegex(engine.DowngradeError, "rolled back"):
+                engine.apply(plan, archives)
+        self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), self.new_exe)
+        self.assertEqual((self.game / "Data/Skyrim.esm").read_bytes(), b"esm-new" * 1000)
+        self.assertFalse((self.game / ".modsync-downgrade").exists())
+        self.assertEqual(engine.run(plan, cache_dir=self.cache).installed_version, "1.6.1170")
+
+    def test_failed_rollback_preserves_backups_and_blocks_reuse(self):
+        plan = engine.make_plan(self.index, self.game, "1.6.1170", "english")
+        archives, _ = engine.download_all(plan, self.cache)
+        replace = engine._replace
+
+        def fail_swap_and_restore(src, dst):
+            if src.name == "SkyrimSE.exe" and src.parent.name in ("out", "backup"):
+                raise PermissionError("locked executable")
+            replace(src, dst)
+
+        with patch.object(engine, "_replace", side_effect=fail_swap_and_restore):
+            with self.assertRaises(engine.SwapError) as ctx:
+                engine.apply(plan, archives)
+        backup = ctx.exception.backup_dir / "SkyrimSE.exe"
+        self.assertEqual(backup.read_bytes(), self.new_exe)
+        with self.assertRaisesRegex(engine.DowngradeError, "previous downgrade"):
+            engine.apply(plan, archives)
+        self.assertEqual(backup.read_bytes(), self.new_exe)
+
+    def test_deletions_are_restored_on_interrupt_then_applied_on_retry(self):
+        self.index.raw["targets"]["1.6.1170"]["delete"] = ["Data/obsolete.bsa", "another.dll"]
+        obsolete = self.game / "Data/obsolete.bsa"
+        another = self.game / "another.dll"
+        obsolete.write_bytes(b"obsolete")
+        another.write_bytes(b"another")
+        plan = engine.make_plan(self.index, self.game, "1.6.1170", "english")
+        archives, _ = engine.download_all(plan, self.cache)
+
+        def interrupt(progress):
+            if progress.message == "Removing another.dll":
+                raise KeyboardInterrupt()
+
+        with self.assertRaises(KeyboardInterrupt):
+            engine.apply(plan, archives, progress=interrupt)
+        self.assertEqual(obsolete.read_bytes(), b"obsolete")
+        self.assertEqual(another.read_bytes(), b"another")
+        self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), self.new_exe)
+        self.assertEqual((self.game / "Data/Skyrim.esm").read_bytes(), b"esm-new" * 1000)
+        result = engine.run(plan, cache_dir=self.cache)
+        self.assertEqual(result.removed_files, [obsolete, another])
+        self.assertFalse(obsolete.exists())
+        self.assertFalse(another.exists())
+
+    def test_wrong_staged_version_does_not_touch_install(self):
+        plan = engine.make_plan(self.index, self.game, "1.6.1170", "english")
+        plan.target = "1.5.97"
+        archives, _ = engine.download_all(plan, self.cache)
+        with self.assertRaisesRegex(engine.DowngradeError, "staged game"):
+            engine.apply(plan, archives)
+        self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), self.new_exe)
+        self.assertEqual((self.game / "Data/Skyrim.esm").read_bytes(), b"esm-new" * 1000)
 
 
 if __name__ == "__main__":

@@ -91,6 +91,12 @@ class Index:
         kib = self.raw["targets"][target].get("estimated_kib")
         return int(kib) * 1024 if kib else None
 
+    def deletes_for(self, target: str) -> list[str]:
+        """Game-relative files the target version must not have."""
+        if target not in self.raw["targets"]:
+            raise RecipeError(f"no recipe from {self.from_version} to {target}")
+        return [str(p) for p in self.raw["targets"][target].get("delete") or []]
+
     def steam_manifests(self, version: str) -> dict[str, str] | None:
         table = ((self.raw.get("steam") or {}).get("manifests") or {}).get(version)
         if not table:
@@ -122,7 +128,9 @@ def cache_path() -> Path:
 
 def _parse(text: str, origin: str) -> Index:
     data = json.loads(text)
-    if data.get("schema") != 1 or "from" not in data or "targets" not in data:
+    # Schema 1 omitted required target-specific deletions. Reject it so an
+    # older remote/cache cannot override the complete bundled recipes.
+    if data.get("schema") != 2 or "from" not in data or "targets" not in data:
         raise RecipeError(f"unrecognised recipe index ({origin})")
     return Index(data, origin)
 
