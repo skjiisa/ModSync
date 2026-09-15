@@ -7,13 +7,20 @@ synchronous/blocking — the GUI runs them on a worker thread.
 
 from __future__ import annotations
 
+import json
 import secrets
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
-from modsync import config, gameversion, pairing_lan
+from modsync import config, gameversion, pairing_lan, platforms
+from modsync.downgrade import engine, recipe
+from modsync.games import SKYRIM_SE
 from modsync.pairing_code import PairingCode
 from modsync.state import State
+from modsync.steam import appinfo, libraries as libs, prefixes, shortcuts
+from modsync.steam.appmanifest import AppManifest, PinChange
 from modsync.sync import pairing, stignore
 from modsync.sync.manager import SyncthingManager
 
@@ -33,6 +40,54 @@ class SyncStatus:
     folder_state: str | None
     completion: float | None
     devices: list[DeviceStatus]
+
+
+@dataclass
+class GameStatus:
+    """Everything the dashboard/CLI need to talk about the game's version."""
+
+    installed: gameversion.GameVersion | None
+    expected: gameversion.GameVersion | None  # what the vault records
+    game_dir: Path | None
+    language: str
+    steam_public_build: int | None
+    steam_is_current: bool | None  # does Steam think the install is up to date?
+    steam_running: bool
+    pending_pin: bool
+    recipe_from: str | None
+    recipe_targets: list[str] = field(default_factory=list)
+    recipe_origin: str = ""
+
+    @property
+    def mismatch(self) -> bool:
+        return self.installed is not None and self.expected is not None and self.installed != self.expected
+
+    @property
+    def can_downgrade_to(self) -> list[str]:
+        """Targets the current recipe can reach from what's installed."""
+        if self.installed is None or self.recipe_from is None or str(self.installed) != self.recipe_from:
+            return []
+        return [t for t in self.recipe_targets if t != str(self.installed)]
+
+    @property
+    def suggested_target(self) -> str | None:
+        """The vault's version, if the recipe can get there from here."""
+        if self.expected is not None and str(self.expected) in self.can_downgrade_to:
+            return str(self.expected)
+        return None
+
+    @property
+    def needs_pin(self) -> bool:
+        """Steam wants to update; pinning would keep the installed files."""
+        return self.steam_is_current is False
+
+
+@dataclass
+class PinOutcome:
+    applied: bool
+    queued: bool
+    changes: list[PinChange]
+    message: str
 
 
 class ModSyncService:
@@ -259,6 +314,148 @@ class ModSyncService:
         if installed is None:
             return None
         return gameversion.record_vault_version(self.state.instance_path, installed)
+
+    # --- game downgrade / Steam pinning ---
+    def _steam_app(self):
+        plat = platforms.current()
+        libraries = libs.all_libraries(plat.steam_roots())
+        app = libs.find_app(libraries, SKYRIM_SE.appid)
+        if app is None:
+            return None, None, None
+        acf = app.library.steamapps / f"appmanifest_{SKYRIM_SE.appid}.acf"
+        root = self._steam_root_for(app.library.path, plat.steam_roots())
+        return app, acf, (appinfo.appinfo_path(root) if root else None)
+
+    @staticmethod
+    def _steam_root_for(library_path: Path, roots: list[Path]) -> Path | None:
+        # appinfo.vdf lives under the Steam *root*, not under every library.
+        for r in roots:
+            if appinfo.appinfo_path(r).exists():
+                return r
+        return None
+
+    @staticmethod
+    def _pending_pin_path() -> Path:
+        return config.config_dir() / "pending-pin.json"
+
+    def game_status(self, *, refresh_index: bool = True) -> GameStatus:
+        app, acf, appinfo_path = self._steam_app()
+        vc = gameversion.check(self.state.instance_path)
+        language = "english"
+        steam_current: bool | None = None
+        public_build: int | None = None
+        if app and acf and acf.exists():
+            try:
+                manifest = AppManifest.load(acf)
+                language = manifest.language
+                if appinfo_path and appinfo_path.exists():
+                    info = appinfo.read_app(appinfo_path, SKYRIM_SE.appid)
+                    if info:
+                        public_build = info.public_buildid
+                        steam_current = manifest.is_current(info)
+            except (OSError, ValueError, appinfo.AppInfoError):
+                pass
+        try:
+            idx = recipe.load_index(refresh=refresh_index)
+            recipe_from, targets, origin = idx.from_version, idx.targets, idx.origin
+        except Exception:
+            recipe_from, targets, origin = None, [], "unavailable"
+        return GameStatus(
+            installed=vc.installed,
+            expected=vc.expected,
+            game_dir=app.install_path if app else vc.game_dir,
+            language=language,
+            steam_public_build=public_build,
+            steam_is_current=steam_current,
+            steam_running=shortcuts.steam_is_running(),
+            pending_pin=self._pending_pin_path().exists(),
+            recipe_from=recipe_from,
+            recipe_targets=targets,
+            recipe_origin=origin,
+        )
+
+    def plan_downgrade(self, target: str, *, refresh_index: bool = True) -> engine.Plan:
+        app, acf, _ = self._steam_app()
+        if app is None:
+            raise engine.DowngradeError(f"{SKYRIM_SE.name} is not installed through Steam on this machine")
+        language = "english"
+        if acf and acf.exists():
+            try:
+                language = AppManifest.load(acf).language
+            except (OSError, ValueError):
+                pass
+        idx = recipe.load_index(refresh=refresh_index)
+        return engine.make_plan(idx, app.install_path, target, language)
+
+    def run_downgrade(self, target: str, progress: engine.ProgressFn | None = None) -> engine.Result:
+        """Download the community patches and rewrite the game files in place.
+        Steam's manifest is left alone: right after a Steam update it already
+        claims the current build, so the game launches from Steam as-is."""
+        app, _, _ = self._steam_app()
+        plan = self.plan_downgrade(target)
+        prefix = prefixes.compat_prefix(app.library, SKYRIM_SE.appid) if app else None
+        cache = config.data_dir() / "downgrade" / "cache"
+        return engine.run(plan, cache_dir=cache, prefix_dir=prefix, progress=progress)
+
+    def pin_game_version(self, *, queue_if_steam_running: bool = True) -> PinOutcome:
+        """Make Steam consider the installed files current so it launches the
+        game without updating. Needs Steam closed; otherwise (optionally) queue
+        it for the background service to apply the moment Steam exits."""
+        app, acf, appinfo_path = self._steam_app()
+        if not app or not acf or not acf.exists():
+            raise RuntimeError(f"{SKYRIM_SE.name} is not installed through Steam on this machine")
+        if not appinfo_path or not appinfo_path.exists():
+            raise RuntimeError("Steam's product cache (appinfo.vdf) was not found")
+        if shortcuts.steam_is_running():
+            if not queue_if_steam_running:
+                raise RuntimeError("Close Steam first — it rewrites the appmanifest while running")
+            self._queue_pin()
+            return PinOutcome(
+                applied=False,
+                queued=True,
+                changes=[],
+                message=(
+                    "Steam is running, so the pin is queued. Restart Steam (on the Deck: "
+                    "Power menu → Restart Steam) and ModSync's background service will "
+                    "apply it while Steam is closed."
+                ),
+            )
+        info = appinfo.read_app(appinfo_path, SKYRIM_SE.appid)
+        if info is None or info.public_buildid is None:
+            raise RuntimeError("Steam's product cache has no current build for this game yet")
+        manifest = AppManifest.load(acf)
+        changes = manifest.pin_to(info)
+        if changes:
+            manifest.save()
+        self._pending_pin_path().unlink(missing_ok=True)
+        msg = (
+            f"Pinned: Steam now treats the installed files as build {info.public_buildid}."
+            if changes
+            else "Already pinned — Steam considers this install up to date."
+        )
+        return PinOutcome(applied=bool(changes), queued=False, changes=changes, message=msg)
+
+    def _queue_pin(self) -> None:
+        p = self._pending_pin_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            json.dumps({"appid": SKYRIM_SE.appid, "requested_at": datetime.now(timezone.utc).isoformat()}),
+            encoding="utf-8",
+        )
+
+    def apply_pending_pin(self) -> PinOutcome | None:
+        """Called periodically by the serve loop / dashboard: apply a queued
+        pin once Steam has exited. Steam rewrites appmanifests on shutdown, so
+        wait a moment after it disappears before touching the file."""
+        if not self._pending_pin_path().exists() or shortcuts.steam_is_running():
+            return None
+        time.sleep(2.0)
+        if shortcuts.steam_is_running():
+            return None
+        try:
+            return self.pin_game_version(queue_if_steam_running=False)
+        except Exception as exc:
+            return PinOutcome(False, True, [], f"pin failed: {exc}")
 
     # --- status ---
     def status(self) -> SyncStatus:

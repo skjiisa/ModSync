@@ -15,7 +15,7 @@ import socket
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -33,14 +33,20 @@ from PySide6.QtWidgets import (
 )
 
 from modsync import background, pairing_lan
-from modsync.gameversion import VersionCheck
+from modsync.downgrade.engine import Progress
 from modsync.pairing_code import PairingCode
-from modsync.service import ModSyncService, SyncStatus
+from modsync.service import GameStatus, ModSyncService, PinOutcome, SyncStatus
 from modsync.steam import shortcuts
 from modsync.ui.qr import pairing_pixmap
 from modsync.ui.worker import run_async
 
 _POLL_MS = 4000
+
+
+class _ProgressBridge(QObject):
+    """Marshals engine progress callbacks from the worker thread to the UI."""
+
+    progressed = Signal(object)
 
 
 def _bold(text: str) -> QLabel:
@@ -65,6 +71,8 @@ class Dashboard(QWidget):
         self._pairing = False
         self._pair_stop: threading.Event | None = None
         self._bg_installed = False
+        self._game: GameStatus | None = None
+        self._downgrading = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 24, 28, 20)
@@ -93,6 +101,7 @@ class Dashboard(QWidget):
         if self.configured:
             self._timer.timeout.connect(self.refresh)
             self._timer.timeout.connect(self._accept_pending)
+            self._timer.timeout.connect(self._apply_pending_pin)
             self._load_code()
             self._refresh_bg_status()
             self._refresh_game_version()
@@ -422,8 +431,33 @@ class Dashboard(QWidget):
         self._gv_adopt.clicked.connect(self._adopt_game_version)
         self._gv_adopt.setVisible(False)
         row.addWidget(self._gv_adopt)
+        self._gv_downgrade = QPushButton("Downgrade…")
+        self._gv_downgrade.setToolTip(
+            "Rewrite the game files to the vault's version using community xdelta "
+            "patches (Mulderland). Steam keeps launching the game normally."
+        )
+        self._gv_downgrade.clicked.connect(self._downgrade)
+        self._gv_downgrade.setVisible(False)
+        row.addWidget(self._gv_downgrade)
+        self._gv_pin = QPushButton("Keep this version")
+        self._gv_pin.setToolTip(
+            "Steam wants to update the game. Pin the installed files so Steam treats "
+            "them as current and launches without updating. Needs Steam closed; "
+            "otherwise it is queued and applied when Steam restarts."
+        )
+        self._gv_pin.clicked.connect(self._pin)
+        self._gv_pin.setVisible(False)
+        row.addWidget(self._gv_pin)
         row.addStretch(1)
         layout.addLayout(row)
+        self._gv_progress = QProgressBar()
+        self._gv_progress.setRange(0, 100)
+        self._gv_progress.setVisible(False)
+        layout.addWidget(self._gv_progress)
+        self._gv_progress_label = QLabel("")
+        self._gv_progress_label.setStyleSheet("color: palette(mid);")
+        self._gv_progress_label.setVisible(False)
+        layout.addWidget(self._gv_progress_label)
         return box
 
     def _build_buttons(self) -> QHBoxLayout:
@@ -494,24 +528,135 @@ class Dashboard(QWidget):
 
     def _refresh_game_version(self) -> None:
         run_async(
-            self.service.game_version_check,
-            on_done=self._on_game_version,
+            self.service.game_status,
+            on_done=self._on_game_status,
             on_failed=lambda m: self._gv_label.setText(f"⚠ Version check failed: {m}"),
         )
 
-    def _on_game_version(self, vc: VersionCheck) -> None:
+    def _on_game_status(self, st: GameStatus) -> None:
+        self._game = st
+        vc = self.service.game_version_check()  # local and cheap; reuses the wording
+        lines = []
         if vc.mismatch:
-            self._gv_label.setText(f"⚠  {vc.summary()}")
+            lines.append(f"⚠  {vc.summary()}")
             self._gv_label.setStyleSheet("color: palette(text);")
         elif vc.ok:
-            self._gv_label.setText(f"✅  {vc.summary()}")
+            lines.append(f"✅  {vc.summary()}")
             self._gv_label.setStyleSheet("color: palette(mid);")
         else:
-            self._gv_label.setText(f"•  {vc.summary()}")
+            lines.append(f"•  {vc.summary()}")
             self._gv_label.setStyleSheet("color: palette(mid);")
+        if st.needs_pin:
+            lines.append(
+                "⚠  Steam wants to update the game on its next launch. “Keep this version” "
+                "makes Steam treat the installed files as current."
+            )
+        if st.pending_pin:
+            lines.append("•  A pin is queued; it applies automatically the next time Steam is closed.")
+        if st.mismatch and st.suggested_target is None and st.installed is not None and st.recipe_from:
+            if str(st.installed) != st.recipe_from:
+                lines.append(
+                    f"•  Downgrade recipes currently start from {st.recipe_from}; let Steam "
+                    f"update the game first, then downgrade to {st.expected}."
+                )
+            elif st.expected is not None:
+                lines.append(f"•  No recipe reaches {st.expected} yet (targets: {', '.join(st.recipe_targets)}).")
+        self._gv_label.setText("\n".join(lines))
         # Offer to (re)record only when there is something to record and it
         # would change what the vault says.
-        self._gv_adopt.setVisible(vc.installed is not None and not vc.ok)
+        self._gv_adopt.setVisible(vc.installed is not None and not vc.ok and not self._downgrading)
+        target = st.suggested_target
+        self._gv_downgrade.setVisible(target is not None and not self._downgrading)
+        if target:
+            self._gv_downgrade.setText(f"Downgrade to {target}…")
+        self._gv_pin.setVisible(st.needs_pin and not st.pending_pin and not self._downgrading)
+
+    def _downgrade(self) -> None:
+        st = self._game
+        target = st.suggested_target if st else None
+        if not st or not target:
+            return
+        deck_note = (
+            "• On Steam Deck, 1.6.x brings back the on-screen keyboard crash; the "
+            "“Steam Deck Keyboard Fix for Skyrim” SKSE plugin works around it.\n"
+            if target.startswith(("1.6.", "1.5."))
+            else ""
+        )
+        answer = QMessageBox.question(
+            self,
+            f"Downgrade Skyrim to {target}",
+            f"This rewrites the Skyrim files in Steam's folder from {st.installed} to {target} "
+            "using xdelta patches published by Mulderland (open source, checksummed).\n\n"
+            "• Roughly 1 GB is downloaded and kept for next time.\n"
+            "• Steam keeps launching the game normally afterwards.\n"
+            "• To go back to the current version, use “Verify integrity of game files” in Steam.\n"
+            f"{deck_note}\nProceed?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._downgrading = True
+        for btn in (self._gv_downgrade, self._gv_adopt, self._gv_pin):
+            btn.setVisible(False)
+        self._gv_progress.setVisible(True)
+        self._gv_progress_label.setVisible(True)
+        self._gv_progress_label.setText("Starting…")
+        bridge = _ProgressBridge(self)
+        bridge.progressed.connect(self._on_downgrade_progress)
+        run_async(
+            self.service.run_downgrade,
+            target,
+            lambda p: bridge.progressed.emit(p),
+            on_done=self._on_downgraded,
+            on_failed=self._on_downgrade_failed,
+        )
+
+    def _on_downgrade_progress(self, p: Progress) -> None:
+        if p.stage == "download" and p.total:
+            self._gv_progress.setRange(0, 100)
+            self._gv_progress.setValue(int(100 * (p.done or 0) / p.total))
+            self._gv_progress_label.setText(
+                f"Downloading {p.message}: {(p.done or 0) / 1e6:,.0f} / {p.total / 1e6:,.0f} MB"
+            )
+        elif p.total:
+            self._gv_progress.setRange(0, p.total)
+            self._gv_progress.setValue(p.done or 0)
+            self._gv_progress_label.setText(f"{p.stage.capitalize()}: {p.message}")
+        else:
+            self._gv_progress.setRange(0, 0)
+            self._gv_progress_label.setText(f"{p.stage.capitalize()}: {p.message}")
+
+    def _end_downgrade(self) -> None:
+        self._downgrading = False
+        self._gv_progress.setVisible(False)
+        self._gv_progress_label.setVisible(False)
+        self._refresh_game_version()
+
+    def _on_downgraded(self, result: object) -> None:
+        self._end_downgrade()
+        version = getattr(result, "installed_version", "?")
+        notes = " ".join(getattr(result, "notes", []) or [])
+        self._status_line.setText(f"Downgrade complete — the game now reports {version}. {notes}".strip())
+
+    def _on_downgrade_failed(self, message: str) -> None:
+        self._end_downgrade()
+        self._on_error(f"Downgrade failed: {message}")
+
+    def _pin(self) -> None:
+        run_async(self.service.pin_game_version, on_done=self._on_pinned, on_failed=self._on_error)
+
+    def _on_pinned(self, out: PinOutcome) -> None:
+        self._status_line.setText(out.message)
+        self._refresh_game_version()
+
+    def _apply_pending_pin(self) -> None:
+        if self._game is None or not self._game.pending_pin:
+            return
+        run_async(self.service.apply_pending_pin, on_done=self._on_pending_pin_applied, on_failed=lambda _: None)
+
+    def _on_pending_pin_applied(self, out: object) -> None:
+        if out is not None:
+            self._status_line.setText(getattr(out, "message", "Pin applied."))
+            self._refresh_game_version()
 
     def _adopt_game_version(self) -> None:
         run_async(

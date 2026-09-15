@@ -52,6 +52,28 @@ modules:
         sha256: 0b960a67a0391156c2ca45943ed1ceaad9ae1fc3772d967e6aafc5a7c662565d
         strip-components: 1
 
+  # --- Game downgrade tools ----------------------------------------------------
+  # xdelta3 applies the community downgrade patches; 7zz unpacks them. Both are
+  # small C programs; the recipe itself is fetched at runtime (see
+  # modsync/downgrade/). Not yet exercised in a Flatpak build.
+  - name: xdelta3
+    buildsystem: autotools
+    sources:
+      - type: archive
+        url: https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0.tar.gz
+        sha256: 114543336ab6cee3764e3c03202701ef79d7e5e8e4863fe64811e4d9e61884dc
+
+  - name: 7zip
+    buildsystem: simple
+    build-commands:
+      - make -C CPP/7zip/Bundles/Alone2 -f makefile.gcc
+      - install -Dm755 CPP/7zip/Bundles/Alone2/_o/7zz /app/bin/7zz
+    sources:
+      - type: archive
+        url: https://7-zip.org/a/7z2501-src.tar.xz
+        sha256: ed087f83ee789c1ea5f39c464c55a5c9d4008deb0efe900814f2df262b82c36e
+        strip-components: 0
+
   # --- Python dependencies -----------------------------------------------------
   # ModSync only uses QtCore/QtGui/QtWidgets, so PySide6-Essentials is enough
   # (skips the much larger PySide6-Addons). qrcode renders via QImage — no Pillow.

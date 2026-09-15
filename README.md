@@ -32,6 +32,40 @@ sync). Every machine reads its own `SkyrimSE.exe` version and the dashboard,
 After an intentional upgrade or downgrade, "Use this machine's version" on the
 dashboard re-records it.
 
+### Downgrading the game (and still launching it from Steam)
+
+Bethesda's patches change the executable, so SKSE and every native plugin stop
+loading until the runtime matches again. ModSync can downgrade the game itself:
+
+- **Recipes** come from [Mulderland's open-source downgrader](https://www.mulderland.com/en/games/the-elder-scrolls-5-skyrim-special-edition):
+  xdelta3 patches on a public CDN, described by an NSIS script on GitHub that has
+  been updated within hours of each Bethesda patch. A scheduled GitHub Action
+  converts it into `modsync/downgrade/recipes/skyrim-se.json`, which ModSync
+  fetches at runtime (falling back to the bundled copy), so new recipes reach
+  users without a ModSync release.
+- **Applying** is native: download + SHA1 check, unpack the 7z, `xdelta3 -d` every
+  file into a staging dir on the same drive, then swap all files at once. xdelta3
+  verifies the source checksum, so a wrong source version fails cleanly. Downloads
+  are cached (about 1.1 GB for 1.7.104 → 1.6.1170) so a repeat is offline.
+- **Steam keeps working.** Steam decides whether to update purely from
+  `appmanifest_489830.acf` (state flags, build id, depot manifest ids), never by
+  hashing files. Right after a Steam update the manifest already claims the
+  current build, so a downgraded install launches from Steam as-is. When the next
+  Bethesda patch flips the flag, "Keep this version" / `modsync game pin` rewrites
+  the manifest to the current public build (read from Steam's own `appinfo.vdf`).
+  That needs Steam closed; the background service applies a queued pin the
+  moment Steam exits (on the Deck: Power → Restart Steam).
+
+```sh
+modsync game status                 # installed vs vault version, Steam state, recipes
+modsync game downgrade 1.6.1170     # needs xdelta3 and 7z (or bsdtar) installed
+modsync game pin                    # after the next Bethesda patch, with Steam closed
+```
+
+The Flatpak bundles xdelta3 and 7zz. Downgrading to 1.6.x on a Steam Deck brings
+back the on-screen-keyboard crash that 1.7.99 fixed; the "Steam Deck Keyboard Fix
+for Skyrim" SKSE plugin works around it.
+
 ## Status
 
 Early development. Working toward the MVP described in the plan.

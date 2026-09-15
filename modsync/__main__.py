@@ -18,6 +18,9 @@ usage:
   modsync vault serve                    resume an existing vault and keep syncing
   modsync service install [--linger]     run sync in the background (systemd --user)
   modsync steam shortcut                 add ModSync as a non-Steam game (Gaming Mode)
+  modsync game status                    installed game version vs the vault, Steam state
+  modsync game downgrade <version>       downgrade the game with community xdelta patches
+  modsync game pin                       keep Steam from updating the installed files
   modsync                                launch the GUI (requires PySide6)
 
 vault commands run headless and keep Syncthing alive until Ctrl-C.
@@ -47,6 +50,11 @@ def main(argv: list[str] | None = None) -> int:
         from modsync.cli import steam
 
         return steam(argv[1:])
+
+    if cmd == "game":
+        from modsync.cli import game
+
+        return game(argv[1:])
 
     if cmd in {"-h", "--help", "help"}:
         print(_USAGE)

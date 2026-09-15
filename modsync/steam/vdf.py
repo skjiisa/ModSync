@@ -87,3 +87,27 @@ def loads(text: str) -> KV:
 
 def load(path: Path | str) -> KV:
     return loads(Path(path).read_text(encoding="utf-8", errors="replace"))
+
+
+def _escape(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def dumps(data: KV, indent: int = 0) -> str:
+    """Serialise KeyValues in Steam's own layout (tabs, ``"key"\\t\\t"value"``),
+    so a rewritten ``appmanifest_*.acf`` looks exactly like one Steam wrote."""
+    out: list[str] = []
+    pad = "\t" * indent
+    for key, val in data.items():
+        if isinstance(val, dict):
+            out.append(f'{pad}"{_escape(key)}"')
+            out.append(f"{pad}{{")
+            out.append(dumps(val, indent + 1))
+            out.append(f"{pad}}}")
+        else:
+            out.append(f'{pad}"{_escape(key)}"\t\t"{_escape(str(val))}"')
+    return "\n".join(out)
+
+
+def dump(data: KV, path: Path | str) -> None:
+    Path(path).write_text(dumps(data) + "\n", encoding="utf-8")
