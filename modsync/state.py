@@ -1,7 +1,10 @@
-"""Persistent ModSync state — which instance is synced under which vault (folder id).
+"""Persistent ModSync state — which MO2 instance this machine uses, and (only if
+the user opted into syncing) which Syncthing folder id it is shared under.
 
-Devices live in Syncthing's own config (the source of truth); we only remember the
-local instance path + the shared folder id so the dashboard knows what's set up.
+The two are independent: an instance can be chosen without ever creating a vault,
+which is all that the game-version tools and the MO2 installer need. Devices live
+in Syncthing's own config (the source of truth); we only remember the local
+instance path + the shared folder id so the dashboard knows what's set up.
 """
 
 from __future__ import annotations
@@ -42,5 +45,16 @@ class State:
         p.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
 
     @property
-    def configured(self) -> bool:
+    def has_instance(self) -> bool:
+        """An MO2 instance is chosen (installed, browsed to, or joined)."""
+        return bool(self.instance_path)
+
+    @property
+    def syncing(self) -> bool:
+        """The instance is shared through a Syncthing vault."""
         return bool(self.instance_path and self.folder_id)
+
+    @property
+    def configured(self) -> bool:
+        """Kept for the sync-era callers; means ``syncing``."""
+        return self.syncing

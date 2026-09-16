@@ -122,7 +122,7 @@ class VersionCheckTests(unittest.TestCase):
             self.assertIsNone(vc.expected)
             self.assertFalse(vc.mismatch)
             self.assertFalse(vc.ok)
-            self.assertIn("does not record", vc.summary())
+            self.assertIn("No version is recorded", vc.summary())
 
             gv.record_vault_version(inst, gv.GameVersion((1, 6, 1170, 0)))
             vc = gv.check(inst)

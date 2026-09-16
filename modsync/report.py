@@ -93,10 +93,11 @@ def build() -> Report:
             line(f"      ! {issue}")
 
     state = State.load()
-    if state.configured:
+    if state.has_instance:
         line()
-        line("Vault:")
+        line("ModSync setup:")
         line(f"  • instance: {state.instance_path}")
+        line(f"  • sync: {'vault ' + str(state.folder_id) if state.syncing else 'off'}")
         vc = gameversion.check(state.instance_path)
         mark = "!" if vc.mismatch else "•"
         line(f"  {mark} {vc.summary()}")
