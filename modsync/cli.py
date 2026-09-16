@@ -64,6 +64,14 @@ def _vault_create(args: list[str]) -> int:
     service = ModSyncService()
     print(f"Starting Syncthing and creating a vault for {positional[0]} …")
     code = service.create_vault(positional[0], label)
+    vc = service.game_version_check()
+    if vc.expected is not None:
+        src = " (from the installed SKSE)" if vc.expected_from == "skse" else ""
+        print(f"Recorded {vc.expected}{src} as the game version this vault is built for.")
+        if vc.mismatch:
+            print(f"  ! {vc.summary()}")
+            print("    'modsync game status' shows the downgrade, or re-record with the dashboard's")
+            print("    \"Use this machine's version\" if the SKSE here is stale.")
     print("\nShare this pairing code with your other machines:\n")
     print(f"  {code.encode()}\n")
     return _run_until_interrupt(service)
@@ -107,8 +115,11 @@ def _vault_serve(args: list[str]) -> int:
         return 1
     print(f"Serving vault {service.state.folder_id} for {service.state.instance_path}")
     vc = service.game_version_check()
-    if vc.mismatch:
-        print(f"\n  ! {vc.summary()}\n")
+    if vc.mismatch or vc.skse_suggests:
+        print(f"\n  ! {vc.summary()}")
+        if vc.skse_note():
+            print(f"    {vc.skse_note()}")
+        print()
     service.ensure_running()
     return _run_until_interrupt(service)
 
@@ -195,6 +206,12 @@ def _game_status(service) -> int:
     print(f"Installed:      {st.installed or '(not detected)'}"
           + (f"   ({st.game_dir})" if st.game_dir else ""))
     print(f"Vault expects:  {st.expected or '(not recorded)'}")
+    if st.skse_runtime:
+        print(f"SKSE here:      built for {st.skse_runtime}   ({st.skse_source})")
+    elif st.skse_runtimes:
+        print(f"SKSE here:      DLLs for several versions: {', '.join(st.skse_runtimes)}")
+    else:
+        print("SKSE here:      (not found)")
     print(f"Language:       {st.language}")
     if st.steam_is_current is None:
         print("Steam:          (state unknown)")
@@ -214,8 +231,13 @@ def _game_status(service) -> int:
         print("Recipes:        unavailable")
     if st.mismatch:
         print(f"\n! This machine runs {st.installed} but the vault was set up for {st.expected}.")
-        if st.suggested_target:
-            print(f"  Run: modsync game downgrade {st.suggested_target}")
+    elif st.needs_downgrade:
+        print(
+            f"\n! This machine runs {st.installed} but the installed SKSE is built for {st.wanted}, "
+            "so this setup was most likely made for that version."
+        )
+    if st.needs_downgrade and st.suggested_target:
+        print(f"  Run: modsync game downgrade {st.suggested_target}")
     return 0
 
 

@@ -100,5 +100,7 @@ def build() -> Report:
         vc = gameversion.check(state.instance_path)
         mark = "!" if vc.mismatch else "•"
         line(f"  {mark} {vc.summary()}")
+        if vc.skse_note():
+            line(f"  {'!' if vc.skse_suggests else '•'} {vc.skse_note()}")
 
     return Report(out.getvalue(), True)

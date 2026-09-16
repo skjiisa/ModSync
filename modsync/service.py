@@ -57,10 +57,30 @@ class GameStatus:
     recipe_from: str | None
     recipe_targets: list[str] = field(default_factory=list)
     recipe_origin: str = ""
+    skse_runtime: gameversion.GameVersion | None = None  # what the installed SKSE is built for
+    skse_runtimes: list[str] = field(default_factory=list)  # all of them, when DLLs for several exist
+    skse_source: str = ""  # e.g. "skse64_1_6_1170.dll in the game folder"
 
     @property
     def mismatch(self) -> bool:
         return self.installed is not None and self.expected is not None and self.installed != self.expected
+
+    @property
+    def wanted(self) -> gameversion.GameVersion | None:
+        """The runtime this setup should be on: the vault's record when it has
+        one, otherwise what the installed SKSE was built for."""
+        return self.expected if self.expected is not None else self.skse_runtime
+
+    @property
+    def wanted_from(self) -> str:
+        """"vault" | "skse" | "" — where ``wanted`` came from."""
+        if self.expected is not None:
+            return "vault"
+        return "skse" if self.skse_runtime is not None else ""
+
+    @property
+    def needs_downgrade(self) -> bool:
+        return self.installed is not None and self.wanted is not None and self.installed != self.wanted
 
     @property
     def can_downgrade_to(self) -> list[str]:
@@ -71,9 +91,10 @@ class GameStatus:
 
     @property
     def suggested_target(self) -> str | None:
-        """The vault's version, if the recipe can get there from here."""
-        if self.expected is not None and str(self.expected) in self.can_downgrade_to:
-            return str(self.expected)
+        """The version to downgrade to, if the recipe can get there from here:
+        the vault's, or failing that the one the installed SKSE is built for."""
+        if self.wanted is not None and str(self.wanted) in self.can_downgrade_to:
+            return str(self.wanted)
         return None
 
     @property
@@ -147,7 +168,7 @@ class ModSyncService:
         # The creating machine defines which game runtime the vault is built for;
         # joiners receive this file through sync and compare against it.
         if gameversion.VaultMeta.load(instance_path) is None:
-            self.adopt_local_game_version()
+            self.record_initial_vault_version()
         return PairingCode(device_id, folder_id, label)
 
     def join_vault(self, code: PairingCode, instance_path: Path | str) -> PairingCode:
@@ -315,6 +336,21 @@ class ModSyncService:
             return None
         return gameversion.record_vault_version(self.state.instance_path, installed)
 
+    def record_initial_vault_version(self) -> gameversion.VaultMeta | None:
+        """First record for a brand-new vault. An imported MO2 setup was built
+        for the SKSE that sits next to it, which may be older than the game
+        Steam has patched to since; prefer SKSE's answer when it is unambiguous,
+        so the dashboard immediately offers the right downgrade."""
+        if not self.state.instance_path:
+            return None
+        game_dir = gameversion.find_game_dir(self.state.instance_path)
+        installed = gameversion.installed_version(game_dir) if game_dir else None
+        skse = gameversion.scan_skse(game_dir, self.state.instance_path)
+        version, source = gameversion.choose_vault_version(installed, skse)
+        if version is None:
+            return None
+        return gameversion.record_vault_version(self.state.instance_path, version, source=source)
+
     # --- game downgrade / Steam pinning ---
     def _steam_app(self):
         plat = platforms.current()
@@ -372,6 +408,9 @@ class ModSyncService:
             recipe_from=recipe_from,
             recipe_targets=targets,
             recipe_origin=origin,
+            skse_runtime=vc.skse.runtime,
+            skse_runtimes=[str(v) for v in vc.skse.runtimes],
+            skse_source=vc.skse.describe(),
         )
 
     def plan_downgrade(self, target: str, *, refresh_index: bool = True) -> engine.Plan:

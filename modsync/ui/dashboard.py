@@ -547,9 +547,15 @@ class Dashboard(QWidget):
         elif vc.ok:
             lines.append(f"✅  {vc.summary()}")
             self._gv_label.setStyleSheet("color: palette(mid);")
+        elif vc.skse_suggests:
+            lines.append(f"⚠  {vc.summary()}")
+            self._gv_label.setStyleSheet("color: palette(text);")
         else:
             lines.append(f"•  {vc.summary()}")
             self._gv_label.setStyleSheet("color: palette(mid);")
+        note = vc.skse_note()
+        if note:
+            lines.append(f"{'⚠' if vc.skse_suggests else '•'}  {note}")
         if st.needs_pin:
             lines.append(
                 "⚠  Steam wants to update the game on its next launch. “Keep this version” "
@@ -557,14 +563,14 @@ class Dashboard(QWidget):
             )
         if st.pending_pin:
             lines.append("•  A pin is queued; it applies automatically the next time Steam is closed.")
-        if st.mismatch and st.suggested_target is None and st.installed is not None and st.recipe_from:
+        if st.needs_downgrade and st.suggested_target is None and st.installed is not None and st.recipe_from:
             if str(st.installed) != st.recipe_from:
                 lines.append(
                     f"•  Downgrade recipes currently start from {st.recipe_from}; let Steam "
-                    f"update the game first, then downgrade to {st.expected}."
+                    f"update the game first, then downgrade to {st.wanted}."
                 )
-            elif st.expected is not None:
-                lines.append(f"•  No recipe reaches {st.expected} yet (targets: {', '.join(st.recipe_targets)}).")
+            else:
+                lines.append(f"•  No recipe reaches {st.wanted} yet (targets: {', '.join(st.recipe_targets)}).")
         self._gv_label.setText("\n".join(lines))
         # Offer to (re)record only when there is something to record and it
         # would change what the vault says.
@@ -586,9 +592,15 @@ class Dashboard(QWidget):
             if target.startswith(("1.6.", "1.5."))
             else ""
         )
+        why = (
+            f"{target} is what the installed SKSE ({st.skse_source}) is built for.\n\n"
+            if st.wanted_from == "skse"
+            else ""
+        )
         answer = QMessageBox.question(
             self,
             f"Downgrade Skyrim to {target}",
+            f"{why}"
             f"This rewrites the Skyrim files in Steam's folder from {st.installed} to {target} "
             "using xdelta patches published by Mulderland (open source, checksummed).\n\n"
             "• Roughly 1 GB is downloaded and kept for next time.\n"
