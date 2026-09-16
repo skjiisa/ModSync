@@ -34,13 +34,13 @@ def vault(args: list[str]) -> int:
         return _vault_create(rest)
     if sub == "join":
         return _vault_join(rest)
-    if sub == "serve":
-        return _vault_serve(rest)
+    if sub == "serve":  # kept for units installed by older versions
+        return serve(rest)
     print(
         "usage:\n"
         "  modsync vault create <instance-dir> [--label NAME]\n"
         "  modsync vault join <pairing-code> <instance-dir>\n"
-        "  modsync vault serve"
+        "  modsync serve                       keep syncing / watching in the foreground"
     )
     return 2
 
@@ -100,60 +100,26 @@ def _vault_join(args: list[str]) -> int:
     return _run_until_interrupt(service)
 
 
-def _vault_serve(args: list[str]) -> int:
-    """Resume an already-configured vault and keep syncing. This is what the
-    background service runs; it can also be used for a manual long-running sync."""
+def serve(args: list[str]) -> int:
+    """Keep this machine's setup going in the foreground: sync the vault if
+    there is one, apply a queued Steam pin, watch for Steam updates. This is
+    what the background service runs."""
     from modsync.service import ModSyncService
 
-    service = ModSyncService()
-    if not service.state.configured:
-        print(
-            "No vault is configured on this machine yet.\n"
-            "Run 'modsync vault create <instance-dir>' or\n"
-            "    'modsync vault join <pairing-code> <instance-dir>' first."
-        )
-        return 1
-    print(f"Serving vault {service.state.folder_id} for {service.state.instance_path}")
-    vc = service.game_version_check()
-    if vc.mismatch or vc.skse_suggests:
-        print(f"\n  ! {vc.summary()}")
-        if vc.skse_note():
-            print(f"    {vc.skse_note()}")
-        print()
-    service.ensure_running()
-    return _run_until_interrupt(service)
+    return _run_until_interrupt(ModSyncService())
 
 
 def _run_until_interrupt(service) -> int:
-    import time
+    from modsync.serve import Server
 
-    print("Syncing — press Ctrl-C to stop.")
-    try:
-        while True:
-            try:
-                for device_id in service.accept_pending():
-                    print(f"  ✓ accepted new device {device_id[:13]}…", flush=True)
-                pin = service.apply_pending_pin()
-                if pin is not None:
-                    print(f"  {'✓' if pin.applied else '!'} {pin.message}", flush=True)
-                status = service.status()
-                connected = sum(1 for d in status.devices if d.connected)
-                line = f"  devices {connected}/{len(status.devices)} connected"
-                if status.folder_state is not None:
-                    line += f" · folder {status.folder_state} · {int(status.completion or 0)}% in sync"
-                print(line, flush=True)
-            except Exception as exc:
-                print(f"  (status unavailable: {exc})", flush=True)
-            time.sleep(5)
-    except KeyboardInterrupt:
-        print("\nStopping Syncthing …")
-    finally:
-        service.shutdown()
-    return 0
+    def log(line: str) -> None:
+        print(line, flush=True)
+
+    return Server(service, log=log).run()
 
 
 def service(args: list[str]) -> int:
-    """Install/manage the optional systemd --user background sync service."""
+    """Install/manage the optional systemd --user background service."""
     from modsync import background
 
     sub = args[0] if args else ""
@@ -162,7 +128,7 @@ def service(args: list[str]) -> int:
         return 0
     if sub == "uninstall":
         background.uninstall()
-        print("Removed the ModSync background sync service.")
+        print("Removed the ModSync background service.")
         return 0
     if sub == "status":
         st = background.status()
@@ -173,7 +139,7 @@ def service(args: list[str]) -> int:
         return 0
     print(
         "usage:\n"
-        "  modsync service install [--linger]   sync in the background (systemd --user)\n"
+        "  modsync service install [--linger]   run 'modsync serve' at login (systemd --user)\n"
         "  modsync service status\n"
         "  modsync service uninstall"
     )

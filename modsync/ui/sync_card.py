@@ -2,8 +2,8 @@
 
 Before the user opts in it is a short offer: share this instance from here
 (create a vault) or copy another machine's (join). Once a vault exists it becomes
-the live sync view: pairing code + QR, devices, folder progress, the background
-service, and "Stop syncing", which leaves the vault but keeps the instance.
+the live sync view: pairing code + QR, devices, folder progress, and "Stop
+syncing", which leaves the vault but keeps the instance.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from modsync import background, pairing_lan
+from modsync import pairing_lan
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService, SyncStatus
 from modsync.ui.qr import pairing_pixmap
@@ -46,13 +46,11 @@ class SyncCard(QGroupBox):
         self._announcements: list = []
         self._pairing = False
         self._pair_stop: threading.Event | None = None
-        self._bg_installed = False
 
         layout = QVBoxLayout(self)
         if self.live:
             self._build_live(layout)
             self._load_code()
-            self._refresh_bg_status()
             self.refresh()
             self._accept_pending()
         elif service.state.has_instance:
@@ -246,19 +244,6 @@ class SyncCard(QGroupBox):
         row.addWidget(stop)
         v.addLayout(row)
 
-        bg = QHBoxLayout()
-        self._bg_button = QPushButton("Run in background")
-        self._bg_button.setToolTip(
-            "Keep syncing via a systemd --user service after you close ModSync"
-        )
-        self._bg_button.clicked.connect(self._toggle_bg)
-        self._bg_status = QLabel("Background service: checking…")
-        self._bg_status.setWordWrap(True)
-        bg.addWidget(self._bg_button)
-        bg.addWidget(self._bg_status)
-        bg.addStretch(1)
-        v.addLayout(bg)
-
     def _build_share_group(self) -> QWidget:
         box = QWidget()
         layout = QVBoxLayout(box)
@@ -311,7 +296,6 @@ class SyncCard(QGroupBox):
             return
         self.refresh()
         self._accept_pending()
-        self._refresh_bg_status()
 
     def _load_code(self) -> None:
         run_async(self.service.my_pairing_code, on_done=self._on_code, on_failed=self._on_error)
@@ -452,55 +436,6 @@ class SyncCard(QGroupBox):
             self.service.stop_sync,
             on_done=lambda _: self.stateChanged.emit(),
             on_failed=self._on_error,
-        )
-
-    # --- live: background service ---------------------------------------------
-    def _toggle_bg(self) -> None:
-        self._bg_button.setEnabled(False)
-        if self._bg_installed:
-            run_async(
-                background.uninstall,
-                on_done=lambda _: self._after_bg("Background sync turned off."),
-                on_failed=self._on_bg_failed,
-            )
-        else:
-            run_async(
-                background.install,
-                on_done=self._after_bg,
-                on_failed=self._on_bg_failed,
-            )
-
-    def _after_bg(self, message: str) -> None:
-        self._bg_button.setEnabled(True)
-        self.status.emit(message)
-        self._refresh_bg_status()
-
-    def _on_bg_failed(self, message: str) -> None:
-        self._bg_button.setEnabled(True)
-        self._on_error(message)
-        self._refresh_bg_status()
-
-    def _refresh_bg_status(self) -> None:
-        # Polled by the timer: fail into the label, not the shared status line.
-        run_async(
-            background.status,
-            on_done=self._on_bg_status,
-            on_failed=lambda _: self._bg_status.setText("Background service: unknown"),
-        )
-
-    def _on_bg_status(self, st: dict) -> None:
-        self._bg_installed = bool(st.get("installed"))
-        active = st.get("active", "unknown")
-        if active == "active":
-            label = "running"
-        elif self._bg_installed:
-            label = str(active)
-        else:
-            label = "off" if active == "inactive" else str(active)
-        self._bg_status.setText(f"Background service: {label}")
-        self._bg_status.setToolTip(f"Start at login: {st.get('enabled', 'unknown')}")
-        self._bg_button.setText(
-            "Turn off background sync" if self._bg_installed else "Run in background"
         )
 
     def _on_error(self, message: str) -> None:

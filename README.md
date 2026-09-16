@@ -28,7 +28,7 @@ works on the desktop can stop working on the Deck the day Steam updates one of t
 So when a vault is created, ModSync records the installed runtime in
 `modsync-vault.json` inside the instance (the one ModSync-owned file that *does*
 sync). Every machine reads its own `SkyrimSE.exe` version and the dashboard,
-`modsync doctor`, and `modsync vault serve` all warn when it differs from the vault.
+`modsync doctor`, and `modsync serve` all warn when it differs from the vault.
 After an intentional upgrade or downgrade, "Use this machine's version" on the
 dashboard re-records it.
 

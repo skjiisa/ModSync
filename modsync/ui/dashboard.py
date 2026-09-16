@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from modsync import platforms
+from modsync import background, platforms
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import discover as mo2_discover
 from modsync.service import ModSyncService
@@ -75,7 +75,7 @@ class Dashboard(QWidget):
         self.sync.status.connect(self._set_status)
         self.sync.stateChanged.connect(self.stateChanged.emit)
         body_layout.addWidget(self.sync, stretch=1 if self.sync.live else 0)
-        body_layout.addLayout(self._build_integration_buttons())
+        body_layout.addWidget(self._build_integration_group())
         body_layout.addStretch(1)
 
         scroll = QScrollArea()
@@ -89,9 +89,13 @@ class Dashboard(QWidget):
         self._status_line.setWordWrap(True)
         outer.addWidget(self._status_line)
 
+        self._bg_installed = False
+        self._refresh_bg_status()
+
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.game.poll)
         self._timer.timeout.connect(self.sync.poll)
+        self._timer.timeout.connect(self._refresh_bg_status)
         self._timer.start(_POLL_MS)
 
     # --- header -------------------------------------------------------------
@@ -231,17 +235,82 @@ class Dashboard(QWidget):
         if path:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
-    # --- Steam integration ---------------------------------------------------
-    def _build_integration_buttons(self) -> QHBoxLayout:
+    # --- background service + Steam shortcut ---------------------------------
+    def _build_integration_group(self) -> QGroupBox:
+        box = QGroupBox("On this machine")
+        v = QVBoxLayout(box)
+        what = (
+            "keeps syncing and applies a queued Steam pin the moment Steam exits"
+            if self.service.state.syncing
+            else "applies a queued Steam pin the moment Steam exits and notices when Steam updates the game"
+        )
         row = QHBoxLayout()
+        self._bg_button = QPushButton("Run in background")
+        self._bg_button.setToolTip(
+            f"Install a systemd --user service that runs at login and {what}, "
+            "without the ModSync window."
+        )
+        self._bg_button.clicked.connect(self._toggle_bg)
+        self._bg_status = QLabel("Background service: checking…")
+        self._bg_status.setWordWrap(True)
         steam_button = QPushButton("Add to Steam")
         steam_button.setToolTip(
             "Add ModSync as a non-Steam game so it's launchable from Gaming Mode"
         )
         steam_button.clicked.connect(self._add_to_steam)
+        row.addWidget(self._bg_button)
+        row.addWidget(self._bg_status, stretch=1)
         row.addWidget(steam_button)
-        row.addStretch(1)
-        return row
+        v.addLayout(row)
+        return box
+
+    def _toggle_bg(self) -> None:
+        self._bg_button.setEnabled(False)
+        if self._bg_installed:
+            run_async(
+                background.uninstall,
+                on_done=lambda _: self._after_bg("Background service turned off."),
+                on_failed=self._on_bg_failed,
+            )
+        else:
+            run_async(
+                background.install,
+                on_done=self._after_bg,
+                on_failed=self._on_bg_failed,
+            )
+
+    def _after_bg(self, message: str) -> None:
+        self._bg_button.setEnabled(True)
+        self._set_status(message)
+        self._refresh_bg_status()
+
+    def _on_bg_failed(self, message: str) -> None:
+        self._bg_button.setEnabled(True)
+        self._on_error(message)
+        self._refresh_bg_status()
+
+    def _refresh_bg_status(self) -> None:
+        # Polled by the timer: fail into the label, not the shared status line.
+        run_async(
+            background.status,
+            on_done=self._on_bg_status,
+            on_failed=lambda _: self._bg_status.setText("Background service: unknown"),
+        )
+
+    def _on_bg_status(self, st: dict) -> None:
+        self._bg_installed = bool(st.get("installed"))
+        active = st.get("active", "unknown")
+        if active == "active":
+            label = "running"
+        elif self._bg_installed:
+            label = str(active)
+        else:
+            label = "off" if active == "inactive" else str(active)
+        self._bg_status.setText(f"Background service: {label}")
+        self._bg_status.setToolTip(f"Start at login: {st.get('enabled', 'unknown')}")
+        self._bg_button.setText(
+            "Turn off background service" if self._bg_installed else "Run in background"
+        )
 
     def _add_to_steam(self) -> None:
         if shortcuts.steam_is_running():
