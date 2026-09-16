@@ -64,7 +64,7 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(widget)
 
     def _show_wizard(self) -> None:
-        wizard = WizardWidget()
+        wizard = WizardWidget(self.service)
         wizard.completed.connect(self._on_wizard_completed)
         wizard.cancelled.connect(self._show_dashboard)
         self._set(wizard)
@@ -74,6 +74,9 @@ class MainWindow(QMainWindow):
         if not path:
             return
         mode = data.get("mode")
+        if mode == "local":  # the wizard already remembered the instance
+            self._show_dashboard()
+            return
         code_text = data.get("pairing_code") or ""
         label = Path(path).name or "Mod Organizer 2"
 

@@ -1,9 +1,12 @@
 """In-window onboarding wizard (custom, not QWizard — single window, no modal
 dialogs, per Steam Deck Gaming-Mode constraints).
 
-Collects: the MO2 instance to sync (an existing one, or a fresh one installed via
-a guided MO2-LINT install), and whether to create a new vault or join an existing
-one. Emits ``completed(dict)`` for the main window to act on."""
+Steps: choose the MO2 instance (an existing one, or a fresh one installed via a
+guided MO2-LINT install) → check the game version and fix it if needed → decide
+whether to sync with another machine, which is optional. The instance is
+remembered as soon as it is chosen, so the game step can compare against it and
+finishing with "Not now" leaves nothing else to do. Emits ``completed(dict)`` for
+the main window to act on."""
 
 from __future__ import annotations
 
@@ -30,6 +33,8 @@ from modsync.games import SKYRIM_SE, Game
 from modsync.mo2 import discover as mo2_discover
 from modsync.mo2.installers import InstallerBackend, InstallResult, Mo2LintBackend
 from modsync.pairing_code import PairingCode
+from modsync.service import ModSyncService
+from modsync.ui.game_card import GameCard
 from modsync.ui.worker import run_async
 
 
@@ -51,19 +56,30 @@ class Page(QWidget):
     def on_show(self) -> None:
         pass
 
+    def commit(self, on_done, on_failed) -> bool:
+        """Called when leaving the page forwards. Return True to advance now, or
+        False to wait: call ``on_done()`` to advance later or ``on_failed(msg)``
+        to stay."""
+        return True
+
 
 class WelcomePage(Page):
     title = "Welcome to ModSync"
-    subtitle = "Sync your Mod Organizer 2 setup across machines."
+    subtitle = f"Set up {SKYRIM_SE.name} for modding on this machine."
 
     def __init__(self) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
         intro = QLabel(
-            "ModSync keeps your mods, load order, and downloads in sync between "
-            "machines using Syncthing — while each machine keeps its own local game "
-            "paths (so Steam Deck and a desktop can share one setup).\n\n"
-            "This wizard sets up syncing on THIS machine."
+            f"ModSync gets {SKYRIM_SE.name} ready for Mod Organizer 2 on Linux and "
+            "Steam Deck:\n\n"
+            "  1.  Choose or install a Mod Organizer 2 instance.\n"
+            "  2.  Keep the game on the exact version your mods need — downgrading it "
+            "if Steam has updated it, and stopping Steam from updating it again.\n"
+            "  3.  Optionally, keep the whole setup in sync with another machine "
+            "(desktop ↔ Steam Deck), while each keeps its own game paths.\n\n"
+            "This wizard walks through those steps for THIS machine. Everything here "
+            "can also be done from the dashboard."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -74,10 +90,13 @@ class ChooseInstancePage(Page):
     title = "Choose your Mod Organizer 2 instance"
     subtitle = "Pick an existing MO2 instance, browse to one, or install a fresh one here."
 
-    def __init__(self, installer: InstallerBackend, game: Game) -> None:
+    def __init__(
+        self, installer: InstallerBackend, game: Game, service: ModSyncService | None = None
+    ) -> None:
         super().__init__()
         self._installer = installer
         self._game = game
+        self._service = service
         self._path: str | None = None
         self._installing = False
         self._buttons = QButtonGroup(self)
@@ -259,10 +278,56 @@ class ChooseInstancePage(Page):
     def instance_path(self) -> str | None:
         return self._path
 
+    def commit(self, on_done, on_failed) -> bool:
+        if self._service is None or not self._path:
+            return True
+        self._chosen.setText(f"Reading {self._path}…")
+        run_async(
+            self._service.choose_instance,
+            self._path,
+            on_done=lambda _: (self._chosen.setText(f"Selected: {self._path}"), on_done()),
+            on_failed=lambda m: (self._chosen.setText(f"⚠ {m}"), on_failed(m)),
+        )
+        return False
+
+
+class GameVersionPage(Page):
+    title = "Game version"
+    subtitle = (
+        "SKSE and native DLL mods only load on the exact game version they were built "
+        "for. Steam updates the game silently; this puts it back."
+    )
+
+    def __init__(self, service: ModSyncService) -> None:
+        super().__init__()
+        self._note = QLabel("")
+        self._note.setWordWrap(True)
+        self.card = GameCard(service)
+        self.card.busyChanged.connect(self.busyChanged.emit)
+        self.card.busyChanged.connect(lambda *_: self.completenessChanged.emit())
+        self.card.status.connect(self._note.setText)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.card)
+        hint = QLabel(
+            "Nothing to fix? Just continue. A downgrade takes a few minutes and about "
+            "1 GB of downloads (kept for next time)."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: palette(mid);")
+        layout.addWidget(hint)
+        layout.addWidget(self._note)
+        layout.addStretch(1)
+
+    def on_show(self) -> None:
+        self.card.refresh()  # the instance was chosen on the previous page
+
+    def is_complete(self) -> bool:
+        return not self.card.busy
+
 
 class VaultPage(Page):
-    title = "Create or join a vault"
-    subtitle = "A vault links this instance with your other machines."
+    title = "Sync with another machine"
+    subtitle = "Optional — keep this exact setup on another machine, e.g. desktop ↔ Steam Deck."
 
     def __init__(self) -> None:
         super().__init__()
@@ -271,8 +336,9 @@ class VaultPage(Page):
 
         layout = QVBoxLayout(self)
 
+        self.local_radio = QRadioButton("Not now  (just use this machine)")
         self.create_radio = QRadioButton(
-            "Create a new vault  (this machine has my current mod setup)"
+            "Share from this machine  (it has my current mod setup)"
         )
         self.network_radio = QRadioButton(
             "Find a machine on my network  (easiest for Steam Deck ↔ PC — no code to type)"
@@ -280,9 +346,9 @@ class VaultPage(Page):
         self.join_radio = QRadioButton(
             "Join with a pairing code  (paste a code from another machine)"
         )
-        self.create_radio.setChecked(True)
+        self.local_radio.setChecked(True)
         group = QButtonGroup(self)
-        for radio in (self.create_radio, self.network_radio, self.join_radio):
+        for radio in (self.local_radio, self.create_radio, self.network_radio, self.join_radio):
             group.addButton(radio)
             layout.addWidget(radio)
 
@@ -327,7 +393,7 @@ class VaultPage(Page):
         self.network_radio.toggled.connect(self._net_panel.setVisible)
         self.network_radio.toggled.connect(lambda on: self._scan() if on else None)
         self.join_radio.toggled.connect(self.code_edit.setVisible)
-        for radio in (self.create_radio, self.network_radio, self.join_radio):
+        for radio in (self.local_radio, self.create_radio, self.network_radio, self.join_radio):
             radio.toggled.connect(lambda *_: self.completenessChanged.emit())
         self.code_edit.textChanged.connect(lambda *_: self.completenessChanged.emit())
 
@@ -372,6 +438,8 @@ class VaultPage(Page):
     # --- exposed to the wizard ---
     @property
     def mode(self) -> str:
+        if self.local_radio.isChecked():
+            return "local"
         if self.network_radio.isChecked():
             return "network"
         return "join" if self.join_radio.isChecked() else "create"
@@ -389,6 +457,9 @@ class VaultPage(Page):
         return self._selected
 
     def is_complete(self) -> bool:
+        if self.mode == "local":
+            self._hint.setText("You can set up syncing any time from the dashboard.")
+            return True
         if self.mode == "create":
             self._hint.setText("You'll get a pairing code to share with your other machines.")
             return True
@@ -416,14 +487,16 @@ class WizardWidget(QWidget):
 
     def __init__(
         self,
+        service: ModSyncService,
         installer: InstallerBackend | None = None,
         game: Game = SKYRIM_SE,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._choose = ChooseInstancePage(installer or Mo2LintBackend(), game)
+        self._choose = ChooseInstancePage(installer or Mo2LintBackend(), game, service)
+        self._game_page = GameVersionPage(service)
         self._vault = VaultPage()
-        self._pages: list[Page] = [WelcomePage(), self._choose, self._vault]
+        self._pages: list[Page] = [WelcomePage(), self._choose, self._game_page, self._vault]
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 24, 28, 20)
@@ -491,7 +564,18 @@ class WizardWidget(QWidget):
 
     def _on_next(self) -> None:
         if self._index < len(self._pages) - 1:
-            self._go_to(self._index + 1)
+            page = self._pages[self._index]
+            self._set_busy(True)
+
+            def advance() -> None:
+                self._set_busy(False)
+                self._go_to(self._index + 1)
+
+            def stay(message: str) -> None:
+                self._set_busy(False)
+
+            if page.commit(advance, stay):
+                advance()
         else:
             self.completed.emit(
                 {
