@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=ModSync
-GenericName=Mod sync tool
-Comment=Sync your Mod Organizer 2 setup across Steam Deck and other machines
+GenericName=Skyrim modding setup
+Comment=Set up Skyrim SE for modding: install Mod Organizer 2, keep the game version your mods need, optionally sync between machines
 Icon=io.github.skjiisa.ModSync
 Exec=modsync
 Terminal=false
 Categories=Game;
-Keywords=Mod;Skyrim;Syncthing;Steam Deck;Mod Organizer;MO2;
+Keywords=Mod;Skyrim;SKSE;Downgrade;Steam Deck;Mod Organizer;MO2;Syncthing;
 StartupWMClass=modsync

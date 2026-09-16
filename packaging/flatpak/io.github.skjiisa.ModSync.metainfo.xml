@@ -4,17 +4,19 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>ModSync</name>
-  <summary>Sync your Mod Organizer 2 setup across machines</summary>
+  <summary>Set up Skyrim SE for modding on Steam Deck and Linux</summary>
   <description>
     <p>
-      ModSync keeps a Mod Organizer 2 portable instance in sync across your Steam
-      Deck and other Linux machines using Syncthing, so the same mod list, load
-      order and downloads are available everywhere you play.
+      ModSync gets Skyrim Special Edition ready for Mod Organizer 2 on Steam Deck
+      and Linux, and keeps it working: it installs a portable MO2 instance, detects
+      the installed game version and the SKSE runtime, downgrades the game with
+      community patches when Steam has updated it, and pins Steam so the
+      downgraded install keeps launching normally.
     </p>
     <p>
-      It pairs your machines directly (peer to peer), excludes the machine-specific
-      files so each install keeps its own correct paths, and never touches your
-      Nexus API key.
+      Optionally it keeps the whole setup in sync between machines — desktop and
+      Steam Deck — using Syncthing, peer to peer, while each machine keeps its own
+      game paths. It never touches your Nexus API key.
     </p>
   </description>
   <developer id="io.github.skjiisa">

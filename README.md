@@ -1,34 +1,34 @@
 # ModSync
 
-Sync a [Mod Organizer 2](https://github.com/ModOrganizer2/modorganizer) mod setup
-across multiple machines — primarily **Steam Deck / SteamOS**, but also ordinary
-Linux (and Windows as a post-1.0 target). Built around portable MO2 instances and
-[Syncthing](https://syncthing.net/) as the sync engine.
+Get [Mod Organizer 2](https://github.com/ModOrganizer2/modorganizer) modding of
+**Skyrim Special Edition** working on **Steam Deck / SteamOS** and ordinary Linux
+(Windows is a post-1.0 target), and keep it working:
 
-First supported game: **Skyrim Special Edition** (Steam cloud already handles saves,
-so only the portable MO2 instance needs syncing).
+- **Install Mod Organizer 2** as a portable instance wired into the game's Proton
+  prefix (guided, via [MO2-LINT](https://github.com/Furglitch/modorganizer2-linux-installer)).
+- **Keep the game on the version your mods need.** SKSE and native DLL mods only
+  load on the exact runtime they were built for, and Steam updates the game
+  silently. ModSync detects the installed version and the SKSE runtime, downgrades
+  the game with community xdelta patches, and pins Steam so it keeps launching the
+  downgraded install.
+- **Optionally, sync the whole setup between machines** — desktop ↔ Steam Deck —
+  with [Syncthing](https://syncthing.net/), while each machine keeps its own game
+  paths.
 
-## How it works (the core idea)
+Each part stands on its own: someone who only wants the downgrader never creates a
+vault. The dashboard is three cards — *Game*, *Mod Organizer 2*, *Sync* — and the
+wizard walks the same steps with sync as a "Not now" option.
 
-A portable MO2 instance is *almost* entirely portable content (`mods/`, `profiles/`,
-`downloads/`, `overwrite/`). The only machine-specific data — absolute paths to the
-game, the Proton prefix, and tool executables — lives in **`ModOrganizer.ini`**.
-
-So ModSync makes the **Syncthing shared folder = the MO2 instance folder**, and
-**excludes `ModOrganizer.ini`** (plus logs/cache) via `.stignore`. Each machine keeps
-its own correct `ModOrganizer.ini` (written once by the installer), and everything
-else syncs. This also makes Steam Deck ↔ Windows sync work cleanly, because the files
-that differ between OSes are exactly the ones that never sync.
-
-### Game version check
+## Game version
 
 SKSE and every native DLL mod are compiled against one exact Skyrim runtime
-(1.5.97, 1.6.1170, 1.7.104, …), and Steam updates the game silently. A vault that
-works on the desktop can stop working on the Deck the day Steam updates one of them.
-So when a vault is created, ModSync records the installed runtime in
-`modsync-vault.json` inside the instance (the one ModSync-owned file that *does*
-sync). Every machine reads its own `SkyrimSE.exe` version and the dashboard,
-`modsync doctor`, and `modsync serve` all warn when it differs from the vault.
+(1.5.97, 1.6.1170, 1.7.104, …), and Steam updates the game silently. A setup that
+works today can stop working the day Steam patches the game. So when an instance
+is chosen (or a vault created from it), ModSync records the runtime it is built
+for in `modsync-vault.json` inside the instance — the one ModSync-owned file that
+*does* sync, so every machine sharing the setup compares against the same record.
+Every machine reads its own `SkyrimSE.exe` version and the dashboard,
+`modsync doctor`, and `modsync serve` all warn when it differs from the record.
 After an intentional upgrade or downgrade, "Use this machine's version" on the
 dashboard re-records it.
 
@@ -36,18 +36,18 @@ The installed SKSE is a second clue. Its runtime DLL is named after the exact ga
 version it was built for (`skse64_1_6_1170.dll`), so ModSync looks for it in the
 game folder and in the instance's `mods/` (top level or `Root/`) and:
 
-- **When a vault is created from an existing MO2 setup**, it records the SKSE
-  runtime rather than whatever Steam has patched the game to since. An old mod
-  list that has not been run in a while is offered the right downgrade immediately,
-  without the user remembering which version it was built for.
-- **When the vault has no record**, the dashboard and `modsync game status` suggest
+- **When an existing MO2 setup is chosen**, it records the SKSE runtime rather
+  than whatever Steam has patched the game to since. An old mod list that has not
+  been run in a while is offered the right downgrade immediately, without the user
+  remembering which version it was built for.
+- **When there is no record**, the dashboard and `modsync game status` suggest
   the SKSE runtime as the downgrade target.
-- **Otherwise it cross-checks**: the vault's version wins, and SKSE built for a
-  different version is called out so the user knows it needs reinstalling.
+- **Otherwise it cross-checks**: the record wins, and SKSE built for a different
+  version is called out so the user knows it needs reinstalling.
 
 DLLs for several versions lying around make SKSE ambiguous, and it is ignored.
 
-### Downgrading the game (and still launching it from Steam)
+## Downgrading the game (and still launching it from Steam)
 
 Bethesda's patches change the executable, so SKSE and every native plugin stop
 loading until the runtime matches again. ModSync can downgrade the game itself:
@@ -73,7 +73,7 @@ loading until the runtime matches again. ModSync can downgrade the game itself:
   Bethesda patch flips the flag, "Keep this version" / `modsync game pin` rewrites
   the manifest to the current public build (read from Steam's own `appinfo.vdf`).
   That needs Steam closed; the background service applies a queued pin the
-  moment Steam exits (on the Deck: Power → Restart Steam).
+  moment Steam exits (on the Deck: Power → Restart Steam) — no vault needed.
 
 ```sh
 modsync game status                 # installed vs vault version, Steam state, recipes
@@ -84,6 +84,59 @@ modsync game pin                    # after the next Bethesda patch, with Steam 
 The Flatpak bundles xdelta3 and 7zz. Downgrading to 1.6.x on a Steam Deck brings
 back the on-screen-keyboard crash that 1.7.99 fixed; the "Steam Deck Keyboard Fix
 for Skyrim" SKSE plugin works around it.
+
+## Syncing between machines (optional)
+
+A portable MO2 instance is *almost* entirely portable content (`mods/`, `profiles/`,
+`downloads/`, `overwrite/`). The only machine-specific data — absolute paths to the
+game, the Proton prefix, and tool executables — lives in **`ModOrganizer.ini`**.
+
+So ModSync makes the **Syncthing shared folder = the MO2 instance folder**, and
+**excludes `ModOrganizer.ini`** (plus logs/cache) via `.stignore`. Each machine keeps
+its own correct `ModOrganizer.ini` (written once by the installer), and everything
+else syncs. This also makes Steam Deck ↔ Windows sync work cleanly, because the files
+that differ between OSes are exactly the ones that never sync. Steam Cloud already
+handles saves, so only the instance needs syncing.
+
+On the dashboard, the *Sync* card offers "This machine has the mods" (create a
+vault and get a pairing code / QR / LAN PIN) or "Copy from another machine". "Stop
+syncing" leaves the vault but keeps the instance; nothing is ever deleted.
+
+```sh
+modsync sync create <instance-dir>  # share from here; prints a pairing code
+modsync sync join <code> <instance> # copy another machine's setup here
+modsync serve                       # keep syncing in the foreground
+```
+
+## Background service
+
+By default ModSync only acts while the app (or `modsync serve`) is running.
+**Run in background** installs a user service that starts at login and, without
+the app window, applies a queued Steam pin the moment Steam exits, notices when
+Steam updates the game, and — if a vault exists — keeps it syncing. If the service
+initially shares the app's process, it starts a replacement on its next poll after
+the app closes; transfers resume automatically. Both machines still need to be
+awake and connected.
+
+The dashboard shows **Background service: running / inactive / failed / off**.
+Open the ModSync Steam shortcut to check it in Gaming Mode. The service is
+independent of the desktop, but Steam Deck mode transitions still need testing on
+hardware. **Turn off background service** stops and removes it without deleting
+mods; an open app can continue syncing.
+
+## Command line
+
+Everything the dashboard does is also a command:
+
+```sh
+modsync doctor                      # Steam libraries, game, MO2 instances, current setup
+modsync mo2 status | use <dir> | install <dest>
+modsync game status | downgrade <version> | pin
+modsync sync create | join          # optional
+modsync serve                       # foreground loop; what the background service runs
+modsync service install [--linger] | status | uninstall
+modsync steam shortcut              # add ModSync as a non-Steam game (Gaming Mode)
+```
 
 ## Status
 
@@ -96,20 +149,6 @@ Early development. Working toward the MVP described in the plan.
 - [x] Phase 3 — guided MO2 install (MO2-LINT backend) — *real Skyrim SE install verified*
 - [ ] Phase 5 — Flatpak + Steam Deck  ← *next*
 - [ ] Post-1.0 — Windows target
-
-### Background sync
-
-By default, closing ModSync stops the Syncthing process it started. **Run in
-background** installs a user service that starts at login and keeps the vault
-available without the app window. If the service initially shares the app's
-process, it starts a replacement on its next poll after the app closes; transfers
-resume automatically. Both machines still need to be awake and connected.
-
-The dashboard shows **Background service: running / inactive / failed / off**
-separately from folder sync progress. Open the ModSync Steam shortcut to check it
-in Gaming Mode. The service is independent of the desktop, but Steam Deck mode
-transitions still need testing on hardware. **Turn off background sync** stops
-and removes the service without deleting mods; an open app can continue syncing.
 
 ## Try the discovery report
 
