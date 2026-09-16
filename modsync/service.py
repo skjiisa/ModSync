@@ -1,8 +1,10 @@
 """High-level ModSync operations the GUI calls.
 
-Owns the Syncthing daemon (one dedicated instance), persists which MO2 instance is
-synced under which vault, and exposes create/join/add-peer/status. All methods are
-synchronous/blocking — the GUI runs them on a worker thread.
+Remembers which MO2 instance this machine uses, reports and fixes the game's
+runtime version, and — only once the user opts in — owns the Syncthing daemon
+(one dedicated instance) that shares the instance as a vault. Nothing here starts
+Syncthing unless a sync operation needs it. All methods are synchronous/blocking —
+the GUI runs them on a worker thread.
 """
 
 from __future__ import annotations
@@ -47,7 +49,7 @@ class GameStatus:
     """Everything the dashboard/CLI need to talk about the game's version."""
 
     installed: gameversion.GameVersion | None
-    expected: gameversion.GameVersion | None  # what the vault records
+    expected: gameversion.GameVersion | None  # what the setup's record says
     game_dir: Path | None
     language: str
     steam_public_build: int | None
@@ -131,7 +133,7 @@ class ModSyncService:
         ``modsync-vault.json`` starts syncing it). Syncthing watches the file, so
         no restart is needed. Only rewrites when the content actually differs."""
         path = self.state.instance_path
-        if not self.state.configured or not path or not Path(path).is_dir():
+        if not self.state.syncing or not path or not Path(path).is_dir():
             return
         target = Path(path) / ".stignore"
         try:
@@ -150,6 +152,29 @@ class ModSyncService:
     def device_id(self) -> str:
         self.ensure_running()
         return self.manager.device_id()
+
+    # --- the MO2 instance (no sync involved) ---
+    def choose_instance(self, instance_path: Path | str, label: str | None = None) -> None:
+        """Use this MO2 instance on this machine. Does not touch Syncthing.
+
+        If the instance has no game-version record yet, one is made now (from the
+        SKSE that sits next to it when possible), so the dashboard can offer the
+        matching downgrade straight away."""
+        if self.state.syncing and str(instance_path) != self.state.instance_path:
+            raise RuntimeError("stop syncing before switching to a different instance")
+        instance_path = Path(instance_path)
+        self.state.instance_path = str(instance_path)
+        self.state.instance_label = label or instance_path.name or "Mod Organizer 2"
+        self.state.save()
+        if gameversion.VaultMeta.load(instance_path) is None:
+            self.record_initial_vault_version()
+
+    def forget_instance(self) -> None:
+        """Stop using the chosen instance (and its vault, if any). Files stay."""
+        if self.state.syncing:
+            self.stop_sync()
+        self.state = State()
+        self.state.save()
 
     # --- vaults ---
     @staticmethod
@@ -275,12 +300,12 @@ class ModSyncService:
         return peer
 
     # --- undo ---
-    def reset(self, *, forget_devices: bool = True) -> None:
-        """Forget this machine's setup so it can be set up differently.
+    def stop_sync(self, *, forget_devices: bool = True) -> None:
+        """Leave the vault but keep using the instance on this machine.
 
-        Stops syncing the vault folder, drops paired devices, and clears our
-        state. **Your mods are never touched** — removing a Syncthing folder only
-        stops syncing it; every file stays on disk.
+        Stops syncing the folder and drops paired devices. **Your mods are never
+        touched** — removing a Syncthing folder only stops syncing it; every file
+        stays on disk.
         """
         folder_id = self.state.folder_id
         try:
@@ -302,11 +327,16 @@ class ModSyncService:
                                 pass
         except Exception:
             pass  # daemon may be down; clearing our own state is what matters
-        self.state = State()
+        self.state.folder_id = None
         self.state.save()
 
+    def reset(self, *, forget_devices: bool = True) -> None:
+        """Forget everything on this machine: the vault and the chosen instance."""
+        self.stop_sync(forget_devices=forget_devices)
+        self.forget_instance()
+
     def my_pairing_code(self) -> PairingCode | None:
-        if not self.state.configured or not self.state.folder_id:
+        if not self.state.syncing:
             return None
         return PairingCode(self.device_id(), self.state.folder_id, self.state.instance_label)
 
@@ -525,7 +555,7 @@ class ModSyncService:
             return SyncStatus(
                 device_id=me,
                 folder_id=self.state.folder_id,
-                configured=self.state.configured,
+                configured=self.state.syncing,
                 folder_state=folder_state,
                 completion=completion,
                 devices=devices,

@@ -287,18 +287,18 @@ class VersionCheck:
         if self.expected is None:
             return (
                 f"{game.name} runtime here: {self.installed}. "
-                "The vault does not record a version yet."
+                "No version is recorded for this setup yet."
             )
         if self.mismatch:
             who = f" (set by {self.expected_by})" if self.expected_by else ""
             if self.expected_by and self.expected_from == "skse":
                 who = f" (set by {self.expected_by} from its installed SKSE)"
             return (
-                f"This machine runs {game.name} {self.installed}, but the vault was set "
-                f"up for {self.expected}{who}. SKSE and native DLL mods in the vault will "
-                "not load here until the versions match."
+                f"This machine runs {game.name} {self.installed}, but this setup was "
+                f"built for {self.expected}{who}. SKSE and native DLL mods will not load "
+                "here until the versions match."
             )
-        return f"{game.name} runtime: {self.installed} — matches the vault."
+        return f"{game.name} runtime: {self.installed} — matches what this setup was built for."
 
     @property
     def skse_suggests(self) -> GameVersion | None:
@@ -335,8 +335,8 @@ class VersionCheck:
             return f"The installed SKSE ({src}) is built for {rt}: it will work again once the game is {rt}."
         if rt != self.expected:
             return (
-                f"The installed SKSE ({src}) is built for {rt}, but the vault expects {self.expected}. "
-                "SKSE will need to be reinstalled for the vault's version."
+                f"The installed SKSE ({src}) is built for {rt}, but this setup was built for "
+                f"{self.expected}. SKSE will need to be reinstalled for that version."
             )
         return ""
 
