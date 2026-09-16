@@ -74,7 +74,7 @@ Already implemented (just needs the Deck to exercise it):
 
 - **Bundled Syncthing** + the app **icon**.
 - **Background sync service** — `modsync service install [--linger]` writes a
-  `systemd --user` unit running `modsync vault serve`, so sync continues after
+  `systemd --user` unit running `modsync serve`, so sync continues after
   the app is closed. `SyncthingManager` attaches to an already-running daemon, so
   the service and the app coexist without a port clash.
 - **"Add to Steam" helper** — `modsync steam shortcut` adds ModSync as a

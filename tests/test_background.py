@@ -37,7 +37,7 @@ class BackgroundTests(unittest.TestCase):
     def test_success_checks_service_is_active(self):
         with patch.object(background, "_systemctl", return_value=self.result()) as call:
             self.assertIn("Enabled and started", background.install())
-        self.assertIn("modsync vault serve", self.unit.read_text())
+        self.assertIn("modsync serve", self.unit.read_text())
         call.assert_any_call("is-active", background.UNIT_NAME)
 
     def test_failed_stop_preserves_service_file(self):

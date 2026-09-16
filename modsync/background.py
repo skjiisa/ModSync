@@ -1,9 +1,10 @@
-"""Optional background sync via a systemd --user service.
+"""Optional background service via systemd --user.
 
-By default ModSync only syncs while the app (or a ``vault`` command) is running.
-Installing this service runs ``modsync vault serve`` under systemd --user so the
-vault keeps syncing after you close the app; ``--linger`` additionally lets it run
-while you're logged out.
+By default ModSync only works while the app (or ``modsync serve``) is running.
+Installing this service runs ``modsync serve`` under systemd --user so that,
+after you close the app, a vault keeps syncing and a queued Steam pin is applied
+the moment Steam exits; ``--linger`` additionally lets it run while you're logged
+out. The unit keeps its historical name so upgrades replace it in place.
 
 Works natively and inside the Flatpak — there it hops to the host's systemd via
 ``flatpak-spawn --host``.
@@ -26,15 +27,15 @@ def in_flatpak() -> bool:
 def _exec_start() -> str:
     flatpak_id = os.environ.get("FLATPAK_ID")
     if flatpak_id or Path("/.flatpak-info").exists():
-        return f"flatpak run {flatpak_id or 'io.github.skjiisa.ModSync'} vault serve"
+        return f"flatpak run {flatpak_id or 'io.github.skjiisa.ModSync'} serve"
     # Native: current interpreter + module form (works inside a venv too).
-    return f"{sys.executable} -m modsync vault serve"
+    return f"{sys.executable} -m modsync serve"
 
 
 def unit_text() -> str:
     return f"""\
 [Unit]
-Description=ModSync background sync (Syncthing for your MO2 vault)
+Description=ModSync background service (vault sync, Steam pin, update watch)
 Documentation=https://github.com/skjiisa/ModSync
 
 [Service]
@@ -93,8 +94,8 @@ def install(enable_linger: bool = False) -> str:
             lines.append("Could not enable linger automatically; run: loginctl enable-linger")
     else:
         lines.append(
-            "Sync runs while you're logged in. For sync while logged out, "
-            "re-run with --linger (or: loginctl enable-linger)."
+            "The service runs while you're logged in. To keep it running while "
+            "logged out, re-run with --linger (or: loginctl enable-linger)."
         )
     return "\n".join(lines)
 

@@ -15,8 +15,8 @@ usage:
   modsync doctor                         inspect this machine (Steam, Skyrim SE, MO2)
   modsync vault create <instance-dir>    create a sync vault and print a pairing code
   modsync vault join <code> <instance>   join a vault from another machine's code
-  modsync vault serve                    resume an existing vault and keep syncing
-  modsync service install [--linger]     run sync in the background (systemd --user)
+  modsync serve                          keep syncing (if set up) and watching Steam, in the foreground
+  modsync service install [--linger]     run 'modsync serve' at login (systemd --user)
   modsync steam shortcut                 add ModSync as a non-Steam game (Gaming Mode)
   modsync game status                    installed game version vs the vault, Steam state
   modsync game downgrade <version>       downgrade the game with community xdelta patches
@@ -40,6 +40,11 @@ def main(argv: list[str] | None = None) -> int:
         from modsync.cli import vault
 
         return vault(argv[1:])
+
+    if cmd == "serve":
+        from modsync.cli import serve
+
+        return serve(argv[1:])
 
     if cmd == "service":
         from modsync.cli import service
