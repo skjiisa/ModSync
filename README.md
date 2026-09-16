@@ -32,6 +32,21 @@ sync). Every machine reads its own `SkyrimSE.exe` version and the dashboard,
 After an intentional upgrade or downgrade, "Use this machine's version" on the
 dashboard re-records it.
 
+The installed SKSE is a second clue. Its runtime DLL is named after the exact game
+version it was built for (`skse64_1_6_1170.dll`), so ModSync looks for it in the
+game folder and in the instance's `mods/` (top level or `Root/`) and:
+
+- **When a vault is created from an existing MO2 setup**, it records the SKSE
+  runtime rather than whatever Steam has patched the game to since. An old mod
+  list that has not been run in a while is offered the right downgrade immediately,
+  without the user remembering which version it was built for.
+- **When the vault has no record**, the dashboard and `modsync game status` suggest
+  the SKSE runtime as the downgrade target.
+- **Otherwise it cross-checks**: the vault's version wins, and SKSE built for a
+  different version is called out so the user knows it needs reinstalling.
+
+DLLs for several versions lying around make SKSE ambiguous, and it is ignored.
+
 ### Downgrading the game (and still launching it from Steam)
 
 Bethesda's patches change the executable, so SKSE and every native plugin stop

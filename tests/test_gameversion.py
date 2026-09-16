@@ -148,5 +148,164 @@ class VersionCheckTests(unittest.TestCase):
             self.assertFalse(vc.mismatch)
 
 
+class SkseScanTests(unittest.TestCase):
+    def test_reads_runtime_from_dll_name_in_game_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            (game / "skse64_loader.exe").write_bytes(b"MZ")
+            (game / "skse64_steam_loader.dll").write_bytes(b"MZ")
+            (game / "SKSE64_1_6_1170.dll").write_bytes(b"MZ")  # case-insensitive
+            sk = gv.scan_skse(game)
+            self.assertEqual(str(sk.runtime), "1.6.1170")
+            self.assertFalse(sk.ambiguous)
+            self.assertEqual(sk.files[0].where, "game folder")
+            self.assertIn("SKSE64_1_6_1170.dll in the game folder", sk.describe())
+
+    def test_gog_suffix_and_directories_are_handled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            (game / "skse64_1_6_659_gog.dll").write_bytes(b"MZ")
+            (game / "skse64_1_5_97.dll").mkdir()  # a directory is not a DLL
+            self.assertEqual(str(gv.scan_skse(game).runtime), "1.6.659")
+
+    def test_several_runtimes_are_ambiguous(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            (game / "skse64_1_5_97.dll").write_bytes(b"MZ")
+            (game / "skse64_1_6_1170.dll").write_bytes(b"MZ")
+            sk = gv.scan_skse(game)
+            self.assertIsNone(sk.runtime)
+            self.assertTrue(sk.ambiguous)
+            self.assertEqual([str(v) for v in sk.runtimes], ["1.5.97", "1.6.1170"])
+
+    def test_same_runtime_in_two_places_is_not_ambiguous(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            game = tmp_p / "game"
+            game.mkdir()
+            (game / "skse64_1_6_1170.dll").write_bytes(b"MZ")
+            inst = tmp_p / "instance"
+            (inst / "mods" / "SKSE" / "Root").mkdir(parents=True)
+            (inst / "mods" / "SKSE" / "Root" / "skse64_1_6_1170.dll").write_bytes(b"MZ")
+            sk = gv.scan_skse(game, inst)
+            self.assertEqual(len(sk.files), 2)
+            self.assertEqual(str(sk.runtime), "1.6.1170")
+
+    def test_finds_skse_kept_as_a_mod(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inst = Path(tmp) / "instance"
+            (inst / "mods" / "SKSE64" ).mkdir(parents=True)
+            (inst / "mods" / "SKSE64" / "skse64_1_5_97.dll").write_bytes(b"MZ")
+            # Deeper files must not be picked up: only the mod root and Root/.
+            (inst / "mods" / "Other" / "deep" / "er").mkdir(parents=True)
+            (inst / "mods" / "Other" / "deep" / "er" / "skse64_1_6_640.dll").write_bytes(b"MZ")
+            sk = gv.scan_skse(None, inst)
+            self.assertEqual(str(sk.runtime), "1.5.97")
+            self.assertIn("SKSE64", sk.files[0].where)
+
+    def test_nothing_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sk = gv.scan_skse(tmp, None)
+            self.assertEqual(sk.files, [])
+            self.assertIsNone(sk.runtime)
+            self.assertEqual(sk.describe(), "")
+        self.assertIsNone(gv.scan_skse(None, None).runtime)
+        self.assertIsNone(gv.scan_skse("/definitely/not/here", "/nor/here").runtime)
+
+
+class ChooseVaultVersionTests(unittest.TestCase):
+    def _skse(self, *versions: str) -> gv.SkseCheck:
+        return gv.SkseCheck(
+            [gv.SkseFile(Path(f"skse64_{v.replace('.', '_')}.dll"), gv.GameVersion.parse(v), "game folder") for v in versions]
+        )
+
+    def test_skse_wins_over_installed_game(self):
+        installed = gv.GameVersion.parse("1.7.104")
+        self.assertEqual(
+            gv.choose_vault_version(installed, self._skse("1.6.1170")),
+            (gv.GameVersion.parse("1.6.1170"), "skse"),
+        )
+
+    def test_falls_back_to_installed_game(self):
+        installed = gv.GameVersion.parse("1.7.104")
+        self.assertEqual(gv.choose_vault_version(installed, self._skse()), (installed, "game"))
+        self.assertEqual(gv.choose_vault_version(installed, self._skse("1.5.97", "1.6.1170")), (installed, "game"))
+        self.assertEqual(gv.choose_vault_version(None, self._skse()), (None, ""))
+
+    def test_source_is_recorded_in_the_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gv.record_vault_version(tmp, gv.GameVersion.parse("1.6.1170"), source="skse")
+            loaded = gv.VaultMeta.load(tmp)
+            assert loaded is not None
+            self.assertEqual(loaded.set_from, "skse")
+            # Older manifests without the field still load.
+            (Path(tmp) / gv.VAULT_META_NAME).write_text(
+                json.dumps({"modsync": 1, "game": {"appid": 489830, "runtime": "1.6.1170"}})
+            )
+            loaded = gv.VaultMeta.load(tmp)
+            assert loaded is not None
+            self.assertEqual(loaded.set_from, "")
+
+
+class SkseInVersionCheckTests(unittest.TestCase):
+    def _setup(self, tmp: Path, game_version: tuple, skse: str | None) -> tuple[Path, Path]:
+        game = tmp / "Skyrim Special Edition"
+        game.mkdir()
+        (game / "SkyrimSE.exe").write_bytes(fake_pe(*game_version))
+        if skse:
+            (game / f"skse64_{skse.replace('.', '_')}.dll").write_bytes(b"MZ")
+        inst = tmp / "instance"
+        inst.mkdir()
+        (inst / "ModOrganizer.ini").write_text(
+            "[General]\n"
+            "gameName=@ByteArray(Skyrim Special Edition)\n"
+            f"gamePath=@ByteArray(Z:{str(game).replace('/', chr(92) * 2)})\n"
+        )
+        return game, inst
+
+    def test_imported_setup_after_steam_update(self):
+        # The user's scenario: old MO2 setup with SKSE for 1.6.1170, game now 1.7.104,
+        # no vault record yet.
+        with tempfile.TemporaryDirectory() as tmp:
+            _, inst = self._setup(Path(tmp), (1, 7, 104, 0), "1.6.1170")
+            vc = gv.check(inst)
+            self.assertIsNone(vc.expected)
+            self.assertEqual(str(vc.skse.runtime), "1.6.1170")
+            self.assertEqual(str(vc.skse_suggests), "1.6.1170")
+            self.assertIn("most likely made for 1.6.1170", vc.skse_note())
+
+    def test_skse_matches_game_and_no_vault_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, inst = self._setup(Path(tmp), (1, 6, 1170, 0), "1.6.1170")
+            vc = gv.check(inst)
+            self.assertIsNone(vc.skse_suggests)
+            self.assertIn("matching the game", vc.skse_note())
+
+    def test_vault_record_takes_precedence_over_skse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, inst = self._setup(Path(tmp), (1, 7, 104, 0), "1.6.1170")
+            gv.record_vault_version(inst, gv.GameVersion.parse("1.6.1170"), source="skse")
+            vc = gv.check(inst)
+            self.assertTrue(vc.mismatch)
+            self.assertIsNone(vc.skse_suggests)  # the vault speaks; SKSE only comments
+            self.assertIn("from its installed SKSE", vc.summary())
+            self.assertIn("will work again once the game is 1.6.1170", vc.skse_note())
+
+    def test_skse_disagreeing_with_vault_is_called_out(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, inst = self._setup(Path(tmp), (1, 6, 1170, 0), "1.5.97")
+            gv.record_vault_version(inst, gv.GameVersion.parse("1.6.1170"))
+            vc = gv.check(inst)
+            self.assertTrue(vc.ok)
+            self.assertIn("SKSE will need to be reinstalled", vc.skse_note())
+
+    def test_no_skse_means_no_note(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, inst = self._setup(Path(tmp), (1, 7, 104, 0), None)
+            vc = gv.check(inst)
+            self.assertEqual(vc.skse_note(), "")
+            self.assertIsNone(vc.skse_suggests)
+
+
 if __name__ == "__main__":
     unittest.main()
