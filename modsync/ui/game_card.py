@@ -35,6 +35,7 @@ class _ProgressBridge(QObject):
 class GameCard(QGroupBox):
     status = Signal(str)  # one-line messages for the host's status line
     changed = Signal()  # the game files or the setup record were modified
+    busyChanged = Signal(bool)  # a downgrade is rewriting game files
 
     def __init__(self, service: ModSyncService, parent: QWidget | None = None) -> None:
         super().__init__(f"{SKYRIM_SE.name} version", parent)
@@ -200,6 +201,7 @@ class GameCard(QGroupBox):
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._downgrading = True
+        self.busyChanged.emit(True)
         for btn in (self._downgrade, self._adopt, self._pin):
             btn.setVisible(False)
         self._refresh_btn.setEnabled(False)
@@ -238,6 +240,7 @@ class GameCard(QGroupBox):
 
     def _end_downgrade(self) -> None:
         self._downgrading = False
+        self.busyChanged.emit(False)
         self._progress.setVisible(False)
         self._progress_label.setVisible(False)
         self.refresh()

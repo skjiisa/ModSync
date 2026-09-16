@@ -41,7 +41,7 @@ def fake_sync_status(self):
 
 
 @unittest.skipIf(QApplication is None, "PySide6 not installed")
-class DashboardSmokeTests(unittest.TestCase):
+class _SmokeBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -68,6 +68,8 @@ class DashboardSmokeTests(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
+
+class DashboardSmokeTests(_SmokeBase):
     def _build(self):
         from modsync.ui.dashboard import Dashboard
 
@@ -98,3 +100,56 @@ class DashboardSmokeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WizardSmokeTests(_SmokeBase):
+    def _wizard(self):
+        from modsync.ui.wizard import WizardWidget
+
+        class NoInstaller:
+            def available(self):
+                return False, "test"
+
+            def install(self, *a, **k):
+                raise AssertionError("not called")
+
+        svc = ModSyncService(manager=object())
+        wizard = WizardWidget(svc, installer=NoInstaller())
+        wizard.resize(1120, 780)
+        return svc, wizard
+
+    def _settle(self):
+        QThreadPool.globalInstance().waitForDone(5000)
+        self.app.processEvents()
+
+    def test_not_now_finishes_with_instance_remembered(self):
+        with patch("modsync.ui.wizard.ChooseInstancePage._scan", staticmethod(lambda: [])):
+            svc, wizard = self._wizard()
+        done = []
+        wizard.completed.connect(done.append)
+        wizard._on_next()  # welcome -> choose
+        self._settle()
+        wizard._choose._select(str(self.tmp))
+        wizard._on_next()  # choose -> game (commits the instance)
+        self._settle()
+        self.assertEqual(wizard._index, 2)
+        self.assertEqual(State.load().instance_path, str(self.tmp))
+        self.assertFalse(State.load().syncing)
+        wizard._on_next()  # game -> sync
+        self.assertEqual(wizard._vault.mode, "local")
+        wizard._on_next()  # finish
+        self.assertEqual(done[0]["mode"], "local")
+        self.assertEqual(done[0]["instance_path"], str(self.tmp))
+
+    def test_cannot_switch_instance_while_syncing(self):
+        State(instance_path="/elsewhere", folder_id="modsync-1").save()
+        with patch("modsync.ui.wizard.ChooseInstancePage._scan", staticmethod(lambda: [])):
+            svc, wizard = self._wizard()
+        wizard._on_next()
+        self._settle()
+        wizard._choose._select(str(self.tmp))
+        wizard._on_next()
+        self._settle()
+        self.assertEqual(wizard._index, 1)  # stayed put
+        self.assertIn("stop syncing", wizard._choose._chosen.text())
+        self.assertTrue(wizard._next.isEnabled())
