@@ -25,6 +25,98 @@ def launch_gui(args: list[str]) -> int:
     return run(args)
 
 
+def mo2(args: list[str]) -> int:
+    """The Mod Organizer 2 instance this machine uses: show, choose, or install one."""
+    sub = args[0] if args else ""
+    rest = args[1:]
+    if sub == "status":
+        return _mo2_status()
+    if sub == "use":
+        return _mo2_use(rest)
+    if sub == "install":
+        return _mo2_install(rest)
+    print(
+        "usage:\n"
+        "  modsync mo2 status                   the instance in use and whether it is synced\n"
+        "  modsync mo2 use <instance-dir>       use an existing portable instance here\n"
+        "  modsync mo2 install <dest-dir>       install a fresh instance with MO2-LINT"
+    )
+    return 2
+
+
+def _mo2_status() -> int:
+    from modsync.state import State
+
+    state = State.load()
+    if not state.has_instance:
+        print("No Mod Organizer 2 instance chosen yet. 'modsync mo2 use <dir>' or 'modsync mo2 install <dest>'.")
+        return 1
+    print(f"Instance:  {state.instance_path}")
+    print(f"Label:     {state.instance_label}")
+    print(f"Sync:      {'vault ' + str(state.folder_id) if state.syncing else 'off'}")
+    return 0
+
+
+def _mo2_use(args: list[str]) -> int:
+    from pathlib import Path
+
+    from modsync.service import ModSyncService
+
+    if len(args) != 1:
+        print("usage: modsync mo2 use <instance-dir>")
+        return 2
+    path = Path(args[0]).expanduser()
+    if not path.is_dir():
+        print(f"Not a directory: {path}")
+        return 1
+    service = ModSyncService()
+    try:
+        service.choose_instance(path)
+    except RuntimeError as exc:
+        print(f"Cannot switch instance: {exc}")
+        return 1
+    print(f"Using {path}")
+    vc = service.game_version_check()
+    if vc.expected is not None:
+        src = " (from the installed SKSE)" if vc.expected_from == "skse" else ""
+        print(f"This setup is built for {vc.expected}{src}.")
+    if vc.mismatch or vc.skse_suggests:
+        print(f"  ! {vc.summary()}")
+        print("    'modsync game status' shows the downgrade.")
+    return 0
+
+
+def _mo2_install(args: list[str]) -> int:
+    import sys
+    from pathlib import Path
+
+    from modsync.games import SKYRIM_SE
+    from modsync.mo2.installers import Mo2LintBackend
+    from modsync.service import ModSyncService
+    from modsync.steam import shortcuts
+
+    if len(args) != 1:
+        print("usage: modsync mo2 install <dest-dir>")
+        return 2
+    dest = Path(args[0]).expanduser()
+    backend = Mo2LintBackend()
+    ok, reason = backend.available()
+    if not ok:
+        print(f"Cannot install: {reason}")
+        return 1
+    if shortcuts.steam_is_running():
+        print("Close Steam first — the installer configures the game's Proton prefix.")
+        return 1
+    print(f"Installing Mod Organizer 2 for {SKYRIM_SE.name} to {dest} … (this can take several minutes)")
+    result = backend.install(SKYRIM_SE, dest, on_output=lambda line: print(f"  {line}", file=sys.stderr))
+    if not result.success or not result.instance_path:
+        print(f"Install failed: {result.message}")
+        return 1
+    ModSyncService().choose_instance(result.instance_path)
+    print(f"Installed and now in use: {result.instance_path}")
+    return 0
+
+
 def vault(args: list[str]) -> int:
     """Headless vault management (no GUI). Keeps Syncthing running in the
     foreground so it actually syncs; Ctrl-C to stop."""
@@ -38,8 +130,8 @@ def vault(args: list[str]) -> int:
         return serve(rest)
     print(
         "usage:\n"
-        "  modsync vault create <instance-dir> [--label NAME]\n"
-        "  modsync vault join <pairing-code> <instance-dir>\n"
+        "  modsync sync create <instance-dir> [--label NAME]\n"
+        "  modsync sync join <pairing-code> <instance-dir>\n"
         "  modsync serve                       keep syncing / watching in the foreground"
     )
     return 2
@@ -56,7 +148,7 @@ def _vault_create(args: list[str]) -> int:
             positional.append(args[i])
             i += 1
     if len(positional) != 1:
-        print("usage: modsync vault create <instance-dir> [--label NAME]")
+        print("usage: modsync sync create <instance-dir> [--label NAME]")
         return 2
 
     from modsync.service import ModSyncService
@@ -79,7 +171,7 @@ def _vault_create(args: list[str]) -> int:
 
 def _vault_join(args: list[str]) -> int:
     if len(args) != 2:
-        print("usage: modsync vault join <pairing-code> <instance-dir>")
+        print("usage: modsync sync join <pairing-code> <instance-dir>")
         return 2
     code_text, instance = args
 
@@ -160,7 +252,7 @@ def game(args: list[str]) -> int:
         return _game_pin(ModSyncService())
     print(
         "usage:\n"
-        "  modsync game status                  installed vs vault version, Steam state, recipes\n"
+        "  modsync game status                  installed vs this setup's version, Steam state, recipes\n"
         "  modsync game downgrade <version> [-y] apply the community patches to reach <version>\n"
         "  modsync game pin                     make Steam treat the installed files as current"
     )
@@ -171,7 +263,7 @@ def _game_status(service) -> int:
     st = service.game_status()
     print(f"Installed:      {st.installed or '(not detected)'}"
           + (f"   ({st.game_dir})" if st.game_dir else ""))
-    print(f"Vault expects:  {st.expected or '(not recorded)'}")
+    print(f"Setup needs:    {st.expected or '(not recorded)'}")
     if st.skse_runtime:
         print(f"SKSE here:      built for {st.skse_runtime}   ({st.skse_source})")
     elif st.skse_runtimes:
@@ -196,7 +288,7 @@ def _game_status(service) -> int:
     else:
         print("Recipes:        unavailable")
     if st.mismatch:
-        print(f"\n! This machine runs {st.installed} but the vault was set up for {st.expected}.")
+        print(f"\n! This machine runs {st.installed} but this setup was built for {st.expected}.")
     elif st.needs_downgrade:
         print(
             f"\n! This machine runs {st.installed} but the installed SKSE is built for {st.wanted}, "

@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "modsync"
 version = "0.1.0.dev0"
-description = "Sync Mod Organizer 2 setups across Steam Deck and other Linux/Windows machines"
+description = "Set up Skyrim SE for modding on Steam Deck and Linux: install Mod Organizer 2, keep the game version your mods need, optionally sync between machines"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "ModSync contributors" }]
-keywords = ["mod-organizer", "steam-deck", "syncthing", "skyrim", "modding"]
+keywords = ["mod-organizer", "steam-deck", "skyrim", "skse", "downgrade", "syncthing", "modding"]
 
 # NOTE: the discovery layer (`modsync doctor`) deliberately uses only the Python
 # standard library, so it runs without any of these installed. They are needed
