@@ -25,9 +25,13 @@ is rendered from the `.svg` with `rsvg-convert -w 512 -h 512`.
 flatpak install -y flathub org.kde.Platform//6.9 org.kde.Sdk//6.9
 
 # Build + install into the user installation. Keep the build dir OUTSIDE the
-# repo so the `dir` source doesn't copy it into itself.
+# repo so the `dir` source doesn't copy it into itself, and put the state dir
+# next to it: flatpak-builder refuses to run when its state dir (default
+# `.flatpak-builder` inside the repo) is on a different filesystem than the
+# build dir.
 flatpak-builder --user --install --force-clean \
-    /tmp/modsync-flatpak-build \
+    --state-dir="$HOME/.cache/modsync-flatpak/state" \
+    "$HOME/.cache/modsync-flatpak/build" \
     packaging/flatpak/io.github.skjiisa.ModSync.yaml
 
 flatpak run io.github.skjiisa.ModSync
@@ -35,7 +39,8 @@ flatpak run io.github.skjiisa.ModSync
 
 `flatpak-builder` itself comes from either your distro (`flatpak-builder`
 package) or Flathub (`flatpak install flathub org.flatpak.Builder`, then run
-`flatpak run org.flatpak.Builder` in place of `flatpak-builder`).
+`flatpak run org.flatpak.Builder` in place of `flatpak-builder` in the command
+above, with the same arguments).
 
 ## How the manifest is put together
 

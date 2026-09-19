@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest an improvement or something ModSync should handle
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the situation, not the solution. What are you doing with Skyrim / MO2 / Steam that ModSync makes hard or does not cover?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like ModSync to do?
+      description: A rough idea is fine. Mention if it belongs in the dashboard, the wizard, the CLI or the launch hook.
+    validations:
+      required: true
+  - type: dropdown
+    id: machine
+    attributes:
+      label: Where does this matter most?
+      multiple: true
+      options:
+        - Steam Deck (SteamOS)
+        - Desktop Linux
+        - Both / not machine-specific
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds or alternatives you have tried
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Links to mods, guides, MO2-LINT issues, screenshots.
