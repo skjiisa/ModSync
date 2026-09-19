@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.skjiisa.ModSync</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>GPL-3.0-or-later</project_license>
   <name>ModSync</name>
   <summary>Set up Skyrim SE for modding on Steam Deck and Linux</summary>
   <description>

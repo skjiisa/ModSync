@@ -13,7 +13,10 @@ Syncthing, no collisions.
 | `io.github.skjiisa.ModSync.metainfo.xml` | AppStream metadata (store listing). |
 | `icons/io.github.skjiisa.ModSync.svg` / `.png` | App icon (scalable + 512px). |
 
-The `.png` is rendered from the `.svg` with `rsvg-convert -w 512 -h 512`.
+The logo was designed in Canva and exported as PDF. The `.svg` is that PDF
+converted with `pdftocairo -svg` (canvas attributes set to 512×512; the hex
+background is a small embedded bitmap, everything else is vector). The `.png`
+is rendered from the `.svg` with `rsvg-convert -w 512 -h 512`.
 
 ## Build & run locally
 

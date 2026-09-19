@@ -8,7 +8,7 @@ version = "0.1.0.dev0"
 description = "Set up Skyrim SE for modding on Steam Deck and Linux: install Mod Organizer 2, keep the game version your mods need, optionally sync between machines"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "ModSync contributors" }]
 keywords = ["mod-organizer", "steam-deck", "skyrim", "skse", "downgrade", "syncthing", "modding"]
 

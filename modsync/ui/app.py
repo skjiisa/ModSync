@@ -6,12 +6,20 @@ import sys
 
 
 def _application(argv: list[str] | None):
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     args = [sys.argv[0], *(argv or [])]
     app = QApplication.instance() or QApplication(args)
     app.setApplicationName("ModSync")
     app.setApplicationDisplayName("ModSync")
+    # Lets Wayland compositors / taskbars match our windows to the installed
+    # .desktop entry and its icon; the theme lookup covers X11 and the
+    # non-Flatpak install (falls back to no icon if the theme lacks it).
+    app.setDesktopFileName("io.github.skjiisa.ModSync")
+    icon = QIcon.fromTheme("io.github.skjiisa.ModSync")
+    if not icon.isNull():
+        app.setWindowIcon(icon)
     return app
 
 
