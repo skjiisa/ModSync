@@ -1,26 +1,84 @@
 # ModSync
 
-Get [Mod Organizer 2](https://github.com/ModOrganizer2/modorganizer) modding of
-**Skyrim Special Edition** working on **Steam Deck / SteamOS** and ordinary Linux
-(Windows is a post-1.0 target), and keep it working:
+ModSync gets **Skyrim Special Edition** ready for [Mod Organizer 2](https://github.com/ModOrganizer2/modorganizer)
+on **Steam Deck / SteamOS** and ordinary Linux, and keeps it working. It installs a
+portable MO2 instance wired into the game's Proton prefix (via
+[MO2-LINT](https://github.com/Furglitch/modorganizer2-linux-installer)), detects the
+installed game version and the SKSE runtime, downgrades the game with community
+patches when Steam has updated it, pins Steam so the downgraded install keeps
+launching normally, and — optionally — keeps the whole setup in sync between a
+desktop and a Steam Deck with [Syncthing](https://syncthing.net/), while each machine
+keeps its own game paths. Each part stands on its own: someone who only wants the
+downgrader never sets up sync.
 
-- **Install Mod Organizer 2** as a portable instance wired into the game's Proton
-  prefix (guided, via [MO2-LINT](https://github.com/Furglitch/modorganizer2-linux-installer)).
-- **Keep the game on the version your mods need.** SKSE and native DLL mods only
-  load on the exact runtime they were built for, and Steam updates the game
-  silently. ModSync detects the installed version and the SKSE runtime, downgrades
-  the game with community xdelta patches, and pins Steam so it keeps launching the
-  downgraded install.
-- **Optionally, sync the whole setup between machines** — desktop ↔ Steam Deck —
-  with [Syncthing](https://syncthing.net/), while each machine keeps its own game
-  paths.
-- **Optionally, open ModSync when Skyrim is launched from Steam.** Play shows the
-  mod setup, sync state and any game-version / SKSE problem first, with *Continue
-  to Mod Organizer* and *Cancel*.
+## Install
 
-Each part stands on its own: someone who only wants the downgrader never creates a
-vault. The dashboard is three cards — *Game*, *Mod Organizer 2*, *Sync* — and the
-wizard walks the same steps with sync as a "Not now" option.
+### Flatpak (recommended, Steam Deck and any Linux)
+
+The Flatpak bundles Syncthing, PySide6, xdelta3 and 7-Zip, so nothing needs to be
+installed on the host and nothing collides with a system Python or Syncthing. It is
+built locally for now; a Flathub listing is planned. Build and install it with the
+steps in [packaging/flatpak/README.md](packaging/flatpak/README.md), then:
+
+```sh
+flatpak run io.github.skjiisa.ModSync
+```
+
+### From source (uv or pip)
+
+Requires Python 3.11+. With [uv](https://docs.astral.sh/uv/):
+
+```sh
+git clone https://github.com/skjiisa/ModSync.git
+cd ModSync
+uv run modsync            # GUI
+uv run modsync doctor     # command line
+```
+
+Or with pip into a virtual environment:
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install .
+.venv/bin/modsync
+```
+
+Outside the Flatpak, ModSync downloads a Syncthing binary and the MO2-LINT
+installer into its data directory on first use, and a game downgrade needs
+`xdelta3` and a 7z extractor (`7z`/`7zz` or `bsdtar`, which SteamOS ships) on the
+`PATH`. MO2-LINT itself needs `protontricks`.
+
+The discovery layer uses only the Python standard library, so
+`python3 -m modsync doctor` works even without the dependencies installed. It
+reports the Steam libraries, whether Skyrim SE is installed, its Proton prefix, and
+any MO2 instances it can find on this machine.
+
+## First run
+
+The dashboard is always the home screen, laid out as independent cards: **Game**,
+**Mod Organizer 2**, and **Sync** (optional), plus an *On this machine* box for the
+background service, the Steam shortcut and the launch hook. Before anything is set
+up the MO2 card offers **Choose folder…** (an existing portable instance, with any
+instances found on the machine listed with a **Use** button) or **Install MO2…**,
+and the Game card already works with Steam alone.
+
+**Setup wizard** runs the same steps in order, in one window and without modal
+dialogs, so it works in Gaming Mode:
+
+1. **Choose your Mod Organizer 2 instance** — pick one that was found, browse to
+   one, or install a fresh one into a folder of your choice. The guided install
+   drives MO2-LINT and streams its log into the page. The instance is remembered as
+   soon as it is chosen.
+2. **Game version** — the installed Skyrim runtime versus the one this setup needs
+   (see [Game version](#game-version)), with **Downgrade** and **Keep this version**
+   right there. Nothing to fix? Just continue.
+3. **Sync with another machine** — optional. **Not now** finishes with just this
+   machine; otherwise either share this setup and get a pairing code, or copy
+   another machine's setup here by picking it from the LAN list and entering its
+   PIN, or by pasting its pairing code. Sync can also be set up later from the
+   dashboard.
+
+**Reset setup…** on the dashboard forgets the instance and any sync without touching
+a single mod file.
 
 ## Game version
 
@@ -79,7 +137,7 @@ loading until the runtime matches again. ModSync can downgrade the game itself:
   moment Steam exits (on the Deck: Power → Restart Steam) — no vault needed.
 
 ```sh
-modsync game status                 # installed vs vault version, Steam state, recipes
+modsync game status                 # installed vs recorded version, Steam state, recipes
 modsync game downgrade 1.6.1170     # needs xdelta3 and 7z (or bsdtar) installed
 modsync game pin                    # after the next Bethesda patch, with Steam closed
 ```
@@ -195,36 +253,66 @@ modsync steam shortcut              # add ModSync as a non-Steam game (Gaming Mo
 modsync launch status | enable | disable   # open ModSync when Skyrim is launched from Steam
 ```
 
+`modsync --help` and `modsync <group> --help` list the arguments.
+
 ## Status
 
-Early development. Working toward the MVP described in the plan.
+Early development; not yet released.
 
-- [x] Phase 0 — project scaffold
-- [x] Phase 1 — Steam library + MO2 instance discovery
-- [x] Phase 2 — Syncthing core (bundled, REST-controlled, pairing) — *two-node sync verified*
-- [x] Phase 4 — PySide6 wizard + dashboard — *full wizard→daemon→dashboard flow verified*
-- [x] Phase 3 — guided MO2 install (MO2-LINT backend) — *real Skyrim SE install verified*
-- [ ] Phase 5 — Flatpak + Steam Deck  ← *next*
-- [ ] Post-1.0 — Windows target
+**Works and verified on desktop Linux:** Steam library, game and MO2 instance
+discovery; guided MO2 install through MO2-LINT against a real Skyrim SE install;
+game-version and SKSE detection, downgrade and Steam pin; two-node Syncthing sync
+with a pairing code; the wizard and dashboard; the background service; the Flatpak
+build; and the Steam launch hook (from the source install and from the Flatpak).
 
-## Try the discovery report
+**Implemented but not yet exercised on a Steam Deck:** the Flatpak on SteamOS
+(including a downgrade with the bundled xdelta3/7zz), the two-machine flow in
+Desktop and Gaming Mode, LAN PIN pairing between real machines, the launch hub's
+focus and hand-off under gamescope with a controller, and Steam Deck mode
+transitions for the background service. See "Still to do" in
+[packaging/flatpak/README.md](packaging/flatpak/README.md).
 
-The discovery layer uses only the Python standard library, so no install is needed:
+**Not started:** a Flathub listing (the Python wheels still need pinning for an
+offline build), and Windows, which is a later target.
 
-```sh
-python3 -m modsync doctor
-```
+## Third-party components and licenses
 
-It reports the Steam libraries, whether Skyrim SE is installed, its Proton prefix,
-and any MO2 instances it can find on this machine.
+ModSync is free software under the **GNU GPL, version 3 or later** — see
+[LICENSE](LICENSE). It builds on, bundles or downloads the following. ModSync does
+**not** distribute any Bethesda game files: the downgrade patches are binary deltas
+that only apply to a copy of Skyrim Special Edition you already own through Steam.
+
+| Component | Role | How you get it | License |
+| --- | --- | --- | --- |
+| [Syncthing](https://github.com/syncthing/syncthing) | peer-to-peer sync engine, driven over its REST API | bundled in the Flatpak; otherwise downloaded from its GitHub releases on first use | MPL-2.0 |
+| [7-Zip](https://7-zip.org/) (`7zz`) | unpacks the downgrade patch archives | bundled in the Flatpak (built from the 7-Zip source); otherwise your system `7z`/`7zz` or `bsdtar` | LGPL-2.1-or-later, with the unRAR restriction on the RAR code and BSD-licensed parts — see its [License.txt](https://github.com/ip7z/7zip/blob/main/DOC/License.txt) |
+| [xdelta3](https://github.com/jmacd/xdelta-gpl) | applies the binary patches | bundled in the Flatpak (3.1.0 from the `xdelta-gpl` repository); otherwise your system `xdelta3` | GPL-2.0-or-later (this release; Apache-2.0 sources exist separately at [jmacd/xdelta](https://github.com/jmacd/xdelta)) |
+| [PySide6](https://pypi.org/project/PySide6-Essentials/) / Qt 6 | the GUI | bundled in the Flatpak (PySide6-Essentials on the KDE runtime); a dependency of the source install | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only |
+| [MO2-LINT](https://github.com/Furglitch/modorganizer2-linux-installer) | installs Mod Organizer 2 into the game's Proton prefix | downloaded on demand as a pinned prebuilt binary when you choose *Install MO2* | GPL-3.0 |
+| [Mod Organizer 2](https://github.com/ModOrganizer2/modorganizer) | the mod manager | installed by MO2-LINT, not bundled or downloaded by ModSync itself | GPL-3.0 |
+| [Mulderland's Skyrim SE downgrader](https://github.com/Mulderland/MulderLoad) | the downgrade recipe (NSIS script) and the community xdelta patches it points to | ModSync converts the script to a JSON recipe and downloads the patches from Mulderland's CDN only when you ask for a downgrade | see upstream — the repository page shows no license declaration |
+| [httpx](https://github.com/encode/httpx) | HTTP client for the Syncthing API | Python dependency | BSD-3-Clause |
+| [platformdirs](https://github.com/tox-dev/platformdirs) | data/config directories | Python dependency | MIT |
+| [qrcode](https://github.com/lincolnloop/python-qrcode) | pairing QR codes | Python dependency | BSD-3-Clause |
+| [spake2](https://github.com/warner/python-spake2) | PIN-authenticated LAN pairing (pulls in `cryptography`) | Python dependency | MIT |
+
+The Flatpak runs on the `org.kde.Platform` runtime; its contents carry their own
+licenses. Steam, Proton and `protontricks` are used where installed and are not
+part of ModSync.
 
 ## Development
 
 ```sh
-# unit tests (fast, offline):
-.venv/bin/python -m unittest discover -s tests -t .
+# unit tests (fast, offline). pytest lives in the `dev` extra:
+uv run --extra dev pytest -q
+# or, with the standard library runner:
+uv run python -m unittest discover -s tests -t .
 
 # integration tests — download + run a real Syncthing daemon, incl. a two-node
 # sync test proving a mod propagates while each machine keeps its ModOrganizer.ini:
-MODSYNC_IT=1 .venv/bin/python -m unittest tests.test_sync_integration -v
+MODSYNC_IT=1 uv run python -m unittest tests.test_sync_integration -v
 ```
+
+The downgrade recipe index is regenerated by
+[.github/workflows/recipe-index.yml](.github/workflows/recipe-index.yml) using
+[scripts/build_recipe_index.py](scripts/build_recipe_index.py).
