@@ -2,8 +2,8 @@
 
 It does whatever this machine's setup calls for, and nothing more:
 
-* always: apply a queued Steam pin the moment Steam exits, and notice when Steam
-  has updated the game under a setup built for another version;
+* always: apply a queued Steam pin or launch-hook switch the moment Steam exits,
+  and notice when Steam has updated the game under a setup built for another version;
 * only when a vault exists: keep Syncthing running, auto-accept machines that
   paired with our code, and report sync progress.
 
@@ -18,7 +18,7 @@ import subprocess
 import time
 from typing import Callable
 
-from modsync import gameversion
+from modsync import gameversion, launchhook
 from modsync.games import SKYRIM_SE
 
 Log = Callable[[str], None]
@@ -81,6 +81,13 @@ class Server:
                     self.notify("Steam pin applied", pin.message)
         except Exception as exc:
             self.log(f"  (pin check failed: {exc})")
+        try:
+            hook = launchhook.apply_pending()
+            if hook is not None:
+                self.log(f"  {hook}")
+                self.notify("ModSync launch hook", hook)
+        except Exception as exc:
+            self.log(f"  (launch hook check failed: {exc})")
         if self._ticks % _VERSION_CHECK_EVERY == 1:
             self._check_game_version()
         if not self.syncing:

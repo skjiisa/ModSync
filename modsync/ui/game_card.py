@@ -37,11 +37,20 @@ class GameCard(QGroupBox):
     changed = Signal()  # the game files or the setup record were modified
     busyChanged = Signal(bool)  # a downgrade is rewriting game files
 
-    def __init__(self, service: ModSyncService, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        service: ModSyncService,
+        parent: QWidget | None = None,
+        *,
+        refresh_index: bool = True,
+    ) -> None:
         super().__init__(f"{SKYRIM_SE.name} version", parent)
         self.service = service
         self._game: GameStatus | None = None
         self._downgrading = False
+        # The launch hub runs while the user is waiting to play: use the recipe
+        # index already on disk rather than fetching the latest one.
+        self._refresh_index = refresh_index
 
         layout = QVBoxLayout(self)
         self._label = QLabel("checking…")
@@ -101,6 +110,7 @@ class GameCard(QGroupBox):
         self._refresh_btn.setEnabled(False)
         run_async(
             self.service.game_status,
+            refresh_index=self._refresh_index,
             on_done=self._on_game_status,
             on_failed=self._on_check_failed,
         )

@@ -29,6 +29,8 @@ usage:
 
   modsync service install [--linger]     run 'modsync serve' at login (systemd --user)
   modsync steam shortcut                 add ModSync as a non-Steam game (Gaming Mode)
+  modsync launch status | enable | disable
+                                         open ModSync when Skyrim is launched from Steam
 
 sync commands run headless and keep Syncthing alive until Ctrl-C.
 """
@@ -72,6 +74,11 @@ def main(argv: list[str] | None = None) -> int:
         from modsync.cli import game
 
         return game(argv[1:])
+
+    if cmd == "launch":
+        from modsync.cli import launch
+
+        return launch(argv[1:])
 
     if cmd in {"-h", "--help", "help"}:
         print(_USAGE)

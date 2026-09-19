@@ -12,8 +12,10 @@ codec round-trips Steam's own files byte-for-byte.
 from __future__ import annotations
 
 import binascii
+import os
 import shutil
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -174,7 +176,22 @@ def modsync_target(flatpak_id: str | None = MODSYNC_FLATPAK_ID) -> tuple[str, st
 
 def steam_is_running() -> bool:
     """Best-effort (Linux) check: editing shortcuts.vdf while Steam is running is
-    unsafe because Steam rewrites the file from memory when it exits."""
+    unsafe because Steam rewrites the file from memory when it exits.
+
+    A Flatpak has its own PID namespace, so ``/proc`` shows nothing of the host
+    there; ask the host through the Flatpak portal instead."""
+    if os.environ.get("FLATPAK_ID") or Path("/.flatpak-info").exists():
+        try:
+            result = subprocess.run(
+                ["flatpak-spawn", "--host", "pgrep", "-x", "steam"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            result = None
+        if result is not None and result.returncode in (0, 1):
+            return result.returncode == 0
     proc = Path("/proc")
     if not proc.is_dir():
         return False

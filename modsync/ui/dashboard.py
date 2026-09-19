@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from modsync import background, platforms
+from modsync import background, launchhook, platforms
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import discover as mo2_discover
 from modsync.service import ModSyncService
@@ -96,6 +96,7 @@ class Dashboard(QWidget):
         self._timer.timeout.connect(self.game.poll)
         self._timer.timeout.connect(self.sync.poll)
         self._timer.timeout.connect(self._refresh_bg_status)
+        self._timer.timeout.connect(self._poll_hook)
         self._timer.start(_POLL_MS)
 
     # --- header -------------------------------------------------------------
@@ -235,7 +236,7 @@ class Dashboard(QWidget):
         if path:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
-    # --- background service + Steam shortcut ---------------------------------
+    # --- background service, Steam shortcut, launch hook -----------------------
     def _build_integration_group(self) -> QGroupBox:
         box = QGroupBox("On this machine")
         v = QVBoxLayout(box)
@@ -262,7 +263,82 @@ class Dashboard(QWidget):
         row.addWidget(self._bg_status, stretch=1)
         row.addWidget(steam_button)
         v.addLayout(row)
+
+        # The launch hook: Play in Steam opens ModSync first, then hands the same
+        # launch on to Mod Organizer 2 / the game. Steam's previous choice is
+        # restored on turn-off.
+        hook_row = QHBoxLayout()
+        self._hook_button = QPushButton(f"Open ModSync when launching {SKYRIM_SE.name}")
+        self._hook_button.setToolTip(
+            "Register a small Steam compatibility tool for the game that opens this hub "
+            "before every launch — mod setup, sync state, game-version and SKSE issues — "
+            "with Continue and Cancel. Turning it off puts Steam's previous choice back."
+        )
+        self._hook_button.clicked.connect(self._toggle_hook)
+        self._hook_status = QLabel("Steam launch: checking…")
+        self._hook_status.setWordWrap(True)
+        hook_row.addWidget(self._hook_button)
+        hook_row.addWidget(self._hook_status, stretch=1)
+        v.addLayout(hook_row)
+        self._hook: launchhook.LaunchHookStatus | None = None
+        self._refresh_hook_status()
         return box
+
+    def _toggle_hook(self) -> None:
+        self._hook_button.setEnabled(False)
+        st = self._hook
+        turning_off = bool(st and (st.installed or st.selected) and not (st.pending and st.pending.action == "select"))
+        if turning_off:
+            run_async(launchhook.disable, on_done=self._after_hook, on_failed=self._on_hook_failed)
+        else:
+            run_async(launchhook.enable, on_done=self._after_hook, on_failed=self._on_hook_failed)
+
+    def _after_hook(self, message: str) -> None:
+        self._hook_button.setEnabled(True)
+        self._set_status(message)
+        self._refresh_hook_status()
+
+    def _on_hook_failed(self, message: str) -> None:
+        self._hook_button.setEnabled(True)
+        self._on_error(message)
+        self._refresh_hook_status()
+
+    def _refresh_hook_status(self) -> None:
+        run_async(
+            launchhook.status,
+            on_done=self._on_hook_status,
+            on_failed=lambda _: self._hook_status.setText("Steam launch: unknown"),
+        )
+
+    def _on_hook_status(self, st: launchhook.LaunchHookStatus) -> None:
+        self._hook = st
+        if st.enabled and not st.pending:
+            head = "on"
+        elif st.pending:
+            head = "switching when Steam closes"
+        elif st.installed or st.selected:
+            head = "partly set up"
+        else:
+            head = "off"
+        self._hook_status.setText(f"Steam launch: {head} — {st.summary()}")
+        if st.pending and st.pending.action == "select":
+            self._hook_button.setText("Turn off")
+        elif st.installed or st.selected:
+            self._hook_button.setText("Turn off" if st.enabled else "Turn off / reset")
+        else:
+            self._hook_button.setText(f"Open ModSync when launching {SKYRIM_SE.name}")
+        self._hook_button.setEnabled(st.steam_found)
+
+    def _poll_hook(self) -> None:
+        """Timer: apply a queued launcher switch once Steam has exited."""
+        if self._hook is None or self._hook.pending is None:
+            return
+        run_async(launchhook.apply_pending, on_done=self._on_hook_applied, on_failed=lambda _: None)
+
+    def _on_hook_applied(self, message: object) -> None:
+        if message:
+            self._set_status(str(message))
+            self._refresh_hook_status()
 
     def _toggle_bg(self) -> None:
         self._bg_button.setEnabled(False)

@@ -398,3 +398,79 @@ def steam(args: list[str]) -> int:
         "        (--native uses the local command instead of the Flatpak)"
     )
     return 2
+
+
+def launch(args: list[str]) -> int:
+    """Open ModSync when the game is launched from Steam (the launch hook)."""
+    from modsync import launchhook
+
+    sub = args[0] if args else ""
+    rest = args[1:]
+    if sub == "status":
+        st = launchhook.status()
+        print(f"Launch hook:    {'on' if st.enabled else 'off'}")
+        print(f"Steam runs {st.game.name} with: {st.current_mapping or '(Steam default)'}")
+        if st.installed or st.underlying_name:
+            print(f"Hands off to:   {st.hands_off_to}" + ("" if st.underlying_exists else "   (missing!)"))
+        print(f"Steam running:  {'yes' if st.steam_running else 'no'}")
+        print(f"\n{st.summary()}")
+        return 0 if st.enabled else 1
+    if sub == "enable":
+        through = None
+        i = 0
+        while i < len(rest):
+            if rest[i] == "--through" and i + 1 < len(rest):
+                through, i = rest[i + 1], i + 2
+            else:
+                print("usage: modsync launch enable [--through <compat-tool-name>]")
+                return 2
+        try:
+            print(launchhook.enable(through=through))
+        except RuntimeError as exc:
+            print(f"Cannot enable the launch hook: {exc}")
+            return 1
+        return 0
+    if sub == "disable":
+        try:
+            print(launchhook.disable())
+        except RuntimeError as exc:
+            print(f"Cannot disable the launch hook: {exc}")
+            return 1
+        return 0
+    if sub == "hub":
+        return _launch_hub(rest)
+    print(
+        "usage:\n"
+        "  modsync launch status                show whether Play opens ModSync first\n"
+        "  modsync launch enable [--through T]  open ModSync when the game is launched from Steam\n"
+        "  modsync launch disable               restore the previous launch behaviour\n"
+        "  modsync launch hub --appid N         (run by Steam) the pre-launch window"
+    )
+    return 2
+
+
+def _launch_hub(args: list[str]) -> int:
+    """What the hook runs. Exit 0 continues the launch, 10 cancels it; any
+    other failure also continues, so ModSync can never keep a game from starting."""
+    from modsync import launchhook
+
+    appid: int | None = None
+    through: str | None = None
+    i = 0
+    while i < len(args):
+        if args[i] == "--appid" and i + 1 < len(args):
+            try:
+                appid = int(args[i + 1])
+            except ValueError:
+                pass
+            i += 2
+        elif args[i] == "--through" and i + 1 < len(args):
+            through, i = args[i + 1], i + 2
+        else:
+            i += 1
+    try:
+        from modsync.ui.app import run_hub
+    except ImportError as exc:
+        print(f"ModSync hub unavailable (PySide6 missing: {exc}); continuing the launch.")
+        return launchhook.EXIT_CONTINUE
+    return run_hub(appid=appid, through=through)

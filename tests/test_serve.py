@@ -2,8 +2,9 @@
 always; Syncthing only when a vault exists."""
 
 import unittest
+from unittest.mock import patch
 
-from modsync import gameversion
+from modsync import gameversion, launchhook
 from modsync.serve import Server
 from modsync.service import DeviceStatus, PinOutcome, SyncStatus
 from modsync.state import State
@@ -72,6 +73,14 @@ class ServerTests(unittest.TestCase):
         server.tick()
         self.assertIn("  ✓ Pinned.", lines)
         self.assertEqual(notes[0][0], "Steam pin applied")
+
+    def test_queued_launch_hook_change_is_applied(self):
+        svc, server, lines, notes = self.make(State())
+        with patch.object(launchhook, "apply_pending", return_value="Launch hook selected for the game."):
+            server.start()
+            server.tick()
+        self.assertIn("  Launch hook selected for the game.", lines)
+        self.assertEqual(notes[0], ("ModSync launch hook", "Launch hook selected for the game."))
 
     def test_steam_update_is_noticed(self):
         svc, server, lines, notes = self.make(State(instance_path="/mo2"))
