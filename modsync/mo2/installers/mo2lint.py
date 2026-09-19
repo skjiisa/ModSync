@@ -8,6 +8,7 @@ endpoint skips them). Requires ``protontricks`` on the system.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import stat
@@ -18,6 +19,8 @@ from pathlib import Path
 
 from modsync.config import data_dir
 from modsync.games import Game
+
+log = logging.getLogger(__name__)
 from modsync.mo2.installers.base import InstallerBackend, InstallResult, OnOutput
 
 MO2LINT_VERSION = "7.0.0-rc7"
@@ -90,6 +93,7 @@ class Mo2LintBackend(InstallerBackend):
         if script_extender:
             args.append("--script-extender")
 
+        log.info("installing MO2 with MO2-LINT: %s", " ".join(args))
         if on_output:
             on_output("$ " + " ".join(args))
 
@@ -114,4 +118,8 @@ class Mo2LintBackend(InstallerBackend):
             message = f"mo2-lint exited with code {returncode}"
         else:
             message = "mo2-lint finished but ModOrganizer.exe was not found"
+        if success:
+            log.info("MO2 installed to %s", dest_dir)
+        else:
+            log.error("MO2 install into %s failed: %s", dest_dir, message)
         return InstallResult(success, returncode, dest_dir if success else None, message)

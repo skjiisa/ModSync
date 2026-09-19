@@ -6,9 +6,12 @@ pool and delivers the result (or error string) back on the UI thread via signals
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+
+log = logging.getLogger(__name__)
 
 
 class _Signals(QObject):
@@ -29,6 +32,7 @@ class _Job(QRunnable):
         try:
             result = self._fn(*self._args, **self._kwargs)
         except Exception as exc:  # surface the message to the UI thread
+            log.error("background job %s failed", getattr(self._fn, "__qualname__", self._fn), exc_info=True)
             self.signals.failed.emit(str(exc))
         else:
             self.signals.done.emit(result)

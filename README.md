@@ -186,6 +186,7 @@ Everything the dashboard does is also a command:
 
 ```sh
 modsync doctor                      # Steam libraries, game, MO2 instances, current setup
+modsync diagnostics                 # doctor + recent logs, secrets redacted: paste into a bug report
 modsync mo2 status | use <dir> | install <dest>
 modsync game status | downgrade <version> | pin
 modsync sync create | join          # optional
@@ -217,6 +218,12 @@ python3 -m modsync doctor
 
 It reports the Steam libraries, whether Skyrim SE is installed, its Proton prefix,
 and any MO2 instances it can find on this machine.
+
+Every way ModSync runs (GUI, CLI, `serve`, the launch hub) logs to
+`~/.local/state/modsync/modsync.log` (`MODSYNC_LOG_LEVEL=DEBUG` for more). For a bug
+report, `modsync diagnostics` — or the dashboard's **Copy diagnostics** button — bundles
+the doctor report with the last 200 lines of that log and of the launch hook's, with
+pairing codes, API keys and device ids redacted.
 
 ## Development
 

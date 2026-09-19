@@ -14,6 +14,7 @@ modsync — set up Skyrim SE for modding on Steam Deck and Linux
 usage:
   modsync                                launch the GUI (requires PySide6)
   modsync doctor                         inspect this machine (Steam, Skyrim SE, MO2, current setup)
+  modsync diagnostics                    everything for a bug report: doctor + recent logs (secrets redacted)
 
   modsync mo2 status                     the Mod Organizer 2 instance in use
   modsync mo2 use <instance-dir>         use an existing portable instance
@@ -33,6 +34,7 @@ usage:
                                          open ModSync when Skyrim is launched from Steam
 
 sync commands run headless and keep Syncthing alive until Ctrl-C.
+logs: ~/.local/state/modsync/modsync.log (MODSYNC_LOG_LEVEL=DEBUG for more).
 """
 
 
@@ -40,10 +42,26 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     cmd = argv[0] if argv else None
 
+    if cmd in {"-h", "--help", "help"}:
+        print(_USAGE)
+        return 0
+
+    # The GUI, the hub and `serve` configure logging themselves with their own
+    # component tag; every other command is "cli".
+    if cmd not in {None, "serve"} and not (cmd == "launch" and argv[1:2] == ["hub"]):
+        from modsync.logging_setup import configure
+
+        configure("cli", argv)
+
     if cmd in {"doctor", "discover", "scan"}:
         from modsync.cli import doctor
 
         return doctor(argv[1:])
+
+    if cmd == "diagnostics":
+        from modsync.cli import diagnostics
+
+        return diagnostics(argv[1:])
 
     if cmd == "mo2":
         from modsync.cli import mo2
@@ -79,10 +97,6 @@ def main(argv: list[str] | None = None) -> int:
         from modsync.cli import launch
 
         return launch(argv[1:])
-
-    if cmd in {"-h", "--help", "help"}:
-        print(_USAGE)
-        return 0
 
     from modsync.cli import launch_gui
 

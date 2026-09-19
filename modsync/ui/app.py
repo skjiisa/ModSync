@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
+import logging
 import sys
+
+log = logging.getLogger(__name__)
+
+
+def _install_excepthook() -> None:
+    """Qt swallows exceptions raised in slots after printing them; make sure
+    they also land in modsync.log, then let the previous hook have its say."""
+    previous = sys.excepthook
+    if getattr(previous, "_modsync", False):
+        return
+
+    def hook(exc_type, exc, tb):
+        log.error("uncaught exception in the GUI", exc_info=(exc_type, exc, tb))
+        previous(exc_type, exc, tb)
+
+    hook._modsync = True  # type: ignore[attr-defined]
+    sys.excepthook = hook
 
 
 def _application(argv: list[str] | None):
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
+    _install_excepthook()
     args = [sys.argv[0], *(argv or [])]
     app = QApplication.instance() or QApplication(args)
     app.setApplicationName("ModSync")
@@ -24,8 +43,10 @@ def _application(argv: list[str] | None):
 
 
 def run(argv: list[str] | None = None) -> int:
+    from modsync.logging_setup import configure
     from modsync.ui.main_window import MainWindow
 
+    configure("gui", argv)
     app = _application(argv)
     window = MainWindow()
     # Gaming Mode (gamescope) renders non-maximized windows tiny/low-res, so we
@@ -40,9 +61,11 @@ def run_hub(*, appid: int | None = None, through: str | None = None) -> int:
     from PySide6.QtCore import QThreadPool
 
     from modsync import launchhook
+    from modsync.logging_setup import configure
     from modsync.service import ModSyncService
     from modsync.ui.launch_hub import LaunchHub
 
+    configure("hub", ["launch", "hub", f"--appid={appid}", f"--through={through}"])
     app = _application(None)
     service = ModSyncService()
     hub = LaunchHub(service, appid=appid, through=through)
@@ -53,6 +76,8 @@ def run_hub(*, appid: int | None = None, through: str | None = None) -> int:
         service.shutdown()  # stops a Syncthing the hub started; leaves the service's alone
     except Exception:
         pass
-    if hub.decision is not None:
-        return hub.decision
-    return code if code in (launchhook.EXIT_CONTINUE, launchhook.EXIT_CANCEL) else launchhook.EXIT_CANCEL
+    result = hub.decision if hub.decision is not None else (
+        code if code in (launchhook.EXIT_CONTINUE, launchhook.EXIT_CANCEL) else launchhook.EXIT_CANCEL
+    )
+    log.info("hub closed: %s (exit %d)", "cancel" if result == launchhook.EXIT_CANCEL else "continue", result)
+    return result

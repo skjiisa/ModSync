@@ -14,7 +14,7 @@ without touching a single mod file.
 from __future__ import annotations
 
 from PySide6.QtCore import QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from modsync import background, launchhook, platforms
+from modsync import background, diagnostics, launchhook, platforms
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import discover as mo2_discover
 from modsync.service import ModSyncService
@@ -84,10 +84,19 @@ class Dashboard(QWidget):
         scroll.setWidget(body)
         outer.addWidget(scroll, stretch=1)
 
+        footer = QHBoxLayout()
         self._status_line = QLabel("")
         self._status_line.setStyleSheet("color: palette(mid);")
         self._status_line.setWordWrap(True)
-        outer.addWidget(self._status_line)
+        footer.addWidget(self._status_line, stretch=1)
+        self._diag_button = QPushButton("Copy diagnostics")
+        self._diag_button.setToolTip(
+            "Copy the doctor report and the recent ModSync logs to the clipboard for a bug report. "
+            "Pairing codes and keys are redacted."
+        )
+        self._diag_button.clicked.connect(self._copy_diagnostics)
+        footer.addWidget(self._diag_button)
+        outer.addLayout(footer)
 
         self._bg_installed = False
         self._refresh_bg_status()
@@ -407,6 +416,21 @@ class Dashboard(QWidget):
             self._set_status(
                 "No Steam users found — is Steam installed and run at least once?"
             )
+
+    # --- diagnostics -----------------------------------------------------------
+    def _copy_diagnostics(self) -> None:
+        self._diag_button.setEnabled(False)
+        self._set_status("Collecting diagnostics…")
+        run_async(diagnostics.build, on_done=self._on_diagnostics, on_failed=self._on_diagnostics_failed)
+
+    def _on_diagnostics(self, text: str) -> None:
+        QGuiApplication.clipboard().setText(text)
+        self._diag_button.setEnabled(True)
+        self._set_status("Diagnostics copied to the clipboard — paste them into your bug report.")
+
+    def _on_diagnostics_failed(self, message: str) -> None:
+        self._diag_button.setEnabled(True)
+        self._on_error(f"Could not collect diagnostics: {message}")
 
     # --- plumbing ------------------------------------------------------------
     def _on_game_changed(self) -> None:
