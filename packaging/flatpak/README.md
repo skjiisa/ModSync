@@ -80,3 +80,10 @@ Already implemented (just needs the Deck to exercise it):
 - **"Add to Steam" helper** — `modsync steam shortcut` adds ModSync as a
   non-Steam game (`flatpak run io.github.skjiisa.ModSync`) for every Steam user,
   so it's launchable from Gaming Mode.
+- **Launch hook** — `modsync launch enable` writes a compatibility tool into
+  `~/.local/share/Steam/compatibilitytools.d` (covered by `xdg-data/Steam:rw`)
+  whose `proton` script runs *on the host* and starts the hub with
+  `/usr/bin/flatpak run io.github.skjiisa.ModSync launch hub …`. Inside the
+  sandbox, "is Steam running" is answered through `flatpak-spawn --host pgrep`
+  (the sandbox has its own PID namespace). Needs a Deck to confirm the hub window
+  shows and hands off correctly under gamescope.

@@ -15,7 +15,8 @@ try:
 except ImportError:  # pragma: no cover - GUI extra not installed
     QApplication = None
 
-from modsync import background, gameversion
+from modsync import background, gameversion, launchhook
+from modsync.games import SKYRIM_SE
 from modsync.service import GameStatus, ModSyncService, SyncStatus
 from modsync.state import State
 
@@ -63,6 +64,8 @@ class _SmokeBase(unittest.TestCase):
             patch.object(ModSyncService, "my_pairing_code", lambda self: None),
             patch.object(ModSyncService, "accept_pending", lambda self: []),
             patch.object(background, "status", lambda: {"installed": False, "active": "inactive", "enabled": "disabled"}),
+            patch.object(launchhook, "status", lambda appid=SKYRIM_SE.appid: launchhook.LaunchHookStatus(
+                SKYRIM_SE, False, None, False, None, None, False, None, False, True)),
         ]
         for p in patches:
             p.start()
@@ -84,6 +87,8 @@ class DashboardSmokeTests(_SmokeBase):
         dash = self._build()
         self.assertFalse(dash.sync.live)
         self.assertIn("runtime here: 1.7.104", dash.game._label.text())
+        self.assertIn("Steam launch: off", dash._hook_status.text())
+        self.assertIn("Open ModSync when launching", dash._hook_button.text())
 
     def test_instance_only(self):
         State(instance_path=str(self.tmp), instance_label="MO2").save()
@@ -153,3 +158,59 @@ class WizardSmokeTests(_SmokeBase):
         self.assertEqual(wizard._index, 1)  # stayed put
         self.assertIn("stop syncing", wizard._choose._chosen.text())
         self.assertTrue(wizard._next.isEnabled())
+
+
+class LaunchHubSmokeTests(_SmokeBase):
+    def _hub(self, through=None):
+        from modsync.ui.launch_hub import LaunchHub
+
+        hub = LaunchHub(ModSyncService(manager=object()), appid=489830, through=through)
+        hub.resize(1120, 780)
+        QThreadPool.globalInstance().waitForDone(5000)
+        self.app.processEvents()
+        return hub
+
+    def test_labels_follow_the_underlying_tool(self):
+        hub = self._hub(through="mo2_489830_redirector")
+        self.assertEqual(hub.continue_button.text(), "Continue to Mod Organizer")
+        self.assertTrue(hub.continue_button.isDefault())
+        self.assertIn("No Mod Organizer 2 instance", hub._setup_label.text())
+        self.assertIn("Not set up", hub._sync_label.text())
+        hub2 = self._hub(through="GE-Proton10-34")
+        self.assertEqual(hub2.continue_button.text(), "Continue to Skyrim Special Edition")
+
+    def test_setup_summary_and_decisions(self):
+        inst = self.tmp / "MO2"
+        (inst / "profiles" / "Default").mkdir(parents=True)
+        (inst / "mods").mkdir()
+        (inst / "ModOrganizer.ini").write_text("[General]\ngameName=Skyrim Special Edition\nselected_profile=@ByteArray(Default)\n")
+        (inst / "profiles/Default/modlist.txt").write_text("+SkyUI\n-Unused\n+USSEP\n")
+        State(instance_path=str(inst), instance_label="My setup").save()
+        hub = self._hub()
+        self.assertIn("Profile: Default  ·  2 mods enabled", hub._setup_label.text())
+        self.assertIn("Off — this machine's setup is not shared", hub._sync_label.text())
+        hub.proceed()
+        self.assertEqual(hub.decision, launchhook.EXIT_CONTINUE)
+        hub.cancel()  # a second decision does not overwrite the first
+        self.assertEqual(hub.decision, launchhook.EXIT_CONTINUE)
+        other = self._hub()
+        other.cancel()
+        self.assertEqual(other.decision, launchhook.EXIT_CANCEL)
+        closed = self._hub()
+        closed.close()
+        self.assertEqual(closed.decision, launchhook.EXIT_CANCEL)
+
+    def test_syncing_shows_live_state(self):
+        State(instance_path=str(self.tmp), folder_id="modsync-1").save()
+        hub = self._hub()
+        self.assertIn("In sync", hub._sync_label.text())
+        hub._timer.stop()
+
+    def test_auto_decision_env_is_a_testing_aid(self):
+        from PySide6.QtTest import QTest
+
+        with patch.dict(os.environ, {"MODSYNC_HUB_AUTO_DECISION": "cancel"}):
+            hub = self._hub()
+        self.assertIn("Test mode", hub._status_line.text())
+        QTest.qWait(3500)
+        self.assertEqual(hub.decision, launchhook.EXIT_CANCEL)

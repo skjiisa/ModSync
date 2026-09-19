@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import StringIO
 
-from modsync import gameversion, platforms
+from modsync import gameversion, launchhook, platforms
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import discover as mo2_discover
 from modsync.mo2 import instance as mo2_instance
@@ -91,6 +91,11 @@ def build() -> Report:
             line(f"      profiles: {', '.join(info.profiles)}")
         for issue in info.issues:
             line(f"      ! {issue}")
+
+    hook = launchhook.status()
+    line()
+    line(f"Steam launch hook ({SKYRIM_SE.name}): {'on' if hook.enabled else 'off'}")
+    line(f"  • {hook.summary()}")
 
     state = State.load()
     if state.has_instance:

@@ -14,6 +14,9 @@ Get [Mod Organizer 2](https://github.com/ModOrganizer2/modorganizer) modding of
 - **Optionally, sync the whole setup between machines** — desktop ↔ Steam Deck —
   with [Syncthing](https://syncthing.net/), while each machine keeps its own game
   paths.
+- **Optionally, open ModSync when Skyrim is launched from Steam.** Play shows the
+  mod setup, sync state and any game-version / SKSE problem first, with *Continue
+  to Mod Organizer* and *Cancel*.
 
 Each part stands on its own: someone who only wants the downgrader never creates a
 vault. The dashboard is three cards — *Game*, *Mod Organizer 2*, *Sync* — and the
@@ -108,12 +111,65 @@ modsync sync join <code> <instance> # copy another machine's setup here
 modsync serve                       # keep syncing in the foreground
 ```
 
+## Opening ModSync from Steam's Play button (optional)
+
+With the launch hook on, pressing **Play** on Skyrim — in Gaming Mode or on the
+desktop — opens ModSync as a small modding hub before anything else starts: the
+instance and profile in use with the number of enabled mods, the game-version
+card (installed vs. expected runtime, SKSE, Steam's update state, with the
+Downgrade and Keep-this-version buttons), and the vault's sync state if there is
+one, so a mod list that is still arriving is noticed before the game loads.
+**Continue to Mod Organizer** carries the very same Steam launch on; **Cancel**
+(or closing the window) ends it cleanly and Steam returns to the library.
+
+How it works: Steam runs whatever *compatibility tool* is selected for a game,
+and the hook is one more such tool — `compatibilitytools.d/modsync_489830_hub`,
+the approach MO2-LINT introduced in
+[PR #1096](https://github.com/Furglitch/modorganizer2-linux-installer/pull/1096)
+for its own `mo2_489830_redirector`. Its `proton` script opens the hub and then
+hands the launch on to the tool Steam used before, inside the Steam Linux
+Runtime container that tool asks for. When MO2-LINT's redirector is installed
+the chain is Play → ModSync → Mod Organizer 2; otherwise it is Play → ModSync →
+the game with the previously selected Proton, and the button says *Continue to
+Skyrim Special Edition*. The hook declares no runtime requirement of its own, so
+Steam runs it on the host where a window can be shown (Steam Tinker Launch
+works the same way).
+
+It survives updates on both sides. Nothing of MO2-LINT's is copied: the chain
+refers to its tool directory and re-reads its `toolmanifest.vdf` on every
+launch, so a reinstalled or upgraded redirector (new Proton, new runtime) is
+picked up as-is; and the hub is started through a stable command
+(`flatpak run io.github.skjiisa.ModSync` or the installed `modsync`), never a
+versioned path. Steam's own choice is recorded before it is changed and written
+back by **Turn off**. If ModSync cannot start at all, the launch goes ahead
+anyway — the hook never keeps a game from starting.
+
+Steam only reads `config.vdf` and `compatibilitytools.d` on startup, and rewrites
+the former on exit, so turning the hook on or off ends with a Steam restart. With
+Steam running the switch is queued and applied by the open app or the background
+service the moment Steam is closed (on the Deck: Power → Restart Steam) — or pick
+“ModSync (Skyrim Special Edition)” yourself under *Properties → Compatibility*.
+
+```sh
+modsync launch status               # on/off, what Steam runs the game with, what Continue leads to
+modsync launch enable [--through T] # T: a compat-tool name to chain to instead of the detected one
+modsync launch disable              # restore the previous launcher and remove the tool
+```
+
+Not yet exercised on a Steam Deck: the hub window's focus and the hand-off to
+Mod Organizer under gamescope, and gamepad A/B mapping to Continue/Cancel (the
+hub makes Continue the default button and Esc cancels). Setting
+`MODSYNC_HUB_AUTO_DECISION=cancel %command%` in the game's launch options makes
+the hub decide by itself after a few seconds, which is how the chain can be
+tried without a controller in hand.
+
 ## Background service
 
 By default ModSync only acts while the app (or `modsync serve`) is running.
 **Run in background** installs a user service that starts at login and, without
-the app window, applies a queued Steam pin the moment Steam exits, notices when
-Steam updates the game, and — if a vault exists — keeps it syncing. If the service
+the app window, applies a queued Steam pin or launch-hook switch the moment Steam
+exits, notices when Steam updates the game, and — if a vault exists — keeps it
+syncing. If the service
 initially shares the app's process, it starts a replacement on its next poll after
 the app closes; transfers resume automatically. Both machines still need to be
 awake and connected.
@@ -136,6 +192,7 @@ modsync sync create | join          # optional
 modsync serve                       # foreground loop; what the background service runs
 modsync service install [--linger] | status | uninstall
 modsync steam shortcut              # add ModSync as a non-Steam game (Gaming Mode)
+modsync launch status | enable | disable   # open ModSync when Skyrim is launched from Steam
 ```
 
 ## Status
