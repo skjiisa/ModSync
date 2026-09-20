@@ -44,7 +44,9 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     cmd = argv[0] if argv else None
 
-    if cmd in {"-h", "--help", "help"}:
+    # `--help` anywhere prints the usage: `modsync serve --help` used to start
+    # the server, since subcommands take their arguments positionally.
+    if cmd in {"-h", "--help", "help"} or {"-h", "--help"} & set(argv):
         print(_USAGE)
         return 0
 
