@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "modsync"
-version = "0.1.0.dev0"
+version = "0.1.0rc1"
 description = "Set up Skyrim SE for modding on Steam Deck and Linux: install Mod Organizer 2, keep the game version your mods need, optionally sync between machines"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,3 +31,17 @@ modsync = "modsync.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["modsync"]
+
+# The sdist is explicit so a local Flatpak build tree or scratch files next to
+# the checkout never end up in a release.
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "modsync",
+    "tests",
+    "scripts",
+    "packaging",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+]

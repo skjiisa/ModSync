@@ -16,13 +16,28 @@ downgrader never sets up sync.
 ### Flatpak (recommended, Steam Deck and any Linux)
 
 The Flatpak bundles Syncthing, PySide6, xdelta3 and 7-Zip, so nothing needs to be
-installed on the host and nothing collides with a system Python or Syncthing. It is
-built locally for now; a Flathub listing is planned. Build and install it with the
-steps in [packaging/flatpak/README.md](packaging/flatpak/README.md), then:
+installed on the host and nothing collides with a system Python or Syncthing.
+ModSync is not on Flathub; each release ships a single-file bundle instead.
 
-```sh
-flatpak run io.github.skjiisa.ModSync
-```
+1. Download `ModSync-<version>-x86_64.flatpak` from the
+   [latest release](https://github.com/skjiisa/ModSync/releases). On a Steam
+   Deck, do this in Desktop Mode.
+2. Open the file with **Discover** (double-click it in the file manager) and
+   click *Install*, or from a terminal:
+
+   ```sh
+   flatpak install --user ~/Downloads/ModSync-*-x86_64.flatpak
+   ```
+
+   Either way the `org.kde.Platform` runtime is fetched from Flathub, which
+   SteamOS already has set up (about 300 MB the first time, shared with every
+   other KDE app).
+3. Launch **ModSync** from the application menu, or `flatpak run io.github.skjiisa.ModSync`.
+   The dashboard's *Add to Steam* button makes it launchable from Gaming Mode.
+
+A bundle does not update itself: to upgrade, install the newer release's file
+the same way over the old one. To build the Flatpak from source, see
+[packaging/flatpak/README.md](packaging/flatpak/README.md).
 
 ### From source (uv or pip)
 
@@ -262,7 +277,8 @@ modsync launch status | enable | disable   # open ModSync when Skyrim is launche
 
 ## Status
 
-Early development; not yet released.
+Pre-release: `0.1.0-rc1` is the first public build, published as a Flatpak
+bundle on the [releases page](https://github.com/skjiisa/ModSync/releases).
 
 **Works and verified on desktop Linux:** Steam library, game and MO2 instance
 discovery; guided MO2 install through MO2-LINT against a real Skyrim SE install;
@@ -277,8 +293,8 @@ focus and hand-off under gamescope with a controller, and Steam Deck mode
 transitions for the background service. See "Still to do" in
 [packaging/flatpak/README.md](packaging/flatpak/README.md).
 
-**Not started:** a Flathub listing (the Python wheels still need pinning for an
-offline build), and Windows, which is a later target.
+**Not planned:** a Flathub listing; the GitHub release bundle is the release
+channel. Windows is a later target.
 
 ## Third-party components and licenses
 

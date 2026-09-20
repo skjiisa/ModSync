@@ -131,3 +131,12 @@ modules:
     sources:
       - type: dir
         path: ../..
+        # Never copy a build's own output back into the source tree: the
+        # release workflow keeps its build and state dirs inside the checkout.
+        skip:
+          - .flatpak-builder
+          - flatpak_app
+          - repo
+          - .git
+          - .venv
+          - scratch

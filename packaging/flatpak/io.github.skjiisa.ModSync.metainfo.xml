@@ -34,9 +34,10 @@
   <url type="homepage">https://github.com/skjiisa/ModSync</url>
   <url type="bugtracker">https://github.com/skjiisa/ModSync/issues</url>
   <releases>
-    <release version="0.1.0" date="2026-06-26">
+    <release version="0.1.0~rc1" date="2026-09-20" type="development">
+      <url>https://github.com/skjiisa/ModSync/releases/tag/v0.1.0-rc1</url>
       <description>
-        <p>Early development build: Syncthing core, device pairing, guided MO2 install, and the wizard/dashboard UI.</p>
+        <p>First public pre-release, as a Flatpak bundle: guided MO2 install, game version detection and downgrade with Steam pinning, the Steam launch hook, and optional Syncthing sync between machines.</p>
       </description>
     </release>
   </releases>

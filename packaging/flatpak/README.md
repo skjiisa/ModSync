@@ -55,6 +55,35 @@ package) or Flathub (`flatpak install flathub org.flatpak.Builder`, then run
 `flatpak run org.flatpak.Builder` in place of `flatpak-builder` in the command
 above, with the same arguments).
 
+## Release bundle
+
+ModSync is not on Flathub. Each release attaches a single-file bundle,
+`ModSync-<version>-x86_64.flatpak`, that users install with Discover or
+`flatpak install --user`. `.github/workflows/release.yml` builds it on every
+`v*` tag (and on demand via *Run workflow*, as an artifact only) using
+[flatpak-github-actions](https://github.com/flathub-infra/flatpak-github-actions),
+smoke-tests `modsync --version` inside it, and publishes the GitHub release
+together with the wheel/sdist. Tags with a suffix (`v0.1.0-rc1`) become
+pre-releases. The version in the tag must equal `pyproject.toml` and
+`modsync/__init__.py` (`0.1.0rc1` for `v0.1.0-rc1`).
+
+To build the same bundle locally, add `--repo` to the build and export it:
+
+```sh
+flatpak-builder --force-clean --repo="$HOME/.cache/modsync-flatpak/repo" \
+    --state-dir="$HOME/.cache/modsync-flatpak/state" \
+    "$HOME/.cache/modsync-flatpak/build" \
+    packaging/flatpak/io.github.skjiisa.ModSync.yaml
+flatpak build-bundle "$HOME/.cache/modsync-flatpak/repo" ModSync.flatpak \
+    io.github.skjiisa.ModSync \
+    --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+```
+
+`--runtime-repo` is what lets a machine without the KDE runtime fetch it from
+Flathub when the bundle is installed. Bundles are unsigned and do not update
+themselves; a hosted OSTree repository (e.g. on GitHub Pages) would be the
+next step if that ever matters.
+
 ## How the manifest is put together
 
 - **Bundled Syncthing** — a pinned static `syncthing` binary installed to
@@ -115,9 +144,10 @@ flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
 
 - **Build + test on a real Deck** — build with the steps above, then run the
   full two-machine flow in both Desktop and Gaming Mode.
-- **Flathub submission** — the manifest builds offline and lints clean apart
-  from the three `finish-args` exceptions (see *Reproducible / Flathub
-  builds*); what's left is the submission itself and the exception requests.
+- **Flathub submission** — not planned; the release bundle above is the
+  channel. The manifest still builds offline and lints clean apart from the
+  three `finish-args` exceptions (see *Reproducible / Flathub builds*), so a
+  listing stays possible.
 
 Already implemented (just needs the Deck to exercise it):
 

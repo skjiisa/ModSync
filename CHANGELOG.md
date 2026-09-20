@@ -6,7 +6,18 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
-Early development; nothing has been released yet. What exists so far:
+## [0.1.0-rc1] - 2026-09-20
+
+First public pre-release. Ships as a Flatpak bundle attached to the GitHub
+release; there is no Flathub listing. Tested on a desktop Linux install
+(native and Flatpak Steam); the Steam Deck pass is what this release candidate
+is for.
+
+### Added
+
+- `modsync --version`.
+- Release workflow: pushing a `v*` tag builds the Flatpak bundle and the
+  Python wheel/sdist and publishes them as a GitHub (pre-)release.
 
 ### Changed
 
