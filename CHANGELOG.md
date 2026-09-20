@@ -10,6 +10,9 @@ Early development; nothing has been released yet. What exists so far:
 
 ### Changed
 
+- Use the updated inset Canva icon with deeper transparent rounded corners,
+  preserving the supplied artwork in both the scalable SVG and 512px PNG.
+
 - Shorten Skyrim version warnings and show the next action in
   plain language. Keep technical version details in a tooltip.
 
