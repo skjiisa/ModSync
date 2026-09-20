@@ -22,15 +22,6 @@ when generating them.
 - Make “Install MO2…” open the installation step. Add step labels, a shorter
   welcome screen and a way back to the dashboard from each idle setup step.
 
-## Launching MO2 and Skyrim
-
-“Open MO2” opens the chosen portable instance. The prominent “Play Skyrim”
-button uses that instance’s selected profile and prefers SKSE. Start Steam
-before playing. Both actions reuse Skyrim’s existing Proton setup and the
-runtime required by that Proton version. Launch errors point to a log file.
-
-![Configured dashboard with launch buttons](configured-dark.png)
-
 ## Dashboard
 
 ![Light dashboard](dashboard-light.png)
