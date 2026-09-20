@@ -6,6 +6,9 @@ when generating them.
 
 ## What changed
 
+- Shorten Skyrim version warnings to the problem and next step, explain SKSE,
+  and move DLL/patch details into a tooltip.
+
 - Replace every text use of Qt's `Mid` border/shading color with a shared,
   readable secondary text color. Light and dark themes follow the system setting.
 - Increase the base text size (while retaining larger user font settings), give

@@ -10,6 +10,9 @@ Early development; nothing has been released yet. What exists so far:
 
 ### Changed
 
+- Shorten Skyrim version warnings, explain SKSE, and show the next action in
+  plain language. Keep technical version details in a tooltip.
+
 - Refresh the dashboard, setup wizard and launch hub with shared light/dark
   styling, readable secondary text, larger controls, visible keyboard focus
   and padded warnings. Replace all uses of Qt's border color for text.
