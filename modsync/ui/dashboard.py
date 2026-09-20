@@ -51,6 +51,7 @@ class Dashboard(QWidget):
     def __init__(self, service: ModSyncService, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.service = service
+        self._launching = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 24, 28, 20)
@@ -109,8 +110,10 @@ class Dashboard(QWidget):
         self._timer.timeout.connect(self.sync.poll)
         self._timer.timeout.connect(self._refresh_bg_status)
         self._timer.timeout.connect(self._poll_hook)
+        self._timer.timeout.connect(self._poll_launch)
         self._timer.start(_POLL_MS)
         self.game.busyChanged.connect(self._on_busy)
+        self._update_launch_buttons()
 
     def resizeEvent(self, event) -> None:
         self._top_cards.setDirection(
@@ -129,10 +132,19 @@ class Dashboard(QWidget):
         title.setWordWrap(True)
         row.addWidget(title)
         row.addStretch(1)
+        self._play_button = QPushButton("▶  Play Skyrim")
+        role(self._play_button, "primary")
+        self._play_button.setMinimumHeight(48)
+        self._play_button.setMinimumWidth(190)
+        self._play_button.setEnabled(state.has_instance)
+        self._play_button.setToolTip(
+            "Launch Skyrim through the chosen MO2 instance and its selected profile. "
+            "Uses SKSE when available. Choose an MO2 instance first."
+        )
+        self._play_button.clicked.connect(lambda: self._launch_mo2(play=True))
+        row.addWidget(self._play_button)
 
         wizard = self._wizard_button = QPushButton("Setup wizard")
-        if not state.has_instance:
-            role(wizard, "primary")
         wizard.setToolTip("Prefer a guided, step-by-step flow? Run the wizard instead.")
         wizard.clicked.connect(self.wizardRequested.emit)
         row.addWidget(wizard)
@@ -178,10 +190,21 @@ class Dashboard(QWidget):
         box = QGroupBox("Mod Organizer 2")
         v = QVBoxLayout(box)
         state = self.service.state
+        self._open_mo2_button = None
         if state.has_instance:
             path = QLabel(f"✅  {state.instance_path}")
             path.setWordWrap(True)
             v.addWidget(path)
+            launch_row = QHBoxLayout()
+            self._open_mo2_button = QPushButton("Open MO2")
+            self._open_mo2_button.setToolTip("Open the chosen Mod Organizer 2 instance to manage mods and profiles")
+            self._open_mo2_button.clicked.connect(lambda: self._launch_mo2(play=False))
+            launch_row.addWidget(self._open_mo2_button)
+            launch_note = QLabel("Play Skyrim uses MO2’s selected profile and SKSE when available.")
+            launch_note.setWordWrap(True)
+            role(launch_note, "secondary")
+            launch_row.addWidget(launch_note, stretch=1)
+            v.addLayout(launch_row)
             row = QHBoxLayout()
             open_folder = QPushButton("Open instance folder")
             open_folder.clicked.connect(self._open_folder)
@@ -258,6 +281,43 @@ class Dashboard(QWidget):
         path = self.service.state.instance_path
         if path:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _launch_mo2(self, *, play: bool) -> None:
+        if self.busy or self._launching:
+            return
+        self._launching = True
+        self._update_launch_buttons()
+        self._set_status("Starting Skyrim through MO2…" if play else "Opening MO2…")
+        run_async(self.service.launch_mo2, play=play,
+                  on_done=self._on_launched, on_failed=self._on_launch_failed)
+
+    def _on_launched(self, message: str) -> None:
+        self._launching = False
+        self._set_status(message)
+        self._update_launch_buttons()
+
+    def _on_launch_failed(self, message: str) -> None:
+        self._launching = False
+        self._on_error(message)
+        self._update_launch_buttons()
+
+    def _poll_launch(self) -> None:
+        for message in self.service.launcher.poll():
+            self._on_error(message)
+        self._update_launch_buttons()
+
+    def _update_launch_buttons(self) -> None:
+        ready = self.service.state.has_instance and not self.busy and not self._launching
+        self._play_button.setEnabled(ready and not self.service.launcher.running(play=True))
+        self._wizard_button.setEnabled(not self.busy)
+        if self._reset_button is not None:
+            self._reset_button.setEnabled(not self.busy)
+        self.mo2.setEnabled(not self.busy)
+        self.sync.setEnabled(not self.busy)
+        if self._open_mo2_button is not None:
+            self._open_mo2_button.setEnabled(ready and not self.service.launcher.running(play=False))
+        # Do not rewrite game files while a launch from this app is alive.
+        self.game.setEnabled(not self._launching and not self.service.launcher.running())
 
     # --- background service, Steam shortcut, launch hook -----------------------
     def _build_integration_group(self) -> QGroupBox:
@@ -450,7 +510,7 @@ class Dashboard(QWidget):
     # --- plumbing ------------------------------------------------------------
     @property
     def busy(self) -> bool:
-        return self.game.busy
+        return self.game.busy or self._launching
 
     def _on_busy(self, busy: bool) -> None:
         self._wizard_button.setEnabled(not busy)
@@ -458,6 +518,7 @@ class Dashboard(QWidget):
             self._reset_button.setEnabled(not busy)
         self.mo2.setEnabled(not busy)
         self.sync.setEnabled(not busy)
+        self._update_launch_buttons()
 
     def _on_game_changed(self) -> None:
         # A downgrade or a re-record changes nothing the other cards show right

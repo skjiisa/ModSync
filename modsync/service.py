@@ -20,6 +20,7 @@ from pathlib import Path
 from modsync import config, gameversion, pairing_lan, platforms
 from modsync.downgrade import engine, recipe
 from modsync.games import SKYRIM_SE
+from modsync.mo2.launch import Launcher, build_plan
 from modsync.pairing_code import PairingCode
 from modsync.state import State
 from modsync.steam import appinfo, libraries as libs, prefixes, shortcuts
@@ -130,6 +131,7 @@ class PinOutcome:
 class ModSyncService:
     def __init__(self, manager: SyncthingManager | None = None) -> None:
         self.state = State.load()
+        self.launcher = Launcher()
         self.manager = manager or SyncthingManager(
             home=config.syncthing_home(),
             log_file=config.data_dir() / "syncthing.log",
@@ -183,6 +185,10 @@ class ModSyncService:
         self.state.save()
         if gameversion.VaultMeta.load(instance_path) is None:
             self.record_initial_vault_version()
+
+    def launch_mo2(self, *, play: bool = False) -> str:
+        plan = build_plan(self.state.instance_path, play=play)
+        return self.launcher.start(plan)
 
     def forget_instance(self) -> None:
         """Stop using the chosen instance (and its vault, if any). Files stay."""

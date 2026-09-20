@@ -257,7 +257,7 @@ class LaunchHookStatus:
                     f"On, but the tool it hands off to ({self.underlying_display}) is missing — "
                     f"{g} will not start. Turn the hook off or on again."
                 )
-            return f"On — Play opens ModSync, then continues to {self.hands_off_to}."
+            return f"On — Steam’s Play button opens ModSync, then continues to {self.hands_off_to}."
         if self.installed:
             via = f" with {self.current_mapping}" if self.current_mapping else ""
             return (
@@ -269,7 +269,7 @@ class LaunchHookStatus:
                 f"Steam is set to launch {g} through ModSync, but the hook files are gone — "
                 "turn it off to restore the previous launcher, or on to reinstall."
             )
-        return f"Off — Play starts {g} directly."
+        return f"Off — Steam’s Play button starts {g} directly."
 
 
 def describe_target(underlying_name: str | None, underlying_display: str | None = None) -> str:
