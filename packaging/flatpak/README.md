@@ -13,13 +13,14 @@ Syncthing, no collisions.
 | `io.github.skjiisa.ModSync.metainfo.xml` | AppStream metadata (store listing). |
 | `icons/io.github.skjiisa.ModSync.svg` / `.png` | App icon (scalable + 512px). |
 
-The logo was designed in Canva and exported as PDF. The `.svg` is that PDF
+The logo was designed in Canva; the latest inset export is preserved in
+`icons/source/ModSync.pdf`. The `.svg` is that PDF
 converted with `pdftocairo -svg` (canvas attributes set to 512×512; the hex
 background is a small embedded bitmap, everything else is vector). The `.png`
 is rendered from the `.svg` with `rsvg-convert -w 512 -h 512`.
 
 The outer `app-icon-corners` clip gives the icon transparent rounded corners
-(64px radius at 512px). The original artwork and embedded bitmap are unchanged;
+(96px radius at 512px). The supplied PDF artwork and embedded bitmap are unchanged;
 there is no recoloring, padding, shadow or redrawing. Keep the scalable and
 raster versions in sync when updating the presentation:
 

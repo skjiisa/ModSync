@@ -1,18 +1,19 @@
 # Icon presentation review
 
-The same source artwork, with transparent rounded corners. The letter, arrows,
-colors, hexagon pattern and their positions are unchanged. A 64px corner radius
-at 512px softens the tile while retaining its size and alignment.
+Use the updated Canva export with more space around the letter and arrows,
+preserved in [the source PDF](../../packaging/flatpak/icons/source/ModSync.pdf).
+Apply transparent rounded corners with a 96px radius at 512px (up from 64px
+in the initial proposal). The extra inset leaves room for the deeper curve.
 
-The SVG wraps the original artwork in a rounded clipping path; the PNG is
-rendered from that SVG using the existing librsvg workflow. No new artwork,
-color treatment, border or shadow is added.
+The SVG wraps the supplied artwork in a rounded clipping path; the PNG is
+rendered from that SVG using librsvg. No redrawing, recoloring, extra scaling,
+border or shadow is applied to the supplied design.
 
-The comparison shows the original on the left and rounded version on the right
-for each background, at 220, 128, 64 and 32 pixels.
+The comparison shows the new square Canva export on the left and its rounded
+version on the right, at 220, 128, 64 and 32 pixels on each background.
 
-![Before and after on light and dark backgrounds](comparison.png)
+![Updated export and rounded version on light and dark backgrounds](comparison.png)
 
-Validation: SVG artwork is byte-for-byte identical after removing the outer
-clip and wrapper. PNG transparency is confined to the corners; all pixels outside the
-corner regions retain their original colors. Both packaged formats are updated.
+Validation: removing the new clip and wrapper reproduces the PDF-converted SVG
+apart from its 512px canvas dimensions. PNG pixels outside the corner regions
+match the square export exactly. Both packaged formats are updated.

@@ -10,8 +10,8 @@ Early development; nothing has been released yet. What exists so far:
 
 ### Changed
 
-- Round the app icon’s corners with transparency, preserving the original
-  artwork in both the scalable SVG and 512px PNG.
+- Use the updated inset Canva icon with deeper transparent rounded corners,
+  preserving the supplied artwork in both the scalable SVG and 512px PNG.
 
 - Shorten Skyrim version warnings and show the next action in
   plain language. Keep technical version details in a tooltip.
