@@ -18,6 +18,18 @@ converted with `pdftocairo -svg` (canvas attributes set to 512×512; the hex
 background is a small embedded bitmap, everything else is vector). The `.png`
 is rendered from the `.svg` with `rsvg-convert -w 512 -h 512`.
 
+The outer `app-icon-corners` clip gives the icon transparent rounded corners
+(64px radius at 512px). The original artwork and embedded bitmap are unchanged;
+there is no recoloring, padding, shadow or redrawing. Keep the scalable and
+raster versions in sync when updating the presentation:
+
+```sh
+rsvg-convert -w 512 -h 512 packaging/flatpak/icons/io.github.skjiisa.ModSync.svg \
+  -o packaging/flatpak/icons/io.github.skjiisa.ModSync.png
+```
+
+[Before/after previews on light and dark backgrounds](../../docs/icon-review/README.md).
+
 ## Build & run locally
 
 ```sh
