@@ -11,6 +11,12 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
+# flatpak-builder state and output when built inside the checkout (CI does)
+.flatpak-builder/
+/flatpak_app/
+/repo/
+*.flatpak
+
 # Bundled / downloaded binaries (fetched at build time)
 /vendor/syncthing*
 /vendor/*.bin

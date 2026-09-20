@@ -47,7 +47,7 @@ See [packaging/flatpak/README.md](packaging/flatpak/README.md) for the full
 notes. In short:
 
 ```sh
-flatpak install -y flathub org.kde.Platform//6.9 org.kde.Sdk//6.9
+flatpak install -y flathub org.kde.Platform//6.11 org.kde.Sdk//6.11 io.qt.PySide.BaseApp//6.11
 flatpak-builder --user --install --force-clean \
     --state-dir="$HOME/.cache/modsync-flatpak/state" \
     "$HOME/.cache/modsync-flatpak/build" \

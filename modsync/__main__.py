@@ -15,6 +15,7 @@ usage:
   modsync                                launch the GUI (requires PySide6)
   modsync doctor                         inspect this machine (Steam, Skyrim SE, MO2, current setup)
   modsync diagnostics                    everything for a bug report: doctor + recent logs (secrets redacted)
+  modsync --version                      print the ModSync version
 
   modsync mo2 status                     the Mod Organizer 2 instance in use
   modsync mo2 use <instance-dir>         use an existing portable instance
@@ -48,6 +49,12 @@ def main(argv: list[str] | None = None) -> int:
     # the server, since subcommands take their arguments positionally.
     if cmd in {"-h", "--help", "help"} or {"-h", "--help"} & set(argv):
         print(_USAGE)
+        return 0
+
+    if cmd in {"-V", "--version", "version"}:
+        from modsync import __version__
+
+        print(f"ModSync {__version__}")
         return 0
 
     # The GUI, the hub and `serve` configure logging themselves with their own
