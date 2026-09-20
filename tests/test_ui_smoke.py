@@ -90,6 +90,34 @@ class DashboardSmokeTests(_SmokeBase):
         self.assertIn("Steam launch: off", dash._hook_status.text())
         self.assertIn("Open ModSync when launching", dash._hook_button.text())
 
+    def test_first_run_warnings_are_readable_without_an_instance(self):
+        from modsync.ui.game_card import GameCard
+
+        service = ModSyncService(manager=object())
+        card = GameCard(service)
+        QThreadPool.globalInstance().waitForDone(5000)
+        self.app.processEvents()
+        installed = gameversion.GameVersion.parse("1.7.104")
+        skse = gameversion.GameVersion.parse("1.5.97")
+        check = gameversion.VersionCheck(
+            installed, None,
+            skse=gameversion.SkseCheck([
+                gameversion.SkseFile(Path("skse64_1_5_97.dll"), skse, "game folder")
+            ]),
+        )
+        with patch.object(service, "game_version_check", return_value=check):
+            card._on_game_status(fake_game_status(service))
+        self.assertIn("1.5.97", card._label.text())
+        self.assertEqual(card._label.styleSheet(), "color: palette(text);")
+        status = fake_game_status(service)
+        status.steam_is_current = False
+        card._on_game_status(status)
+        self.assertIn("Steam wants to update", card._label.text())
+        self.assertEqual(card._label.styleSheet(), "color: palette(text);")
+        card._on_game_status(fake_game_status(service))
+        self.assertNotIn("Steam wants to update", card._label.text())
+        self.assertEqual(card._label.styleSheet(), "color: palette(mid);")
+
     def test_instance_only(self):
         State(instance_path=str(self.tmp), instance_label="MO2").save()
         dash = self._build()

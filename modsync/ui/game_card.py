@@ -192,6 +192,10 @@ class GameCard(QGroupBox):
                 )
             else:
                 lines.append(f"•  No recipe reaches {st.wanted} yet (targets: {', '.join(st.recipe_targets)}).")
+        # Warnings can be appended after an otherwise healthy/unconfigured
+        # summary. Keep them readable in the active theme, including first run.
+        if vc.mismatch or vc.skse_suggests or st.needs_pin:
+            self._label.setStyleSheet("color: palette(text);")
         self._label.setText("\n".join(lines))
         # Offer to (re)record only when there is a setup to record into and it
         # would change what the record says.
