@@ -101,9 +101,10 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False) -> Launc
     if proton is None:
         raise RuntimeError("Skyrim's last-used Proton wasn't found. Launch Skyrim once through Steam, then try again.")
 
-    # Force this portable instance even when the same prefix remembers a
-    # different global instance. Passing no profile preserves MO2's own choice.
-    mo2_args = ["-i", ""]
+    # Passing no profile preserves MO2's own choice. The portable instance is
+    # pinned with MO2's portable.txt marker at launch time (see Launcher.start):
+    # `-i ""` makes MO2 2.5 exit silently before it writes any log.
+    mo2_args: list[str] = []
     profile = ini.unwrap_bytearray(ini.get_ci(general, "selected_profile"))
     if profile:
         mo2_args += ["-p", profile]
@@ -166,6 +167,10 @@ class Launcher:
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists() and path.stat().st_size > 1_000_000 and not any(p.poll() is None for p, _, _ in self._processes):
                 path.replace(path.with_suffix(".log.1"))
+            # MO2's own marker for a portable install: it makes MO2 open the
+            # instance next to ModOrganizer.exe even when the prefix remembers a
+            # different global instance. Nothing else is written.
+            (plan.cwd / "portable.txt").touch(exist_ok=True)
             env = dict(os.environ)
             # Steam/Qt preload settings belong to the calling GUI, not Proton.
             for key in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH"):

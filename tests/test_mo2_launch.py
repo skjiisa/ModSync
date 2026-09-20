@@ -42,7 +42,7 @@ class LaunchTests(unittest.TestCase):
     def test_open_uses_existing_prefix_runtime_and_selected_profile(self):
         plan = launch.build_plan(self.instance)
         self.assertEqual(plan.argv[:3], [str(self.common / "SteamLinuxRuntime_4/_v2-entry-point"), "--verb=run", "--"])
-        self.assertEqual(plan.argv[3:], [str(self.proton / "proton"), "run", str(self.instance / "ModOrganizer.exe"), "-i", "", "-p", "My Profile"])
+        self.assertEqual(plan.argv[3:], [str(self.proton / "proton"), "run", str(self.instance / "ModOrganizer.exe"), "-p", "My Profile"])
         self.assertEqual(plan.env["STEAM_COMPAT_DATA_PATH"], str(self.compat))
         self.assertEqual(plan.env["SteamAppId"], "489830")
         self.assertEqual(plan.cwd, self.instance)
@@ -116,6 +116,7 @@ class LaunchTests(unittest.TestCase):
             popen.return_value.poll.return_value = None
             launcher = launch.Launcher()
             launcher.start(plan)
+            self.assertTrue((self.instance / "portable.txt").is_file())
             argv = popen.call_args.args[0]
             self.assertEqual(argv[:4], ["flatpak-spawn", "--host", f"--directory={self.instance}", "env"])
             self.assertEqual(argv[-len(plan.argv):], plan.argv)
