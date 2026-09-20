@@ -168,7 +168,7 @@ class GameCard(QGroupBox):
                 lines.append(f"⚠ Your mod setup needs version {vc.expected}. Some mods may not work yet.")
                 warning = True
             elif vc.skse_suggests:
-                lines.append(f"⚠ SKSE (a modding tool) needs Skyrim {vc.skse_suggests}.")
+                lines.append(f"⚠ SKSE needs Skyrim {vc.skse_suggests}.")
                 warning = True
             elif vc.ok:
                 lines.append("Matches the version your mod setup needs.")
@@ -178,7 +178,7 @@ class GameCard(QGroupBox):
                 warning = True
             elif not st.steam_updating and vc.expected is not None and vc.skse.runtime is not None:
                 if vc.skse.runtime != vc.expected:
-                    lines.append(f"Install SKSE (a modding tool) for Skyrim {vc.expected} to match your mods.")
+                    lines.append(f"Install SKSE for Skyrim {vc.expected} to match your mods.")
                     warning = True
 
         if st.suggested_target:
