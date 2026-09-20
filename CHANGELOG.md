@@ -14,6 +14,9 @@ Early development; nothing has been released yet. What exists so far:
   restore or MO2 install is running. Restore now blocks competing game actions
   and launching the game until it finishes; controls recover after failures.
 - Stop dashboard polling and network pairing when opening the setup wizard.
+- Clear old network pairing results when rescanning, so selecting a scanning
+  or failure message cannot join a machine from the previous scan. The setup
+  wizard disables Finish until a machine from the new results is selected.
 
 ### Added
 

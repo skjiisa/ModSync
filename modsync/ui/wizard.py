@@ -399,10 +399,14 @@ class VaultPage(Page):
 
     # --- network discovery ---
     def _scan(self) -> None:
+        if not self._scan_btn.isEnabled():
+            return
+        self._announcements = []
         self._scan_btn.setEnabled(False)
         self._selected = None
         self._net_list.clear()
         self._net_list.addItem("Scanning…")
+        self.completenessChanged.emit()
         run_async(
             pairing_lan.discover,
             on_done=self._on_scanned,
