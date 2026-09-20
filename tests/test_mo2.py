@@ -75,5 +75,43 @@ class InstanceInspectTests(unittest.TestCase):
             self.assertIn(instdir.resolve(), found)
 
 
+
+class BrokenInstanceTests(unittest.TestCase):
+    def test_ini_without_content_dirs_or_exe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            instdir = Path(tmp) / "MO2"
+            instdir.mkdir()
+            (instdir / "ModOrganizer.ini").write_text(INI)
+            info = inst.inspect(instdir)
+            self.assertTrue(info.has_ini)
+            self.assertEqual(info.profiles, [])
+            for name in ("mods", "downloads", "profiles", "overwrite"):
+                self.assertFalse(info.content_dirs[name].exists, name)
+                self.assertTrue(info.content_dirs[name].inside_instance, name)
+            self.assertEqual(info.issues, [])
+            self.assertFalse(discover.is_instance(instdir))  # needs mods/ to count
+
+    def test_garbage_ini_is_reported_not_raised(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            instdir = Path(tmp) / "MO2"
+            (instdir / "mods").mkdir(parents=True)
+            (instdir / "ModOrganizer.ini").write_bytes(b"\x00\xff\xfe[General\n=\nkey\n")
+            info = inst.inspect(instdir)
+            self.assertFalse(info.has_ini)
+            self.assertEqual(info.game_name, "")
+            self.assertIsNone(info.game_path_local)
+            self.assertIn("No readable ModOrganizer.ini found.", info.issues)
+            self.assertTrue(discover.is_instance(instdir))
+
+    def test_missing_ini_and_exe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            instdir = Path(tmp) / "MO2"
+            (instdir / "mods").mkdir(parents=True)
+            info = inst.inspect(instdir)
+            self.assertFalse(info.has_ini)
+            self.assertIn("No readable ModOrganizer.ini found.", info.issues)
+            self.assertFalse(discover.is_instance(instdir))
+            self.assertEqual(discover.discover_instances([Path(tmp)], []), [])
+
 if __name__ == "__main__":
     unittest.main()

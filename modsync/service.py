@@ -60,6 +60,7 @@ class GameStatus:
     steam_running: bool
     pending_pin: bool
     recipe_from: str | None
+    steam_updating: bool = False  # Steam is mid-download/commit; nothing here is final
     recipe_targets: list[str] = field(default_factory=list)
     recipe_origin: str = ""
     skse_runtime: gameversion.GameVersion | None = None  # what the installed SKSE is built for
@@ -87,7 +88,7 @@ class GameStatus:
 
     @property
     def needs_downgrade(self) -> bool:
-        return self.installed is not None and self.wanted is not None and self.installed != self.wanted
+        return not self.steam_updating and self.installed is not None and self.wanted is not None and self.installed != self.wanted
 
     @property
     def can_downgrade_to(self) -> list[str]:
@@ -100,14 +101,14 @@ class GameStatus:
     def suggested_target(self) -> str | None:
         """The version to downgrade to, if the recipe can get there from here:
         the vault's, or failing that the one the installed SKSE is built for."""
-        if self.wanted is not None and str(self.wanted) in self.can_downgrade_to:
+        if self.needs_downgrade and str(self.wanted) in self.can_downgrade_to:
             return str(self.wanted)
         return None
 
     @property
     def needs_pin(self) -> bool:
         """Steam wants to update; pinning would keep the installed files."""
-        return self.steam_is_current is False
+        return self.steam_is_current is False and not self.steam_updating
 
     @property
     def can_unpin(self) -> bool:
@@ -430,10 +431,12 @@ class ModSyncService:
         language = "english"
         steam_current: bool | None = None
         public_build: int | None = None
+        updating = False
         if app and acf and acf.exists():
             try:
                 manifest = AppManifest.load(acf)
                 language = manifest.language
+                updating = manifest.update_in_progress
                 if appinfo_path and appinfo_path.exists():
                     info = appinfo.read_app(appinfo_path, SKYRIM_SE.appid)
                     if info:
@@ -455,6 +458,7 @@ class ModSyncService:
             steam_is_current=steam_current,
             steam_running=shortcuts.steam_is_running(),
             pending_pin=self._pending_pin_path().exists(),
+            steam_updating=updating,
             recipe_from=recipe_from,
             recipe_targets=targets,
             recipe_origin=origin,
