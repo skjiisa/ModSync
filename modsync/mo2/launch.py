@@ -42,8 +42,14 @@ def _game_target(sections: dict, game_dir: Path) -> tuple[list[str], str]:
             entries.setdefault(match[1], {})[match[2].lower()] = ini.unwrap_bytearray(value) or ""
     for filename, fallback_name in (("skse64_loader.exe", "SKSE"), ("SkyrimSE.exe", "Skyrim")):
         for entry in entries.values():
-            if entry.get("title") and PureWindowsPath(entry.get("binary", "")).name.lower() == filename.lower():
-                return ["run", "-e", entry["title"]], entry["title"]
+            if not entry.get("title") or PureWindowsPath(entry.get("binary", "")).name.lower() != filename.lower():
+                continue
+            local = ini.wine_to_local(entry.get("binary"))
+            if local is not None and not local.is_file():
+                # A stale entry (e.g. SKSE removed by a reinstall) would only make
+                # MO2 fail; fall through to whatever is actually on disk.
+                continue
+            return ["run", "-e", entry["title"]], entry["title"]
         binary = game_dir / filename
         if binary.is_file():
             # A new instance may not have saved its executable list yet. Still

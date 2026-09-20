@@ -283,7 +283,7 @@ class Dashboard(QWidget):
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _launch_mo2(self, *, play: bool) -> None:
-        if self.busy or self._launching:
+        if self.busy:
             return
         self._launching = True
         self._update_launch_buttons()
@@ -307,7 +307,7 @@ class Dashboard(QWidget):
         self._update_launch_buttons()
 
     def _update_launch_buttons(self) -> None:
-        ready = self.service.state.has_instance and not self.busy and not self._launching
+        ready = self.service.state.has_instance and not self.busy
         self._play_button.setEnabled(ready and not self.service.launcher.running(play=True))
         self._wizard_button.setEnabled(not self.busy)
         if self._reset_button is not None:
@@ -512,12 +512,7 @@ class Dashboard(QWidget):
     def busy(self) -> bool:
         return self.game.busy or self._launching
 
-    def _on_busy(self, busy: bool) -> None:
-        self._wizard_button.setEnabled(not busy)
-        if self._reset_button is not None:
-            self._reset_button.setEnabled(not busy)
-        self.mo2.setEnabled(not busy)
-        self.sync.setEnabled(not busy)
+    def _on_busy(self, _busy: bool) -> None:
         self._update_launch_buttons()
 
     def _on_game_changed(self) -> None:

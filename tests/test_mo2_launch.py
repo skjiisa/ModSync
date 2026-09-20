@@ -49,12 +49,21 @@ class LaunchTests(unittest.TestCase):
 
     def test_play_prefers_renamed_configured_skse_and_preserves_arguments(self):
         with self.ini.open("a") as file:
-            file.write('[customExecutables]\n1\\title=My SKSE\n1\\binary=Z:/game/skse64_loader.exe\n1\\arguments=--keep-this\n2\\title=Skyrim\n2\\binary=Z:/game/SkyrimSE.exe\n')
+            file.write(f'[customExecutables]\n1\\title=My SKSE\n1\\binary=Z:{self.game}/skse64_loader.exe\n'
+                       f'1\\arguments=--keep-this\n2\\title=Skyrim\n2\\binary=Z:{self.game}/SkyrimSE.exe\n')
+        (self.game / "skse64_loader.exe").touch()
         before = self.ini.read_bytes()
         plan = launch.build_plan(self.instance, play=True)
         self.assertEqual(plan.argv[-3:], ["run", "-e", "My SKSE"])
         self.assertEqual(plan.target, "My SKSE")
         self.assertEqual(self.ini.read_bytes(), before)
+
+    def test_stale_saved_entry_falls_back_to_the_file_on_disk(self):
+        with self.ini.open("a") as file:
+            file.write(f'[customExecutables]\n1\\title=SKSE\n1\\binary=Z:{self.game}/skse64_loader.exe\n')
+        plan = launch.build_plan(self.instance, play=True)
+        self.assertEqual(plan.argv[-4:], ["run", "-c", "Z:" + str(self.game), "Z:" + str(self.game / "SkyrimSE.exe")])
+        self.assertEqual(plan.target, "Skyrim")
 
     def test_play_without_saved_executables_still_goes_through_mo2(self):
         for filename in ("SkyrimSE.exe", "skse64_loader.exe"):
