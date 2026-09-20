@@ -107,6 +107,7 @@ class Dashboard(QWidget):
         self._timer.timeout.connect(self._refresh_bg_status)
         self._timer.timeout.connect(self._poll_hook)
         self._timer.start(_POLL_MS)
+        self.game.busyChanged.connect(self._on_busy)
 
     # --- header -------------------------------------------------------------
     def _build_header(self) -> QVBoxLayout:
@@ -121,13 +122,14 @@ class Dashboard(QWidget):
         row.addWidget(title)
         row.addStretch(1)
 
-        wizard = QPushButton("Setup wizard")
+        wizard = self._wizard_button = QPushButton("Setup wizard")
         wizard.setToolTip("Prefer a guided, step-by-step flow? Run the wizard instead.")
         wizard.clicked.connect(self.wizardRequested.emit)
         row.addWidget(wizard)
 
+        self._reset_button = None
         if state.has_instance:
-            reset = QPushButton("Reset setup…")
+            reset = self._reset_button = QPushButton("Reset setup…")
             reset.setToolTip("Forget the instance and any sync on this machine. Mods are not deleted.")
             reset.clicked.connect(self._reset)
             row.addWidget(reset)
@@ -140,6 +142,8 @@ class Dashboard(QWidget):
         return col
 
     def _reset(self) -> None:
+        if self.busy:
+            return
         answer = QMessageBox.question(
             self,
             "Reset setup",
@@ -433,6 +437,17 @@ class Dashboard(QWidget):
         self._on_error(f"Could not collect diagnostics: {message}")
 
     # --- plumbing ------------------------------------------------------------
+    @property
+    def busy(self) -> bool:
+        return self.game.busy
+
+    def _on_busy(self, busy: bool) -> None:
+        self._wizard_button.setEnabled(not busy)
+        if self._reset_button is not None:
+            self._reset_button.setEnabled(not busy)
+        self.mo2.setEnabled(not busy)
+        self.sync.setEnabled(not busy)
+
     def _on_game_changed(self) -> None:
         # A downgrade or a re-record changes nothing the other cards show right
         # now, but a synced record reaches other machines: nudge Syncthing.

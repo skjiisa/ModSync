@@ -55,15 +55,24 @@ class MainWindow(QMainWindow):
 
         self._show_dashboard()  # always — it handles the not-set-up case itself
 
+    @property
+    def busy(self) -> bool:
+        current = self._stack.currentWidget()
+        return isinstance(current, (Dashboard, WizardWidget)) and current.busy
+
     def _set(self, widget: QWidget) -> None:
         while self._stack.count():
             old = self._stack.widget(0)
+            if isinstance(old, Dashboard):
+                old.shutdown()
             self._stack.removeWidget(old)
             old.deleteLater()
         self._stack.addWidget(widget)
         self._stack.setCurrentWidget(widget)
 
     def _show_wizard(self) -> None:
+        if self.busy:
+            return
         wizard = WizardWidget(self.service)
         wizard.completed.connect(self._on_wizard_completed)
         wizard.cancelled.connect(self._show_dashboard)
@@ -97,12 +106,17 @@ class MainWindow(QMainWindow):
         self._set(_centered(f"Setup failed:\n{message}", back))
 
     def _show_dashboard(self) -> None:
+        if self.busy:
+            return
         dashboard = Dashboard(self.service)
         dashboard.wizardRequested.connect(self._show_wizard)
         dashboard.stateChanged.connect(self._show_dashboard)  # rebuild after setup/reset
         self._set(dashboard)
 
     def closeEvent(self, event) -> None:  # noqa: ANN001 (Qt signature)
+        if self.busy:
+            event.ignore()
+            return
         # Order matters: stop polling, let in-flight worker jobs finish (so none
         # emit back into widgets being torn down), then stop the daemon.
         current = self._stack.currentWidget()

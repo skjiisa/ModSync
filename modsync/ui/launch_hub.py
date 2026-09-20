@@ -211,7 +211,7 @@ class LaunchHub(QMainWindow):
         self._status_line.setText(message)
 
     def _on_busy(self, busy: bool) -> None:
-        # A downgrade is rewriting the game files: neither start the game nor
+        # A downgrade or restore is rewriting the game files: neither start the game nor
         # walk away from the rewrite mid-way.
         self.continue_button.setEnabled(not busy)
         self.cancel_button.setEnabled(not busy)
