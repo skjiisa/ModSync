@@ -134,6 +134,9 @@ class SyncCard(QGroupBox):
             self._scan()
 
     def _scan(self) -> None:
+        if not self._scan_btn.isEnabled():
+            return
+        self._announcements = []
         self._scan_btn.setEnabled(False)
         self._net_list.clear()
         self._net_list.addItem("Scanning…")
@@ -157,6 +160,7 @@ class SyncCard(QGroupBox):
             self._net_list.addItem(f"{a.name}   ({a.host})")
 
     def _on_scan_failed(self, message: str) -> None:
+        self._announcements = []
         self._scan_btn.setEnabled(True)
         self._net_list.clear()
         self._net_list.addItem(f"Scan failed: {message}")
