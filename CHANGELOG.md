@@ -15,6 +15,7 @@ Early development; nothing has been released yet. What exists so far:
   and padded warnings. Replace all uses of Qt's border color for text.
 - Wrap game actions and stack dashboard cards in narrower windows; keep wizard
   navigation outside its scrolling content. Show sync progress before pairing.
+- Clarify that the Steam shortcut button adds ModSync as a non-Steam shortcut.
 - Open the installation step directly from “Install MO2…”, add wizard step
   labels, and allow returning to the dashboard from any idle setup step.
 

@@ -14,6 +14,8 @@ when generating them.
   Wizard content scrolls while navigation stays visible.
 - Move sync progress above pairing details and keep pairing codes scrolled to
   their beginning.
+- Rename the Steam action to “Add ModSync shortcut to Steam” and clarify that
+  it creates a non-Steam shortcut.
 - Make “Install MO2…” open the installation step. Add step labels, a shorter
   welcome screen and a way back to the dashboard from each idle setup step.
 

@@ -277,9 +277,10 @@ class Dashboard(QWidget):
         self._bg_button.clicked.connect(self._toggle_bg)
         self._bg_status = QLabel("Background service: checking…")
         self._bg_status.setWordWrap(True)
-        steam_button = QPushButton("Add to Steam")
+        steam_button = QPushButton("Add ModSync shortcut to Steam")
         steam_button.setToolTip(
-            "Add ModSync as a non-Steam game so it's launchable from Gaming Mode"
+            "Add ModSync as a non-Steam shortcut in your Steam library, including Gaming Mode. "
+            "Close Steam first."
         )
         steam_button.clicked.connect(self._add_to_steam)
         row.addWidget(self._bg_button)
@@ -415,7 +416,7 @@ class Dashboard(QWidget):
         if shortcuts.steam_is_running():
             self._set_status(
                 "⚠ Close Steam first (it rewrites its shortcuts on exit), "
-                "then click “Add to Steam” again."
+                "then click “Add ModSync shortcut to Steam” again."
             )
             return
         run_async(shortcuts.add_modsync_to_steam, on_done=self._on_steam_added, on_failed=self._on_error)
@@ -423,7 +424,7 @@ class Dashboard(QWidget):
     def _on_steam_added(self, paths: list) -> None:
         if paths:
             self._set_status(
-                f"Added ModSync to Steam ({len(paths)} user(s)). Start Steam to find it "
+                f"Added a ModSync non-Steam shortcut ({len(paths)} user(s)). Start Steam to find it "
                 "in your library / Gaming Mode."
             )
         else:
