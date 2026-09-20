@@ -11,7 +11,7 @@ Syncthing, no collisions.
 | `io.github.skjiisa.ModSync.yaml` | The flatpak-builder manifest. |
 | `io.github.skjiisa.ModSync.desktop` | Desktop launcher entry. |
 | `io.github.skjiisa.ModSync.metainfo.xml` | AppStream metadata (store listing). |
-| `icons/io.github.skjiisa.ModSync.svg` / `.png` | App icon (scalable + 512px). |
+| `icons/io.github.skjiisa.ModSync.svg` / `.png` | Editable SVG source + installed 512px PNG. |
 
 The logo was designed in Canva; the latest inset export is preserved in
 `icons/source/ModSync.pdf`. The `.svg` is that PDF
@@ -137,3 +137,10 @@ Already implemented (just needs the Deck to exercise it):
   sandbox, "is Steam running" is answered through `flatpak-spawn --host pgrep`
   (the sandbox has its own PID namespace). Needs a Deck to confirm the hub window
   shows and hands off correctly under gamescope.
+
+### Icon rendering
+
+Install only the rounded PNG into the icon theme. Qt's SVG renderer does not
+support the clipping paths used by the Canva export, so installing the SVG as
+a scalable theme icon can produce a square or otherwise incorrect icon in Qt
+and KDE. Keep the SVG in the repository for editing and PNG generation.

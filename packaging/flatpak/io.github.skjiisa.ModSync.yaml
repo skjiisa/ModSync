@@ -127,7 +127,6 @@ modules:
       - pip3 install --prefix=${FLATPAK_DEST} --no-deps --no-build-isolation --no-index --no-warn-script-location .
       - install -Dm644 packaging/flatpak/io.github.skjiisa.ModSync.desktop ${FLATPAK_DEST}/share/applications/io.github.skjiisa.ModSync.desktop
       - install -Dm644 packaging/flatpak/io.github.skjiisa.ModSync.metainfo.xml ${FLATPAK_DEST}/share/metainfo/io.github.skjiisa.ModSync.metainfo.xml
-      - install -Dm644 packaging/flatpak/icons/io.github.skjiisa.ModSync.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/io.github.skjiisa.ModSync.svg
       - install -Dm644 packaging/flatpak/icons/io.github.skjiisa.ModSync.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/io.github.skjiisa.ModSync.png
     sources:
       - type: dir

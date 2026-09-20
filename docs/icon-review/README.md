@@ -16,4 +16,6 @@ version on the right, at 220, 128, 64 and 32 pixels on each background.
 
 Validation: removing the new clip and wrapper reproduces the PDF-converted SVG
 apart from its 512px canvas dimensions. PNG pixels outside the corner regions
-match the square export exactly. Both packaged formats are updated.
+match the square export exactly. The Flatpak installs only the PNG; the SVG remains the editable source.
+Qt ignores SVG clipping paths, so exporting the SVG to the icon theme would
+lose the rounded corners.
