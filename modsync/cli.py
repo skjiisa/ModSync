@@ -431,6 +431,8 @@ def _game_restore(service, args: list[str]) -> int:
     print(f"Restored {len(result.restored)} original file(s){came_from} into {result.game_dir}:")
     for rel in result.restored:
         print(f"  ✓ {rel}")
+    for rel in result.removed:
+        print(f"  ✗ {rel} (added by the downgrade, removed)")
     for problem in result.mismatches:
         print(f"  ! {problem}")
     if result.mismatches:
