@@ -28,6 +28,10 @@ from modsync.steam.libraries import Library
 
 STATE_FULLY_INSTALLED = 4
 STATE_UPDATE_REQUIRED = 6
+# Bits Steam sets while it is actively changing the install (UpdateRunning,
+# UpdateStarted, Validating, AddingFiles, Preallocating, Downloading, Staging,
+# Committing). While any is set the files on disk are in flux.
+_UPDATE_ACTIVE = 256 | 1024 | 131072 | 262144 | 524288 | 1048576 | 2097152 | 4194304
 
 
 @dataclass
@@ -77,6 +81,20 @@ class AppManifest:
             return int(self.state.get("StateFlags"))
         except (TypeError, ValueError):
             return None
+
+    @property
+    def update_in_progress(self) -> bool:
+        """Steam is mid-download or mid-commit (or paused part-way): the install is
+        not ready to be pinned, downgraded or version-checked. A merely *pending*
+        update (StateFlags 6, nothing downloaded yet) is not in progress."""
+        if (self.state_flags or 0) & _UPDATE_ACTIVE:
+            return True
+        try:
+            to_download = int(self.state.get("BytesToDownload", 0))
+            downloaded = int(self.state.get("BytesDownloaded", 0))
+        except (TypeError, ValueError):
+            return False
+        return 0 < downloaded < to_download
 
     @property
     def language(self) -> str:

@@ -1,5 +1,6 @@
 import json
 import io
+import os
 import shutil
 import subprocess
 import tempfile
@@ -306,6 +307,124 @@ class EngineTests(unittest.TestCase):
         self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), self.new_exe)
         self.assertEqual((self.game / "Data/Skyrim.esm").read_bytes(), b"esm-new" * 1000)
 
+
+
+def _response(body: bytes, status: int = 200, **headers: str) -> io.BytesIO:
+    resp = io.BytesIO(body)
+    resp.status = status
+    resp.headers = {"Content-Length": str(len(body)), **headers}
+    return resp
+
+
+class VerifiedDownloadTests(unittest.TestCase):
+    """SHA1-checked parts: wrong bytes are never cached, truncated ones resume."""
+
+    GOOD = b"good"
+
+    def setUp(self):
+        import hashlib
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.part = recipe.Part("https://example.test/489833.7z", hashlib.sha1(self.GOOD).hexdigest())
+        self.archive = recipe.Archive("489833", None, "489833.7z", (self.part,))
+        self.plan = engine.Plan(self.root, "new", "sha", "old", "english", [self.archive], "SkyrimSE.exe")
+        self.dest = engine._part_cache_path(self.root, self.archive, 0)
+        self.partial = self.dest.with_name(self.dest.name + ".part")
+
+    def test_wrong_content_is_rejected_and_nothing_is_cached(self):
+        with patch.object(engine.urllib.request, "urlopen", return_value=_response(b"evil")):
+            with self.assertRaisesRegex(engine.DowngradeError, "checksum mismatch"):
+                engine.download_all(self.plan, self.root)
+        self.assertFalse(self.dest.exists())
+        self.assertFalse(self.partial.exists())
+
+    def test_truncated_part_resumes_and_the_whole_file_is_verified(self):
+        self.partial.parent.mkdir(parents=True)
+        self.partial.write_bytes(b"go")
+        tail = _response(b"od", 206, **{"Content-Range": "bytes 2-3/4"})
+        with patch.object(engine.urllib.request, "urlopen", return_value=tail) as request:
+            paths, moved = engine.download_all(self.plan, self.root)
+        self.assertEqual(request.call_args.args[0].get_header("Range"), "bytes=2-")
+        self.assertEqual(moved, 2)
+        self.assertEqual(paths[0].read_bytes(), self.GOOD)
+        self.assertFalse(self.partial.exists())
+
+    def test_corrupt_resume_deletes_the_part_so_the_next_try_starts_clean(self):
+        self.partial.parent.mkdir(parents=True)
+        self.partial.write_bytes(b"go")
+        tail = _response(b"xx", 206, **{"Content-Range": "bytes 2-3/4"})
+        with patch.object(engine.urllib.request, "urlopen", return_value=tail):
+            with self.assertRaisesRegex(engine.DowngradeError, "checksum mismatch"):
+                engine.download_all(self.plan, self.root)
+        self.assertFalse(self.dest.exists())
+        self.assertFalse(self.partial.exists())
+        with patch.object(engine.urllib.request, "urlopen", return_value=_response(self.GOOD)) as request:
+            paths, moved = engine.download_all(self.plan, self.root)
+        self.assertIsNone(request.call_args.args[0].get_header("Range"))
+        self.assertEqual((moved, paths[0].read_bytes()), (4, self.GOOD))
+
+    def test_truncated_cached_archive_is_refetched(self):
+        self.dest.parent.mkdir(parents=True)
+        self.dest.write_bytes(b"goo")  # promoted by an older version, or damaged on disk
+        with patch.object(engine.urllib.request, "urlopen", return_value=_response(self.GOOD)):
+            paths, moved = engine.download_all(self.plan, self.root)
+        self.assertEqual((moved, paths[0].read_bytes()), (4, self.GOOD))
+
+
+@unittest.skipIf(os.geteuid() == 0, "root ignores directory permissions")
+class ReadOnlySwapTests(unittest.TestCase):
+    """A game folder Steam (or a mount) made read-only: the swap must leave every
+    original where it was, without needing xdelta3 or 7z."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.game = self.tmp / "Skyrim Special Edition"
+        (self.game / "Data").mkdir(parents=True)
+        (self.game / "Data" / "Skyrim.esm").write_bytes(b"esm-new")
+        (self.game / "SkyrimSE.exe").write_bytes(b"exe-new")
+        self.work = self.tmp / "work"
+        out = self.work / "out"
+        (out / "Data").mkdir(parents=True)
+        (out / "Data" / "Skyrim.esm").write_bytes(b"esm-old")
+        (out / "SkyrimSE.exe").write_bytes(b"exe-old")
+        self.plan = engine.Plan(self.game, "1.7.104", "sha", "1.6.1170", "english", [], "SkyrimSE.exe")
+        self.patched = [Path("Data/Skyrim.esm"), Path("SkyrimSE.exe")]
+
+    def _swap(self, progress=None):
+        return engine._swap(self.plan, self.patched, self.work / "backup", self.work / "out", progress)
+
+    def test_read_only_game_root_rolls_back_the_file_already_swapped(self):
+        self.game.chmod(0o555)
+        self.addCleanup(self.game.chmod, 0o755)
+        events = []
+        with self.assertRaisesRegex(engine.DowngradeError, "rolled back") as ctx:
+            self._swap(events.append)
+        self.assertNotIsInstance(ctx.exception, engine.SwapError)
+        # Data/Skyrim.esm (a writable subdir) was swapped first and must be back.
+        self.assertEqual((self.game / "Data" / "Skyrim.esm").read_bytes(), b"esm-new")
+        self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), b"exe-new")
+        self.assertFalse(engine._has_backups(self.work / "backup"))
+        self.assertEqual([e.message for e in events], ["Installing Data/Skyrim.esm", "Installing SkyrimSE.exe"])
+
+    def test_read_only_subdir_fails_before_anything_moves(self):
+        (self.game / "Data").chmod(0o555)
+        self.addCleanup((self.game / "Data").chmod, 0o755)
+        with self.assertRaisesRegex(engine.DowngradeError, "rolled back"):
+            self._swap()
+        self.assertEqual((self.game / "Data" / "Skyrim.esm").read_bytes(), b"esm-new")
+        self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), b"exe-new")
+        self.assertEqual((self.work / "out" / "SkyrimSE.exe").read_bytes(), b"exe-old")  # staged file kept
+
+    def test_writable_swap_succeeds(self):
+        swapped, removed = self._swap()
+        self.assertEqual(swapped, [self.game / "Data/Skyrim.esm", self.game / "SkyrimSE.exe"])
+        self.assertEqual(removed, [])
+        self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), b"exe-old")
+        self.assertEqual((self.work / "backup" / "SkyrimSE.exe").read_bytes(), b"exe-new")
 
 if __name__ == "__main__":
     unittest.main()

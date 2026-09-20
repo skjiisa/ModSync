@@ -66,6 +66,12 @@ def _mo2_status() -> int:
         return 1
     print(f"Instance:  {state.instance_path}")
     print(f"Label:     {state.instance_label}")
+    from pathlib import Path
+
+    if not Path(state.instance_path).is_dir():
+        print("           ! this directory no longer exists (unplugged drive? moved?) — "
+              "'modsync mo2 use <dir>' to point at it again")
+        return 1
     print(f"Sync:      {'vault ' + str(state.folder_id) if state.syncing else 'off'}")
     return 0
 
@@ -275,7 +281,12 @@ def game(args: list[str]) -> int:
 
 
 def _game_status(service) -> int:
+    from modsync.games import SKYRIM_SE
+
     st = service.game_status()
+    if st.installed is None and st.game_dir is None:
+        print(f"{SKYRIM_SE.name} was not found through Steam on this machine. Install it in Steam first.")
+        return 1
     print(f"Installed:      {st.installed or '(not detected)'}"
           + (f"   ({st.game_dir})" if st.game_dir else ""))
     print(f"Setup needs:    {st.expected or '(not recorded)'}")
@@ -286,7 +297,9 @@ def _game_status(service) -> int:
     else:
         print("SKSE here:      (not found)")
     print(f"Language:       {st.language}")
-    if st.steam_is_current is None:
+    if st.steam_updating:
+        print("Steam:          updating the game right now — not ready; wait for Steam to finish before pinning or downgrading")
+    elif st.steam_is_current is None:
         print("Steam:          (state unknown)")
     elif st.steam_is_current:
         print(f"Steam:          up to date as far as Steam knows (build {st.steam_public_build})")
@@ -302,7 +315,9 @@ def _game_status(service) -> int:
             print(f"Downgradable:   none from {st.installed} (recipes start at {st.recipe_from})")
     else:
         print("Recipes:        unavailable")
-    if st.mismatch:
+    if st.steam_updating:
+        print(f"\n! Steam is still updating {SKYRIM_SE.name}; version checks wait until it finishes.")
+    elif st.mismatch:
         print(f"\n! This machine runs {st.installed} but this setup was built for {st.expected}.")
     elif st.needs_downgrade:
         print(

@@ -31,8 +31,10 @@ class SyncthingClient:
     # --- liveness / identity ---
     def ping(self) -> bool:
         try:
-            return self._http.get("/rest/system/ping").status_code == 200
-        except httpx.HTTPError:
+            resp = self._http.get("/rest/system/ping")
+            # Any web server answers 200; only Syncthing answers with a pong.
+            return resp.status_code == 200 and resp.json().get("ping") == "pong"
+        except (httpx.HTTPError, ValueError, AttributeError):
             return False
 
     def system_status(self) -> dict[str, Any]:

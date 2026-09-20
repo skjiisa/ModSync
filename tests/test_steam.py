@@ -80,5 +80,45 @@ class LibrariesTests(unittest.TestCase):
             self.assertIsNone(libs.find_app(libraries, 999999))
 
 
+
+class RemovableLibraryTests(unittest.TestCase):
+    """Skyrim on an SD-card library, plus a library whose path is gone (unplugged)."""
+
+    def _layout(self, tmp: str) -> tuple[Path, Path, Path]:
+        root = Path(tmp) / "steamroot"
+        sdcard = Path(tmp) / "run/media/deck/SDCARD"
+        unplugged = Path(tmp) / "run/media/deck/UNPLUGGED"  # never created
+        (root / "steamapps").mkdir(parents=True)
+        (sdcard / "steamapps" / "common" / "Skyrim Special Edition").mkdir(parents=True)
+        (sdcard / "steamapps" / "appmanifest_489830.acf").write_text(ACF)
+        (root / "steamapps" / "libraryfolders.vdf").write_text(
+            vdf.dumps({"libraryfolders": {
+                "0": {"path": str(root), "apps": {"730": "1"}},
+                "1": {"path": str(sdcard), "apps": {"489830": "1"}},
+                "2": {"path": str(unplugged), "apps": {"1091500": "1"}},
+            }})
+        )
+        return root, sdcard, unplugged
+
+    def test_game_in_second_library_on_removable_media(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, sdcard, unplugged = self._layout(tmp)
+            libraries = libs.read_libraries(root)
+            self.assertEqual([l.path for l in libraries], [root.resolve(), sdcard.resolve(), unplugged])
+            app = libs.find_app(libraries, 489830)
+            assert app is not None
+            self.assertEqual(app.library.path, sdcard.resolve())
+            self.assertTrue(app.install_path.is_dir())
+
+    def test_unplugged_library_is_harmless(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _, unplugged = self._layout(tmp)
+            gone = next(l for l in libs.read_libraries(root) if l.path == unplugged)
+            self.assertIn(1091500, gone.app_ids)  # still indexed by Steam ...
+            self.assertEqual(list(libs.iter_apps(gone)), [])  # ... but nothing readable there
+            self.assertIsNone(libs.find_app([gone], 1091500))
+            # The same library listed by two roots is reported once.
+            self.assertEqual(len(libs.all_libraries([root, root])), 3)
+
 if __name__ == "__main__":
     unittest.main()

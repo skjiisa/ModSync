@@ -191,5 +191,37 @@ class AppManifestTests(unittest.TestCase):
             self.assertFalse(list(Path(tmp).glob("*.modsync-tmp")))
 
 
+
+class UpdateInProgressTests(unittest.TestCase):
+    def _with(self, tmp: str, **fields: str) -> AppManifest:
+        p = Path(tmp) / "appmanifest_489830.acf"
+        data = vdf.loads(ACF)
+        data["AppState"].update(fields)
+        p.write_text(vdf.dumps(data))
+        return AppManifest.load(p)
+
+    def test_pending_update_with_nothing_downloaded_is_not_in_progress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._with(tmp)  # StateFlags 6, BytesDownloaded 0: Steam merely wants to update
+            self.assertFalse(m.update_in_progress)
+
+    def test_running_update_flags_are_in_progress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for flags in ("1030", "1026", "260", "1048580", "4194308"):
+                with self.subTest(flags=flags):
+                    self.assertTrue(self._with(tmp, StateFlags=flags).update_in_progress)
+
+    def test_partial_download_is_in_progress_even_when_paused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._with(tmp, StateFlags="6", BytesDownloaded="12345")
+            self.assertTrue(m.update_in_progress)
+            self.assertFalse(m.is_current(appinfo._to_appinfo(489830, FAKE_APP)))
+
+    def test_fully_installed_is_not_in_progress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._with(tmp, StateFlags="4", BytesToDownload="0", BytesDownloaded="0")
+            self.assertFalse(m.update_in_progress)
+            self.assertFalse(self._with(tmp, StateFlags="4", BytesToDownload="x").update_in_progress)
+
 if __name__ == "__main__":
     unittest.main()
