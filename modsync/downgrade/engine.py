@@ -107,6 +107,7 @@ class RestoreResult:
     game_dir: Path
     restored: list[Path]  # game-relative paths moved back into place
     mismatches: list[str]  # restored files whose hash/size differs from the record
+    removed: list[Path] = field(default_factory=list)  # files the downgrade added, now deleted
     from_version: str | None = None  # the version the backup came from, per the manifest
     target: str | None = None  # the version the downgrade had installed
 
@@ -289,6 +290,16 @@ def _collect_patches(extract_root: Path) -> list[tuple[Path, Path]]:
     return out
 
 
+def _collect_whole_files(extract_root: Path) -> list[tuple[Path, Path]]:
+    """(file, game-relative path) for every non-patch file under root. Files
+    that only exist in the target version (e.g. 1.5.97's binkw64.dll) ship whole."""
+    out: list[tuple[Path, Path]] = []
+    for p in sorted(extract_root.rglob("*")):
+        if p.is_file() and not p.is_symlink() and p.suffix != ".xdelta":
+            out.append((p, p.relative_to(extract_root)))
+    return out
+
+
 def _replace(src: Path, dst: Path) -> None:
     """Atomic same-filesystem move (split out so tests can inject failures)."""
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -312,10 +323,13 @@ def _swap(
     progress: ProgressFn | None,
 ) -> tuple[list[Path], list[Path]]:
     """Move originals into ``backup_root`` and patched files into place; also
-    move recipe-listed deletions into the backup. Rolls everything back if any
-    step fails. Returns (patched paths, removed paths) in the game dir."""
+    move recipe-listed deletions into the backup. Files with no original (new
+    in the target version) are simply added, and deleted on rollback. Rolls
+    everything back if any step fails. Returns (installed paths, removed paths)
+    in the game dir."""
     game = plan.game_dir
     done: list[Path] = []
+    added: list[Path] = []
     swapped: list[Path] = []
     removed: list[Path] = []
     total = len(patched) + len(plan.deletes)
@@ -330,8 +344,11 @@ def _swap(
             if progress:
                 progress(Progress("swap", f"Installing {rel}", i, total))
             target = game / rel
-            _replace(target, backup_root / rel)
-            done.append(target)
+            if target.exists() or target.is_symlink():
+                _replace(target, backup_root / rel)
+                done.append(target)
+            else:
+                added.append(target)
             _replace(out_root / rel, target)
             swapped.append(target)
         for j, rel_s in enumerate(plan.deletes, len(patched) + 1):
@@ -346,6 +363,11 @@ def _swap(
             removed.append(target)
     except BaseException as exc:
         failures: list[str] = []
+        for target in added:
+            try:
+                target.unlink(missing_ok=True)
+            except Exception as rexc:
+                failures.append(f"{target.relative_to(game)}: {rexc}")
         for target in reversed(done):
             rel = target.relative_to(game)
             try:
@@ -424,10 +446,15 @@ def _write_manifest(work: Path, plan: Plan, patched: list[Path]) -> None:
     """Record what the swap is about to do so ``restore`` can verify its work.
     The recipe only knows the exe's hash; sizes cover the rest."""
     originals: dict[str, dict] = {}
+    added: list[str] = []
     for rel in patched:
         entry: dict = {}
+        target = plan.game_dir / rel
+        if not (target.exists() or target.is_symlink()):
+            added.append(rel.as_posix())
+            continue
         try:
-            entry["size"] = (plan.game_dir / rel).stat().st_size
+            entry["size"] = target.stat().st_size
         except OSError:
             pass
         if rel == Path(plan.exe_name):
@@ -446,6 +473,7 @@ def _write_manifest(work: Path, plan: Plan, patched: list[Path]) -> None:
         "exe_name": plan.exe_name,
         "originals": originals,
         "removed": removed,
+        "added": added,
     }
     work.mkdir(parents=True, exist_ok=True)
     (work / MANIFEST_NAME).write_text(json.dumps(doc, indent=2), encoding="utf-8")
@@ -492,8 +520,9 @@ def apply(
             extractor.extract(archive, extract_root)
 
         patches = _collect_patches(extract_root)
-        if not patches:
-            raise DowngradeError("the patch archives contained no .xdelta files")
+        whole = _collect_whole_files(extract_root)
+        if not patches and not whole:
+            raise DowngradeError("the patch archives contained no files to install")
         missing = [rel for _, rel in patches if not (plan.game_dir / rel).is_file()]
         if missing:
             raise DowngradeError(
@@ -501,6 +530,7 @@ def apply(
                 + ", ".join(str(m) for m in missing[:5])
             )
         need = sum((plan.game_dir / rel).stat().st_size for _, rel in patches)
+        need += sum(src.stat().st_size for src, _ in whole)
         free = shutil.disk_usage(plan.game_dir).free
         if free < need * 1.05:
             raise DowngradeError(
@@ -513,12 +543,17 @@ def apply(
                 progress(Progress("patch", f"Patching {rel}", i, len(patches)))
             tools.xdelta3_apply(xdelta3, plan.game_dir / rel, patch, out_root / rel)
             patch.unlink(missing_ok=True)  # free space as we go
+        for i, (src, rel) in enumerate(whole, 1):
+            if progress:
+                progress(Progress("patch", f"Adding {rel}", i, len(whole)))
+            _replace(src, out_root / rel)
+        installing = [rel for _, rel in patches] + [rel for _, rel in whole]
 
         staged_version = gameversion.installed_version(out_root)
         if staged_version is None or str(staged_version) != plan.target:
             raise DowngradeError(f"staged game reports version {staged_version}, expected {plan.target}")
-        _write_manifest(work, plan, [rel for _, rel in patches])
-        swapped, removed = _swap(plan, [rel for _, rel in patches], backup_root, out_root, progress)
+        _write_manifest(work, plan, installing)
+        swapped, removed = _swap(plan, installing, backup_root, out_root, progress)
 
         for step in plan.post_steps:
             if progress:
@@ -597,12 +632,25 @@ def restore(game_dir: Path | str, progress: ProgressFn | None = None) -> Restore
             mismatches.append(
                 f"{rel}: {target.stat().st_size} bytes, the original had {expect['size']}"
             )
+    deleted: list[Path] = []
+    added = manifest.get("added")
+    for name in added if isinstance(added, list) else []:
+        rel = Path(str(name))
+        target = game / rel
+        if rel.is_absolute() or ".." in rel.parts or not rel.parts:
+            continue
+        if target.is_file() and not target.is_symlink():
+            if progress:
+                progress(Progress("restore", f"Removing {rel}"))
+            target.unlink()
+            deleted.append(rel)
     # Everything left in the work dir is ModSync's own scratch; the backup is now empty.
     shutil.rmtree(work, ignore_errors=True)
     return RestoreResult(
         game,
         restored,
         mismatches,
+        removed=deleted,
         from_version=str(manifest["from_version"]) if manifest.get("from_version") else None,
         target=str(manifest["target"]) if manifest.get("target") else None,
     )

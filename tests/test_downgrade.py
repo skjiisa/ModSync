@@ -171,9 +171,13 @@ class EngineTests(unittest.TestCase):
         subprocess.run([xd, "-e", "-f", "-s", str(self.game / "Data" / "Skyrim.esm"), str(build / "Data" / "Skyrim.esm.old"), str(build / "Data" / "Skyrim.esm.xdelta")], check=True)
         for extra in build.rglob("*.old"):
             extra.unlink()
+        # Files shipped whole: one new in the old version, one replacing an existing file.
+        (build / "binkw64.dll").write_bytes(b"old-bink")
+        (build / "Data" / "extra.ini").write_bytes(b"ini-old")
+        (self.game / "Data" / "extra.ini").write_bytes(b"ini-new")
         self.archive = self.tmp / "patch.7z"
         sevenz = shutil.which("7z") or shutil.which("7zz") or shutil.which("7za")
-        subprocess.run([sevenz, "a", "-bso0", str(self.archive), "SkyrimSE.exe.xdelta", "Data"], cwd=build, check=True)
+        subprocess.run([sevenz, "a", "-bso0", str(self.archive), "SkyrimSE.exe.xdelta", "binkw64.dll", "Data"], cwd=build, check=True)
         self.sha1 = engine.sha1_of(self.archive)
 
         self.prefix = self.tmp / "pfx"
@@ -198,12 +202,16 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result.installed_version, "1.6.1170")
         self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), self.old_exe)
         self.assertEqual((self.game / "Data" / "Skyrim.esm").read_bytes(), b"esm-old" * 1000)
+        self.assertEqual((self.game / "binkw64.dll").read_bytes(), b"old-bink")
+        self.assertEqual((self.game / "Data" / "extra.ini").read_bytes(), b"ini-old")
         self.assertFalse((self.game / "Data" / "ShaderCache").exists())
         # The originals stay behind for `restore`; the scratch dirs do not.
         work = self.game / ".modsync-downgrade"
         self.assertEqual(result.backup_dir, work / "backup")
         self.assertEqual((work / "backup" / "SkyrimSE.exe").read_bytes(), self.new_exe)
         self.assertEqual((work / "backup" / "Data" / "Skyrim.esm").read_bytes(), b"esm-new" * 1000)
+        self.assertEqual((work / "backup" / "Data" / "extra.ini").read_bytes(), b"ini-new")
+        self.assertFalse((work / "backup" / "binkw64.dll").exists())
         self.assertTrue((work / "manifest.json").exists())
         self.assertFalse((work / "out").exists())
         self.assertFalse((work / "patches").exists())
@@ -233,6 +241,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(manifest["originals"]["SkyrimSE.exe"]["sha1"], plan.from_exe_sha1)
         self.assertEqual(manifest["originals"]["Data/Skyrim.esm"]["size"], len(b"esm-new" * 1000))
         self.assertIn("Data/obsolete.bsa", manifest["removed"])
+        self.assertEqual(manifest["added"], ["binkw64.dll"])
 
         events = []
         result = engine.restore(self.game, progress=events.append)
@@ -241,8 +250,11 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result.mismatches, [])
         self.assertEqual(
             sorted(result.restored),
-            sorted([Path("SkyrimSE.exe"), Path("Data/Skyrim.esm"), Path("Data/obsolete.bsa")]),
+            sorted([Path("SkyrimSE.exe"), Path("Data/Skyrim.esm"), Path("Data/extra.ini"), Path("Data/obsolete.bsa")]),
         )
+        self.assertEqual(result.removed, [Path("binkw64.dll")])
+        self.assertFalse((self.game / "binkw64.dll").exists())
+        self.assertEqual((self.game / "Data" / "extra.ini").read_bytes(), b"ini-new")
         self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), self.new_exe)
         self.assertEqual((self.game / "Data" / "Skyrim.esm").read_bytes(), b"esm-new" * 1000)
         self.assertEqual(obsolete.read_bytes(), b"obsolete")
@@ -260,7 +272,7 @@ class EngineTests(unittest.TestCase):
         (backup / "SkyrimSE.exe").write_bytes(b"corrupted backup")
         (backup / "Data" / "Skyrim.esm").write_bytes(b"short")
         result = engine.restore(self.game)
-        self.assertEqual(len(result.restored), 2)
+        self.assertEqual(len(result.restored), 3)
         self.assertEqual(len(result.mismatches), 2)
         self.assertTrue(any("SkyrimSE.exe" in m and "SHA1" in m for m in result.mismatches))
         self.assertTrue(any("Skyrim.esm" in m and "bytes" in m for m in result.mismatches))

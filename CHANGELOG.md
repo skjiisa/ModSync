@@ -30,6 +30,10 @@ Early development; nothing has been released yet. What exists so far:
 
 ### Fixed
 
+- Install files that the downgrade archives ship whole, such as 1.5.97's
+  binkw64.dll and Skyrim - Patch.bsa. Without them the downgraded game exited
+  at startup. Restoring a downgrade removes them again.
+
 - Show SKSE mismatch and pending Steam update warnings at normal text contrast,
   including before an MO2 instance is chosen.
 
