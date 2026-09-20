@@ -9,7 +9,20 @@ def doctor(args: list[str]) -> int:
     print("ModSync doctor\n")
     report = build()
     print(report.text)
+    from modsync.logging_setup import launch_hook_log_path, log_path
+
+    print(f"Log file:        {log_path()}")
+    print(f"Launch hook log: {launch_hook_log_path()}")
+    print("'modsync diagnostics' bundles this report with the recent logs for a bug report.")
     return 0 if report.steam_found else 1
+
+
+def diagnostics(args: list[str]) -> int:
+    """Everything for a bug report, secrets redacted. Stdlib-only like `doctor`."""
+    from modsync.diagnostics import build
+
+    print(build(), end="")
+    return 0
 
 
 def launch_gui(args: list[str]) -> int:
@@ -196,8 +209,10 @@ def serve(args: list[str]) -> int:
     """Keep this machine's setup going in the foreground: sync the vault if
     there is one, apply a queued Steam pin, watch for Steam updates. This is
     what the background service runs."""
+    from modsync.logging_setup import configure
     from modsync.service import ModSyncService
 
+    configure("serve", ["serve", *args])
     return _run_until_interrupt(ModSyncService())
 
 

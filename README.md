@@ -244,6 +244,7 @@ Everything the dashboard does is also a command:
 
 ```sh
 modsync doctor                      # Steam libraries, game, MO2 instances, current setup
+modsync diagnostics                 # doctor + recent logs, secrets redacted: paste into a bug report
 modsync mo2 status | use <dir> | install <dest>
 modsync game status | downgrade <version> | pin
 modsync sync create | join          # optional
@@ -299,6 +300,12 @@ that only apply to a copy of Skyrim Special Edition you already own through Stea
 The Flatpak runs on the `org.kde.Platform` runtime; its contents carry their own
 licenses. Steam, Proton and `protontricks` are used where installed and are not
 part of ModSync.
+
+Every way ModSync runs (GUI, CLI, `serve`, the launch hub) logs to
+`~/.local/state/modsync/modsync.log` (`MODSYNC_LOG_LEVEL=DEBUG` for more). For a bug
+report, `modsync diagnostics` — or the dashboard's **Copy diagnostics** button — bundles
+the doctor report with the last 200 lines of that log and of the launch hook's, with
+pairing codes, API keys and device ids redacted.
 
 ## Development
 

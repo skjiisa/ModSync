@@ -10,6 +10,7 @@ the GUI runs them on a worker thread.
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -25,6 +26,8 @@ from modsync.steam import appinfo, libraries as libs, prefixes, shortcuts
 from modsync.steam.appmanifest import AppManifest, PinChange
 from modsync.sync import pairing, stignore
 from modsync.sync.manager import SyncthingManager
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -163,6 +166,7 @@ class ModSyncService:
         if self.state.syncing and str(instance_path) != self.state.instance_path:
             raise RuntimeError("stop syncing before switching to a different instance")
         instance_path = Path(instance_path)
+        log.info("using MO2 instance %s", instance_path)
         self.state.instance_path = str(instance_path)
         self.state.instance_label = label or instance_path.name or "Mod Organizer 2"
         self.state.save()
@@ -190,6 +194,7 @@ class ModSyncService:
             pairing.share_instance_folder(client, folder_id, instance_path, [], label=label)
             device_id = client.my_id()
         self._remember(instance_path, folder_id, label)
+        log.info("created vault %s for %s", folder_id, instance_path)
         # The creating machine defines which game runtime the vault is built for;
         # joiners receive this file through sync and compare against it.
         if gameversion.VaultMeta.load(instance_path) is None:
@@ -208,6 +213,7 @@ class ModSyncService:
             )
             device_id = client.my_id()
         self._remember(instance_path, code.folder_id, label)
+        log.info("joined vault %s from device %s… into %s", code.folder_id, code.device_id[:7], instance_path)
         return PairingCode(device_id, code.folder_id, label)
 
     def add_peer(self, code: PairingCode) -> None:
@@ -252,6 +258,7 @@ class ModSyncService:
                 ]
                 client.put_folder(folder)
                 accepted.append(device_id)
+                log.info("accepted pending device %s… (%s)", device_id[:7], name)
         return accepted
 
     # --- LAN pairing (no code typing) ---
@@ -308,6 +315,7 @@ class ModSyncService:
         stays on disk.
         """
         folder_id = self.state.folder_id
+        log.info("leaving vault %s (forget devices: %s)", folder_id, forget_devices)
         try:
             self.ensure_running()
             with self.manager.client() as client:
@@ -464,7 +472,16 @@ class ModSyncService:
         plan = self.plan_downgrade(target)
         prefix = prefixes.compat_prefix(app.library, SKYRIM_SE.appid) if app else None
         cache = config.data_dir() / "downgrade" / "cache"
-        return engine.run(plan, cache_dir=cache, prefix_dir=prefix, progress=progress)
+        log.info("downgrade %s -> %s (%s) in %s: %d archive(s)", plan.from_version, plan.target, plan.language,
+                 plan.game_dir, len(plan.archives))
+        try:
+            result = engine.run(plan, cache_dir=cache, prefix_dir=prefix, progress=progress)
+        except Exception:
+            log.exception("downgrade to %s failed", target)
+            raise
+        log.info("downgrade finished: game reports %s, %d files patched, %d bytes downloaded",
+                 result.installed_version, len(result.patched_files), result.downloaded_bytes)
+        return result
 
     def pin_game_version(self, *, queue_if_steam_running: bool = True) -> PinOutcome:
         """Make Steam consider the installed files current so it launches the
@@ -479,6 +496,7 @@ class ModSyncService:
             if not queue_if_steam_running:
                 raise RuntimeError("Close Steam first — it rewrites the appmanifest while running")
             self._queue_pin()
+            log.info("Steam is running; pin queued for when it exits")
             return PinOutcome(
                 applied=False,
                 queued=True,
@@ -496,6 +514,8 @@ class ModSyncService:
         changes = manifest.pin_to(info)
         if changes:
             manifest.save()
+            log.info("pinned %s to build %s: %s", acf.name, info.public_buildid,
+                     ", ".join(f"{c.field} {c.old}->{c.new}" for c in changes))
         self._pending_pin_path().unlink(missing_ok=True)
         msg = (
             f"Pinned: Steam now treats the installed files as build {info.public_buildid}."
@@ -524,6 +544,7 @@ class ModSyncService:
         try:
             return self.pin_game_version(queue_if_steam_running=False)
         except Exception as exc:
+            log.error("queued pin failed: %s", exc)
             return PinOutcome(False, True, [], f"pin failed: {exc}")
 
     # --- status ---

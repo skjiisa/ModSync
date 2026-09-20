@@ -26,6 +26,7 @@ the moment Steam exits — the same mechanism the appmanifest pin uses.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shlex
@@ -43,6 +44,8 @@ from modsync.steam import compattools, shortcuts
 from modsync.steam import libraries as libs
 from modsync.steam.compattools import CompatTool
 from modsync.steam.steamconfig import SteamConfig, config_vdf_path
+
+log = logging.getLogger(__name__)
 
 TEMPLATE_VERSION = 1
 TEMPLATE_DIR = Path(__file__).parent / "steam" / "launchhook_template"
@@ -462,6 +465,8 @@ def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None) -> str:
     new_record.write_marker()
 
     hands = describe_target(underlying.name, underlying.display_name)
+    log.info("launch hook enabled for %s: hands off to %s (%s); Steam had %s; steam running: %s",
+             appid, underlying.name, underlying.path, current or "(default)", shortcuts.steam_is_running())
     if current == ours:
         Pending.clear()
         return f"Launch hook refreshed. Play opens ModSync, then continues to {hands}."
@@ -485,6 +490,7 @@ def disable(appid: int = SKYRIM_SE.appid) -> str:
     env = steam_env()
     record = load_record(env.tool_dir(appid) if env else None)
     previous = record.previous if record else None
+    log.info("launch hook disable for %s: restoring %s", appid, (previous or {}).get("name") or "Steam's default")
     if env is None:
         Record.remove()
         Pending.clear()
@@ -526,6 +532,7 @@ def apply_pending() -> str | None:
     env = steam_env()
     if env is None or not env.config_vdf.exists():
         return None
+    log.info("applying queued launch hook change: %s for %s", pending.action, pending.appid)
     try:
         cfg = SteamConfig.load(env.config_vdf)
         if pending.action == "select":
@@ -545,6 +552,7 @@ def apply_pending() -> str | None:
         name = (pending.mapping or {}).get("name")
         return f"Launch hook off — the game launches {'with ' + str(name) if name else 'with Steam’s default'} again."
     except Exception as exc:  # keep the loop alive; the queue stays for the next try
+        log.error("queued launch hook change failed: %s", exc)
         return f"Launch hook: could not apply the queued change: {exc}"
 
 

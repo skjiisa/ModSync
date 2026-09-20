@@ -8,6 +8,7 @@ to come up.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import threading
 import time
@@ -16,6 +17,8 @@ from pathlib import Path
 
 from modsync.sync.api import SyncthingClient
 from modsync.sync.binary import ensure_syncthing
+
+log = logging.getLogger(__name__)
 
 
 class SyncthingError(RuntimeError):
@@ -86,6 +89,7 @@ class SyncthingManager:
             with self.client() as client:
                 if client.ping():
                     self._attached = True
+                    log.info("attached to the Syncthing already serving %s at %s", self.home, self.address)
                     return
         except Exception:
             pass
@@ -105,8 +109,13 @@ class SyncthingManager:
             out = self._log_handle
         else:
             out = subprocess.DEVNULL
+        log.info("starting %s serve --home %s (gui %s, log %s)", self.binary, self.home, self.address, self._log_file)
         self._proc = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT)
-        self._wait_ready(timeout)
+        try:
+            self._wait_ready(timeout)
+        except SyncthingError as exc:
+            log.error("Syncthing did not come up: %s", exc)
+            raise
 
     def _wait_ready(self, timeout: float) -> None:
         deadline = time.monotonic() + timeout
