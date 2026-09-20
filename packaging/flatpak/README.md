@@ -22,7 +22,7 @@ is rendered from the `.svg` with `rsvg-convert -w 512 -h 512`.
 
 ```sh
 # One-time: the runtime + SDK (the Platform may already be installed).
-flatpak install -y flathub org.kde.Platform//6.9 org.kde.Sdk//6.9
+flatpak install -y flathub org.kde.Platform//6.11 org.kde.Sdk//6.11 io.qt.PySide.BaseApp//6.11
 
 # Build + install into the user installation. Keep the build dir OUTSIDE the
 # repo so the `dir` source doesn't copy it into itself, and put the state dir
