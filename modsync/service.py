@@ -67,6 +67,9 @@ class GameStatus:
     skse_runtimes: list[str] = field(default_factory=list)  # all of them, when DLLs for several exist
     skse_source: str = ""  # e.g. "skse64_1_6_1170.dll in the game folder"
     backup_present: bool = False  # a downgrade left the originals in .modsync-downgrade/backup
+    backup_stale: bool = False  # ...but the game folder already holds those files again (Steam re-installed)
+    backup_from: str | None = None  # the game version the backup came from, per its manifest
+    backup_bytes: int = 0
     pinned_by_modsync: bool = False  # a pin record exists, so 'unpin' can put the manifest back
 
     @property
@@ -465,9 +468,22 @@ class ModSyncService:
             skse_runtime=vc.skse.runtime,
             skse_runtimes=[str(v) for v in vc.skse.runtimes],
             skse_source=vc.skse.describe(),
-            backup_present=engine.has_backup(app.install_path if app else vc.game_dir),
             pinned_by_modsync=self._pin_record_path().exists(),
+            **self._backup_fields(app.install_path if app else vc.game_dir),
         )
+
+    @staticmethod
+    def _backup_fields(game_dir: Path | None) -> dict:
+        if not engine.has_backup(game_dir):
+            return {}
+        assert game_dir is not None
+        manifest = engine._read_manifest(engine.work_dir_for(game_dir))
+        return {
+            "backup_present": True,
+            "backup_stale": engine.backup_is_stale(game_dir),
+            "backup_from": str(manifest["from_version"]) if manifest.get("from_version") else None,
+            "backup_bytes": engine.backup_size(game_dir),
+        }
 
     def plan_downgrade(self, target: str, *, refresh_index: bool = True) -> engine.Plan:
         app, acf, _ = self._steam_app()

@@ -317,8 +317,15 @@ def _game_status(service) -> int:
     elif st.can_unpin:
         print("                pinned by ModSync — 'modsync game unpin' lets Steam update again")
     if st.backup_present and st.game_dir:
-        print(f"Backup:         originals from before the downgrade are in {st.game_dir}/.modsync-downgrade/backup")
-        print("                'modsync game restore' puts them back")
+        came_from = f" ({st.backup_from})" if st.backup_from else ""
+        if st.backup_stale:
+            print(f"Backup:         a leftover backup{came_from} in {st.game_dir}/.modsync-downgrade/backup, "
+                  f"{st.backup_bytes / 1e9:.1f} GB")
+            print("                the game folder already holds those files again; the next downgrade")
+            print("                replaces it, or 'modsync game restore --discard' deletes it now")
+        else:
+            print(f"Backup:         originals{came_from} from before the downgrade are in {st.game_dir}/.modsync-downgrade/backup")
+            print("                'modsync game restore' puts them back")
     if st.recipe_from:
         print(f"Recipes:        from {st.recipe_from} → {', '.join(st.recipe_targets)}   [{st.recipe_origin}]")
         if st.can_downgrade_to:
@@ -355,6 +362,10 @@ def _game_downgrade(service, args: list[str]) -> int:
     try:
         plan = service.plan_downgrade(target)
         engine.preflight(plan)
+    except engine.BackupPresentError as exc:
+        print(f"Cannot downgrade: {exc}")
+        print("  'modsync game restore' puts them back; 'modsync game restore --discard' drops the backup.")
+        return 1
     except Exception as exc:
         print(f"Cannot downgrade: {exc}")
         return 1

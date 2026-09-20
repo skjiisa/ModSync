@@ -10,16 +10,48 @@ from modsync.steam import pe
 REAL_EXE = Path.home() / ".local/share/Steam/steamapps/common/Skyrim Special Edition/SkyrimSE.exe"
 
 
-def fake_pe(major: int, minor: int, build: int, rev: int, *, decoy: bool = False) -> bytes:
-    """Bytes containing a VS_FIXEDFILEINFO header, surrounded by junk."""
+def _string(key: str, value: str) -> bytes:
+    """One String struct of a StringFileInfo table (wLength, wValueLength, wType, key, value)."""
+    key_b = key.encode("utf-16-le") + b"\x00\x00"
+    val_b = value.encode("utf-16-le") + b"\x00\x00"
+    body = key_b + b"\x00" * (-(6 + len(key_b)) % 4) + val_b
+    body += b"\x00" * (-(6 + len(body)) % 4)
+    return struct.pack("<HHH", 6 + len(body), len(val_b) // 2, 1) + body
+
+
+def fake_pe(
+    major: int,
+    minor: int,
+    build: int,
+    rev: int,
+    *,
+    decoy: bool = False,
+    strings: dict[str, str] | None = None,
+) -> bytes:
+    """Bytes containing a VS_VERSIONINFO resource, surrounded by junk.
+
+    ``strings`` adds a StringFileInfo table (e.g. ``{"ProductVersion": "1.5.97.0"}``)
+    after the fixed struct, the way a real resource lays it out."""
     body = b"MZ" + b"\x00" * 100
     if decoy:
         # The magic without a valid dwStrucVersion must be skipped, not trusted.
         body += b"\xbd\x04\xef\xfe" + struct.pack("<III", 0xDEADBEEF, 9 << 16, 9 << 16)
         body += b"\x00" * 16
-    body += b"\xbd\x04\xef\xfe" + struct.pack(
+    fixed = b"\xbd\x04\xef\xfe" + struct.pack(
         "<III", 0x00010000, (major << 16) | minor, (build << 16) | rev
     )
+    fixed += b"\x00" * (52 - len(fixed))  # the rest of VS_FIXEDFILEINFO
+    children = b""
+    if strings:
+        table = b"".join(_string(k, v) for k, v in strings.items())
+        lang = "040904b0".encode("utf-16-le") + b"\x00\x00"
+        lang += b"\x00" * (-(6 + len(lang)) % 4)
+        table = struct.pack("<HHH", 6 + len(lang) + len(table), 0, 1) + lang + table
+        sfi = "StringFileInfo".encode("utf-16-le") + b"\x00\x00"
+        children = struct.pack("<HHH", 6 + len(sfi) + len(table), 0, 1) + sfi + table
+    root_key = "VS_VERSION_INFO".encode("utf-16-le") + b"\x00\x00"
+    payload = root_key + b"\x00\x00" + fixed + children
+    body += struct.pack("<HHH", 6 + len(payload), 52, 0) + payload
     return body + b"\x00" * 64
 
 
@@ -29,6 +61,22 @@ class PeVersionTests(unittest.TestCase):
             p = Path(tmp) / "game.exe"
             p.write_bytes(fake_pe(1, 6, 1170, 0))
             self.assertEqual(pe.file_version(p), (1, 6, 1170, 0))
+
+    def test_prefers_string_table_over_fixed_struct(self):
+        # Skyrim SE 1.5.97 leaves VS_FIXEDFILEINFO at 1.0.0.0 and only names the
+        # real version in the string table, which is also what SKSE reads.
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "game.exe"
+            p.write_bytes(fake_pe(1, 0, 0, 0, strings={"FileVersion": "1.5.97.0", "ProductVersion": "1.5.97.0"}))
+            self.assertEqual(pe.file_version(p), (1, 5, 97, 0))
+            p.write_bytes(fake_pe(1, 0, 0, 0, strings={"ProductVersion": "1, 6, 1170, 0"}))
+            self.assertEqual(pe.file_version(p), (1, 6, 1170, 0))
+
+    def test_falls_back_to_fixed_struct_when_strings_are_unusable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "game.exe"
+            p.write_bytes(fake_pe(1, 7, 104, 0, strings={"ProductVersion": "latest", "CompanyName": "x"}))
+            self.assertEqual(pe.file_version(p), (1, 7, 104, 0))
 
     def test_skips_decoy_signature(self):
         with tempfile.TemporaryDirectory() as tmp:
