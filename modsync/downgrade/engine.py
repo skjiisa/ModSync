@@ -14,6 +14,12 @@ Design notes:
   are moved back; if even that fails the backup dir is left on disk and named
   in the error. Files the target version must not have (per the recipe) are
   moved into the same backup rather than deleted, so they roll back too.
+* **The downgrade is reversible.** After a successful swap the originals stay
+  in ``<game_dir>/.modsync-downgrade/backup`` next to a ``manifest.json`` that
+  lists what was swapped and removed (with the recipe's SHA1 for the exe and
+  the original sizes). ``restore`` moves them all back and verifies them;
+  ``discard_backup`` drops them once Steam has re-installed the current
+  version anyway. A new downgrade refuses to run while a backup exists.
 * **Partial downloads are never mistaken for complete ones.** Data streams into
   a ``.part`` file that is only promoted once its size matches the server's
   Content-Length (and its SHA1 matches, when the recipe has one).
@@ -26,6 +32,7 @@ Design notes:
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shutil
 import urllib.error
@@ -39,6 +46,13 @@ from modsync.downgrade import tools
 from modsync.downgrade.recipe import Archive, Index
 
 _CHUNK = 1 << 20
+WORK_DIR_NAME = ".modsync-downgrade"
+MANIFEST_NAME = "manifest.json"
+NO_BACKUP_MESSAGE = (
+    "no ModSync backup of the original game files was found, so there is nothing to restore. "
+    "To get the current version back, use \"Verify integrity of game files\" in Steam "
+    "(Library → the game → Properties → Installed Files)."
+)
 
 
 class DowngradeError(RuntimeError):
@@ -47,7 +61,7 @@ class DowngradeError(RuntimeError):
 
 @dataclass
 class Progress:
-    stage: str  # "download" | "extract" | "patch" | "swap" | "post" | "verify"
+    stage: str  # "download" | "extract" | "patch" | "swap" | "post" | "verify" | "restore"
     message: str
     done: int | None = None
     total: int | None = None
@@ -82,6 +96,32 @@ class Result:
     downloaded_bytes: int
     notes: list[str] = field(default_factory=list)
     removed_files: list[Path] = field(default_factory=list)
+    backup_dir: Path | None = None  # where the originals are kept for ``restore``
+
+
+@dataclass
+class RestoreResult:
+    game_dir: Path
+    restored: list[Path]  # game-relative paths moved back into place
+    mismatches: list[str]  # restored files whose hash/size differs from the record
+    from_version: str | None = None  # the version the backup came from, per the manifest
+    target: str | None = None  # the version the downgrade had installed
+
+
+def work_dir_for(game_dir: Path | str) -> Path:
+    return Path(game_dir) / WORK_DIR_NAME
+
+
+def backup_dir_for(game_dir: Path | str) -> Path:
+    return work_dir_for(game_dir) / "backup"
+
+
+def has_backup(game_dir: Path | str | None) -> bool:
+    """Does a previous downgrade's backup of the originals exist here?"""
+    if not game_dir:
+        return False
+    root = backup_dir_for(game_dir)
+    return root.is_dir() and _has_backups(root)
 
 
 def make_plan(index: Index, game_dir: Path | str, target: str, language: str) -> Plan:
@@ -108,7 +148,7 @@ def sha1_of(path: Path) -> str:
 
 
 def preflight(plan: Plan) -> None:
-    _check_backups(plan.game_dir / ".modsync-downgrade" / "backup")
+    _check_backups(backup_dir_for(plan.game_dir))
     exe = plan.game_dir / plan.exe_name
     if not exe.is_file():
         raise DowngradeError(f"{exe} not found")
@@ -328,10 +368,49 @@ def _has_backups(root: Path) -> bool:
 def _check_backups(root: Path) -> None:
     if _has_backups(root):
         raise DowngradeError(
-            f"a previous downgrade left original files in {root}; restore them relative to the game "
-            "folder and remove the backup directory before trying again. Alternatively, use Steam's "
-            "'Verify integrity of game files', then remove the backup directory."
+            f"a previous downgrade left original files in {root}. Run 'modsync game restore' to put "
+            "them back first, or 'modsync game restore --discard' to drop the backup if Steam has "
+            "since re-installed the current version."
         )
+
+
+def _write_manifest(work: Path, plan: Plan, patched: list[Path]) -> None:
+    """Record what the swap is about to do so ``restore`` can verify its work.
+    The recipe only knows the exe's hash; sizes cover the rest."""
+    originals: dict[str, dict] = {}
+    for rel in patched:
+        entry: dict = {}
+        try:
+            entry["size"] = (plan.game_dir / rel).stat().st_size
+        except OSError:
+            pass
+        if rel == Path(plan.exe_name):
+            entry["sha1"] = plan.from_exe_sha1
+        originals[rel.as_posix()] = entry
+    removed: dict[str, dict] = {}
+    for name in plan.deletes:
+        target = plan.game_dir / name
+        if target.is_file():
+            removed[Path(name).as_posix()] = {"size": target.stat().st_size}
+    doc = {
+        "schema": 1,
+        "from_version": plan.from_version,
+        "target": plan.target,
+        "language": plan.language,
+        "exe_name": plan.exe_name,
+        "originals": originals,
+        "removed": removed,
+    }
+    work.mkdir(parents=True, exist_ok=True)
+    (work / MANIFEST_NAME).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def _read_manifest(work: Path) -> dict:
+    try:
+        doc = json.loads((work / MANIFEST_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
 
 
 def apply(
@@ -347,7 +426,7 @@ def apply(
     if xdelta3 is None or extractor is None:
         raise DowngradeError("Missing tools: " + ", ".join(tools.missing_tools()))
 
-    work = work_dir or (plan.game_dir / ".modsync-downgrade")
+    work = work_dir or work_dir_for(plan.game_dir)
     _check_backups(work / "backup")
     if work.exists():
         shutil.rmtree(work)
@@ -388,6 +467,7 @@ def apply(
         staged_version = gameversion.installed_version(out_root)
         if staged_version is None or str(staged_version) != plan.target:
             raise DowngradeError(f"staged game reports version {staged_version}, expected {plan.target}")
+        _write_manifest(work, plan, [rel for _, rel in patches])
         swapped, removed = _swap(plan, [rel for _, rel in patches], backup_root, out_root, progress)
 
         for step in plan.post_steps:
@@ -410,15 +490,84 @@ def apply(
                 + ", ".join(str(p.relative_to(plan.game_dir)) for p in removed)
             )
         committed = True
-        return Result(plan.target, str(installed), swapped, 0, notes, removed)
+        return Result(plan.target, str(installed), swapped, 0, notes, removed, backup_root)
     except Exception as exc:
         if _has_backups(backup_root) and not isinstance(exc, SwapError):
-            raise DowngradeError(f"{exc}; originals are preserved in {backup_root}") from exc
+            raise DowngradeError(
+                f"{exc}; originals are preserved in {backup_root} ('modsync game restore' puts them back)"
+            ) from exc
         raise
     finally:
-        # Preserve recovery files on every exceptional exit, including interrupts.
-        if committed or not _has_backups(backup_root):
+        # Preserve recovery files on every exceptional exit, including interrupts,
+        # and keep the originals after success so the downgrade can be undone.
+        if not _has_backups(backup_root):
             shutil.rmtree(work, ignore_errors=True)
+        elif committed:
+            for scratch in (extract_root, out_root):
+                shutil.rmtree(scratch, ignore_errors=True)
+
+
+# --- restore ----------------------------------------------------------------------
+
+
+def restore(game_dir: Path | str, progress: ProgressFn | None = None) -> RestoreResult:
+    """Move every backed-up original back to its place in the game folder and
+    remove the backup. Verifies what the manifest lets us verify (the exe's
+    SHA1, everyone else's size) and reports mismatches without aborting."""
+    game = Path(game_dir)
+    work = work_dir_for(game)
+    backup = backup_dir_for(game)
+    files = sorted(p for p in backup.rglob("*") if p.is_file() or p.is_symlink()) if backup.is_dir() else []
+    if not files:
+        raise DowngradeError(NO_BACKUP_MESSAGE)
+    manifest = _read_manifest(work)
+    known: dict[str, dict] = {}
+    for key in ("originals", "removed"):
+        block = manifest.get(key)
+        if isinstance(block, dict):
+            known.update({k: v for k, v in block.items() if isinstance(v, dict)})
+
+    restored: list[Path] = []
+    mismatches: list[str] = []
+    for i, src in enumerate(files, 1):
+        rel = src.relative_to(backup)
+        if progress:
+            progress(Progress("restore", f"Restoring {rel}", i, len(files)))
+        target = game / rel
+        _replace(src, target)
+        restored.append(rel)
+        expect = known.get(rel.as_posix())
+        if not expect or target.is_symlink():
+            continue
+        if expect.get("sha1"):
+            actual = sha1_of(target)
+            if actual != str(expect["sha1"]).lower():
+                mismatches.append(f"{rel}: SHA1 {actual} differs from the original's {expect['sha1']}")
+        elif expect.get("size") is not None and target.stat().st_size != int(expect["size"]):
+            mismatches.append(
+                f"{rel}: {target.stat().st_size} bytes, the original had {expect['size']}"
+            )
+    # Everything left in the work dir is ModSync's own scratch; the backup is now empty.
+    shutil.rmtree(work, ignore_errors=True)
+    return RestoreResult(
+        game,
+        restored,
+        mismatches,
+        from_version=str(manifest["from_version"]) if manifest.get("from_version") else None,
+        target=str(manifest["target"]) if manifest.get("target") else None,
+    )
+
+
+def discard_backup(game_dir: Path | str) -> int:
+    """Delete a leftover backup without restoring it (Steam has re-installed
+    the current version, so the backup is stale). Returns the bytes freed."""
+    game = Path(game_dir)
+    work = work_dir_for(game)
+    if not has_backup(game):
+        raise DowngradeError(NO_BACKUP_MESSAGE)
+    freed = sum(p.stat().st_size for p in work.rglob("*") if p.is_file())
+    shutil.rmtree(work)
+    return freed
 
 
 def _post_step(step: str, game_dir: Path, prefix_dir: Path | None) -> str | None:

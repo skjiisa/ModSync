@@ -122,8 +122,10 @@ loading until the runtime matches again. ModSync can downgrade the game itself:
 - **Applying** is native: download + SHA1 check, unpack the 7z, `xdelta3 -d` every
   file into a staging dir on the same drive, then install with backups and rollback
   on replacement failure. Files excluded by the target recipe are backed up and
-  removed too. If recovery fails or the process is killed, originals remain in
-  `.modsync-downgrade/backup`; restore them before retrying. xdelta3 verifies the
+  removed too. The originals stay in `.modsync-downgrade/backup` after a
+  successful downgrade, so `modsync game restore` (or "Restore original files"
+  on the dashboard) undoes it; `modsync game restore --discard` drops a stale
+  backup once Steam has re-installed the current version. xdelta3 verifies the
   source checksum, so a wrong source version fails cleanly. Interrupted downloads
   resume from temporary files; only completed downloads enter the cache (about
   1.1 GB for 1.7.104 → 1.6.1170), so a repeat is offline.
@@ -140,6 +142,8 @@ loading until the runtime matches again. ModSync can downgrade the game itself:
 modsync game status                 # installed vs recorded version, Steam state, recipes
 modsync game downgrade 1.6.1170     # needs xdelta3 and 7z (or bsdtar) installed
 modsync game pin                    # after the next Bethesda patch, with Steam closed
+modsync game restore                # undo the downgrade: put the original files back
+modsync game unpin                  # let Steam update the game again
 ```
 
 The Flatpak bundles xdelta3 and 7zz. Downgrading to 1.6.x on a Steam Deck brings
@@ -246,11 +250,11 @@ Everything the dashboard does is also a command:
 modsync doctor                      # Steam libraries, game, MO2 instances, current setup
 modsync diagnostics                 # doctor + recent logs, secrets redacted: paste into a bug report
 modsync mo2 status | use <dir> | install <dest>
-modsync game status | downgrade <version> | pin
+modsync game status | downgrade <version> | restore | pin | unpin
 modsync sync create | join          # optional
 modsync serve                       # foreground loop; what the background service runs
 modsync service install [--linger] | status | uninstall
-modsync steam shortcut              # add ModSync as a non-Steam game (Gaming Mode)
+modsync steam shortcut [--remove]   # add ModSync as a non-Steam game (Gaming Mode), or remove it
 modsync launch status | enable | disable   # open ModSync when Skyrim is launched from Steam
 ```
 

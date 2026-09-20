@@ -65,6 +65,8 @@ class GameStatus:
     skse_runtime: gameversion.GameVersion | None = None  # what the installed SKSE is built for
     skse_runtimes: list[str] = field(default_factory=list)  # all of them, when DLLs for several exist
     skse_source: str = ""  # e.g. "skse64_1_6_1170.dll in the game folder"
+    backup_present: bool = False  # a downgrade left the originals in .modsync-downgrade/backup
+    pinned_by_modsync: bool = False  # a pin record exists, so 'unpin' can put the manifest back
 
     @property
     def mismatch(self) -> bool:
@@ -106,6 +108,11 @@ class GameStatus:
     def needs_pin(self) -> bool:
         """Steam wants to update; pinning would keep the installed files."""
         return self.steam_is_current is False
+
+    @property
+    def can_unpin(self) -> bool:
+        """A ModSync pin is in effect that unpinning would reverse."""
+        return self.pinned_by_modsync and self.steam_is_current is True and not self.pending_pin
 
 
 @dataclass
@@ -412,6 +419,11 @@ class ModSyncService:
     def _pending_pin_path() -> Path:
         return config.config_dir() / "pending-pin.json"
 
+    @staticmethod
+    def _pin_record_path() -> Path:
+        """What the last pin changed, so ``unpin_game_version`` can put it back."""
+        return config.config_dir() / "pin-record.json"
+
     def game_status(self, *, refresh_index: bool = True) -> GameStatus:
         app, acf, appinfo_path = self._steam_app()
         vc = gameversion.check(self.state.instance_path)
@@ -449,6 +461,8 @@ class ModSyncService:
             skse_runtime=vc.skse.runtime,
             skse_runtimes=[str(v) for v in vc.skse.runtimes],
             skse_source=vc.skse.describe(),
+            backup_present=engine.has_backup(app.install_path if app else vc.game_dir),
+            pinned_by_modsync=self._pin_record_path().exists(),
         )
 
     def plan_downgrade(self, target: str, *, refresh_index: bool = True) -> engine.Plan:
@@ -483,6 +497,28 @@ class ModSyncService:
                  result.installed_version, len(result.patched_files), result.downloaded_bytes)
         return result
 
+    def restore_game_files(self, progress: engine.ProgressFn | None = None) -> engine.RestoreResult:
+        """Undo a downgrade: move the backed-up originals back into the game
+        folder and drop the backup. Steam's manifest is left alone; if it was
+        pinned, the files it now describes really are the current build."""
+        result = engine.restore(self._game_dir_for_backup(), progress)
+        log.info("restored %d original file(s) into %s (%d mismatch(es))",
+                 len(result.restored), result.game_dir, len(result.mismatches))
+        return result
+
+    def discard_downgrade_backup(self) -> int:
+        """Delete a leftover backup without restoring it. Returns bytes freed."""
+        freed = engine.discard_backup(self._game_dir_for_backup())
+        log.info("discarded the downgrade backup (%d bytes freed)", freed)
+        return freed
+
+    def _game_dir_for_backup(self) -> Path:
+        app, _, _ = self._steam_app()
+        game_dir = app.install_path if app else gameversion.find_game_dir(self.state.instance_path)
+        if game_dir is None:
+            raise engine.DowngradeError(f"{SKYRIM_SE.name} was not found on this machine")
+        return Path(game_dir)
+
     def pin_game_version(self, *, queue_if_steam_running: bool = True) -> PinOutcome:
         """Make Steam consider the installed files current so it launches the
         game without updating. Needs Steam closed; otherwise (optionally) queue
@@ -516,12 +552,63 @@ class ModSyncService:
             manifest.save()
             log.info("pinned %s to build %s: %s", acf.name, info.public_buildid,
                      ", ".join(f"{c.field} {c.old}->{c.new}" for c in changes))
+            self._save_pin_record(changes)
         self._pending_pin_path().unlink(missing_ok=True)
         msg = (
             f"Pinned: Steam now treats the installed files as build {info.public_buildid}."
             if changes
             else "Already pinned — Steam considers this install up to date."
         )
+        return PinOutcome(applied=bool(changes), queued=False, changes=changes, message=msg)
+
+    def _save_pin_record(self, changes: list[PinChange]) -> None:
+        p = self._pin_record_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            json.dumps(
+                {
+                    "appid": SKYRIM_SE.appid,
+                    "pinned_at": datetime.now(timezone.utc).isoformat(),
+                    "changes": [{"field": c.field, "old": c.old, "new": c.new} for c in changes],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _load_pin_record(self) -> list[PinChange] | None:
+        try:
+            doc = json.loads(self._pin_record_path().read_text(encoding="utf-8"))
+            return [PinChange(str(c["field"]), c.get("old"), str(c["new"])) for c in doc["changes"]]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def unpin_game_version(self) -> PinOutcome:
+        """Let Steam update the game again: put the manifest fields the pin
+        changed back (or, without a record, flag the install as needing an
+        update). Also drops any queued pin. Needs Steam closed."""
+        app, acf, _ = self._steam_app()
+        if not app or not acf or not acf.exists():
+            raise RuntimeError(f"{SKYRIM_SE.name} is not installed through Steam on this machine")
+        if shortcuts.steam_is_running():
+            raise RuntimeError("Close Steam first — it rewrites the appmanifest while running")
+        record = self._load_pin_record()
+        manifest = AppManifest.load(acf)
+        changes = manifest.unpin(record)
+        if changes:
+            manifest.save()
+            log.info("unpinned %s (%s record): %s", acf.name, "with" if record else "no",
+                     ", ".join(f"{c.field} {c.old}->{c.new}" for c in changes))
+        self._pending_pin_path().unlink(missing_ok=True)
+        self._pin_record_path().unlink(missing_ok=True)
+        if changes and record:
+            msg = "Unpinned: Steam's manifest is back to what it said before the pin, so Steam will update the game again."
+        elif changes:
+            msg = (
+                "Unpinned: Steam now sees this install as needing an update and will re-check it on its "
+                "next launch. If it does not update, use \"Verify integrity of game files\" in Steam."
+            )
+        else:
+            msg = "Nothing to unpin — Steam's manifest does not carry a ModSync pin."
         return PinOutcome(applied=bool(changes), queued=False, changes=changes, message=msg)
 
     def _queue_pin(self) -> None:

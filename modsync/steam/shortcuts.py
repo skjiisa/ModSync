@@ -1,4 +1,4 @@
-"""Add ModSync as a non-Steam game by editing Steam's ``shortcuts.vdf``.
+"""Add (or remove) ModSync as a non-Steam game by editing Steam's ``shortcuts.vdf``.
 
 This is what makes ModSync reachable from **Gaming Mode** on the Steam Deck (where
 there's no desktop launcher and text fields get the on-screen keyboard).
@@ -161,6 +161,29 @@ def add_or_update(
     return int(target_key)
 
 
+def _find_entry(root: dict, app_name: str) -> str | None:
+    """Key under ``root['shortcuts']`` of the entry named ``app_name``."""
+    shortcuts = root.get("shortcuts")
+    if not isinstance(shortcuts, dict):
+        return None
+    for k, entry in shortcuts.items():
+        if isinstance(entry, dict) and str(_ci_get(entry, "AppName") or "").strip() == app_name:
+            return k
+    return None
+
+
+def remove(root: dict, *, app_name: str) -> bool:
+    """Drop the shortcut named ``app_name`` (the exact inverse of ``add_or_update``,
+    so add-then-remove leaves the file byte-identical). Other entries keep
+    their indices; Steam renumbers on its next save. Returns whether anything
+    was removed."""
+    key = _find_entry(root, app_name)
+    if key is None:
+        return False
+    del root["shortcuts"][key]
+    return True
+
+
 def modsync_target(flatpak_id: str | None = MODSYNC_FLATPAK_ID) -> tuple[str, str, str]:
     """(Exe, StartDir, LaunchOptions) for launching ModSync — Flatpak by default,
     falling back to the native command. Exe/StartDir are quoted as Steam stores
@@ -206,6 +229,33 @@ def steam_is_running() -> bool:
     return False
 
 
+MODSYNC_APP_NAME = "ModSync"
+
+
+def _user_shortcut_files() -> list[Path]:
+    """``shortcuts.vdf`` for every Steam user on this machine (whether or not
+    the file exists yet)."""
+    out: list[Path] = []
+    for root_dir in platforms.current().steam_roots():
+        userdata = root_dir / "userdata"
+        if not userdata.is_dir():
+            continue
+        for user in sorted(userdata.iterdir()):
+            if user.name == "0" or not user.is_dir():
+                continue
+            out.append(user / "config" / "shortcuts.vdf")
+    return out
+
+
+def _save(vdf_path: Path, root_obj: dict) -> None:
+    vdf_path.parent.mkdir(parents=True, exist_ok=True)
+    if vdf_path.exists():
+        # Steam has no recovery for a bad shortcuts.vdf: keep the
+        # previous file next to it so a user can always roll back.
+        shutil.copy2(vdf_path, vdf_path.with_suffix(".vdf.modsync-bak"))
+    dump(vdf_path, root_obj)
+
+
 def add_modsync_to_steam(
     flatpak_id: str | None = MODSYNC_FLATPAK_ID,
     *,
@@ -216,30 +266,31 @@ def add_modsync_to_steam(
     pick the shortcut up."""
     exe, start_dir, opts = modsync_target(flatpak_id)
     written: list[Path] = []
-    for root_dir in platforms.current().steam_roots():
-        userdata = root_dir / "userdata"
-        if not userdata.is_dir():
+    for vdf_path in _user_shortcut_files():
+        if not vdf_path.exists() and not create_missing:
             continue
-        for user in userdata.iterdir():
-            if user.name == "0" or not user.is_dir():
-                continue
-            cfg = user / "config"
-            vdf_path = cfg / "shortcuts.vdf"
-            if not vdf_path.exists() and not create_missing:
-                continue
-            root_obj = load(vdf_path) if vdf_path.exists() else {"shortcuts": {}}
-            add_or_update(
-                root_obj,
-                app_name="ModSync",
-                exe=exe,
-                start_dir=start_dir,
-                launch_options=opts,
-            )
-            cfg.mkdir(parents=True, exist_ok=True)
-            if vdf_path.exists():
-                # Steam has no recovery for a bad shortcuts.vdf: keep the
-                # previous file next to it so a user can always roll back.
-                shutil.copy2(vdf_path, vdf_path.with_suffix(".vdf.modsync-bak"))
-            dump(vdf_path, root_obj)
+        root_obj = load(vdf_path) if vdf_path.exists() else {"shortcuts": {}}
+        add_or_update(
+            root_obj,
+            app_name=MODSYNC_APP_NAME,
+            exe=exe,
+            start_dir=start_dir,
+            launch_options=opts,
+        )
+        _save(vdf_path, root_obj)
+        written.append(vdf_path)
+    return written
+
+
+def remove_modsync_from_steam() -> list[Path]:
+    """Remove the "ModSync" shortcut from every Steam user's shortcuts.vdf.
+    Returns the paths that actually had one. Steam must be restarted to notice."""
+    written: list[Path] = []
+    for vdf_path in _user_shortcut_files():
+        if not vdf_path.exists():
+            continue
+        root_obj = load(vdf_path)
+        if remove(root_obj, app_name=MODSYNC_APP_NAME):
+            _save(vdf_path, root_obj)
             written.append(vdf_path)
     return written
