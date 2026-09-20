@@ -1,0 +1,158 @@
+"""MO2 launch plans use the right instance, profile, Proton and virtual filesystem."""
+
+from pathlib import Path
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import Mock, patch
+
+from modsync.mo2 import launch
+from modsync.steam import vdf
+from tests import fakesteam
+
+
+class LaunchTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.root = fakesteam.make_steam(self.tmp / "Steam")
+        self.common = self.root / "steamapps/common"
+        self.game = self.common / "Skyrim Special Edition"
+        (self.game / "SkyrimSE.exe").touch()
+        self.proton = self.common / "Proton - Experimental"
+        self.compat = self.root / "steamapps/compatdata/489830"
+        (self.compat / "pfx").mkdir(parents=True)
+        (self.compat / "config_info").write_text(f"version\n{self.proton}/files/lib/\n")
+        self.instance = self.tmp / "MO2 with spaces"
+        self.instance.mkdir()
+        (self.instance / "ModOrganizer.exe").touch()
+        self.ini = self.instance / "ModOrganizer.ini"
+        self.ini.write_text("[General]\ngameName=Skyrim Special Edition\nselected_profile=My Profile\n")
+        for item in (
+            patch("modsync.mo2.launch.platforms.current", return_value=Mock(steam_roots=lambda: [self.root])),
+            patch("modsync.mo2.launch.shortcuts.steam_is_running", return_value=True),
+            patch("modsync.mo2.launch.background.in_flatpak", return_value=False),
+            patch("modsync.mo2.launch.state_dir", return_value=self.tmp / "logs"),
+            patch("modsync.mo2.launch.launchhook.game_proton", return_value=None),
+        ):
+            item.start()
+            self.addCleanup(item.stop)
+
+    def test_open_uses_existing_prefix_runtime_and_selected_profile(self):
+        plan = launch.build_plan(self.instance)
+        self.assertEqual(plan.argv[:3], [str(self.common / "SteamLinuxRuntime_4/_v2-entry-point"), "--verb=run", "--"])
+        self.assertEqual(plan.argv[3:], [str(self.proton / "proton"), "run", str(self.instance / "ModOrganizer.exe"), "-p", "My Profile"])
+        self.assertEqual(plan.env["STEAM_COMPAT_DATA_PATH"], str(self.compat))
+        self.assertEqual(plan.env["SteamAppId"], "489830")
+        self.assertEqual(plan.cwd, self.instance)
+
+    def test_play_prefers_renamed_configured_skse_and_preserves_arguments(self):
+        with self.ini.open("a") as file:
+            file.write(f'[customExecutables]\n1\\title=My SKSE\n1\\binary=Z:{self.game}/skse64_loader.exe\n'
+                       f'1\\arguments=--keep-this\n2\\title=Skyrim\n2\\binary=Z:{self.game}/SkyrimSE.exe\n')
+        (self.game / "skse64_loader.exe").touch()
+        before = self.ini.read_bytes()
+        plan = launch.build_plan(self.instance, play=True)
+        self.assertEqual(plan.argv[-3:], ["run", "-e", "My SKSE"])
+        self.assertEqual(plan.target, "My SKSE")
+        self.assertEqual(self.ini.read_bytes(), before)
+
+    def test_stale_saved_entry_falls_back_to_the_file_on_disk(self):
+        with self.ini.open("a") as file:
+            file.write(f'[customExecutables]\n1\\title=SKSE\n1\\binary=Z:{self.game}/skse64_loader.exe\n')
+        plan = launch.build_plan(self.instance, play=True)
+        self.assertEqual(plan.argv[-4:], ["run", "-c", "Z:" + str(self.game), "Z:" + str(self.game / "SkyrimSE.exe")])
+        self.assertEqual(plan.target, "Skyrim")
+
+    def test_play_without_saved_executables_still_goes_through_mo2(self):
+        for filename in ("SkyrimSE.exe", "skse64_loader.exe"):
+            (self.game / filename).touch()
+            plan = launch.build_plan(self.instance, play=True)
+            self.assertIn(str(self.instance / "ModOrganizer.exe"), plan.argv)
+            self.assertEqual(plan.argv[-4:], ["run", "-c", "Z:" + str(self.game), "Z:" + str(self.game / filename)])
+
+    def test_steams_current_proton_wins_over_the_prefix_history(self):
+        chosen = self.common / "GE-Proton"
+        chosen.mkdir()
+        (chosen / "proton").touch()
+        (chosen / "toolmanifest.vdf").write_text('"manifest" { "require_tool_appid" "1628350" }')
+        tool = Mock(path=chosen)
+        with patch("modsync.mo2.launch.launchhook.game_proton", return_value=tool):
+            with self.assertRaisesRegex(RuntimeError, "Runtime 1628350"):
+                launch.build_plan(self.instance)
+            (self.common / "SteamLinuxRuntime_sniper").mkdir()
+            (self.common / "SteamLinuxRuntime_sniper/_v2-entry-point").touch()
+            fakesteam_manifest = self.root / "steamapps/appmanifest_1628350.acf"
+            fakesteam_manifest.write_text(vdf.dumps({"AppState": {"appid": "1628350", "name": "SLR sniper", "installdir": "SteamLinuxRuntime_sniper"}}))
+            plan = launch.build_plan(self.instance)
+        self.assertEqual(plan.argv[3], str(chosen / "proton"))
+        self.assertEqual(plan.argv[0], str(self.common / "SteamLinuxRuntime_sniper/_v2-entry-point"))
+
+    def test_external_library_prefix_is_not_confused_with_steam_root(self):
+        external = self.tmp / "Other Library"
+        (external / "steamapps").mkdir(parents=True)
+        (self.root / "steamapps/appmanifest_489830.acf").replace(external / "steamapps/appmanifest_489830.acf")
+        self.compat.rename(external / "steamapps/compatdata-game")
+        (external / "steamapps/compatdata").mkdir()
+        (external / "steamapps/compatdata-game").rename(external / "steamapps/compatdata/489830")
+        (self.root / "steamapps/libraryfolders.vdf").write_text(vdf.dumps({"libraryfolders": {
+            "0": {"path": str(self.root)}, "1": {"path": str(external)}}}))
+        plan = launch.build_plan(self.instance)
+        self.assertEqual(plan.env["STEAM_COMPAT_DATA_PATH"], str(external / "steamapps/compatdata/489830"))
+        self.assertEqual(plan.env["STEAM_COMPAT_CLIENT_INSTALL_PATH"], str(self.root))
+
+    def test_missing_runtime_or_proton_explains_how_to_fix_it(self):
+        runtime = self.common / "SteamLinuxRuntime_4/_v2-entry-point"
+        runtime.unlink()
+        with self.assertRaisesRegex(RuntimeError, "Runtime.*missing"):
+            launch.build_plan(self.instance)
+        (self.compat / "config_info").write_text("/gone/Proton/files/lib/\n")
+        with self.assertRaisesRegex(RuntimeError, "Proton wasn't found"):
+            launch.build_plan(self.instance)
+
+    def test_missing_instance_and_steam_update_are_blocked(self):
+        with self.assertRaisesRegex(RuntimeError, "Choose an MO2"):
+            launch.build_plan(None)
+        manifest = self.root / "steamapps/appmanifest_489830.acf"
+        data = vdf.load(manifest)
+        data["AppState"]["StateFlags"] = "1024"
+        manifest.write_text(vdf.dumps(data))
+        with self.assertRaisesRegex(RuntimeError, "Steam is updating"):
+            launch.build_plan(self.instance, play=True)
+
+    def test_steam_must_be_running_to_play_but_not_to_open_mo2(self):
+        with patch("modsync.mo2.launch.shortcuts.steam_is_running", return_value=False):
+            launch.build_plan(self.instance)
+            with self.assertRaisesRegex(RuntimeError, "Start Steam"):
+                launch.build_plan(self.instance, play=True)
+
+    def test_flatpak_launch_escapes_to_host_without_shell_interpolation(self):
+        plan = launch.build_plan(self.instance, play=True)
+        with patch("modsync.mo2.launch.background.in_flatpak", return_value=True), patch.object(launch.subprocess, "Popen") as popen:
+            popen.return_value.poll.return_value = None
+            launcher = launch.Launcher()
+            launcher.start(plan)
+            self.assertTrue((self.instance / "portable.txt").is_file())
+            argv = popen.call_args.args[0]
+            self.assertEqual(argv[:4], ["flatpak-spawn", "--host", f"--directory={self.instance}", "env"])
+            self.assertEqual(argv[-len(plan.argv):], plan.argv)
+            self.assertTrue(popen.call_args.kwargs["start_new_session"])
+            self.assertNotIn("shell", popen.call_args.kwargs)
+            with self.assertRaisesRegex(RuntimeError, "already running"):
+                launcher.start(plan)
+
+    def test_failed_child_is_reported_and_can_be_retried(self):
+        plan = launch.LaunchPlan([sys.executable, "-c", "raise SystemExit(7)"], {}, self.tmp, "SKSE", True)
+        launcher = launch.Launcher()
+        launcher.start(plan)
+        deadline = time.monotonic() + 5
+        while launcher.running() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertFalse(launcher.running())
+        errors = launcher.poll()
+        self.assertEqual(len(errors), 1)
+        self.assertIn("SKSE exited with code 7", errors[0])
+        self.assertEqual(launcher.poll(), [])
+        self.assertTrue((self.tmp / "logs/mo2-launch.log").exists())

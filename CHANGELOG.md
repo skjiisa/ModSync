@@ -10,6 +10,9 @@ Early development; nothing has been released yet. What exists so far:
 
 ### Changed
 
+- Add a prominent Play Skyrim button that launches through the chosen MO2
+  instance and selected profile, preferring SKSE. Add a separate Open MO2 button.
+
 - Use the updated inset Canva icon with deeper transparent rounded corners,
   preserving the supplied artwork in both the scalable SVG and 512px PNG.
 

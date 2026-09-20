@@ -257,7 +257,7 @@ class LaunchHookStatus:
                     f"On, but the tool it hands off to ({self.underlying_display}) is missing — "
                     f"{g} will not start. Turn the hook off or on again."
                 )
-            return f"On — Play opens ModSync, then continues to {self.hands_off_to}."
+            return f"On — Steam’s Play button opens ModSync, then continues to {self.hands_off_to}."
         if self.installed:
             via = f" with {self.current_mapping}" if self.current_mapping else ""
             return (
@@ -269,7 +269,7 @@ class LaunchHookStatus:
                 f"Steam is set to launch {g} through ModSync, but the hook files are gone — "
                 "turn it off to restore the previous launcher, or on to reinstall."
             )
-        return f"Off — Play starts {g} directly."
+        return f"Off — Steam’s Play button starts {g} directly."
 
 
 def describe_target(underlying_name: str | None, underlying_display: str | None = None) -> str:
@@ -381,6 +381,33 @@ def remove_tool_dir(path: Path) -> bool:
 
 
 # --- enable / disable -------------------------------------------------------------
+
+
+def game_proton(appid: int = SKYRIM_SE.appid, env: SteamEnv | None = None) -> CompatTool | None:
+    """The real Proton Steam would launch the game with right now, looking
+    through ModSync's hook to the tool it hands off to. ``None`` when Steam has
+    no usable choice recorded (no mapping, or a tool such as MO2-LINT's
+    redirector that is not itself a Proton)."""
+    env = env or steam_env()
+    if env is None or not env.config_vdf.exists():
+        return None
+    try:
+        current = SteamConfig.load(env.config_vdf).compat_tool_name(appid)
+    except (OSError, ValueError):
+        return None
+    if not current:
+        return None
+    if current == tool_id(appid):
+        record = load_record(env.tool_dir(appid))
+        current = record.underlying_name if record else None
+        if not current:
+            return None
+    if _TOOL_ID_RE.match(current) or compattools.MO2LINT_TOOL_RE.match(current):
+        return None
+    tool = compattools.find_tool(current, env.root, env.libraries)
+    if tool is None or not (tool.path / "proton").is_file():
+        return None
+    return tool
 
 
 def _resolve_underlying(
