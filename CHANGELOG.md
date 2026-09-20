@@ -10,6 +10,9 @@ Early development; nothing has been released yet. What exists so far:
 
 ### Fixed
 
+- Show SKSE mismatch and pending Steam update warnings at normal text contrast,
+  including before an MO2 instance is chosen.
+
 - Keep the dashboard, setup wizard and launch hub open while a downgrade,
   restore or MO2 install is running. Restore now blocks competing game actions
   and launching the game until it finishes; controls recover after failures.
