@@ -18,3 +18,4 @@ venv/
 # Local scratch
 *.local
 /scratch/
+.claude/worktrees/
