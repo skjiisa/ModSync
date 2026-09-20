@@ -19,7 +19,10 @@ Design notes:
   lists what was swapped and removed (with the recipe's SHA1 for the exe and
   the original sizes). ``restore`` moves them all back and verifies them;
   ``discard_backup`` drops them once Steam has re-installed the current
-  version anyway. A new downgrade refuses to run while a backup exists.
+  version anyway. A new downgrade refuses to run while a backup exists —
+  unless the backup is *stale*: Steam has re-installed the version it came
+  from (every backed-up file is in the game folder again, byte-for-byte for
+  the executables), so it preserves nothing and is simply replaced.
 * **Partial downloads are never mistaken for complete ones.** Data streams into
   a ``.part`` file that is only promoted once its size matches the server's
   Content-Length (and its SHA1 matches, when the recipe has one).
@@ -148,7 +151,7 @@ def sha1_of(path: Path) -> str:
 
 
 def preflight(plan: Plan) -> None:
-    _check_backups(backup_dir_for(plan.game_dir))
+    _check_backups(plan.game_dir, work_dir_for(plan.game_dir))
     exe = plan.game_dir / plan.exe_name
     if not exe.is_file():
         raise DowngradeError(f"{exe} not found")
@@ -361,17 +364,60 @@ def _swap(
     return swapped, removed
 
 
+class BackupPresentError(DowngradeError):
+    """A previous downgrade's originals are still backed up and differ from
+    what is installed, so a new downgrade would overwrite the only copy of them.
+    The caller decides: restore them first, or discard the backup."""
+
+    def __init__(self, backup_dir: Path) -> None:
+        super().__init__(
+            "the original game files from a previous downgrade are still backed up in "
+            f"{backup_dir} and differ from what is installed now. Restore them first, or "
+            "discard the backup if you no longer need those files."
+        )
+        self.backup_dir = backup_dir
+
+
 def _has_backups(root: Path) -> bool:
     return any(p.is_file() or p.is_symlink() for p in root.rglob("*"))
 
 
-def _check_backups(root: Path) -> None:
-    if _has_backups(root):
-        raise DowngradeError(
-            f"a previous downgrade left original files in {root}. Run 'modsync game restore' to put "
-            "them back first, or 'modsync game restore --discard' to drop the backup if Steam has "
-            "since re-installed the current version."
-        )
+_HASHED_SUFFIXES = {".exe", ".dll"}
+
+
+def backup_is_stale(game_dir: Path | str, work_dir: Path | None = None) -> bool:
+    """Does the game folder already hold everything the backup does?
+
+    True after Steam re-installs the version a downgrade was taken from
+    (typically "Verify integrity of game files"): every backed-up file exists in
+    the game folder again with the same size — byte-for-byte for the small
+    executables — so the backup preserves nothing and can be replaced."""
+    game = Path(game_dir)
+    backup = (work_dir or work_dir_for(game)) / "backup"
+    if not backup.is_dir():
+        return False
+    files = [p for p in backup.rglob("*") if p.is_file() or p.is_symlink()]
+    if not files:
+        return False
+    for src in files:
+        target = game / src.relative_to(backup)
+        try:
+            if src.is_symlink() or target.is_symlink() or not target.is_file():
+                return False
+            if src.stat().st_size != target.stat().st_size:
+                return False
+            if src.suffix.lower() in _HASHED_SUFFIXES and sha1_of(src) != sha1_of(target):
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def _check_backups(game_dir: Path, work: Path) -> None:
+    """Refuse while a backup that still matters exists; stale ones are fine."""
+    backup = work / "backup"
+    if backup.is_dir() and _has_backups(backup) and not backup_is_stale(game_dir, work):
+        raise BackupPresentError(backup)
 
 
 def _write_manifest(work: Path, plan: Plan, patched: list[Path]) -> None:
@@ -427,13 +473,17 @@ def apply(
         raise DowngradeError("Missing tools: " + ", ".join(tools.missing_tools()))
 
     work = work_dir or work_dir_for(plan.game_dir)
-    _check_backups(work / "backup")
+    _check_backups(plan.game_dir, work)
+    notes: list[str] = []
+    if (work / "backup").is_dir() and _has_backups(work / "backup"):
+        # Only a stale backup gets past _check_backups: the game folder already
+        # holds those files, so replacing it loses nothing.
+        notes.append("Replaced the leftover backup from an earlier downgrade (the game folder already held those files).")
     if work.exists():
         shutil.rmtree(work)
     extract_root = work / "patches"
     out_root = work / "out"
     backup_root = work / "backup"
-    notes: list[str] = []
     committed = False
     try:
         for i, archive in enumerate(archives, 1):
@@ -556,6 +606,16 @@ def restore(game_dir: Path | str, progress: ProgressFn | None = None) -> Restore
         from_version=str(manifest["from_version"]) if manifest.get("from_version") else None,
         target=str(manifest["target"]) if manifest.get("target") else None,
     )
+
+
+def backup_size(game_dir: Path | str | None) -> int:
+    """Bytes held by a leftover backup (0 when there is none)."""
+    if not game_dir:
+        return 0
+    root = backup_dir_for(game_dir)
+    if not root.is_dir():
+        return 0
+    return sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
 
 
 def discard_backup(game_dir: Path | str) -> int:

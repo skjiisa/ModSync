@@ -99,9 +99,17 @@ class GameCard(QGroupBox):
             "Undo the downgrade: move the original game files that ModSync backed up "
             "back into the game folder and remove the backup."
         )
-        self._restore.clicked.connect(self._restore_files)
+        self._restore.clicked.connect(lambda: self._restore_files())
         self._restore.setVisible(False)
         row.addWidget(self._restore)
+        self._discard = QPushButton("Delete leftover backup")
+        self._discard.setToolTip(
+            "Steam has re-installed the files ModSync backed up before your last downgrade, "
+            "so the backup is no longer needed. Deleting it only frees disk space."
+        )
+        self._discard.clicked.connect(self._discard_backup)
+        self._discard.setVisible(False)
+        row.addWidget(self._discard)
         self._refresh_btn = QPushButton("Check again")
         self._refresh_btn.setToolTip("Re-read the installed version, SKSE and Steam's update state")
         self._refresh_btn.clicked.connect(self.refresh)
@@ -194,8 +202,14 @@ class GameCard(QGroupBox):
         elif st.needs_pin:
             lines.append("Steam has an update ready. Choose “Keep this version” to stay on this version.")
             warning = True
-        if st.backup_present:
-            lines.append("“Restore original files” undoes your last downgrade.")
+        if st.backup_present and st.backup_stale:
+            lines.append(
+                f"Steam has re-installed Skyrim {st.backup_from or st.installed}, so the backup from your "
+                f"last downgrade ({st.backup_bytes / 1e9:.1f} GB) is no longer needed."
+            )
+        elif st.backup_present:
+            came_from = f" ({st.backup_from})" if st.backup_from else ""
+            lines.append(f"“Restore original files” puts back the files{came_from} from before your last downgrade.")
 
         role(self._label, "warning" if warning else "secondary")
         self._label.setText("\n".join(lines))
@@ -215,7 +229,8 @@ class GameCard(QGroupBox):
             self._downgrade.setText(f"Downgrade to {target}…")
         self._pin.setVisible(st.needs_pin and not st.pending_pin and not self._busy)
         self._unpin.setVisible(st.can_unpin and not self._busy)
-        self._restore.setVisible(st.backup_present and not self._busy)
+        self._restore.setVisible(st.backup_present and not st.backup_stale and not self._busy)
+        self._discard.setVisible(st.backup_present and st.backup_stale and not self._busy)
 
     # --- downgrade ----------------------------------------------------------
     def _start_downgrade(self) -> None:
@@ -225,6 +240,57 @@ class GameCard(QGroupBox):
         target = st.suggested_target if st else None
         if not st or not target:
             return
+        if st.backup_present and not st.backup_stale:
+            # The engine would refuse: a new downgrade overwrites the only copy
+            # of those originals. Let the user pick instead of failing later.
+            self._resolve_backup_then_downgrade(st)
+            return
+        self._confirm_downgrade(st, target)
+
+    def _resolve_backup_then_downgrade(self, st: GameStatus) -> None:
+        came_from = f"Skyrim {st.backup_from} " if st.backup_from else ""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Files from an earlier downgrade are still backed up")
+        box.setText(
+            f"ModSync still has the {came_from}files it set aside before your last downgrade "
+            f"({st.backup_bytes / 1e9:.1f} GB), and they differ from what is installed now.\n\n"
+            "Downgrading again would replace that backup. Put those files back first, or delete "
+            "the backup if you no longer need them?"
+        )
+        restore = box.addButton("Restore them first", QMessageBox.ButtonRole.AcceptRole)
+        discard = box.addButton("Delete backup and downgrade", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(restore)
+        box.exec()
+        if box.clickedButton() is restore:
+            self._restore_files(confirm=False)
+        elif box.clickedButton() is discard:
+            self._begin_file_operation("Deleting the old backup…")
+            run_async(
+                self.service.discard_downgrade_backup,
+                on_done=self._on_backup_discarded_for_downgrade,
+                on_failed=self._on_discard_failed,
+            )
+
+    def _on_backup_discarded_for_downgrade(self, freed: object) -> None:
+        self._busy = False
+        self.busyChanged.emit(False)
+        self._progress.setVisible(False)
+        self._progress_label.setVisible(False)
+        st = self._game
+        if st is None:
+            self.refresh()
+            return
+        st.backup_present = False
+        st.backup_stale = False
+        target = st.suggested_target
+        if target:
+            self._confirm_downgrade(st, target)
+        else:
+            self.refresh()
+
+    def _confirm_downgrade(self, st: GameStatus, target: str) -> None:
         deck_note = (
             "• On Steam Deck, 1.6.x brings back the on-screen keyboard crash; the "
             "“Steam Deck Keyboard Fix for Skyrim” SKSE plugin works around it.\n"
@@ -263,7 +329,7 @@ class GameCard(QGroupBox):
     def _begin_file_operation(self, message: str) -> None:
         self._busy = True
         self.busyChanged.emit(True)
-        for btn in (self._downgrade, self._adopt, self._pin, self._unpin, self._restore):
+        for btn in (self._downgrade, self._adopt, self._pin, self._unpin, self._restore, self._discard):
             btn.setVisible(False)
         self._refresh_btn.setEnabled(False)
         self._progress.setVisible(True)
@@ -321,19 +387,20 @@ class GameCard(QGroupBox):
         run_async(self.service.unpin_game_version, on_done=self._on_pinned, on_failed=self._on_error)
 
     # --- restore ------------------------------------------------------------
-    def _restore_files(self) -> None:
+    def _restore_files(self, *, confirm: bool = True) -> None:
         if self.busy:
             return
-        answer = QMessageBox.question(
-            self,
-            "Restore the original game files",
-            f"This moves the {SKYRIM_SE.name} files ModSync backed up before the downgrade back into "
-            "Steam's folder, replacing the downgraded ones, and removes the backup.\n\n"
-            "Mods built for the downgraded version (SKSE and its plugins) will stop working until "
-            "you downgrade again.\n\nProceed?",
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
+        if confirm:
+            answer = QMessageBox.question(
+                self,
+                "Restore the original game files",
+                f"This moves the {SKYRIM_SE.name} files ModSync backed up before the downgrade back into "
+                "Steam's folder, replacing the downgraded ones, and removes the backup.\n\n"
+                "Mods built for the downgraded version (SKSE and its plugins) will stop working until "
+                "you downgrade again.\n\nProceed?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         self._begin_file_operation("Restoring original files…")
         run_async(self.service.restore_game_files, on_done=self._on_restored, on_failed=self._on_restore_failed)
 
@@ -354,6 +421,22 @@ class GameCard(QGroupBox):
     def _on_restore_failed(self, message: str) -> None:
         self._end_file_operation()
         self.status.emit(f"⚠ Restore failed: {message}")
+
+    # --- leftover backup ----------------------------------------------------
+    def _discard_backup(self) -> None:
+        if self.busy:
+            return
+        self._begin_file_operation("Deleting the old backup…")
+        run_async(self.service.discard_downgrade_backup, on_done=self._on_backup_discarded, on_failed=self._on_discard_failed)
+
+    def _on_backup_discarded(self, freed: object) -> None:
+        self._end_file_operation()
+        mb = int(freed) / 1e6 if isinstance(freed, (int, float)) else 0
+        self.status.emit(f"Deleted the old backup ({mb:,.0f} MB freed). The game files were not touched.")
+
+    def _on_discard_failed(self, message: str) -> None:
+        self._end_file_operation()
+        self.status.emit(f"⚠ Couldn’t delete the old backup: {message}")
 
     def _on_pending_pin_applied(self, out: object) -> None:
         if out is not None:

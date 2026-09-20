@@ -208,8 +208,9 @@ class EngineTests(unittest.TestCase):
         self.assertFalse((work / "out").exists())
         self.assertFalse((work / "patches").exists())
         self.assertTrue(engine.has_backup(self.game))
-        with self.assertRaisesRegex(engine.DowngradeError, "modsync game restore"):
+        with self.assertRaises(engine.BackupPresentError):
             engine.preflight(plan)
+        self.assertFalse(engine.backup_is_stale(self.game))
         cat_dir = self.prefix / "drive_c/users/steamuser/AppData/Local/Skyrim Special Edition"
         self.assertTrue((cat_dir / "ContentCatalog.bak").exists())
         self.assertFalse((cat_dir / "ContentCatalog.txt").exists())
@@ -363,9 +364,45 @@ class EngineTests(unittest.TestCase):
                 engine.apply(plan, archives)
         backup = ctx.exception.backup_dir / "SkyrimSE.exe"
         self.assertEqual(backup.read_bytes(), self.new_exe)
-        with self.assertRaisesRegex(engine.DowngradeError, "previous downgrade"):
+        with self.assertRaises(engine.BackupPresentError):
             engine.apply(plan, archives)
         self.assertEqual(backup.read_bytes(), self.new_exe)
+
+    def test_stale_backup_is_replaced_by_the_next_downgrade(self):
+        # Downgrade, then "Steam verifies integrity": the originals come back on
+        # top of the patched files while the backup is still there.
+        plan = engine.make_plan(self.index, self.game, "1.6.1170", "english")
+        engine.run(plan, cache_dir=self.cache)
+        backup = self.game / ".modsync-downgrade" / "backup"
+        for src in backup.rglob("*"):
+            if src.is_file():
+                shutil.copy2(src, self.game / src.relative_to(backup))
+        self.assertTrue(engine.backup_is_stale(self.game))
+        self.assertGreater(engine.backup_size(self.game), 0)
+
+        engine.preflight(plan)  # no complaint: the backup preserves nothing
+        result = engine.run(plan, cache_dir=self.cache)
+        self.assertEqual(result.installed_version, "1.6.1170")
+        self.assertTrue(any("leftover backup" in n for n in result.notes))
+        self.assertEqual((backup / "SkyrimSE.exe").read_bytes(), self.new_exe)
+
+    def test_backup_is_not_stale_when_a_file_differs_or_is_missing(self):
+        plan = engine.make_plan(self.index, self.game, "1.6.1170", "english")
+        engine.run(plan, cache_dir=self.cache)
+        backup = self.game / ".modsync-downgrade" / "backup"
+        for src in backup.rglob("*"):
+            if src.is_file():
+                shutil.copy2(src, self.game / src.relative_to(backup))
+        # Same size, different bytes: the executable is hashed, so this is caught.
+        exe = self.game / "SkyrimSE.exe"
+        exe.write_bytes(self.new_exe[:-3] + b"XYZ")
+        self.assertFalse(engine.backup_is_stale(self.game))
+        exe.write_bytes(self.new_exe)
+        self.assertTrue(engine.backup_is_stale(self.game))
+        (self.game / "Data" / "Skyrim.esm").unlink()
+        self.assertFalse(engine.backup_is_stale(self.game))
+        with self.assertRaises(engine.BackupPresentError):
+            engine.preflight(plan)
 
     def test_deletions_are_restored_on_interrupt_then_applied_on_retry(self):
         self.index.raw["targets"]["1.6.1170"]["delete"] = ["Data/obsolete.bsa", "another.dll"]
