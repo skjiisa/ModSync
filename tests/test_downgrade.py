@@ -198,7 +198,17 @@ class EngineTests(unittest.TestCase):
         self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), self.old_exe)
         self.assertEqual((self.game / "Data" / "Skyrim.esm").read_bytes(), b"esm-old" * 1000)
         self.assertFalse((self.game / "Data" / "ShaderCache").exists())
-        self.assertFalse((self.game / ".modsync-downgrade").exists())
+        # The originals stay behind for `restore`; the scratch dirs do not.
+        work = self.game / ".modsync-downgrade"
+        self.assertEqual(result.backup_dir, work / "backup")
+        self.assertEqual((work / "backup" / "SkyrimSE.exe").read_bytes(), self.new_exe)
+        self.assertEqual((work / "backup" / "Data" / "Skyrim.esm").read_bytes(), b"esm-new" * 1000)
+        self.assertTrue((work / "manifest.json").exists())
+        self.assertFalse((work / "out").exists())
+        self.assertFalse((work / "patches").exists())
+        self.assertTrue(engine.has_backup(self.game))
+        with self.assertRaisesRegex(engine.DowngradeError, "modsync game restore"):
+            engine.preflight(plan)
         cat_dir = self.prefix / "drive_c/users/steamuser/AppData/Local/Skyrim Special Edition"
         self.assertTrue((cat_dir / "ContentCatalog.bak").exists())
         self.assertFalse((cat_dir / "ContentCatalog.txt").exists())
@@ -208,6 +218,89 @@ class EngineTests(unittest.TestCase):
         # cached: a second download pass transfers nothing
         _, transferred = engine.download_all(plan, self.cache)
         self.assertEqual(transferred, 0)
+
+    def test_restore_round_trip(self):
+        self.index.raw["targets"]["1.6.1170"]["delete"] = ["Data/obsolete.bsa"]
+        obsolete = self.game / "Data/obsolete.bsa"
+        obsolete.write_bytes(b"obsolete")
+        plan = engine.make_plan(self.index, self.game, "1.6.1170", "english")
+        engine.run(plan, cache_dir=self.cache, prefix_dir=self.prefix)
+        self.assertFalse(obsolete.exists())
+        manifest = json.loads((self.game / ".modsync-downgrade" / "manifest.json").read_text())
+        self.assertEqual(manifest["from_version"], "1.7.104")
+        self.assertEqual(manifest["originals"]["SkyrimSE.exe"]["sha1"], plan.from_exe_sha1)
+        self.assertEqual(manifest["originals"]["Data/Skyrim.esm"]["size"], len(b"esm-new" * 1000))
+        self.assertIn("Data/obsolete.bsa", manifest["removed"])
+
+        events = []
+        result = engine.restore(self.game, progress=events.append)
+        self.assertEqual(result.from_version, "1.7.104")
+        self.assertEqual(result.target, "1.6.1170")
+        self.assertEqual(result.mismatches, [])
+        self.assertEqual(
+            sorted(result.restored),
+            sorted([Path("SkyrimSE.exe"), Path("Data/Skyrim.esm"), Path("Data/obsolete.bsa")]),
+        )
+        self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), self.new_exe)
+        self.assertEqual((self.game / "Data" / "Skyrim.esm").read_bytes(), b"esm-new" * 1000)
+        self.assertEqual(obsolete.read_bytes(), b"obsolete")
+        self.assertFalse((self.game / ".modsync-downgrade").exists())
+        self.assertFalse(engine.has_backup(self.game))
+        self.assertEqual({e.stage for e in events}, {"restore"})
+        # ...and the install is downgradable again
+        engine.preflight(plan)
+        self.assertEqual(engine.run(plan, cache_dir=self.cache).installed_version, "1.6.1170")
+
+    def test_restore_reports_tampered_backup_without_aborting(self):
+        plan = engine.make_plan(self.index, self.game, "1.6.1170", "english")
+        engine.run(plan, cache_dir=self.cache, prefix_dir=self.prefix)
+        backup = self.game / ".modsync-downgrade" / "backup"
+        (backup / "SkyrimSE.exe").write_bytes(b"corrupted backup")
+        (backup / "Data" / "Skyrim.esm").write_bytes(b"short")
+        result = engine.restore(self.game)
+        self.assertEqual(len(result.restored), 2)
+        self.assertEqual(len(result.mismatches), 2)
+        self.assertTrue(any("SkyrimSE.exe" in m and "SHA1" in m for m in result.mismatches))
+        self.assertTrue(any("Skyrim.esm" in m and "bytes" in m for m in result.mismatches))
+        self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), b"corrupted backup")
+        self.assertFalse((self.game / ".modsync-downgrade").exists())
+
+    def test_restore_without_backup(self):
+        with self.assertRaisesRegex(engine.DowngradeError, "Verify integrity"):
+            engine.restore(self.game)
+        (self.game / ".modsync-downgrade" / "backup").mkdir(parents=True)
+        with self.assertRaisesRegex(engine.DowngradeError, "nothing to restore"):
+            engine.restore(self.game)
+        with self.assertRaises(engine.DowngradeError):
+            engine.discard_backup(self.game)
+
+    def test_restore_after_failed_rollback(self):
+        plan = engine.make_plan(self.index, self.game, "1.6.1170", "english")
+        archives, _ = engine.download_all(plan, self.cache)
+        replace = engine._replace
+
+        def fail_swap_and_restore(src, dst):
+            if src.name == "SkyrimSE.exe" and src.parent.name in ("out", "backup"):
+                raise PermissionError("locked executable")
+            replace(src, dst)
+
+        with patch.object(engine, "_replace", side_effect=fail_swap_and_restore):
+            with self.assertRaises(engine.SwapError):
+                engine.apply(plan, archives)
+        result = engine.restore(self.game)
+        self.assertEqual(result.restored, [Path("SkyrimSE.exe")])
+        self.assertEqual(result.mismatches, [])
+        self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), self.new_exe)
+        self.assertEqual((self.game / "Data/Skyrim.esm").read_bytes(), b"esm-new" * 1000)
+        self.assertFalse((self.game / ".modsync-downgrade").exists())
+
+    def test_discard_backup(self):
+        plan = engine.make_plan(self.index, self.game, "1.6.1170", "english")
+        engine.run(plan, cache_dir=self.cache, prefix_dir=self.prefix)
+        freed = engine.discard_backup(self.game)
+        self.assertGreaterEqual(freed, len(self.new_exe))
+        self.assertEqual((self.game / "SkyrimSE.exe").read_bytes(), self.old_exe)
+        self.assertFalse((self.game / ".modsync-downgrade").exists())
 
     def test_preflight_rejects_wrong_source_version(self):
         (self.game / "SkyrimSE.exe").write_bytes(self.old_exe)

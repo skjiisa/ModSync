@@ -61,6 +61,49 @@ class AddOrUpdate(unittest.TestCase):
         self.assertEqual(entry["LaunchOptions"], "")
         self.assertLess(entry["appid"], 0)  # high bit set, stored as signed int32
 
+    def test_remove_undoes_add_byte_for_byte(self):
+        root = _sample()
+        before = shortcuts.dumps(root)
+        shortcuts.add_or_update(root, app_name="ModSync", exe='"/usr/bin/flatpak"', start_dir='"/usr/bin"')
+        self.assertNotEqual(shortcuts.dumps(root), before)
+        self.assertTrue(shortcuts.remove(root, app_name="ModSync"))
+        self.assertEqual(shortcuts.dumps(root), before)
+        self.assertFalse(shortcuts.remove(root, app_name="ModSync"))
+        self.assertFalse(shortcuts.remove({}, app_name="ModSync"))
+
+    def test_remove_modsync_from_steam_only_writes_where_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            steam = Path(tmp)
+            with_it = steam / "userdata" / "111" / "config"
+            without = steam / "userdata" / "222" / "config"
+            with_it.mkdir(parents=True)
+            without.mkdir(parents=True)
+            original = shortcuts.dumps(_sample())
+            (with_it / "shortcuts.vdf").write_bytes(original)
+            (without / "shortcuts.vdf").write_bytes(original)
+
+            class _Plat:
+                def steam_roots(self):
+                    return [steam]
+
+            orig_current = shortcuts.platforms.current
+            shortcuts.platforms.current = lambda: _Plat()
+            try:
+                shortcuts.add_modsync_to_steam(flatpak_id=None)
+                (without / "shortcuts.vdf").write_bytes(original)  # user 222 never had it
+                removed = shortcuts.remove_modsync_from_steam()
+            finally:
+                shortcuts.platforms.current = orig_current
+            self.assertEqual(removed, [with_it / "shortcuts.vdf"])
+            self.assertEqual((with_it / "shortcuts.vdf").read_bytes(), original)
+            self.assertEqual((without / "shortcuts.vdf").read_bytes(), original)
+            # the pre-removal file (with ModSync in it) is kept as the rollback copy
+            names = [
+                e["AppName"]
+                for e in shortcuts.load(with_it / "shortcuts.vdf.modsync-bak")["shortcuts"].values()
+            ]
+            self.assertIn("ModSync", names)
+
     def test_writes_backup_before_overwriting(self):
         with tempfile.TemporaryDirectory() as tmp:
             steam = Path(tmp)

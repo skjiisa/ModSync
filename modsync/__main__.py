@@ -22,14 +22,16 @@ usage:
 
   modsync game status                    installed game version vs this setup, Steam state
   modsync game downgrade <version>       downgrade the game with community xdelta patches
+  modsync game restore [--discard]       undo the downgrade: put the original files back
   modsync game pin                       keep Steam from updating the installed files
+  modsync game unpin                     let Steam update the game again
 
   modsync sync create <instance-dir>     optional: share this setup; prints a pairing code
   modsync sync join <code> <instance>    optional: copy another machine's setup here
   modsync serve                          keep syncing (if set up) and watching Steam, in the foreground
 
   modsync service install [--linger]     run 'modsync serve' at login (systemd --user)
-  modsync steam shortcut                 add ModSync as a non-Steam game (Gaming Mode)
+  modsync steam shortcut [--remove]      add ModSync as a non-Steam game (Gaming Mode), or remove it
   modsync launch status | enable | disable
                                          open ModSync when Skyrim is launched from Steam
 

@@ -190,6 +190,31 @@ class AppManifestTests(unittest.TestCase):
             self.assertTrue(text.startswith('"AppState"\n{\n'))
             self.assertFalse(list(Path(tmp).glob("*.modsync-tmp")))
 
+    def test_unpin_with_record_restores_every_field(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._manifest(tmp)
+            record = m.pin_to(self._info())
+            self.assertTrue(m.is_current(self._info()))
+            undone = m.unpin(record)
+            self.assertEqual({c.field for c in undone}, {c.field for c in record})
+            self.assertEqual(m.data, vdf.loads(ACF))
+            self.assertFalse(m.is_current(self._info()))
+            m.save()
+            self.assertEqual(vdf.loads(m.path.read_text()), vdf.loads(ACF))
+            # already unpinned: nothing more to do
+            self.assertEqual(m.unpin(record), [])
+
+    def test_unpin_without_record_flags_update_required(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._manifest(tmp)
+            m.pin_to(self._info())
+            changes = m.unpin()
+            self.assertEqual({c.field for c in changes}, {"StateFlags", "buildid"})
+            self.assertEqual(m.state_flags, 6)
+            self.assertEqual(m.buildid, 0)
+            self.assertFalse(m.is_current(self._info()))
+            self.assertEqual(m.unpin(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

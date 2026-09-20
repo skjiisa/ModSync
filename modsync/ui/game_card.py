@@ -1,6 +1,7 @@
 """The **Game** card: which Skyrim runtime is installed, which one this setup was
 built for, and the buttons that fix a mismatch (downgrade with community patches,
-pin the Steam manifest so it keeps launching, or re-record the version).
+pin the Steam manifest so it keeps launching, or re-record the version) — plus
+the two that undo them (restore the original files, unpin).
 
 Needs nothing but Steam: it works before an MO2 instance is chosen and never
 touches Syncthing. The dashboard and the wizard's game-version step both embed it.
@@ -83,6 +84,22 @@ class GameCard(QGroupBox):
         self._pin.clicked.connect(self._pin_version)
         self._pin.setVisible(False)
         row.addWidget(self._pin)
+        self._unpin = QPushButton("Unpin")
+        self._unpin.setToolTip(
+            "Put Steam's manifest back to what it said before the pin, so Steam updates "
+            "the game again. Needs Steam closed."
+        )
+        self._unpin.clicked.connect(self._unpin_version)
+        self._unpin.setVisible(False)
+        row.addWidget(self._unpin)
+        self._restore = QPushButton("Restore original files")
+        self._restore.setToolTip(
+            "Undo the downgrade: move the original game files that ModSync backed up "
+            "back into the game folder and remove the backup."
+        )
+        self._restore.clicked.connect(self._restore_files)
+        self._restore.setVisible(False)
+        row.addWidget(self._restore)
         row.addStretch(1)
         self._refresh_btn = QPushButton("Check again")
         self._refresh_btn.setToolTip("Re-read the installed version, SKSE and Steam's update state")
@@ -160,6 +177,11 @@ class GameCard(QGroupBox):
             )
         if st.pending_pin:
             lines.append("•  A pin is queued; it applies automatically the next time Steam is closed.")
+        if st.backup_present:
+            lines.append(
+                "•  The original game files from before the downgrade are kept in the game folder; "
+                "“Restore original files” puts them back."
+            )
         if st.needs_downgrade and st.suggested_target is None and st.installed is not None and st.recipe_from:
             if str(st.installed) != st.recipe_from:
                 lines.append(
@@ -179,6 +201,8 @@ class GameCard(QGroupBox):
         if target:
             self._downgrade.setText(f"Downgrade to {target}…")
         self._pin.setVisible(st.needs_pin and not st.pending_pin and not self._downgrading)
+        self._unpin.setVisible(st.can_unpin and not self._downgrading)
+        self._restore.setVisible(st.backup_present and not self._downgrading)
 
     # --- downgrade ----------------------------------------------------------
     def _start_downgrade(self) -> None:
@@ -205,14 +229,14 @@ class GameCard(QGroupBox):
             "using xdelta patches published by Mulderland (open source, checksummed).\n\n"
             "• Roughly 1 GB is downloaded and kept for next time.\n"
             "• Steam keeps launching the game normally afterwards.\n"
-            "• To go back to the current version, use “Verify integrity of game files” in Steam.\n"
+            "• The original files are kept in the game folder; “Restore original files” undoes the downgrade.\n"
             f"{deck_note}\nProceed?",
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._downgrading = True
         self.busyChanged.emit(True)
-        for btn in (self._downgrade, self._adopt, self._pin):
+        for btn in (self._downgrade, self._adopt, self._pin, self._unpin, self._restore):
             btn.setVisible(False)
         self._refresh_btn.setEnabled(False)
         self._progress.setVisible(True)
@@ -273,6 +297,43 @@ class GameCard(QGroupBox):
     def _on_pinned(self, out: PinOutcome) -> None:
         self.status.emit(out.message)
         self.refresh()
+
+    def _unpin_version(self) -> None:
+        run_async(self.service.unpin_game_version, on_done=self._on_pinned, on_failed=self._on_error)
+
+    # --- restore ------------------------------------------------------------
+    def _restore_files(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Restore the original game files",
+            f"This moves the {SKYRIM_SE.name} files ModSync backed up before the downgrade back into "
+            "Steam's folder, replacing the downgraded ones, and removes the backup.\n\n"
+            "Mods built for the downgraded version (SKSE and its plugins) will stop working until "
+            "you downgrade again.\n\nProceed?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._restore.setEnabled(False)
+        run_async(self.service.restore_game_files, on_done=self._on_restored, on_failed=self._on_restore_failed)
+
+    def _on_restored(self, result: object) -> None:
+        self._restore.setEnabled(True)
+        restored = getattr(result, "restored", []) or []
+        mismatches = getattr(result, "mismatches", []) or []
+        version = getattr(result, "from_version", None)
+        msg = f"Restored {len(restored)} original file(s)" + (f" (game version {version})." if version else ".")
+        if mismatches:
+            msg += (
+                f" ⚠ {len(mismatches)} differ from what was recorded — use “Verify integrity of game "
+                "files” in Steam to be safe."
+            )
+        self.status.emit(msg)
+        self.refresh()
+        self.changed.emit()
+
+    def _on_restore_failed(self, message: str) -> None:
+        self._restore.setEnabled(True)
+        self.status.emit(f"⚠ Restore failed: {message}")
 
     def _on_pending_pin_applied(self, out: object) -> None:
         if out is not None:

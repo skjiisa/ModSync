@@ -254,7 +254,7 @@ def service(args: list[str]) -> int:
 
 
 def game(args: list[str]) -> int:
-    """Game runtime management: show versions, downgrade, pin Steam."""
+    """Game runtime management: show versions, downgrade, pin Steam — and undo both."""
     from modsync.service import ModSyncService
 
     sub = args[0] if args else ""
@@ -263,13 +263,20 @@ def game(args: list[str]) -> int:
         return _game_status(ModSyncService())
     if sub == "downgrade":
         return _game_downgrade(ModSyncService(), rest)
+    if sub == "restore":
+        return _game_restore(ModSyncService(), rest)
     if sub == "pin":
         return _game_pin(ModSyncService())
+    if sub == "unpin":
+        return _game_unpin(ModSyncService())
     print(
         "usage:\n"
         "  modsync game status                  installed vs this setup's version, Steam state, recipes\n"
         "  modsync game downgrade <version> [-y] apply the community patches to reach <version>\n"
-        "  modsync game pin                     make Steam treat the installed files as current"
+        "  modsync game restore [--discard]     put the original files back (undo the downgrade);\n"
+        "        (--discard deletes the backup instead, e.g. after Steam re-installed the game)\n"
+        "  modsync game pin                     make Steam treat the installed files as current\n"
+        "  modsync game unpin                   let Steam update the game again"
     )
     return 2
 
@@ -294,6 +301,11 @@ def _game_status(service) -> int:
         print(f"Steam:          wants to update to build {st.steam_public_build} — 'modsync game pin' keeps the installed files")
     if st.pending_pin:
         print("                a pin is queued and will apply when Steam is closed")
+    elif st.can_unpin:
+        print("                pinned by ModSync — 'modsync game unpin' lets Steam update again")
+    if st.backup_present and st.game_dir:
+        print(f"Backup:         originals from before the downgrade are in {st.game_dir}/.modsync-downgrade/backup")
+        print("                'modsync game restore' puts them back")
     if st.recipe_from:
         print(f"Recipes:        from {st.recipe_from} → {', '.join(st.recipe_targets)}   [{st.recipe_origin}]")
         if st.can_downgrade_to:
@@ -364,9 +376,40 @@ def _game_downgrade(service, args: list[str]) -> int:
           f"{result.downloaded_bytes / 1e6:,.0f} MB downloaded.")
     for note in result.notes:
         print(f"  • {note}")
+    if result.backup_dir:
+        print(f"  • The original files are kept in {result.backup_dir}; 'modsync game restore' puts them back.")
     st = service.game_status(refresh_index=False)
     if st.needs_pin:
         print("Steam wants to update this install — run 'modsync game pin' (with Steam closed) to keep it.")
+    return 0
+
+
+def _game_restore(service, args: list[str]) -> int:
+    if "--discard" in args:
+        try:
+            freed = service.discard_downgrade_backup()
+        except Exception as exc:
+            print(f"Cannot discard the backup: {exc}")
+            return 1
+        print(f"Deleted the downgrade backup ({freed / 1e6:,.0f} MB freed). The game files were not touched.")
+        return 0
+    if args:
+        print("usage: modsync game restore [--discard]")
+        return 2
+    try:
+        result = service.restore_game_files()
+    except Exception as exc:
+        print(f"Cannot restore: {exc}")
+        return 1
+    came_from = f" (game version {result.from_version})" if result.from_version else ""
+    print(f"Restored {len(result.restored)} original file(s){came_from} into {result.game_dir}:")
+    for rel in result.restored:
+        print(f"  ✓ {rel}")
+    for problem in result.mismatches:
+        print(f"  ! {problem}")
+    if result.mismatches:
+        print("Some restored files differ from what was recorded; use \"Verify integrity of game files\" in Steam to be safe.")
+    print("The downgrade backup has been removed.")
     return 0
 
 
@@ -382,16 +425,37 @@ def _game_pin(service) -> int:
     return 0
 
 
+def _game_unpin(service) -> int:
+    try:
+        out = service.unpin_game_version()
+    except Exception as exc:
+        print(f"Cannot unpin: {exc}")
+        return 1
+    print(out.message)
+    for c in out.changes:
+        print(f"  {c.field}: {c.old} → {c.new}")
+    return 0
+
+
 def steam(args: list[str]) -> int:
-    """Steam integration helpers (currently: add ModSync as a non-Steam game)."""
+    """Steam integration helpers (currently: add/remove ModSync as a non-Steam game)."""
     from modsync.steam import shortcuts
 
     sub = args[0] if args else ""
     if sub in {"shortcut", "add-shortcut"}:
         if shortcuts.steam_is_running():
             print("Close Steam first — it rewrites shortcuts.vdf from memory on exit,")
-            print("which would discard the shortcut. Then run this again.")
+            print("which would discard the change. Then run this again.")
             return 1
+        if "--remove" in args:
+            paths = shortcuts.remove_modsync_from_steam()
+            if not paths:
+                print("No 'ModSync' shortcut found in any Steam user's shortcuts.vdf; nothing to remove.")
+                return 0
+            for p in paths:
+                print(f"  ✓ removed 'ModSync' from {p}")
+            print("\nRestart Steam and it disappears from your library.")
+            return 0
         native = "--native" in args
         paths = shortcuts.add_modsync_to_steam(
             flatpak_id=None if native else shortcuts.MODSYNC_FLATPAK_ID
@@ -410,7 +474,8 @@ def steam(args: list[str]) -> int:
     print(
         "usage:\n"
         "  modsync steam shortcut [--native]   add ModSync as a non-Steam game\n"
-        "        (--native uses the local command instead of the Flatpak)"
+        "        (--native uses the local command instead of the Flatpak)\n"
+        "  modsync steam shortcut --remove     take it out of the library again"
     )
     return 2
 

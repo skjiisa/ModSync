@@ -14,6 +14,11 @@ are already the wanted version.
 
 Steam holds this file in memory and rewrites it while running, so a pin only
 sticks if Steam is **not running**; callers must check that first.
+
+**Unpinning** reverses this: given the ``PinChange`` list a pin returned, the
+fields go back to their previous values and Steam wants the update again.
+Without that record the manifest is flagged "update required" with an unknown
+build, which makes Steam re-check (and, if needed, re-download) the game.
 """
 
 from __future__ import annotations
@@ -150,6 +155,39 @@ class AppManifest:
                 if dep.size is not None and str(v.get("size")) != str(dep.size):
                     changes.append(PinChange(f"InstalledDepots/{k}/size", str(v.get("size")), str(dep.size)))
                     v["size"] = str(dep.size)
+        return changes
+
+    # --- unpin ---
+    def unpin(self, record: list[PinChange] | None = None) -> list[PinChange]:
+        """Undo ``pin_to``. With ``record`` (what the pin changed) every field
+        goes back to its old value; without it, mark the install as needing an
+        update so Steam re-checks it. Returns what changed."""
+        changes: list[PinChange] = []
+
+        def setf(block: dict, key: str, value: str | None, label: str) -> None:
+            old = block.get(key)
+            if value is None:
+                if key in block:
+                    changes.append(PinChange(label, str(old), "(removed)"))
+                    del block[key]
+            elif old != value:
+                changes.append(PinChange(label, str(old) if old is not None else None, value))
+                block[key] = value
+
+        if record:
+            depots = self.state.get("InstalledDepots")
+            for change in record:
+                parts = change.field.split("/")
+                if len(parts) == 3 and parts[0] == "InstalledDepots":
+                    if isinstance(depots, dict) and isinstance(depots.get(parts[1]), dict):
+                        setf(depots[parts[1]], parts[2], change.old, change.field)
+                elif len(parts) == 1:
+                    setf(self.state, change.field, change.old, change.field)
+            return changes
+        if self.state_flags == STATE_UPDATE_REQUIRED and self.buildid == 0:
+            return []
+        setf(self.state, "StateFlags", str(STATE_UPDATE_REQUIRED), "StateFlags")
+        setf(self.state, "buildid", "0", "buildid")
         return changes
 
     def save(self) -> None:
