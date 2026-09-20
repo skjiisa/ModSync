@@ -122,6 +122,34 @@ class EnableWithNoExplicitChoice(LaunchHookBase):
         self.assertEqual(launchhook.Record.load().underlying_name, "GE-Proton10-34")
 
 
+class GameProton(LaunchHookBase):
+    mapping = {489830: GE}
+
+    def test_resolves_steams_choice_through_the_hook(self):
+        tool = launchhook.game_proton()
+        self.assertEqual(tool.name, "GE-Proton10-34")
+        launchhook.enable()
+        self.assertEqual(self.mapping_name(), "modsync_489830_hub")
+        self.assertEqual(launchhook.game_proton().name, "GE-Proton10-34")
+        launchhook.disable()
+        self.assertEqual(launchhook.game_proton().name, "GE-Proton10-34")
+
+
+class GameProtonWithMo2Lint(LaunchHookBase):
+    with_mo2lint = True
+    mapping = {489830: "mo2_489830_redirector"}
+
+    def test_redirector_is_not_a_proton(self):
+        self.assertIsNone(launchhook.game_proton())
+        launchhook.enable()
+        self.assertIsNone(launchhook.game_proton())
+
+
+class GameProtonUnmapped(LaunchHookBase):
+    def test_no_mapping_means_none(self):
+        self.assertIsNone(launchhook.game_proton())
+
+
 class PrefersMo2Lint(LaunchHookBase):
     with_mo2lint = True
     mapping = {489830: GE}

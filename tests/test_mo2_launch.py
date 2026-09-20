@@ -35,6 +35,7 @@ class LaunchTests(unittest.TestCase):
             patch("modsync.mo2.launch.shortcuts.steam_is_running", return_value=True),
             patch("modsync.mo2.launch.background.in_flatpak", return_value=False),
             patch("modsync.mo2.launch.state_dir", return_value=self.tmp / "logs"),
+            patch("modsync.mo2.launch.launchhook.game_proton", return_value=None),
         ):
             item.start()
             self.addCleanup(item.stop)
@@ -72,6 +73,23 @@ class LaunchTests(unittest.TestCase):
             self.assertIn(str(self.instance / "ModOrganizer.exe"), plan.argv)
             self.assertEqual(plan.argv[-4:], ["run", "-c", "Z:" + str(self.game), "Z:" + str(self.game / filename)])
 
+    def test_steams_current_proton_wins_over_the_prefix_history(self):
+        chosen = self.common / "GE-Proton"
+        chosen.mkdir()
+        (chosen / "proton").touch()
+        (chosen / "toolmanifest.vdf").write_text('"manifest" { "require_tool_appid" "1628350" }')
+        tool = Mock(path=chosen)
+        with patch("modsync.mo2.launch.launchhook.game_proton", return_value=tool):
+            with self.assertRaisesRegex(RuntimeError, "Runtime 1628350"):
+                launch.build_plan(self.instance)
+            (self.common / "SteamLinuxRuntime_sniper").mkdir()
+            (self.common / "SteamLinuxRuntime_sniper/_v2-entry-point").touch()
+            fakesteam_manifest = self.root / "steamapps/appmanifest_1628350.acf"
+            fakesteam_manifest.write_text(vdf.dumps({"AppState": {"appid": "1628350", "name": "SLR sniper", "installdir": "SteamLinuxRuntime_sniper"}}))
+            plan = launch.build_plan(self.instance)
+        self.assertEqual(plan.argv[3], str(chosen / "proton"))
+        self.assertEqual(plan.argv[0], str(self.common / "SteamLinuxRuntime_sniper/_v2-entry-point"))
+
     def test_external_library_prefix_is_not_confused_with_steam_root(self):
         external = self.tmp / "Other Library"
         (external / "steamapps").mkdir(parents=True)
@@ -91,7 +109,7 @@ class LaunchTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Runtime.*missing"):
             launch.build_plan(self.instance)
         (self.compat / "config_info").write_text("/gone/Proton/files/lib/\n")
-        with self.assertRaisesRegex(RuntimeError, "last-used Proton"):
+        with self.assertRaisesRegex(RuntimeError, "Proton wasn't found"):
             launch.build_plan(self.instance)
 
     def test_missing_instance_and_steam_update_are_blocked(self):

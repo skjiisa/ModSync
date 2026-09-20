@@ -383,6 +383,33 @@ def remove_tool_dir(path: Path) -> bool:
 # --- enable / disable -------------------------------------------------------------
 
 
+def game_proton(appid: int = SKYRIM_SE.appid, env: SteamEnv | None = None) -> CompatTool | None:
+    """The real Proton Steam would launch the game with right now, looking
+    through ModSync's hook to the tool it hands off to. ``None`` when Steam has
+    no usable choice recorded (no mapping, or a tool such as MO2-LINT's
+    redirector that is not itself a Proton)."""
+    env = env or steam_env()
+    if env is None or not env.config_vdf.exists():
+        return None
+    try:
+        current = SteamConfig.load(env.config_vdf).compat_tool_name(appid)
+    except (OSError, ValueError):
+        return None
+    if not current:
+        return None
+    if current == tool_id(appid):
+        record = load_record(env.tool_dir(appid))
+        current = record.underlying_name if record else None
+        if not current:
+            return None
+    if _TOOL_ID_RE.match(current) or compattools.MO2LINT_TOOL_RE.match(current):
+        return None
+    tool = compattools.find_tool(current, env.root, env.libraries)
+    if tool is None or not (tool.path / "proton").is_file():
+        return None
+    return tool
+
+
 def _resolve_underlying(
     env: SteamEnv, appid: int, current: str | None, record: Record | None, through: str | None
 ) -> CompatTool:

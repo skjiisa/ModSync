@@ -1,5 +1,10 @@
 """Launch the chosen portable MO2 instance using Skyrim's existing Proton prefix.
 
+The Steam launch hook (``modsync.launchhook``) covers the other direction:
+Steam's Play button starting ModSync. This module is for ModSync's own buttons,
+where Steam is not the caller, and shares the hook's view of which Proton and
+runtime the game uses.
+
 Direct play uses MO2's `run` command, so its virtual filesystem and selected
 profile remain active. Steam launch mappings and MO2 settings are never edited.
 """
@@ -14,7 +19,7 @@ import re
 import subprocess
 import threading
 
-from modsync import background, platforms
+from modsync import background, launchhook, platforms
 from modsync.games import SKYRIM_SE
 from modsync.logging_setup import state_dir
 from modsync.mo2 import ini
@@ -58,6 +63,28 @@ def _game_target(sections: dict, game_dir: Path) -> tuple[list[str], str]:
     raise RuntimeError("Skyrim's executable was not found. Open MO2 and check its game folder.")
 
 
+def _proton_for(compat: Path, libs: list) -> Path:
+    """The Proton to run MO2 with: Steam's current choice for the game (seen
+    through ModSync's launch hook), else the one that last set up the prefix."""
+    tool = launchhook.game_proton(SKYRIM_SE.appid)
+    if tool is not None:
+        return tool.path
+    try:
+        config_info = (compat / "config_info").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        config_info = ""
+    for line in config_info.splitlines():
+        for marker in ("/files/", "/dist/"):
+            if marker in line:
+                candidate = Path(line.split(marker, 1)[0])
+                if candidate.is_absolute() and (candidate / "proton").is_file():
+                    return candidate
+    raise RuntimeError(
+        "Skyrim's Proton wasn't found. Pick one under Properties → Compatibility in Steam, "
+        "or launch Skyrim once through Steam, then try again."
+    )
+
+
 def build_plan(instance_path: Path | str | None, *, play: bool = False) -> LaunchPlan:
     if not instance_path:
         raise RuntimeError("Choose an MO2 instance first.")
@@ -84,22 +111,7 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False) -> Launc
     compat = app.library.steamapps / "compatdata" / str(SKYRIM_SE.appid)
     if not (compat / "pfx").is_dir():
         raise RuntimeError("Skyrim's Proton setup is missing. Launch Skyrim once through Steam first.")
-    try:
-        config_info = (compat / "config_info").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        config_info = ""
-    proton = None
-    for line in config_info.splitlines():
-        for marker in ("/files/", "/dist/"):
-            if marker in line:
-                candidate = Path(line.split(marker, 1)[0])
-                if candidate.is_absolute() and (candidate / "proton").is_file():
-                    proton = candidate
-                    break
-        if proton is not None:
-            break
-    if proton is None:
-        raise RuntimeError("Skyrim's last-used Proton wasn't found. Launch Skyrim once through Steam, then try again.")
+    proton = _proton_for(compat, libs)
 
     # Passing no profile preserves MO2's own choice. The portable instance is
     # pinned with MO2's portable.txt marker at launch time (see Launcher.start):

@@ -26,8 +26,9 @@ when generating them.
 
 “Open MO2” opens the chosen portable instance. The prominent “Play Skyrim”
 button uses that instance’s selected profile and prefers SKSE. Start Steam
-before playing. Both actions reuse Skyrim’s existing Proton setup and the
-runtime required by that Proton version. Launch errors point to a log file.
+before playing. Both actions use the Proton Steam has chosen for Skyrim (seen through
+ModSync’s launch hook), falling back to the one that last set up its prefix,
+plus the runtime that Proton requires. Launch errors point to a log file.
 
 ![Configured dashboard with launch buttons](configured-dark.png)
 
