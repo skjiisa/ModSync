@@ -12,7 +12,6 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QMessageBox,
     QProgressBar,
@@ -24,6 +23,8 @@ from PySide6.QtWidgets import (
 from modsync.downgrade.engine import Progress
 from modsync.games import SKYRIM_SE
 from modsync.service import GameStatus, ModSyncService, PinOutcome
+from modsync.ui.flow_layout import FlowLayout
+from modsync.ui.theme import role
 from modsync.ui.worker import run_async
 
 
@@ -54,11 +55,11 @@ class GameCard(QGroupBox):
         self._refresh_index = refresh_index
 
         layout = QVBoxLayout(self)
-        self._label = QLabel("checking…")
+        self._label = QLabel("Checking game version…")
         self._label.setWordWrap(True)
         layout.addWidget(self._label)
 
-        row = QHBoxLayout()
+        row = FlowLayout()
         self._adopt = QPushButton("Use this machine's version")
         self._adopt.setToolTip(
             "Record the runtime installed here as the version this setup is built for. "
@@ -72,6 +73,7 @@ class GameCard(QGroupBox):
             "Rewrite the game files to the version this setup needs using community "
             "xdelta patches (Mulderland). Steam keeps launching the game normally."
         )
+        role(self._downgrade, "primary")
         self._downgrade.clicked.connect(self._start_downgrade)
         self._downgrade.setVisible(False)
         row.addWidget(self._downgrade)
@@ -100,7 +102,6 @@ class GameCard(QGroupBox):
         self._restore.clicked.connect(self._restore_files)
         self._restore.setVisible(False)
         row.addWidget(self._restore)
-        row.addStretch(1)
         self._refresh_btn = QPushButton("Check again")
         self._refresh_btn.setToolTip("Re-read the installed version, SKSE and Steam's update state")
         self._refresh_btn.clicked.connect(self.refresh)
@@ -112,7 +113,8 @@ class GameCard(QGroupBox):
         self._progress.setVisible(False)
         layout.addWidget(self._progress)
         self._progress_label = QLabel("")
-        self._progress_label.setStyleSheet("color: palette(mid);")
+        role(self._progress_label, "secondary")
+        self._progress_label.setWordWrap(True)
         self._progress_label.setVisible(False)
         layout.addWidget(self._progress_label)
 
@@ -142,61 +144,66 @@ class GameCard(QGroupBox):
 
     def _on_check_failed(self, message: str) -> None:
         self._refresh_btn.setEnabled(not self.busy)
-        self._label.setText(f"⚠ Version check failed: {message}")
+        role(self._label, "warning")
+        self._label.setText("Couldn’t check Skyrim’s version. Try “Check again”.")
+        self._label.setToolTip(message)
 
     def _on_game_status(self, st: GameStatus) -> None:
         self._refresh_btn.setEnabled(not self.busy)
         self._game = st
-        vc = self.service.game_version_check()  # local and cheap; reuses the wording
+        vc = self.service.game_version_check()
         has_instance = self.service.state.has_instance
         lines = []
+        warning = False
         if vc.installed is None and st.game_dir is None:
-            lines.append(
-                f"•  {SKYRIM_SE.name} was not found through Steam on this machine. Install "
-                "it in Steam first."
-            )
-            self._label.setStyleSheet("color: palette(mid);")
-        elif not has_instance and vc.installed is not None:
-            # No setup to compare against yet: just report what is here.
-            lines.append(f"•  {SKYRIM_SE.name} runtime here: {vc.installed}.")
-            self._label.setStyleSheet("color: palette(mid);")
-        elif vc.mismatch or vc.skse_suggests:
-            lines.append(f"⚠  {vc.summary()}")
-            self._label.setStyleSheet("color: palette(text);")
-        elif vc.ok:
-            lines.append(f"✅  {vc.summary()}")
-            self._label.setStyleSheet("color: palette(mid);")
+            lines.append("Skyrim wasn't found. Install it through Steam first.")
+        elif vc.installed is None:
+            lines.append("Couldn't read Skyrim's version. Try “Check again”.")
+            warning = True
         else:
-            lines.append(f"•  {vc.summary()}")
-            self._label.setStyleSheet("color: palette(mid);")
-        note = vc.skse_note()
-        if note:
-            lines.append(f"{'⚠' if vc.skse_suggests else '•'}  {note}")
-        if st.needs_pin:
-            lines.append(
-                "⚠  Steam wants to update the game on its next launch. “Keep this version” "
-                "makes Steam treat the installed files as current."
-            )
-        if st.pending_pin:
-            lines.append("•  A pin is queued; it applies automatically the next time Steam is closed.")
-        if st.backup_present:
-            lines.append(
-                "•  The original game files from before the downgrade are kept in the game folder; "
-                "“Restore original files” puts them back."
-            )
-        if st.needs_downgrade and st.suggested_target is None and st.installed is not None and st.recipe_from:
-            if str(st.installed) != st.recipe_from:
-                lines.append(
-                    f"•  Downgrade recipes currently start from {st.recipe_from}; let Steam "
-                    f"update the game first, then downgrade to {st.wanted}."
-                )
+            lines.append(f"Skyrim version: {vc.installed}")
+            if st.steam_updating:
+                lines.append("Steam is updating Skyrim. Wait for it to finish, then check again.")
+            elif vc.mismatch:
+                lines.append(f"⚠ Your mod setup needs version {vc.expected}. Some mods may not work yet.")
+                warning = True
+            elif vc.skse_suggests:
+                lines.append(f"⚠ SKSE needs Skyrim {vc.skse_suggests}.")
+                warning = True
+            elif vc.ok:
+                lines.append("Matches the version your mod setup needs.")
+
+            if not st.steam_updating and vc.skse.ambiguous:
+                lines.append("Multiple SKSE versions found. Keep only the one that matches your mod setup.")
+                warning = True
+            elif not st.steam_updating and vc.expected is not None and vc.skse.runtime is not None:
+                if vc.skse.runtime != vc.expected:
+                    lines.append(f"Install SKSE for Skyrim {vc.expected} to match your mods.")
+                    warning = True
+
+        if st.suggested_target:
+            lines.append(f"Choose “Downgrade to {st.suggested_target}” below to switch versions.")
+        elif st.needs_downgrade:
+            if st.recipe_from and str(st.installed) != st.recipe_from and str(st.wanted) in st.recipe_targets:
+                lines.append(f"Update Skyrim in Steam first, then return here to switch to {st.wanted}.")
             else:
-                lines.append(f"•  No recipe reaches {st.wanted} yet (targets: {', '.join(st.recipe_targets)}).")
-        # Warnings can be appended after an otherwise healthy/unconfigured
-        # summary. Keep them readable in the active theme, including first run.
-        if vc.mismatch or vc.skse_suggests or st.needs_pin:
-            self._label.setStyleSheet("color: palette(text);")
+                lines.append(f"ModSync can't switch this install to {st.wanted} yet.")
+
+        if st.pending_pin:
+            lines.append("Close Steam to apply “Keep this version”.")
+        elif st.needs_pin:
+            lines.append("Steam has an update ready. Choose “Keep this version” to stay on this version.")
+            warning = True
+        if st.backup_present:
+            lines.append("“Restore original files” undoes your last downgrade.")
+
+        role(self._label, "warning" if warning else "secondary")
         self._label.setText("\n".join(lines))
+        # Keep provenance and DLL details available without filling the card.
+        details = [vc.summary(), vc.skse_note()]
+        if st.recipe_from:
+            details.append(f"Available downgrade patches start from Skyrim {st.recipe_from}.")
+        self._label.setToolTip("\n".join(detail for detail in details if detail))
         # Offer to (re)record only when there is a setup to record into and it
         # would change what the record says.
         self._adopt.setVisible(

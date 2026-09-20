@@ -27,9 +27,15 @@ def _application(argv: list[str] | None):
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
+    from modsync.ui.theme import apply_theme
+
     _install_excepthook()
     args = [sys.argv[0], *(argv or [])]
     app = QApplication.instance() or QApplication(args)
+    apply_theme(app)
+    if not app.property("modsyncThemeConnected"):
+        app.styleHints().colorSchemeChanged.connect(lambda _: apply_theme(app))
+        app.setProperty("modsyncThemeConnected", True)
     app.setApplicationName("ModSync")
     app.setApplicationDisplayName("ModSync")
     # Lets Wayland compositors / taskbars match our windows to the installed

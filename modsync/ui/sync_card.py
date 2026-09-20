@@ -31,6 +31,7 @@ from modsync import pairing_lan
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService, SyncStatus
 from modsync.ui.qr import pairing_pixmap
+from modsync.ui.theme import role
 from modsync.ui.worker import run_async
 
 
@@ -61,7 +62,7 @@ class SyncCard(QGroupBox):
                 "another machine — desktop ↔ Steam Deck, for example."
             )
             hint.setWordWrap(True)
-            hint.setStyleSheet("color: palette(mid);")
+            role(hint, "secondary")
             layout.addWidget(hint)
 
     # --- offer (instance chosen, not syncing) --------------------------------
@@ -218,12 +219,6 @@ class SyncCard(QGroupBox):
 
     # --- live (syncing) -------------------------------------------------------
     def _build_live(self, v: QVBoxLayout) -> None:
-        columns = QHBoxLayout()
-        columns.setSpacing(18)
-        columns.addWidget(self._build_share_group(), stretch=1)
-        columns.addWidget(self._build_devices_group(), stretch=1)
-        v.addLayout(columns, stretch=1)
-
         self._folder_state = QLabel("starting Syncthing…")
         v.addWidget(self._folder_state)
         self._progress = QProgressBar()
@@ -247,6 +242,12 @@ class SyncCard(QGroupBox):
         row.addStretch(1)
         row.addWidget(stop)
         v.addLayout(row)
+
+        columns = QHBoxLayout()
+        columns.setSpacing(18)
+        columns.addWidget(self._build_share_group(), stretch=1)
+        columns.addWidget(self._build_devices_group(), stretch=1)
+        v.addLayout(columns, stretch=1)
 
     def _build_share_group(self) -> QWidget:
         box = QWidget()
@@ -309,6 +310,7 @@ class SyncCard(QGroupBox):
             return
         text = code.encode()
         self._code_edit.setText(text)
+        self._code_edit.setCursorPosition(0)
         pixmap = pairing_pixmap(text)
         if pixmap is not None:
             self._qr.setPixmap(pixmap)

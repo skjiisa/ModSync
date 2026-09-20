@@ -16,6 +16,8 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFileDialog,
+    QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -23,6 +25,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -35,6 +38,7 @@ from modsync.mo2.installers import InstallerBackend, InstallResult, Mo2LintBacke
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService
 from modsync.ui.game_card import GameCard
+from modsync.ui.theme import role
 from modsync.ui.worker import run_async
 
 
@@ -70,19 +74,17 @@ class WelcomePage(Page):
     def __init__(self) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
-        intro = QLabel(
-            f"ModSync gets {SKYRIM_SE.name} ready for Mod Organizer 2 on Linux and "
-            "Steam Deck:\n\n"
-            "  1.  Choose or install a Mod Organizer 2 instance.\n"
-            "  2.  Keep the game on the exact version your mods need — downgrading it "
-            "if Steam has updated it, and stopping Steam from updating it again.\n"
-            "  3.  Optionally, keep the whole setup in sync with another machine "
-            "(desktop ↔ Steam Deck), while each keeps its own game paths.\n\n"
-            "This wizard walks through those steps for THIS machine. Everything here "
-            "can also be done from the dashboard."
-        )
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
+        for title, description in (
+            ("1 · Mod Organizer 2", "Choose an existing instance or install a fresh one for Skyrim."),
+            ("2 · Game version", "Check Skyrim and SKSE, and keep the version your mods need."),
+            ("3 · Sync (optional)", "Share mods and load order with another machine, or keep this setup local."),
+        ):
+            box = QGroupBox(title)
+            content = QVBoxLayout(box)
+            label = QLabel(description)
+            label.setWordWrap(True)
+            content.addWidget(label)
+            layout.addWidget(box)
         layout.addStretch(1)
 
 
@@ -129,7 +131,7 @@ class ChooseInstancePage(Page):
 
         self._chosen = QLabel("")
         self._chosen.setWordWrap(True)
-        self._chosen.setStyleSheet("color: palette(highlight);")
+        role(self._chosen, "secondary")
         layout.addWidget(self._chosen)
         layout.addStretch(1)
 
@@ -146,6 +148,7 @@ class ChooseInstancePage(Page):
         choose = QPushButton("Choose…")
         choose.clicked.connect(self._choose_dest)
         self._run_btn = QPushButton("Install")
+        role(self._run_btn, "primary")
         self._run_btn.clicked.connect(self._start_install)
         dest_row.addWidget(self._dest_edit, stretch=1)
         dest_row.addWidget(choose)
@@ -158,7 +161,7 @@ class ChooseInstancePage(Page):
             "SKSE is not installed automatically yet."
         )
         note.setWordWrap(True)
-        note.setStyleSheet("color: palette(mid);")
+        role(note, "secondary")
         v.addWidget(note)
 
         self._log = QPlainTextEdit()
@@ -313,7 +316,7 @@ class GameVersionPage(Page):
             "1 GB of downloads (kept for next time)."
         )
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: palette(mid);")
+        role(hint, "secondary")
         layout.addWidget(hint)
         layout.addWidget(self._note)
         layout.addStretch(1)
@@ -386,7 +389,7 @@ class VaultPage(Page):
 
         self._hint = QLabel("")
         self._hint.setWordWrap(True)
-        self._hint.setStyleSheet("color: palette(mid);")
+        role(self._hint, "secondary")
         layout.addWidget(self._hint)
         layout.addStretch(1)
 
@@ -506,13 +509,14 @@ class WizardWidget(QWidget):
         outer.setContentsMargins(28, 24, 28, 20)
         outer.setSpacing(8)
 
+        self._steps = QLabel()
+        role(self._steps, "step")
+        outer.addWidget(self._steps)
         self._title = QLabel()
-        title_font = self._title.font()
-        title_font.setPointSize(20)
-        title_font.setBold(True)
-        self._title.setFont(title_font)
+        role(self._title, "title")
+        self._title.setWordWrap(True)
         self._subtitle = QLabel()
-        self._subtitle.setStyleSheet("color: palette(mid);")
+        role(self._subtitle, "secondary")
         self._subtitle.setWordWrap(True)
         outer.addWidget(self._title)
         outer.addWidget(self._subtitle)
@@ -523,14 +527,22 @@ class WizardWidget(QWidget):
             page.completenessChanged.connect(self._update_nav)
             page.busyChanged.connect(self._set_busy)
             self._stack.addWidget(page)
-        outer.addWidget(self._stack, stretch=1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(self._stack)
+        outer.addWidget(scroll, stretch=1)
 
         footer = QHBoxLayout()
         self._back = QPushButton("Back")
         self._back.clicked.connect(self._on_back)
+        self._cancel = QPushButton("Back to dashboard")
+        self._cancel.clicked.connect(self._on_cancel)
         self._next = QPushButton("Next")
+        role(self._next, "primary")
         self._next.clicked.connect(self._on_next)
         footer.addWidget(self._back)
+        footer.addWidget(self._cancel)
         footer.addStretch(1)
         footer.addWidget(self._next)
         outer.addLayout(footer)
@@ -538,6 +550,15 @@ class WizardWidget(QWidget):
         self._index = 0
         self._busy = False
         self._go_to(0)
+
+    def open_install(self) -> None:
+        self._go_to(1)
+        self._choose._panel.setVisible(True)
+        self._choose._dest_edit.setFocus()
+
+    def _on_cancel(self) -> None:
+        if not self.busy:
+            self.cancelled.emit()
 
     @property
     def busy(self) -> bool:
@@ -547,6 +568,7 @@ class WizardWidget(QWidget):
         self._index = max(0, min(index, len(self._pages) - 1))
         page = self._pages[self._index]
         self._stack.setCurrentIndex(self._index)
+        self._steps.setText("SETUP OVERVIEW" if self._index == 0 else f"STEP {self._index} OF 3")
         self._title.setText(page.title)
         self._subtitle.setText(page.subtitle)
         page.on_show()
@@ -557,6 +579,8 @@ class WizardWidget(QWidget):
         is_last = self._index == len(self._pages) - 1
         self._back.setText("Cancel" if self._index == 0 else "Back")
         self._back.setEnabled(not self._busy)
+        self._cancel.setVisible(self._index > 0)
+        self._cancel.setEnabled(not self._busy)
         self._next.setText("Finish" if is_last else "Next")
         self._next.setEnabled(page.is_complete() and not self._busy)
 

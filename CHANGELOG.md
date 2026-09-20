@@ -8,6 +8,20 @@ All notable changes to ModSync are documented here. The format follows
 
 Early development; nothing has been released yet. What exists so far:
 
+### Changed
+
+- Shorten Skyrim version warnings and show the next action in
+  plain language. Keep technical version details in a tooltip.
+
+- Refresh the dashboard, setup wizard and launch hub with shared light/dark
+  styling, readable secondary text, larger controls, visible keyboard focus
+  and padded warnings. Replace all uses of Qt's border color for text.
+- Wrap game actions and stack dashboard cards in narrower windows; keep wizard
+  navigation outside its scrolling content. Show sync progress before pairing.
+- Clarify that the Steam shortcut button adds ModSync as a non-Steam shortcut.
+- Open the installation step directly from “Install MO2…”, add wizard step
+  labels, and allow returning to the dashboard from any idle setup step.
+
 ### Fixed
 
 - Show SKSE mismatch and pending Steam update warnings at normal text contrast,

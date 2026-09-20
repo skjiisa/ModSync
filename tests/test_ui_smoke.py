@@ -86,9 +86,9 @@ class DashboardSmokeTests(_SmokeBase):
     def test_nothing_set_up(self):
         dash = self._build()
         self.assertFalse(dash.sync.live)
-        self.assertIn("runtime here: 1.7.104", dash.game._label.text())
+        self.assertIn("Skyrim version: 1.7.104", dash.game._label.text())
         self.assertIn("Steam launch: off", dash._hook_status.text())
-        self.assertIn("Open ModSync when launching", dash._hook_button.text())
+        self.assertIn("Open ModSync before Skyrim", dash._hook_button.text())
 
     def test_first_run_warnings_are_readable_without_an_instance(self):
         from modsync.ui.game_card import GameCard
@@ -108,15 +108,15 @@ class DashboardSmokeTests(_SmokeBase):
         with patch.object(service, "game_version_check", return_value=check):
             card._on_game_status(fake_game_status(service))
         self.assertIn("1.5.97", card._label.text())
-        self.assertEqual(card._label.styleSheet(), "color: palette(text);")
+        self.assertEqual(card._label.property("role"), "warning")
         status = fake_game_status(service)
         status.steam_is_current = False
         card._on_game_status(status)
-        self.assertIn("Steam wants to update", card._label.text())
-        self.assertEqual(card._label.styleSheet(), "color: palette(text);")
+        self.assertIn("Steam has an update ready", card._label.text())
+        self.assertEqual(card._label.property("role"), "warning")
         card._on_game_status(fake_game_status(service))
-        self.assertNotIn("Steam wants to update", card._label.text())
-        self.assertEqual(card._label.styleSheet(), "color: palette(mid);")
+        self.assertNotIn("Steam has an update ready", card._label.text())
+        self.assertEqual(card._label.property("role"), "secondary")
 
     def test_instance_only(self):
         State(instance_path=str(self.tmp), instance_label="MO2").save()
@@ -379,3 +379,87 @@ class FileOperationNavigationTests(_SmokeBase):
         self.assertTrue(hub.continue_button.isEnabled())
         hub.cancel()
         self.assertEqual(hub.decision, launchhook.EXIT_CANCEL)
+
+
+class UiNavigationTests(_SmokeBase):
+    def test_install_button_opens_install_page_and_can_return_to_dashboard(self):
+        from PySide6.QtWidgets import QPushButton
+        from modsync.ui.main_window import MainWindow
+        from modsync.ui.dashboard import Dashboard
+        from modsync.ui.wizard import WizardWidget
+
+        with patch.object(Dashboard, "_scan_instances", return_value=[]), patch(
+            "modsync.ui.wizard.ChooseInstancePage._scan", return_value=[]
+        ):
+            window = MainWindow()
+            window.show()
+            self.addCleanup(window.close)
+            QThreadPool.globalInstance().waitForDone(5000)
+            self.app.processEvents()
+            dashboard = window._stack.currentWidget()
+            next(b for b in dashboard.findChildren(QPushButton) if b.text() == "Install MO2…").click()
+            wizard = window._stack.currentWidget()
+            self.assertIsInstance(wizard, WizardWidget)
+            self.assertEqual(wizard._index, 1)
+            self.assertFalse(wizard._choose._panel.isHidden())
+            self.assertEqual(wizard._steps.text(), "STEP 1 OF 3")
+            wizard._set_busy(True)
+            self.assertFalse(wizard._cancel.isEnabled())
+            wizard._on_cancel()
+            self.assertIs(window._stack.currentWidget(), wizard)
+            wizard._set_busy(False)
+            wizard._cancel.click()
+            self.assertIsInstance(window._stack.currentWidget(), Dashboard)
+            QThreadPool.globalInstance().waitForDone(5000)
+            self.app.processEvents()
+
+
+class GameWarningCopyTests(_SmokeBase):
+    def _card(self):
+        from modsync.ui.game_card import GameCard
+
+        service = ModSyncService(manager=object())
+        card = GameCard(service)
+        QThreadPool.globalInstance().waitForDone(5000)
+        self.app.processEvents()
+        return service, card
+
+    def test_skse_warning_is_short_and_keeps_technical_details_in_tooltip(self):
+        service, card = self._card()
+        version = gameversion.GameVersion.parse
+        status = fake_game_status(service)
+        status.installed = version("1.6.1170")
+        status.skse_runtime = version("1.5.97")
+        status.recipe_targets = ["1.5.97"]
+        status.backup_present = True
+        check = gameversion.VersionCheck(status.installed, None, skse=gameversion.SkseCheck([
+            gameversion.SkseFile(Path("skse64_1_5_97.dll"), status.skse_runtime, "game folder")
+        ]))
+        with patch.object(service, "game_version_check", return_value=check):
+            card._on_game_status(status)
+        text = card._label.text()
+        self.assertIn("SKSE needs Skyrim 1.5.97", text)
+        self.assertIn("Update Skyrim in Steam first", text)
+        self.assertIn("Restore original files", text)
+        self.assertNotIn(".dll", text)
+        self.assertNotIn("runtime", text)
+        self.assertLess(len(text.split()), 50)
+        self.assertIn("skse64_1_5_97.dll", card._label.toolTip())
+
+    def test_unsupported_target_and_active_update_do_not_suggest_updating_to_downgrade(self):
+        service, card = self._card()
+        version = gameversion.GameVersion.parse
+        status = fake_game_status(service)
+        status.installed = version("1.6.1170")
+        status.expected = version("1.5.97")
+        # The available patch does not reach the requested version.
+        check = gameversion.VersionCheck(status.installed, status.expected)
+        with patch.object(service, "game_version_check", return_value=check):
+            card._on_game_status(status)
+            self.assertIn("can't switch this install to 1.5.97 yet", card._label.text())
+            self.assertNotIn("Update Skyrim in Steam first", card._label.text())
+            status.steam_updating = True
+            card._on_game_status(status)
+            self.assertIn("Wait for it to finish", card._label.text())
+            self.assertNotIn("Some mods may not work", card._label.text())
+            self.assertNotIn("return here to switch", card._label.text())

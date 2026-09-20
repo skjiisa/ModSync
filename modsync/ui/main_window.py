@@ -70,13 +70,15 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(widget)
         self._stack.setCurrentWidget(widget)
 
-    def _show_wizard(self) -> None:
+    def _show_wizard(self, *, install: bool = False) -> None:
         if self.busy:
             return
         wizard = WizardWidget(self.service)
         wizard.completed.connect(self._on_wizard_completed)
         wizard.cancelled.connect(self._show_dashboard)
         self._set(wizard)
+        if install:
+            wizard.open_install()
 
     def _on_wizard_completed(self, data: dict) -> None:
         path = data.get("instance_path")
@@ -110,6 +112,7 @@ class MainWindow(QMainWindow):
             return
         dashboard = Dashboard(self.service)
         dashboard.wizardRequested.connect(self._show_wizard)
+        dashboard.installRequested.connect(lambda: self._show_wizard(install=True))
         dashboard.stateChanged.connect(self._show_dashboard)  # rebuild after setup/reset
         self._set(dashboard)
 
