@@ -70,3 +70,11 @@ class LaunchCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_help_flag_anywhere_prints_usage(capsys):
+    from modsync.__main__ import main
+
+    for argv in (["--help"], ["serve", "--help"], ["game", "-h"], ["launch", "enable", "--help"]):
+        assert main(argv) == 0
+        assert "usage:" in capsys.readouterr().out
