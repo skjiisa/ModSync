@@ -197,6 +197,7 @@ class Dashboard(QWidget):
             v.addWidget(path)
             launch_row = QHBoxLayout()
             self._open_mo2_button = QPushButton("Open MO2")
+            role(self._open_mo2_button, "primary")
             self._open_mo2_button.setToolTip("Open the chosen Mod Organizer 2 instance to manage mods and profiles")
             self._open_mo2_button.clicked.connect(lambda: self._launch_mo2(play=False))
             launch_row.addWidget(self._open_mo2_button)
