@@ -12,7 +12,6 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QMessageBox,
     QProgressBar,
@@ -24,6 +23,8 @@ from PySide6.QtWidgets import (
 from modsync.downgrade.engine import Progress
 from modsync.games import SKYRIM_SE
 from modsync.service import GameStatus, ModSyncService, PinOutcome
+from modsync.ui.flow_layout import FlowLayout
+from modsync.ui.theme import role
 from modsync.ui.worker import run_async
 
 
@@ -54,11 +55,11 @@ class GameCard(QGroupBox):
         self._refresh_index = refresh_index
 
         layout = QVBoxLayout(self)
-        self._label = QLabel("checking…")
+        self._label = QLabel("Checking game version…")
         self._label.setWordWrap(True)
         layout.addWidget(self._label)
 
-        row = QHBoxLayout()
+        row = FlowLayout()
         self._adopt = QPushButton("Use this machine's version")
         self._adopt.setToolTip(
             "Record the runtime installed here as the version this setup is built for. "
@@ -72,6 +73,7 @@ class GameCard(QGroupBox):
             "Rewrite the game files to the version this setup needs using community "
             "xdelta patches (Mulderland). Steam keeps launching the game normally."
         )
+        role(self._downgrade, "primary")
         self._downgrade.clicked.connect(self._start_downgrade)
         self._downgrade.setVisible(False)
         row.addWidget(self._downgrade)
@@ -100,7 +102,6 @@ class GameCard(QGroupBox):
         self._restore.clicked.connect(self._restore_files)
         self._restore.setVisible(False)
         row.addWidget(self._restore)
-        row.addStretch(1)
         self._refresh_btn = QPushButton("Check again")
         self._refresh_btn.setToolTip("Re-read the installed version, SKSE and Steam's update state")
         self._refresh_btn.clicked.connect(self.refresh)
@@ -112,7 +113,8 @@ class GameCard(QGroupBox):
         self._progress.setVisible(False)
         layout.addWidget(self._progress)
         self._progress_label = QLabel("")
-        self._progress_label.setStyleSheet("color: palette(mid);")
+        role(self._progress_label, "secondary")
+        self._progress_label.setWordWrap(True)
         self._progress_label.setVisible(False)
         layout.addWidget(self._progress_label)
 
@@ -142,6 +144,7 @@ class GameCard(QGroupBox):
 
     def _on_check_failed(self, message: str) -> None:
         self._refresh_btn.setEnabled(not self.busy)
+        role(self._label, "warning")
         self._label.setText(f"⚠ Version check failed: {message}")
 
     def _on_game_status(self, st: GameStatus) -> None:
@@ -155,20 +158,20 @@ class GameCard(QGroupBox):
                 f"•  {SKYRIM_SE.name} was not found through Steam on this machine. Install "
                 "it in Steam first."
             )
-            self._label.setStyleSheet("color: palette(mid);")
+            role(self._label, "secondary")
         elif not has_instance and vc.installed is not None:
             # No setup to compare against yet: just report what is here.
             lines.append(f"•  {SKYRIM_SE.name} runtime here: {vc.installed}.")
-            self._label.setStyleSheet("color: palette(mid);")
+            role(self._label, "secondary")
         elif vc.mismatch or vc.skse_suggests:
             lines.append(f"⚠  {vc.summary()}")
-            self._label.setStyleSheet("color: palette(text);")
+            role(self._label, "warning")
         elif vc.ok:
             lines.append(f"✅  {vc.summary()}")
-            self._label.setStyleSheet("color: palette(mid);")
+            role(self._label, "secondary")
         else:
             lines.append(f"•  {vc.summary()}")
-            self._label.setStyleSheet("color: palette(mid);")
+            role(self._label, "secondary")
         note = vc.skse_note()
         if note:
             lines.append(f"{'⚠' if vc.skse_suggests else '•'}  {note}")
@@ -195,7 +198,7 @@ class GameCard(QGroupBox):
         # Warnings can be appended after an otherwise healthy/unconfigured
         # summary. Keep them readable in the active theme, including first run.
         if vc.mismatch or vc.skse_suggests or st.needs_pin:
-            self._label.setStyleSheet("color: palette(text);")
+            role(self._label, "warning")
         self._label.setText("\n".join(lines))
         # Offer to (re)record only when there is a setup to record into and it
         # would change what the record says.

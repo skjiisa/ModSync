@@ -38,6 +38,7 @@ from modsync.games import GAMES, SKYRIM_SE
 from modsync.mo2 import instance as mo2_instance
 from modsync.service import ModSyncService, SyncStatus
 from modsync.ui.game_card import GameCard
+from modsync.ui.theme import role
 from modsync.ui.worker import run_async
 
 _POLL_MS = 4000
@@ -94,10 +95,8 @@ class LaunchHub(QMainWindow):
 
         state = service.state
         title = QLabel(state.instance_label if state.has_instance else "ModSync")
-        tf = title.font()
-        tf.setPointSize(20)
-        tf.setBold(True)
-        title.setFont(tf)
+        role(title, "title")
+        title.setWordWrap(True)
         layout.addWidget(title)
         self.hands_off_to = launchhook.describe_target(through)
         subtitle = QLabel(
@@ -105,7 +104,7 @@ class LaunchHub(QMainWindow):
             "Cancel returns to Steam without starting anything."
         )
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("color: palette(mid);")
+        role(subtitle, "secondary")
         layout.addWidget(subtitle)
 
         body = QWidget()
@@ -140,7 +139,7 @@ class LaunchHub(QMainWindow):
         layout.addWidget(scroll, stretch=1)
 
         self._status_line = QLabel("")
-        self._status_line.setStyleSheet("color: palette(mid);")
+        role(self._status_line, "secondary")
         self._status_line.setWordWrap(True)
         layout.addWidget(self._status_line)
 
@@ -151,6 +150,7 @@ class LaunchHub(QMainWindow):
         self.cancel_button.clicked.connect(self.cancel)
         self.continue_button = QPushButton(launchhook.continue_label(through, self.game))
         self.continue_button.setToolTip("Carry on with the same Steam launch. (Enter / A)")
+        role(self.continue_button, "primary")
         self.continue_button.setDefault(True)
         self.continue_button.clicked.connect(self.proceed)
         for b in (self.cancel_button, self.continue_button):
@@ -170,10 +170,10 @@ class LaunchHub(QMainWindow):
             self._refresh_sync()
         elif state.has_instance:
             self._sync_label.setText("Off — this machine's setup is not shared.")
-            self._sync_label.setStyleSheet("color: palette(mid);")
+            role(self._sync_label, "secondary")
         else:
             self._sync_label.setText("Not set up.")
-            self._sync_label.setStyleSheet("color: palette(mid);")
+            role(self._sync_label, "secondary")
         self._timer.start(_POLL_MS)
 
         auto = os.environ.get(_AUTO_DECISION_ENV, "").strip().lower()
@@ -190,21 +190,21 @@ class LaunchHub(QMainWindow):
         pct = int(st.completion) if st.completion is not None else None
         if st.folder_state in (None, "idle") and (pct is None or pct >= 100):
             text = f"✅  In sync — {connected} of {len(st.devices)} paired machine(s) connected."
-            self._sync_label.setStyleSheet("color: palette(mid);")
+            role(self._sync_label, "secondary")
         elif st.folder_state == "syncing" or (pct is not None and pct < 100):
             text = (
                 f"⚠  Still syncing ({pct if pct is not None else '?'}% here). Mods may still be arriving; "
                 "playing now uses whatever has landed so far."
             )
-            self._sync_label.setStyleSheet("color: palette(text);")
+            role(self._sync_label, "warning")
         else:
             text = f"•  Vault {st.folder_state or 'unknown'} — {connected} of {len(st.devices)} machine(s) connected."
-            self._sync_label.setStyleSheet("color: palette(mid);")
+            role(self._sync_label, "secondary")
         self._sync_label.setText(text)
 
     def _on_sync_failed(self, message: str) -> None:
         self._sync_label.setText(f"•  Sync state unavailable right now ({message}).")
-        self._sync_label.setStyleSheet("color: palette(mid);")
+        role(self._sync_label, "secondary")
 
     # --- decisions -----------------------------------------------------------
     def _set_status(self, message: str) -> None:

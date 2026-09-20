@@ -88,7 +88,7 @@ class DashboardSmokeTests(_SmokeBase):
         self.assertFalse(dash.sync.live)
         self.assertIn("runtime here: 1.7.104", dash.game._label.text())
         self.assertIn("Steam launch: off", dash._hook_status.text())
-        self.assertIn("Open ModSync when launching", dash._hook_button.text())
+        self.assertIn("Open ModSync before Skyrim", dash._hook_button.text())
 
     def test_first_run_warnings_are_readable_without_an_instance(self):
         from modsync.ui.game_card import GameCard
@@ -108,15 +108,15 @@ class DashboardSmokeTests(_SmokeBase):
         with patch.object(service, "game_version_check", return_value=check):
             card._on_game_status(fake_game_status(service))
         self.assertIn("1.5.97", card._label.text())
-        self.assertEqual(card._label.styleSheet(), "color: palette(text);")
+        self.assertEqual(card._label.property("role"), "warning")
         status = fake_game_status(service)
         status.steam_is_current = False
         card._on_game_status(status)
         self.assertIn("Steam wants to update", card._label.text())
-        self.assertEqual(card._label.styleSheet(), "color: palette(text);")
+        self.assertEqual(card._label.property("role"), "warning")
         card._on_game_status(fake_game_status(service))
         self.assertNotIn("Steam wants to update", card._label.text())
-        self.assertEqual(card._label.styleSheet(), "color: palette(mid);")
+        self.assertEqual(card._label.property("role"), "secondary")
 
     def test_instance_only(self):
         State(instance_path=str(self.tmp), instance_label="MO2").save()
@@ -379,3 +379,36 @@ class FileOperationNavigationTests(_SmokeBase):
         self.assertTrue(hub.continue_button.isEnabled())
         hub.cancel()
         self.assertEqual(hub.decision, launchhook.EXIT_CANCEL)
+
+
+class UiNavigationTests(_SmokeBase):
+    def test_install_button_opens_install_page_and_can_return_to_dashboard(self):
+        from PySide6.QtWidgets import QPushButton
+        from modsync.ui.main_window import MainWindow
+        from modsync.ui.dashboard import Dashboard
+        from modsync.ui.wizard import WizardWidget
+
+        with patch.object(Dashboard, "_scan_instances", return_value=[]), patch(
+            "modsync.ui.wizard.ChooseInstancePage._scan", return_value=[]
+        ):
+            window = MainWindow()
+            window.show()
+            self.addCleanup(window.close)
+            QThreadPool.globalInstance().waitForDone(5000)
+            self.app.processEvents()
+            dashboard = window._stack.currentWidget()
+            next(b for b in dashboard.findChildren(QPushButton) if b.text() == "Install MO2…").click()
+            wizard = window._stack.currentWidget()
+            self.assertIsInstance(wizard, WizardWidget)
+            self.assertEqual(wizard._index, 1)
+            self.assertFalse(wizard._choose._panel.isHidden())
+            self.assertEqual(wizard._steps.text(), "STEP 1 OF 3")
+            wizard._set_busy(True)
+            self.assertFalse(wizard._cancel.isEnabled())
+            wizard._on_cancel()
+            self.assertIs(window._stack.currentWidget(), wizard)
+            wizard._set_busy(False)
+            wizard._cancel.click()
+            self.assertIsInstance(window._stack.currentWidget(), Dashboard)
+            QThreadPool.globalInstance().waitForDone(5000)
+            self.app.processEvents()

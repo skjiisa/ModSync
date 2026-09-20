@@ -16,6 +16,7 @@ from __future__ import annotations
 from PySide6.QtCore import QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -35,6 +36,7 @@ from modsync.service import ModSyncService
 from modsync.steam import shortcuts
 from modsync.ui.game_card import GameCard
 from modsync.ui.sync_card import SyncCard
+from modsync.ui.theme import role
 from modsync.ui.worker import run_async
 
 _POLL_MS = 4000
@@ -42,6 +44,7 @@ _TAGLINE = f"Set up {SKYRIM_SE.name} for modding on this machine."
 
 
 class Dashboard(QWidget):
+    installRequested = Signal()
     wizardRequested = Signal()  # user wants the linear wizard instead
     stateChanged = Signal()  # instance chosen/forgotten, vault created/joined/left -> rebuild
 
@@ -65,7 +68,7 @@ class Dashboard(QWidget):
         self.game.status.connect(self._set_status)
         self.game.changed.connect(self._on_game_changed)
         self.mo2 = self._build_mo2_group()
-        top = QHBoxLayout()
+        top = self._top_cards = QBoxLayout(QBoxLayout.Direction.LeftToRight)
         top.setSpacing(18)
         top.addWidget(self.game, stretch=1)
         top.addWidget(self.mo2, stretch=1)
@@ -86,7 +89,7 @@ class Dashboard(QWidget):
 
         footer = QHBoxLayout()
         self._status_line = QLabel("")
-        self._status_line.setStyleSheet("color: palette(mid);")
+        role(self._status_line, "secondary")
         self._status_line.setWordWrap(True)
         footer.addWidget(self._status_line, stretch=1)
         self._diag_button = QPushButton("Copy diagnostics")
@@ -109,20 +112,27 @@ class Dashboard(QWidget):
         self._timer.start(_POLL_MS)
         self.game.busyChanged.connect(self._on_busy)
 
+    def resizeEvent(self, event) -> None:
+        self._top_cards.setDirection(
+            QBoxLayout.Direction.TopToBottom if self.width() < 1000
+            else QBoxLayout.Direction.LeftToRight
+        )
+        super().resizeEvent(event)
+
     # --- header -------------------------------------------------------------
     def _build_header(self) -> QVBoxLayout:
         state = self.service.state
         col = QVBoxLayout()
         row = QHBoxLayout()
         title = QLabel(state.instance_label if state.has_instance else "ModSync")
-        tf = title.font()
-        tf.setPointSize(20)
-        tf.setBold(True)
-        title.setFont(tf)
+        role(title, "title")
+        title.setWordWrap(True)
         row.addWidget(title)
         row.addStretch(1)
 
         wizard = self._wizard_button = QPushButton("Setup wizard")
+        if not state.has_instance:
+            role(wizard, "primary")
         wizard.setToolTip("Prefer a guided, step-by-step flow? Run the wizard instead.")
         wizard.clicked.connect(self.wizardRequested.emit)
         row.addWidget(wizard)
@@ -136,7 +146,7 @@ class Dashboard(QWidget):
         col.addLayout(row)
 
         subtitle = QLabel(state.instance_path if state.has_instance else _TAGLINE)
-        subtitle.setStyleSheet("color: palette(mid);")
+        role(subtitle, "secondary")
         subtitle.setWordWrap(True)
         col.addWidget(subtitle)
         return col
@@ -183,7 +193,7 @@ class Dashboard(QWidget):
                 row.addWidget(change)
             else:
                 note = QLabel("shared through the vault below")
-                note.setStyleSheet("color: palette(mid);")
+                role(note, "secondary")
                 row.addWidget(note)
             row.addStretch(1)
             v.addLayout(row)
@@ -198,8 +208,8 @@ class Dashboard(QWidget):
             choose = QPushButton("Choose folder…")
             choose.clicked.connect(self._choose_instance)
             install = QPushButton("Install MO2…")
-            install.setToolTip("Guided install — opens the wizard, which streams the installer log")
-            install.clicked.connect(self.wizardRequested.emit)
+            install.setToolTip("Choose an install folder and set up Mod Organizer 2")
+            install.clicked.connect(self.installRequested.emit)
             row.addWidget(choose)
             row.addWidget(install)
             row.addStretch(1)
@@ -281,7 +291,7 @@ class Dashboard(QWidget):
         # launch on to Mod Organizer 2 / the game. Steam's previous choice is
         # restored on turn-off.
         hook_row = QHBoxLayout()
-        self._hook_button = QPushButton(f"Open ModSync when launching {SKYRIM_SE.name}")
+        self._hook_button = QPushButton("Open ModSync before Skyrim")
         self._hook_button.setToolTip(
             "Register a small Steam compatibility tool for the game that opens this hub "
             "before every launch — mod setup, sync state, game-version and SKSE issues — "
@@ -333,13 +343,13 @@ class Dashboard(QWidget):
             head = "partly set up"
         else:
             head = "off"
-        self._hook_status.setText(f"Steam launch: {head} — {st.summary()}")
+        self._hook_status.setText(f"Steam launch: {head}\n{st.summary()}")
         if st.pending and st.pending.action == "select":
             self._hook_button.setText("Turn off")
         elif st.installed or st.selected:
             self._hook_button.setText("Turn off" if st.enabled else "Turn off / reset")
         else:
-            self._hook_button.setText(f"Open ModSync when launching {SKYRIM_SE.name}")
+            self._hook_button.setText("Open ModSync before Skyrim")
         self._hook_button.setEnabled(st.steam_found)
 
     def _poll_hook(self) -> None:
