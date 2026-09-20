@@ -8,6 +8,13 @@ All notable changes to ModSync are documented here. The format follows
 
 Early development; nothing has been released yet. What exists so far:
 
+### Fixed
+
+- Keep the dashboard, setup wizard and launch hub open while a downgrade,
+  restore or MO2 install is running. Restore now blocks competing game actions
+  and launching the game until it finishes; controls recover after failures.
+- Stop dashboard polling and network pairing when opening the setup wizard.
+
 ### Added
 
 - **Discovery** (`modsync doctor`, stdlib only): finds Steam libraries, the

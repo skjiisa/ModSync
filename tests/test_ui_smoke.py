@@ -214,3 +214,140 @@ class LaunchHubSmokeTests(_SmokeBase):
         self.assertIn("Test mode", hub._status_line.text())
         QTest.qWait(3500)
         self.assertEqual(hub.decision, launchhook.EXIT_CANCEL)
+
+
+class FileOperationNavigationTests(_SmokeBase):
+    def _settle(self):
+        QThreadPool.globalInstance().waitForDone(5000)
+        self.app.processEvents()
+
+    def _window(self):
+        from modsync.ui.main_window import MainWindow
+
+        with patch("modsync.ui.dashboard.Dashboard._scan_instances", return_value=[]):
+            window = MainWindow()
+        window.show()
+        self._settle()
+        self.addCleanup(window.close)
+        return window
+
+    def test_dashboard_blocks_navigation_and_close_during_file_changes(self):
+        from threading import Event
+        from PySide6.QtWidgets import QMessageBox
+
+        for operation in ("downgrade", "restore"):
+            for fail in (False, True):
+                with self.subTest(operation=operation, fail=fail):
+                    window = self._window()
+                    dash = window._stack.currentWidget()
+                    card = dash.game
+                    card.game.expected = gameversion.GameVersion.parse("1.6.1170")
+                    release = Event()
+
+                    def work(*args):
+                        if not release.wait(5):
+                            raise RuntimeError("test operation timed out")
+                        if fail:
+                            raise RuntimeError("test failure")
+                        return object()
+
+                    method = "run_downgrade" if operation == "downgrade" else "restore_game_files"
+                    with patch.object(window.service, method, side_effect=work), patch.object(
+                        QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
+                    ):
+                        try:
+                            if operation == "downgrade":
+                                card._start_downgrade()
+                            else:
+                                card._restore_files()
+                            self.assertTrue(card.busy)
+                            self.assertFalse(dash._wizard_button.isEnabled())
+                            self.assertFalse(dash.mo2.isEnabled())
+                            self.assertFalse(dash.sync.isEnabled())
+                            window._show_wizard()
+                            window._show_dashboard()
+                            self.assertIs(window._stack.currentWidget(), dash)
+                            self.assertFalse(window.close())
+                            # A status response already in flight must not re-enable actions.
+                            card._on_game_status(card.game)
+                            self.assertFalse(card._refresh_btn.isEnabled())
+                            self.assertTrue(card._restore.isHidden())
+                            self.assertTrue(card._downgrade.isHidden())
+                        finally:
+                            release.set()
+                            self._settle()
+                            self._settle()
+                    self.assertFalse(card.busy)
+                    self.assertTrue(dash._wizard_button.isEnabled())
+                    self.assertTrue(dash.mo2.isEnabled())
+                    self.assertTrue(dash.sync.isEnabled())
+                    self.assertTrue(card._refresh_btn.isEnabled())
+                    if fail:
+                        self.assertIn("test failure", dash._status_line.text())
+                    self.assertTrue(window.close())
+
+    def test_wizard_install_blocks_window_close_and_recovers_on_failure(self):
+        from threading import Event
+
+        window = self._window()
+        dashboard = window._stack.currentWidget()
+        with patch("modsync.ui.wizard.ChooseInstancePage._scan", return_value=[]):
+            window._show_wizard()
+            wizard = window._stack.currentWidget()
+            wizard._next.click()
+        self.assertFalse(dashboard._timer.isActive())
+        self._settle()
+        release = Event()
+
+        def install(*args, **kwargs):
+            if not release.wait(5):
+                raise RuntimeError("test operation timed out")
+            raise RuntimeError("installer failed")
+
+        with patch.object(wizard._choose._installer, "available", return_value=(True, "")), patch.object(
+            wizard._choose._installer, "install", side_effect=install
+        ):
+            try:
+                wizard._choose._start_install()
+                self.assertTrue(wizard.busy)
+                wizard._on_back()
+                wizard._on_next()
+                self.assertEqual(wizard._index, 1)
+                self.assertFalse(window.close())
+                self.assertFalse(wizard._back.isEnabled())
+            finally:
+                release.set()
+                self._settle()
+        self.assertFalse(wizard.busy)
+        self.assertTrue(wizard._back.isEnabled())
+        self.assertIn("installer failed", wizard._choose._log.toPlainText())
+        self.assertTrue(window.close())
+
+    def test_launch_hub_cannot_launch_or_close_during_restore(self):
+        from threading import Event
+        from PySide6.QtWidgets import QMessageBox
+        from modsync.ui.launch_hub import LaunchHub
+
+        service = ModSyncService()
+        hub = LaunchHub(service)
+        hub.show()
+        self._settle()
+        release = Event()
+        with patch.object(service, "restore_game_files", side_effect=lambda: release.wait(5)), patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
+        ):
+            try:
+                hub.game_card._restore_files()
+                self.assertFalse(hub.continue_button.isEnabled())
+                self.assertFalse(hub.cancel_button.isEnabled())
+                hub.proceed()
+                hub.cancel()
+                self.assertFalse(hub.close())
+                self.assertIsNone(hub.decision)
+            finally:
+                release.set()
+                self._settle()
+                self._settle()
+        self.assertTrue(hub.continue_button.isEnabled())
+        hub.cancel()
+        self.assertEqual(hub.decision, launchhook.EXIT_CANCEL)

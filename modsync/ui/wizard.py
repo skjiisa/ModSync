@@ -535,6 +535,10 @@ class WizardWidget(QWidget):
         self._busy = False
         self._go_to(0)
 
+    @property
+    def busy(self) -> bool:
+        return self._busy
+
     def _go_to(self, index: int) -> None:
         self._index = max(0, min(index, len(self._pages) - 1))
         page = self._pages[self._index]
@@ -557,12 +561,16 @@ class WizardWidget(QWidget):
         self._update_nav()
 
     def _on_back(self) -> None:
+        if self.busy:
+            return
         if self._index == 0:  # nothing to go back to — leave the wizard
             self.cancelled.emit()
             return
         self._go_to(self._index - 1)
 
     def _on_next(self) -> None:
+        if self.busy:
+            return
         if self._index < len(self._pages) - 1:
             page = self._pages[self._index]
             self._set_busy(True)

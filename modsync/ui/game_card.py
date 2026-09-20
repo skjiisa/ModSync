@@ -36,7 +36,7 @@ class _ProgressBridge(QObject):
 class GameCard(QGroupBox):
     status = Signal(str)  # one-line messages for the host's status line
     changed = Signal()  # the game files or the setup record were modified
-    busyChanged = Signal(bool)  # a downgrade is rewriting game files
+    busyChanged = Signal(bool)  # a downgrade or restore is rewriting game files
 
     def __init__(
         self,
@@ -48,7 +48,7 @@ class GameCard(QGroupBox):
         super().__init__(f"{SKYRIM_SE.name} version", parent)
         self.service = service
         self._game: GameStatus | None = None
-        self._downgrading = False
+        self._busy = False
         # The launch hub runs while the user is waiting to play: use the recipe
         # index already on disk rather than fetching the latest one.
         self._refresh_index = refresh_index
@@ -124,6 +124,8 @@ class GameCard(QGroupBox):
         return self._game
 
     def refresh(self) -> None:
+        if self.busy:
+            return
         self._refresh_btn.setEnabled(False)
         run_async(
             self.service.game_status,
@@ -139,11 +141,11 @@ class GameCard(QGroupBox):
         run_async(self.service.apply_pending_pin, on_done=self._on_pending_pin_applied, on_failed=lambda _: None)
 
     def _on_check_failed(self, message: str) -> None:
-        self._refresh_btn.setEnabled(True)
+        self._refresh_btn.setEnabled(not self.busy)
         self._label.setText(f"⚠ Version check failed: {message}")
 
     def _on_game_status(self, st: GameStatus) -> None:
-        self._refresh_btn.setEnabled(True)
+        self._refresh_btn.setEnabled(not self.busy)
         self._game = st
         vc = self.service.game_version_check()  # local and cheap; reuses the wording
         has_instance = self.service.state.has_instance
@@ -194,18 +196,20 @@ class GameCard(QGroupBox):
         # Offer to (re)record only when there is a setup to record into and it
         # would change what the record says.
         self._adopt.setVisible(
-            has_instance and vc.installed is not None and not vc.ok and not self._downgrading
+            has_instance and vc.installed is not None and not vc.ok and not self._busy
         )
         target = st.suggested_target
-        self._downgrade.setVisible(target is not None and not self._downgrading)
+        self._downgrade.setVisible(target is not None and not self._busy)
         if target:
             self._downgrade.setText(f"Downgrade to {target}…")
-        self._pin.setVisible(st.needs_pin and not st.pending_pin and not self._downgrading)
-        self._unpin.setVisible(st.can_unpin and not self._downgrading)
-        self._restore.setVisible(st.backup_present and not self._downgrading)
+        self._pin.setVisible(st.needs_pin and not st.pending_pin and not self._busy)
+        self._unpin.setVisible(st.can_unpin and not self._busy)
+        self._restore.setVisible(st.backup_present and not self._busy)
 
     # --- downgrade ----------------------------------------------------------
     def _start_downgrade(self) -> None:
+        if self.busy:
+            return
         st = self._game
         target = st.suggested_target if st else None
         if not st or not target:
@@ -234,14 +238,7 @@ class GameCard(QGroupBox):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self._downgrading = True
-        self.busyChanged.emit(True)
-        for btn in (self._downgrade, self._adopt, self._pin, self._unpin, self._restore):
-            btn.setVisible(False)
-        self._refresh_btn.setEnabled(False)
-        self._progress.setVisible(True)
-        self._progress_label.setVisible(True)
-        self._progress_label.setText("Starting…")
+        self._begin_file_operation("Starting…")
         bridge = _ProgressBridge(self)
         bridge.progressed.connect(self._on_downgrade_progress)
         run_async(
@@ -252,10 +249,21 @@ class GameCard(QGroupBox):
             on_failed=self._on_downgrade_failed,
         )
 
+    def _begin_file_operation(self, message: str) -> None:
+        self._busy = True
+        self.busyChanged.emit(True)
+        for btn in (self._downgrade, self._adopt, self._pin, self._unpin, self._restore):
+            btn.setVisible(False)
+        self._refresh_btn.setEnabled(False)
+        self._progress.setVisible(True)
+        self._progress_label.setVisible(True)
+        self._progress.setRange(0, 0)
+        self._progress_label.setText(message)
+
     @property
     def busy(self) -> bool:
-        """A downgrade is rewriting game files; don't navigate away."""
-        return self._downgrading
+        """A downgrade or restore is rewriting game files; don't navigate away."""
+        return self._busy
 
     def _on_downgrade_progress(self, p: Progress) -> None:
         if p.stage == "download" and p.total:
@@ -272,22 +280,22 @@ class GameCard(QGroupBox):
             self._progress.setRange(0, 0)
             self._progress_label.setText(f"{p.stage.capitalize()}: {p.message}")
 
-    def _end_downgrade(self) -> None:
-        self._downgrading = False
+    def _end_file_operation(self) -> None:
+        self._busy = False
         self.busyChanged.emit(False)
         self._progress.setVisible(False)
         self._progress_label.setVisible(False)
         self.refresh()
 
     def _on_downgraded(self, result: object) -> None:
-        self._end_downgrade()
+        self._end_file_operation()
         version = getattr(result, "installed_version", "?")
         notes = " ".join(getattr(result, "notes", []) or [])
         self.status.emit(f"Downgrade complete — the game now reports {version}. {notes}".strip())
         self.changed.emit()
 
     def _on_downgrade_failed(self, message: str) -> None:
-        self._end_downgrade()
+        self._end_file_operation()
         self.status.emit(f"⚠ Downgrade failed: {message}")
 
     # --- pin / record -------------------------------------------------------
@@ -303,6 +311,8 @@ class GameCard(QGroupBox):
 
     # --- restore ------------------------------------------------------------
     def _restore_files(self) -> None:
+        if self.busy:
+            return
         answer = QMessageBox.question(
             self,
             "Restore the original game files",
@@ -313,11 +323,11 @@ class GameCard(QGroupBox):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self._restore.setEnabled(False)
+        self._begin_file_operation("Restoring original files…")
         run_async(self.service.restore_game_files, on_done=self._on_restored, on_failed=self._on_restore_failed)
 
     def _on_restored(self, result: object) -> None:
-        self._restore.setEnabled(True)
+        self._end_file_operation()
         restored = getattr(result, "restored", []) or []
         mismatches = getattr(result, "mismatches", []) or []
         version = getattr(result, "from_version", None)
@@ -328,11 +338,10 @@ class GameCard(QGroupBox):
                 "files” in Steam to be safe."
             )
         self.status.emit(msg)
-        self.refresh()
         self.changed.emit()
 
     def _on_restore_failed(self, message: str) -> None:
-        self._restore.setEnabled(True)
+        self._end_file_operation()
         self.status.emit(f"⚠ Restore failed: {message}")
 
     def _on_pending_pin_applied(self, out: object) -> None:
