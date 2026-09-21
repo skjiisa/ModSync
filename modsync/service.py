@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from modsync import config, gameversion, pairing_lan, platforms
+from modsync import config, gameversion, pairing_lan, platforms, skse
 from modsync.downgrade import engine, recipe
 from modsync.games import SKYRIM_SE
 from modsync.mo2.launch import Launcher, build_plan
@@ -108,6 +108,27 @@ class GameStatus:
         if self.needs_downgrade and str(self.wanted) in self.can_downgrade_to:
             return str(self.wanted)
         return None
+
+    @property
+    def skse_state(self) -> str:
+        """How the SKSE in the game folder relates to the installed game:
+        "ok" | "missing" | "wrong" (built for another runtime) | "several" | "".
+        Empty while the game version is unknown, Steam is mid-update, or the
+        game itself still needs switching — SKSE is the step *after* that."""
+        if self.installed is None or self.steam_updating or self.needs_downgrade:
+            return ""
+        if self.skse_runtimes and len(self.skse_runtimes) > 1:
+            return "several"
+        if self.skse_runtime is None:
+            return "missing"
+        return "ok" if self.skse_runtime == self.installed else "wrong"
+
+    @property
+    def skse_build(self) -> skse.SkseBuild | None:
+        """The SKSE build to install here, when one is needed and known."""
+        if self.skse_state in ("", "ok"):
+            return None
+        return skse.build_for(self.installed)
 
     @property
     def needs_pin(self) -> bool:
@@ -552,6 +573,18 @@ class ModSyncService:
         log.info("downgrade finished: game reports %s, %d files patched, %d bytes downloaded",
                  result.installed_version, len(result.patched_files), result.downloaded_bytes)
         return result
+
+    def install_skse(self, progress: engine.ProgressFn | None = None) -> skse.Installed:
+        """Put the SKSE build for the *installed* game version into the game
+        folder, replacing any other SKSE there. Blocks."""
+        st = self.game_status(refresh_index=False)
+        if st.installed is None or st.game_dir is None:
+            raise RuntimeError("could not find the installed game")
+        build = skse.build_for(st.installed)
+        if build is None:
+            raise RuntimeError(f"ModSync doesn't know an SKSE build for Skyrim {st.installed}; see {skse.SKSE_PAGE}")
+        log.info("installing SKSE %s for %s into %s", build.version, build.runtime, st.game_dir)
+        return skse.install(build, st.game_dir, config.data_dir() / "skse", progress)
 
     def restore_game_files(self, progress: engine.ProgressFn | None = None) -> engine.RestoreResult:
         """Undo a downgrade: move the backed-up originals back into the game

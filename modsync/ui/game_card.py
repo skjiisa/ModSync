@@ -9,7 +9,8 @@ touches Syncthing. The dashboard and the wizard's game-version step both embed i
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QGroupBox,
     QLabel,
@@ -95,6 +96,14 @@ class GameCard(QGroupBox):
         self._unpin.clicked.connect(self._unpin_version)
         self._unpin.setVisible(False)
         row.addWidget(self._unpin)
+        self._skse = QPushButton("Install SKSE")
+        self._skse.setToolTip(
+            "Download the SKSE build made for the installed game version from skse.silverlock.org, "
+            "verify it, and put it in the game folder in place of any other SKSE there."
+        )
+        self._skse.clicked.connect(self._install_skse)
+        self._skse.setVisible(False)
+        row.addWidget(self._skse)
         self._restore = QPushButton("Restore original files")
         self._restore.setToolTip(
             "Undo the downgrade: move the original game files that ModSync backed up "
@@ -198,13 +207,25 @@ class GameCard(QGroupBox):
             elif vc.ok:
                 lines.append("Matches the version your mod setup needs.")
 
-            if not st.steam_updating and vc.skse.ambiguous:
-                lines.append("Multiple SKSE versions found. Keep only the one that matches your mod setup.")
+            build = st.skse_build
+            fix = (
+                f" Choose “Install SKSE {build.version}” below."
+                if build and build.downloadable
+                else f" Get SKSE for {vc.installed} from {build.page.split('/')[2]} — “Get SKSE…” below."
+                if build
+                else ""
+            )
+            if st.skse_state == "several":
+                lines.append(
+                    "Multiple SKSE versions are in the game folder; only one can run."
+                    + (fix or " Keep the one built for the installed game.")
+                )
                 warning = True
-            elif not st.steam_updating and vc.expected is not None and vc.skse.runtime is not None:
-                if vc.skse.runtime != vc.expected:
-                    lines.append(f"Install SKSE for Skyrim {vc.expected} to match your mods.")
-                    warning = True
+            elif st.skse_state == "wrong":
+                lines.append(f"⚠ The installed SKSE is built for Skyrim {st.skse_runtime}, not {vc.installed}.{fix}")
+                warning = True
+            elif st.skse_state == "missing":
+                lines.append(f"SKSE isn't installed here; SKSE mods won't load without it.{fix}")
 
         if st.suggested_target:
             lines.append(f"Choose “Downgrade to {st.suggested_target}” below to switch versions.")
@@ -248,6 +269,15 @@ class GameCard(QGroupBox):
         self._unpin.setVisible(st.can_unpin and not self._busy)
         self._restore.setVisible(st.backup_present and not st.backup_stale and not self._busy)
         self._discard.setVisible(st.backup_present and st.backup_stale and not self._busy)
+        build = st.skse_build
+        self._skse.setVisible(build is not None and not self._busy)
+        if build is not None:
+            if build.downloadable:
+                self._skse.setText(f"Install SKSE {build.version}")
+                role(self._skse, "primary")
+            else:
+                self._skse.setText("Get SKSE…")
+                role(self._skse, "")
 
     # --- downgrade ----------------------------------------------------------
     def _start_downgrade(self) -> None:
@@ -346,7 +376,7 @@ class GameCard(QGroupBox):
     def _begin_file_operation(self, message: str) -> None:
         self._busy = True
         self.busyChanged.emit(True)
-        for btn in (self._downgrade, self._adopt, self._pin, self._unpin, self._restore, self._discard):
+        for btn in (self._downgrade, self._adopt, self._pin, self._unpin, self._restore, self._discard, self._skse):
             btn.setVisible(False)
         self._refresh_btn.setEnabled(False)
         self._progress.setVisible(True)
@@ -438,6 +468,44 @@ class GameCard(QGroupBox):
     def _on_restore_failed(self, message: str) -> None:
         self._end_file_operation()
         self.status.emit(f"⚠ Restore failed: {message}")
+
+    # --- SKSE ---------------------------------------------------------------
+    def _install_skse(self) -> None:
+        if self.busy or self._game is None:
+            return
+        build = self._game.skse_build
+        if build is None:
+            return
+        if not build.downloadable:
+            QDesktopServices.openUrl(QUrl(build.page))
+            self.status.emit(
+                f"Opened the SKSE download page. Unpack SKSE {build.version} into "
+                f"{self._game.game_dir}, then “Check again”."
+            )
+            return
+        self._begin_file_operation(f"Installing SKSE {build.version}…")
+        bridge = _ProgressBridge(self)
+        bridge.progressed.connect(self._on_downgrade_progress)
+        run_async(
+            self.service.install_skse,
+            lambda p: bridge.progressed.emit(p),
+            on_done=self._on_skse_installed,
+            on_failed=self._on_skse_failed,
+        )
+
+    def _on_skse_installed(self, result: object) -> None:
+        self._end_file_operation()
+        build = getattr(result, "build", None)
+        removed = getattr(result, "removed", []) or []
+        msg = f"Installed SKSE {build.version} for Skyrim {build.runtime}." if build else "Installed SKSE."
+        if removed:
+            msg += f" Removed the old {', '.join(removed)}."
+        self.status.emit(msg)
+        self.changed.emit()
+
+    def _on_skse_failed(self, message: str) -> None:
+        self._end_file_operation()
+        self.status.emit(f"⚠ SKSE install failed: {message}")
 
     # --- leftover backup ----------------------------------------------------
     def _discard_backup(self) -> None:

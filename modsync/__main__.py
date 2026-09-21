@@ -26,6 +26,7 @@ usage:
   modsync game restore [--discard]       undo the downgrade: put the original files back
   modsync game pin                       keep Steam from updating the installed files
   modsync game unpin                     let Steam update the game again
+  modsync game skse                      install the SKSE build for the installed game version
 
   modsync sync create <instance-dir>     optional: share this setup; prints a pairing code
   modsync sync join <code> <instance>    optional: copy another machine's setup here
