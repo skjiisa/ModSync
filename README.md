@@ -123,6 +123,20 @@ game folder and in the instance's `mods/` (top level or `Root/`) and:
 
 DLLs for several versions lying around make SKSE ambiguous, and it is ignored.
 
+**Installing SKSE.** Once the game itself is on the right version, the Game card
+offers **Install SKSE *x.y.z*** whenever the SKSE in the game folder is missing,
+built for another version, or there are several. It downloads the build made for
+the installed game version from skse.silverlock.org, checks it against a known
+SHA-256, removes the old `skse64_*` files from the game folder and copies the
+loader, runtime DLL and `Data/Scripts` in — the same files a hand install puts
+there. The archive is kept for next time. Builds that SKSE publishes only on
+Nexus (currently 2.3.1 for 1.7.104) can't be fetched without a login, so for
+those the button opens the download page instead. `modsync game skse` does the
+same from a terminal.
+
+This is what makes a machine that copied its mods from another one self-contained:
+join → the mods and the version record arrive → downgrade → Install SKSE → play.
+
 ## Downgrading the game (and still launching it from Steam)
 
 Bethesda's patches change the executable, so SKSE and every native plugin stop
@@ -293,7 +307,7 @@ Everything the dashboard does is also a command:
 modsync doctor                      # Steam libraries, game, MO2 instances, current setup
 modsync diagnostics                 # doctor + recent logs, secrets redacted: paste into a bug report
 modsync mo2 status | use <dir> | install <dest>
-modsync game status | downgrade <version> | restore | pin | unpin
+modsync game status | downgrade <version> | restore | pin | unpin | skse
 modsync sync create | join          # optional
 modsync serve                       # foreground loop; what the background service runs
 modsync service install [--linger] | status | uninstall
@@ -335,6 +349,7 @@ that only apply to a copy of Skyrim Special Edition you already own through Stea
 | --- | --- | --- | --- |
 | [Syncthing](https://github.com/syncthing/syncthing) | peer-to-peer sync engine, driven over its REST API | bundled in the Flatpak; otherwise downloaded from its GitHub releases on first use | MPL-2.0 |
 | [7-Zip](https://7-zip.org/) (`7zz`) | unpacks the downgrade patch archives | bundled in the Flatpak (built from the 7-Zip source); otherwise your system `7z`/`7zz` or `bsdtar` | LGPL-2.1-or-later, with the unRAR restriction on the RAR code and BSD-licensed parts — see its [License.txt](https://github.com/ip7z/7zip/blob/main/DOC/License.txt) |
+| [SKSE](https://skse.silverlock.org/) | the Skyrim Script Extender, which most mods need | downloaded from skse.silverlock.org on request (**Install SKSE** / `modsync game skse`), verified against a pinned SHA-256; not bundled | its own [license](https://skse.silverlock.org/) (free to redistribute unmodified; no source) |
 | [xdelta3](https://github.com/jmacd/xdelta-gpl) | applies the binary patches | bundled in the Flatpak (3.1.0 from the `xdelta-gpl` repository); otherwise your system `xdelta3` | GPL-2.0-or-later (this release; Apache-2.0 sources exist separately at [jmacd/xdelta](https://github.com/jmacd/xdelta)) |
 | [PySide6](https://pypi.org/project/PySide6-Essentials/) / Qt 6 | the GUI | bundled in the Flatpak (PySide6-Essentials on the KDE runtime); a dependency of the source install | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only |
 | [MO2-LINT](https://github.com/Furglitch/modorganizer2-linux-installer) | installs Mod Organizer 2 into the game's Proton prefix | downloaded on demand as a pinned prebuilt binary when you choose *Install MO2* | GPL-3.0 |
