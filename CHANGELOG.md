@@ -23,8 +23,10 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
-- The Sync card detects a running `ufw`/`firewalld` and offers **Allow in
-  firewall…**, which adds ModSync's rules through `pkexec`.
+- The Sync card detects a running `ufw`/`firewalld` at launch, reads whether
+  ModSync's ports are allowed (`firewall-cmd --query-port` / `/etc/ufw/user.rules`,
+  falling back to the rules file's mtime where it isn't readable) and otherwise
+  offers **Allow in firewall…**, which adds the rules through `pkexec`.
 - After LAN pairing, Syncthing is told the peer's address directly instead of
   relying on its own LAN discovery, so a firewalled machine only needs to dial
   out.

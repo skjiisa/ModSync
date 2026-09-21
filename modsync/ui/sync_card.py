@@ -51,6 +51,7 @@ class SyncCard(QGroupBox):
         self._pairing = False
         self._pair_stop: threading.Event | None = None
         self._firewall: firewall.Firewall | None = None
+        self._fw_allowed = True
 
         self.pairingReady.connect(self._on_pairing_ready)
 
@@ -89,13 +90,20 @@ class SyncCard(QGroupBox):
         self._fw_btn.setToolTip("Adds the rules with pkexec — you'll be asked for your password")
         self._fw_btn.clicked.connect(self._allow_firewall)
         row.addWidget(self._fw_btn)
-        if not self.service.state.firewall_allowed:
-            run_async(firewall.detect, on_done=self._on_firewall_detected, on_failed=lambda _: None)
+        run_async(
+            firewall.check,
+            self.service.state.firewall_rules_stamp,
+            on_done=self._on_firewall_checked,
+            on_failed=lambda _: None,
+        )
         return self._fw_banner
 
-    def _on_firewall_detected(self, fw: firewall.Firewall | None) -> None:
-        self._firewall = fw
-        if fw is None or self.service.state.firewall_allowed:
+    def _on_firewall_checked(self, chk: firewall.Check) -> None:
+        self._firewall = chk.firewall
+        self._fw_allowed = chk.allowed
+        fw = chk.firewall
+        if fw is None or chk.allowed:
+            self._fw_banner.setVisible(False)
             return
         self._fw_label.setText(
             f"<b>{fw.kind} is on.</b> It blocks pairing and syncing until ModSync's "
@@ -119,9 +127,10 @@ class SyncCard(QGroupBox):
             on_failed=self._on_firewall_failed,
         )
 
-    def _on_firewall_allowed(self, _: object) -> None:
-        self.service.state.firewall_allowed = True
+    def _on_firewall_allowed(self, stamp: object) -> None:
+        self.service.state.firewall_rules_stamp = str(stamp or "")
         self.service.state.save()
+        self._fw_allowed = True
         self._fw_banner.setVisible(False)
         self.status.emit(f"{self._firewall.kind}: ModSync's ports are now allowed.")
 
@@ -232,7 +241,7 @@ class SyncCard(QGroupBox):
             self._net_list.addItem(
                 "No machines found — start “Pair over network” on the other machine, then Scan again."
             )
-            if self._firewall is not None and not self.service.state.firewall_allowed:
+            if self._firewall is not None and not self._fw_allowed:
                 self._net_list.addItem(
                     f"{self._firewall.kind} is on here and drops their announcements — "
                     "use “Allow in firewall…” below, then Scan again."
