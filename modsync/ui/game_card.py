@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from modsync import gameversion
 from modsync.downgrade.engine import Progress
 from modsync.games import SKYRIM_SE
 from modsync.service import GameStatus, ModSyncService, PinOutcome
@@ -126,6 +127,7 @@ class GameCard(QGroupBox):
         self._progress_label.setVisible(False)
         layout.addWidget(self._progress_label)
 
+        self._meta_stamp: int | None = None
         self.refresh()
 
     # --- data flow ----------------------------------------------------------
@@ -136,6 +138,7 @@ class GameCard(QGroupBox):
     def refresh(self) -> None:
         if self.busy:
             return
+        self._meta_stamp = self._vault_meta_stamp()
         self._refresh_btn.setEnabled(False)
         run_async(
             self.service.game_status,
@@ -145,10 +148,24 @@ class GameCard(QGroupBox):
         )
 
     def poll(self) -> None:
-        """Called by the host's timer: apply a queued Steam pin once Steam exits."""
+        """Called by the host's timer: apply a queued Steam pin once Steam exits,
+        and re-check the version when the vault's record changes under us —
+        that's how a machine copying its mods learns what they were built for."""
+        if self._vault_meta_stamp() != self._meta_stamp:
+            self.refresh()
         if self._game is None or not self._game.pending_pin:
             return
         run_async(self.service.apply_pending_pin, on_done=self._on_pending_pin_applied, on_failed=lambda _: None)
+
+    def _vault_meta_stamp(self) -> int | None:
+        """mtime of the vault's game-version record, or None if there isn't one."""
+        path = self.service.state.instance_path
+        if not path:
+            return None
+        try:
+            return gameversion.VaultMeta.path(path).stat().st_mtime_ns
+        except OSError:
+            return None
 
     def _on_check_failed(self, message: str) -> None:
         self._refresh_btn.setEnabled(not self.busy)

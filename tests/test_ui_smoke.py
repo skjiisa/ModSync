@@ -163,16 +163,41 @@ class WizardSmokeTests(_SmokeBase):
         wizard._on_next()  # welcome -> choose
         self._settle()
         wizard._choose._select(str(self.tmp))
-        wizard._on_next()  # choose -> game (commits the instance)
+        wizard._on_next()  # choose -> sync (commits the instance)
         self._settle()
         self.assertEqual(wizard._index, 2)
+        self.assertIs(wizard._pages[2], wizard._vault)
         self.assertEqual(State.load().instance_path, str(self.tmp))
         self.assertFalse(State.load().syncing)
-        wizard._on_next()  # game -> sync
         self.assertEqual(wizard._vault.mode, "local")
+        self.assertEqual(wizard._next.text(), "Next")  # keeping it local: game version is next
+        wizard._on_next()  # sync -> game
+        self._settle()
+        self.assertIs(wizard._pages[wizard._index], wizard._game_page)
         wizard._on_next()  # finish
         self.assertEqual(done[0]["mode"], "local")
         self.assertEqual(done[0]["instance_path"], str(self.tmp))
+
+    def test_copying_from_another_machine_finishes_at_the_sync_step(self):
+        """A joiner can't know which game version its mods need until they've
+        synced, so the wizard must not route it through the game-version page."""
+        from modsync.pairing_code import PairingCode
+
+        with patch("modsync.ui.wizard.ChooseInstancePage._scan", staticmethod(lambda: [])):
+            svc, wizard = self._wizard()
+        done = []
+        wizard.completed.connect(done.append)
+        wizard._on_next()  # welcome -> choose
+        self._settle()
+        wizard._choose._select(str(self.tmp))
+        wizard._on_next()  # choose -> sync
+        self._settle()
+        wizard._vault.join_radio.setChecked(True)
+        wizard._vault.code_edit.setText(PairingCode("A" * 56, "modsync-abc", "Deck").encode())
+        self.assertEqual(wizard._next.text(), "Finish")
+        wizard._on_next()
+        self.assertEqual(done[0]["mode"], "join")
+        self.assertEqual(wizard._index, 2)  # never showed the game-version page
 
     def test_cannot_switch_instance_while_syncing(self):
         State(instance_path="/elsewhere", folder_id="modsync-1").save()

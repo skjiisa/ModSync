@@ -23,6 +23,21 @@ class FakeClient:
     def devices(self):
         return [{"deviceID": "ME"}, {"deviceID": "PEER"}]
 
+    def default_device(self):
+        return {"deviceID": "", "name": "", "addresses": ["dynamic"]}
+
+    def put_device(self, device):
+        self.manager.devices.append(device)
+
+    def default_folder(self):
+        return {"id": "", "label": "", "path": "", "devices": []}
+
+    def get_folder(self, folder_id):
+        return {"id": folder_id, "devices": []}
+
+    def put_folder(self, folder):
+        self.manager.folders.append(folder)
+
     def delete_folder(self, folder_id):
         self.manager.deleted_folders.append(folder_id)
 
@@ -36,6 +51,8 @@ class FakeManager:
         self.started = 0
         self.deleted_folders = []
         self.deleted_devices = []
+        self.devices = []
+        self.folders = []
 
     def start(self, timeout=0):
         self.running = True
@@ -85,6 +102,22 @@ class InstanceLifecycleTests(unittest.TestCase):
         self.assertIsNotNone(meta)
         self.assertEqual(str(meta.version), "1.6.1170")
         self.assertEqual(meta.set_from, "skse")
+
+    def test_join_drops_the_locally_recorded_version_so_the_vault_wins(self):
+        """choose_instance records this machine's runtime; joining must not
+        carry that into the vault, where it would out-date the real record."""
+        from modsync.pairing_code import PairingCode
+
+        svc = ModSyncService(manager=self.manager)
+        with patch.object(gameversion, "find_game_dir", return_value=self.tmp / "game"), \
+                patch.object(gameversion, "installed_version", return_value=gameversion.GameVersion.parse("1.7.104")):
+            svc.choose_instance(self.instance)
+        self.assertEqual(gameversion.VaultMeta.load(self.instance).runtime, "1.7.104")
+        svc.join_vault(PairingCode("PEER", "modsync-abc", "Deck"), self.instance, peer_host="192.0.2.7")
+        self.assertIsNone(gameversion.VaultMeta.load(self.instance))
+        self.assertTrue(State.load().syncing)
+        # ...and Syncthing is told where the peer is, not left to discover it.
+        self.assertEqual(self.manager.devices[0]["addresses"], ["tcp://192.0.2.7:22000", "dynamic"])
 
     def test_cannot_switch_instance_while_syncing(self):
         State(instance_path=str(self.instance), folder_id="modsync-1").save()
