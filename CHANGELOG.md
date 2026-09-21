@@ -15,6 +15,11 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
+- The Sync card detects a running `ufw`/`firewalld` and offers **Allow in
+  firewall…**, which adds ModSync's rules through `pkexec`.
+- After LAN pairing, Syncthing is told the peer's address directly instead of
+  relying on its own LAN discovery, so a firewalled machine only needs to dial
+  out.
 - The joiner can type the host's address when the scan finds nothing (the host
   shows its address next to the PIN), and "No machines found" / "could not
   reach" messages now say which ports to open. The README documents the ports.

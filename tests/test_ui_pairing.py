@@ -90,3 +90,57 @@ class PairingRescanTests(unittest.TestCase):
             page._net_list.setCurrentRow(0)
             self.assertIs(page.announcement, new)
             self.assertTrue(wizard._next.isEnabled())
+
+
+@unittest.skipIf(QApplication is None, "PySide6 not installed")
+class FirewallBannerTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _card(self, state: State):
+        from unittest.mock import Mock
+        from modsync.ui.sync_card import SyncCard
+
+        with patch("modsync.ui.sync_card.run_async"):  # no real detection
+            return SyncCard(Mock(state=state))
+
+    def test_banner_appears_for_a_detected_firewall_and_tailors_the_empty_scan(self):
+        from modsync.firewall import Firewall
+
+        card = self._card(State(instance_path="/unused/MO2"))
+        self.assertFalse(card._fw_banner.isVisibleTo(card))
+        card._on_firewall_detected(Firewall("ufw"))
+        self.assertTrue(card._fw_banner.isVisibleTo(card))
+        self.assertIn("ufw is on", card._fw_label.text())
+        card._on_scanned([])
+        rows = [card._net_list.item(i).text() for i in range(card._net_list.count())]
+        self.assertTrue(any("ufw is on here" in r for r in rows), rows)
+
+    def test_no_firewall_means_no_banner_and_generic_hint(self):
+        from modsync import pairing_lan
+
+        card = self._card(State(instance_path="/unused/MO2"))
+        card._on_firewall_detected(None)
+        self.assertFalse(card._fw_banner.isVisibleTo(card))
+        card._on_scanned([])
+        rows = [card._net_list.item(i).text() for i in range(card._net_list.count())]
+        self.assertIn(pairing_lan.FIREWALL_HINT, rows)
+
+    def test_allowing_hides_the_banner_and_is_remembered(self):
+        import tempfile
+        from pathlib import Path
+        from modsync.firewall import Firewall
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(State, "path", return_value=Path(tmp) / "state.json"):
+                state = State(instance_path="/unused/MO2")
+                card = self._card(state)
+                card._on_firewall_detected(Firewall("ufw"))
+                card._on_firewall_allowed(None)
+                self.assertFalse(card._fw_banner.isVisibleTo(card))
+                self.assertTrue(State.load().firewall_allowed)
+                # A machine that already allowed the ports never sees the banner.
+                card2 = self._card(State.load())
+                card2._on_firewall_detected(Firewall("ufw"))
+                self.assertFalse(card2._fw_banner.isVisibleTo(card2))

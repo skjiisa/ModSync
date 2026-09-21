@@ -85,6 +85,10 @@ class PairPayload:
     device_id: str
     folder_id: str = ""
     label: str = ""
+    # The IP we reached the peer on — filled in locally after the handshake,
+    # never sent. Lets Syncthing dial it straight away instead of waiting on
+    # its own LAN discovery (which firewalls drop just like ours).
+    host: str = ""
 
     def to_bytes(self) -> bytes:
         return json.dumps(
@@ -340,7 +344,8 @@ def host_pairing(
                     if attempts >= max_attempts:
                         raise PairError("too many failed attempts; start pairing again") from exc
                     continue
-                log.info("paired with %r (%s)", peer.label, peer.device_id[:13])
+                peer.host = peer_ip
+                log.info("paired with %r (%s) at %s", peer.label, peer.device_id[:13], peer_ip)
                 return peer
         log.info("pairing session %s ended without a peer", session)
         raise PairError("timed out waiting for a machine to pair")
@@ -368,4 +373,6 @@ def join_pairing(
         ) from exc
     with sock:
         sock.settimeout(timeout)
-        return _handshake(sock, pin, payload, is_host=False)
+        peer = _handshake(sock, pin, payload, is_host=False)
+    peer.host = announcement.host
+    return peer

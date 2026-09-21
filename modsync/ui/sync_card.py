@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from modsync import pairing_lan
+from modsync import firewall, pairing_lan
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService, SyncStatus
 from modsync.ui.qr import pairing_pixmap
@@ -47,15 +47,18 @@ class SyncCard(QGroupBox):
         self._announcements: list = []
         self._pairing = False
         self._pair_stop: threading.Event | None = None
+        self._firewall: firewall.Firewall | None = None
 
         layout = QVBoxLayout(self)
         if self.live:
             self._build_live(layout)
+            layout.addWidget(self._build_firewall_banner())
             self._load_code()
             self.refresh()
             self._accept_pending()
         elif service.state.has_instance:
             self._build_offer(layout)
+            layout.addWidget(self._build_firewall_banner())
         else:
             hint = QLabel(
                 "Optional. Once an instance is chosen you can keep it identical on "
@@ -64,6 +67,71 @@ class SyncCard(QGroupBox):
             hint.setWordWrap(True)
             role(hint, "secondary")
             layout.addWidget(hint)
+
+    # --- firewall banner (both views) ------------------------------------------
+    def _build_firewall_banner(self) -> QWidget:
+        """Warn when ufw/firewalld is on: it drops pairing and sync traffic until
+        our ports are allowed, and nothing else in the UI would say why."""
+        self._fw_banner = QWidget()
+        self._fw_banner.setVisible(False)
+        row = QHBoxLayout(self._fw_banner)
+        row.setContentsMargins(0, 6, 0, 0)
+        self._fw_label = QLabel()
+        self._fw_label.setWordWrap(True)
+        role(self._fw_label, "warning")
+        row.addWidget(self._fw_label, stretch=1)
+        self._fw_btn = QPushButton("Allow in firewall…")
+        self._fw_btn.setToolTip("Adds the rules with pkexec — you'll be asked for your password")
+        self._fw_btn.clicked.connect(self._allow_firewall)
+        row.addWidget(self._fw_btn)
+        if not self.service.state.firewall_allowed:
+            run_async(firewall.detect, on_done=self._on_firewall_detected, on_failed=lambda _: None)
+        return self._fw_banner
+
+    def _on_firewall_detected(self, fw: firewall.Firewall | None) -> None:
+        self._firewall = fw
+        if fw is None or self.service.state.firewall_allowed:
+            return
+        self._fw_label.setText(
+            f"<b>{fw.kind} is on.</b> It blocks pairing and syncing until ModSync's "
+            f"ports are allowed ({', '.join(f'{p}/{proto}' for p, proto, _ in firewall.PORTS)})."
+        )
+        self._fw_btn.setToolTip(
+            "Runs with pkexec (you'll be asked for your password):\n"
+            + firewall.manual_instructions(fw).replace(" && ", "\n")
+        )
+        self._fw_banner.setVisible(True)
+
+    def _allow_firewall(self) -> None:
+        if self._firewall is None:
+            return
+        self._fw_btn.setEnabled(False)
+        self.status.emit(f"Adding ModSync's rules to {self._firewall.kind}…")
+        run_async(
+            firewall.allow,
+            self._firewall,
+            on_done=self._on_firewall_allowed,
+            on_failed=self._on_firewall_failed,
+        )
+
+    def _on_firewall_allowed(self, _: object) -> None:
+        self.service.state.firewall_allowed = True
+        self.service.state.save()
+        self._fw_banner.setVisible(False)
+        self.status.emit(f"{self._firewall.kind}: ModSync's ports are now allowed.")
+
+    def _on_firewall_failed(self, message: str) -> None:
+        self._fw_btn.setEnabled(True)
+        if "cancelled" in message:
+            self.status.emit("Firewall unchanged.")
+            return
+        fw = self._firewall or firewall.Firewall("ufw")
+        QMessageBox.warning(
+            self,
+            "Firewall",
+            f"Could not change the firewall: {message}\n\nIn a terminal, run:\n\n"
+            + firewall.manual_instructions(fw).replace(" && ", "\n"),
+        )
 
     # --- offer (instance chosen, not syncing) --------------------------------
     def _build_offer(self, v: QVBoxLayout) -> None:
@@ -168,7 +236,13 @@ class SyncCard(QGroupBox):
             self._net_list.addItem(
                 "No machines found — start “Pair over network” on the other machine, then Scan again."
             )
-            self._net_list.addItem(pairing_lan.FIREWALL_HINT)
+            if self._firewall is not None and not self.service.state.firewall_allowed:
+                self._net_list.addItem(
+                    f"{self._firewall.kind} is on here and drops their announcements — "
+                    "use “Allow in firewall…” below, then Scan again."
+                )
+            else:
+                self._net_list.addItem(pairing_lan.FIREWALL_HINT)
             return
         for a in anns:
             self._net_list.addItem(f"{a.name}   ({a.host})")

@@ -3,6 +3,7 @@
 import socket
 import threading
 import unittest
+from dataclasses import replace
 
 from modsync import pairing_lan
 from modsync.pairing_lan import Announcement, PairError, PairPayload, _recv, _send
@@ -51,8 +52,12 @@ class Handshake(unittest.TestCase):
         t = _run_host("123456", results)
         peer = pairing_lan.join_pairing(results["ann"], JOINER, "123456", timeout=5)
         t.join(5)
-        self.assertEqual(peer, HOST)
-        self.assertEqual(results.get("peer"), JOINER)
+        # Each side also learns where it reached the other, for Syncthing.
+        self.assertEqual(peer, replace(HOST, host="127.0.0.1"))
+        self.assertEqual(results.get("peer"), replace(JOINER, host="127.0.0.1"))
+
+    def test_local_host_field_is_never_sent(self):
+        self.assertNotIn(b"host", replace(HOST, host="10.0.0.1").to_bytes())
 
     def test_wrong_pin_is_rejected_on_both_sides(self):
         results: dict = {}
@@ -121,7 +126,7 @@ class HostPort(unittest.TestCase):
             self.assertGreater(ann.port, 0)
             # ...and pairing still works on the fallback port.
             peer = pairing_lan.join_pairing(ann, JOINER, "123456", timeout=5)
-            self.assertEqual(peer, HOST)
+            self.assertEqual(peer, replace(HOST, host="127.0.0.1"))
         finally:
             stop.set()
             blocker.close()
@@ -149,7 +154,7 @@ class ManualAddress(unittest.TestCase):
         ann = Announcement.manual(f"127.0.0.1:{results['ann'].port}")
         peer = pairing_lan.join_pairing(ann, JOINER, "123456", timeout=5)
         t.join(5)
-        self.assertEqual(peer, HOST)
+        self.assertEqual(peer, replace(HOST, host="127.0.0.1"))
 
 
 class BroadcastTargets(unittest.TestCase):

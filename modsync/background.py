@@ -59,14 +59,18 @@ def unit_path() -> Path:
     return config_home / "systemd" / "user" / UNIT_NAME
 
 
-def _run_host(cmd: list[str]) -> subprocess.CompletedProcess:
+def run_host(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
+    """Run a command on the host system (hopping out of the Flatpak sandbox if
+    we're in one). Output is captured unless the caller says otherwise."""
     if in_flatpak():
         cmd = ["flatpak-spawn", "--host", *cmd]
-    return subprocess.run(cmd, capture_output=True, text=True)
+    kwargs.setdefault("capture_output", True)
+    kwargs.setdefault("text", True)
+    return subprocess.run(cmd, **kwargs)
 
 
 def _systemctl(*args: str) -> subprocess.CompletedProcess:
-    return _run_host(["systemctl", "--user", *args])
+    return run_host(["systemctl", "--user", *args])
 
 
 def _checked_systemctl(*args: str) -> None:
@@ -87,7 +91,7 @@ def install(enable_linger: bool = False) -> str:
     lines = [f"Installed {path}", "Enabled and started modsync-sync.service."]
 
     if enable_linger:
-        linger = _run_host(["loginctl", "enable-linger"])
+        linger = run_host(["loginctl", "enable-linger"])
         if linger.returncode == 0:
             lines.append("Enabled linger — sync runs even while logged out.")
         else:
