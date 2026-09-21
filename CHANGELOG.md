@@ -6,6 +6,34 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Network pairing behind a firewall. The PIN handshake now listens on a fixed
+  port (TCP 21029, the same number as the UDP discovery port) instead of a
+  random one, so a single firewall rule covers pairing. Announcements also go
+  to each interface's own broadcast address, not only `255.255.255.255`.
+
+### Changed
+
+- Network pairing is harder to get lost in: the machine with the mods shows
+  the PIN large inside the Sync card (with the joiner's steps and its own
+  address) instead of only in the status line, and on the other machine
+  picking a listed machine opens a "Pair with …" dialog that asks for that
+  PIN. The first-run wizard numbers the same two steps.
+
+### Added
+
+- The Sync card detects a running `ufw`/`firewalld` and offers **Allow in
+  firewall…**, which adds ModSync's rules through `pkexec`.
+- After LAN pairing, Syncthing is told the peer's address directly instead of
+  relying on its own LAN discovery, so a firewalled machine only needs to dial
+  out.
+- The joiner can type the host's address when the scan finds nothing (the host
+  shows its address next to the PIN), and "No machines found" / "could not
+  reach" messages now say which ports to open. The README documents the ports.
+- Pairing logs what it announces, receives and connects to, so a bug report
+  can show where discovery broke.
+
 ## [0.1.0-rc1] - 2026-09-20
 
 First public pre-release. Ships as a Flatpak bundle attached to the GitHub

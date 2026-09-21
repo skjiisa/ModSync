@@ -188,6 +188,34 @@ modsync sync join <code> <instance> # copy another machine's setup here
 modsync serve                       # keep syncing in the foreground
 ```
 
+### Firewalls and "No machines found"
+
+"Pair over network" finds the other machine with a UDP broadcast, then runs the
+PIN handshake over TCP; Syncthing then needs its own ports. The Steam Deck ships
+without a firewall, but a desktop running `ufw`/`firewalld` will silently drop all
+of this. When ModSync sees one of those running it shows an **Allow in firewall…**
+button on the Sync card that adds the rules (you'll be asked for your password).
+By hand, allow these **on the machine that has the mods**:
+
+| Port | Used for |
+| --- | --- |
+| 21029 TCP + UDP | ModSync pairing (discovery + PIN handshake) |
+| 22000 TCP | Syncthing transfers |
+| 21027 UDP | Syncthing local discovery |
+
+```sh
+sudo ufw allow 21029 && sudo ufw allow 22000/tcp && sudo ufw allow 21027/udp
+```
+
+After LAN pairing each machine dials the other's address directly, so only 21029
+strictly needs opening when just one side has a firewall; the Syncthing ports
+matter when both do.
+
+If the scan still finds nothing (some Wi-Fi mesh systems and "client isolation"
+settings don't forward broadcasts), type the IP address that "Pair over network"
+shows on the other machine into the *address* field and join with the PIN — only
+the discovery step needs broadcast. Pasting a pairing code works regardless.
+
 ## Opening ModSync from Steam's Play button (optional)
 
 With the launch hook on, pressing **Play** on Skyrim — in Gaming Mode or on the

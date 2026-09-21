@@ -15,7 +15,7 @@ from pathlib import Path
 
 from modsync import config
 
-_FIELDS = ("instance_path", "folder_id", "instance_label")
+_FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_allowed")
 
 
 @dataclass
@@ -23,6 +23,9 @@ class State:
     instance_path: str | None = None
     folder_id: str | None = None
     instance_label: str = "Mod Organizer 2"
+    # ModSync opened its ports in this machine's firewall (see modsync.firewall),
+    # so the dashboard can stop warning about it.
+    firewall_allowed: bool = False
 
     @staticmethod
     def path() -> Path:

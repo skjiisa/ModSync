@@ -16,6 +16,18 @@ from modsync.sync.api import SyncthingClient
 DEFAULT_FOLDER_LABEL = "Mod Organizer 2 (ModSync)"
 
 
+SYNC_PORT = 22000  # Syncthing's default listen port; ModSync doesn't change it
+
+
+def static_addresses(host: str | None) -> list[str] | None:
+    """Device addresses for a peer we've just reached at ``host`` over the LAN:
+    dial it directly, and fall back to Syncthing's own discovery ("dynamic")
+    if the address changes later. ``None`` means leave the default alone."""
+    if not host:
+        return None
+    return [f"tcp://{host}:{SYNC_PORT}", "dynamic"]
+
+
 def add_peer_device(
     client: SyncthingClient,
     device_id: str,

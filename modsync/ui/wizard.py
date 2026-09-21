@@ -360,7 +360,7 @@ class VaultPage(Page):
         nv = QVBoxLayout(self._net_panel)
         nv.setContentsMargins(24, 4, 0, 0)
         scan_row = QHBoxLayout()
-        scan_row.addWidget(QLabel("Machines offering to pair:"))
+        scan_row.addWidget(QLabel("1. Pick the machine with the mods (it must be showing a PIN):"))
         scan_row.addStretch(1)
         self._scan_btn = QPushButton("Scan")
         self._scan_btn.clicked.connect(self._scan)
@@ -370,10 +370,11 @@ class VaultPage(Page):
         self._net_list.itemSelectionChanged.connect(self._on_select)
         nv.addWidget(self._net_list)
         pin_row = QHBoxLayout()
-        pin_row.addWidget(QLabel("PIN shown on that machine:"))
+        pin_row.addWidget(QLabel("2. Enter the PIN it shows:"))
         self._pin_edit = QLineEdit()
         self._pin_edit.setMaxLength(7)
         self._pin_edit.setPlaceholderText("042 815")
+        self._pin_edit.setEnabled(False)  # until a machine is picked
         self._pin_edit.textChanged.connect(lambda *_: self.completenessChanged.emit())
         pin_row.addWidget(self._pin_edit, stretch=1)
         nv.addLayout(pin_row)
@@ -425,6 +426,7 @@ class VaultPage(Page):
             self._net_list.addItem(
                 "No machines found — start pairing on the other machine, then Scan again."
             )
+            self._net_list.addItem(pairing_lan.FIREWALL_HINT)
         else:
             for a in anns:
                 self._net_list.addItem(f"{a.name}   ({a.host})")
@@ -440,6 +442,9 @@ class VaultPage(Page):
     def _on_select(self) -> None:
         row = self._net_list.currentRow()
         self._selected = self._announcements[row] if 0 <= row < len(self._announcements) else None
+        self._pin_edit.setEnabled(self._selected is not None)
+        if self._selected is not None:
+            self._pin_edit.setFocus()
         self.completenessChanged.emit()
 
     # --- exposed to the wizard ---

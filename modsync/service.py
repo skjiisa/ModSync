@@ -218,13 +218,23 @@ class ModSyncService:
             self.record_initial_vault_version()
         return PairingCode(device_id, folder_id, label)
 
-    def join_vault(self, code: PairingCode, instance_path: Path | str) -> PairingCode:
-        """Join a vault advertised by another machine's pairing code."""
+    def join_vault(
+        self, code: PairingCode, instance_path: Path | str, *, peer_host: str | None = None
+    ) -> PairingCode:
+        """Join a vault advertised by another machine's pairing code.
+
+        ``peer_host`` is the address the peer was reached on during LAN pairing,
+        so Syncthing can connect without its own discovery."""
         self.ensure_running()
         instance_path = Path(instance_path)
         label = code.label or self.state.instance_label
         with self.manager.client() as client:
-            pairing.add_peer_device(client, code.device_id, label or "ModSync device")
+            pairing.add_peer_device(
+                client,
+                code.device_id,
+                label or "ModSync device",
+                addresses=pairing.static_addresses(peer_host),
+            )
             pairing.share_instance_folder(
                 client, code.folder_id, instance_path, [code.device_id], label=label
             )
@@ -233,13 +243,18 @@ class ModSyncService:
         log.info("joined vault %s from device %s… into %s", code.folder_id, code.device_id[:7], instance_path)
         return PairingCode(device_id, code.folder_id, label)
 
-    def add_peer(self, code: PairingCode) -> None:
+    def add_peer(self, code: PairingCode, *, peer_host: str | None = None) -> None:
         """Add another machine to the vault this machine already has."""
         self.ensure_running()
         if not self.state.folder_id:
             raise RuntimeError("no vault configured on this machine yet")
         with self.manager.client() as client:
-            pairing.add_peer_device(client, code.device_id, code.label or "ModSync device")
+            pairing.add_peer_device(
+                client,
+                code.device_id,
+                code.label or "ModSync device",
+                addresses=pairing.static_addresses(peer_host),
+            )
             folder = client.get_folder(self.state.folder_id)
             ids = {d["deviceID"] for d in folder.get("devices", [])}
             ids.add(code.device_id)
@@ -299,7 +314,10 @@ class ModSyncService:
         peer = pairing_lan.host_pairing(
             payload, name, pin, on_ready=on_ready, stop=stop, timeout=timeout
         )
-        self.add_peer(PairingCode(peer.device_id, self.state.folder_id, peer.label or name))
+        self.add_peer(
+            PairingCode(peer.device_id, self.state.folder_id, peer.label or name),
+            peer_host=peer.host,
+        )
         return peer
 
     def discover_hosts(self, timeout: float = 3.0) -> list[pairing_lan.Announcement]:
@@ -320,7 +338,11 @@ class ModSyncService:
         peer = pairing_lan.join_pairing(announcement, payload, pin, timeout=timeout)
         if not peer.folder_id:
             raise RuntimeError("that machine isn't offering a vault to join")
-        self.join_vault(PairingCode(peer.device_id, peer.folder_id, peer.label), instance_path)
+        self.join_vault(
+            PairingCode(peer.device_id, peer.folder_id, peer.label),
+            instance_path,
+            peer_host=peer.host,
+        )
         return peer
 
     # --- undo ---
