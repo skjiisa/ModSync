@@ -1,64 +1,70 @@
+<img src="packaging/flatpak/icons/io.github.skjiisa.ModSync.png" alt="ModSync logo" width="128">
+
 # ModSync
 
-<!-- Draft notes for the 1.0 README. Prose to be written by hand. Details live in docs/advanced.md. -->
+ModSync is a SteamOS/Linux modding hub for Skyrim SE, including multi-device sync.
+Features include:
 
-## What it is
-
-- Gets Skyrim Special Edition ready for Mod Organizer 2 on Steam Deck / SteamOS and any Linux, and keeps it working.
-- Installs a portable MO2 instance wired into the game's Proton prefix, through MO2-LINT.
-- Detects the installed game version and the SKSE runtime.
-- Downgrades the game with community patches when Steam has updated it.
-- Pins Steam so the downgraded install keeps launching normally.
-- Optional: syncs the whole setup between a desktop and a Steam Deck with Syncthing. Each machine keeps its own game paths.
-- Each part works on its own. Someone who only wants the downgrader never sets up sync.
-- Links: MO2 https://github.com/ModOrganizer2/modorganizer, MO2-LINT https://github.com/Furglitch/modorganizer2-linux-installer, Syncthing https://syncthing.net/
+- Game version downgrading
+  - Thanks to [Mulderland's Skyrim SE downgrader](https://github.com/Mulderland/MulderLoad)
+- SKSE installation based on game version 
+- [Mod Organizer 2](https://github.com/ModOrganizer2/modorganizer) installer
+  - Thanks to [MO2-LINT](https://github.com/Furglitch/modorganizer2-linux-installer)
+- Multi-device sync for your Steam Deck, Steam Machine, Steam Frame, or other Linux hardware 
 
 ## Install
 
-- Download the latest `.flatpak` from https://github.com/skjiisa/ModSync/releases. On a Steam Deck, do this in Desktop Mode.
-- Open it with Discover and click Install, or `flatpak install --user ~/Downloads/ModSync-*-x86_64.flatpak`.
-- Launch ModSync from the application menu. The Add to Steam button makes it launchable from Gaming Mode.
-- To upgrade, install the newer release's file over the old one.
-- Running from source and building the Flatpak: docs/advanced.md.
+Download the `.flatpak` from the [releases tab](https://github.com/skjiisa/ModSync/releases).
+
+SteamOS:
+
+- Double click to open the `.flatpak` file in Discover and install it from there
+
+Other:
+
+```bash
+flatpak install --user ~/Downloads/ModSync-*-x86_64.flatpak
+flatpak run io.github.skjiisa.ModSync
+```
+
+To build from source, see [advanced.md](docs/advanced.md).
 
 ## First run
 
-- The dashboard has three cards: Game, Mod Organizer 2, and Sync (optional).
-- The setup wizard walks through the same things in order: choose or install an MO2 instance, optionally sync with another machine, then fix the game version if needed.
-- Works in Gaming Mode: one window, no dialogs.
-- "Reset setup..." forgets the instance and any sync without touching a mod file.
+It's recommended to close Steam for the first run
+
+Run through the setup wizard. Optionally, there are buttons to:
+- Add ModSync as a Steam Shortcut
+- Make Steam launch ModSync instead of Skyrim when opening Skyrim
 
 ## Game version
 
-- Mods are built for one exact Skyrim version, and Steam updates the game silently.
-- ModSync remembers which version your setup needs and warns when the installed game differs.
-- The Game card offers Downgrade, Keep this version, and Install SKSE as needed.
-
-## Downgrading
-
-- Downgrades use Mulderland's community patches and keep a backup, so "Restore original files" undoes it.
-- "Keep this version" stops Steam from updating the game again. If Steam is open, it is applied when Steam next closes.
-- Details, and the Steam Deck keyboard caveat for 1.6.x: docs/advanced.md.
+The "Skyrim Special Edition version" section allows for pinning a game version and gives you the option to downgrade to it whenever Steam updates Skyrim. No more worrying about stopping updates before they happen!
 
 ## Syncing between machines (optional)
 
-- "This machine has the mods" gives a pairing code, QR and LAN PIN. "Copy from another machine" joins.
-- Only the instance syncs. Each machine keeps its own game paths. Saves go through Steam Cloud.
-- A desktop firewall blocks pairing. "Allow in firewall..." on the dashboard fixes it. Ports: docs/advanced.md.
+ModSync allows syncing mod lists between multiple systems.
 
-## Play button hook (optional)
+- Install ModSync on each system, set up Mod Organizer 2 on each, then choose one to be the host and pair the others using the "Sync with another machine" section.
+- For easy pairing, have the host click "Pair over network", then on the other machine, press "Scan network" to have them find each other
+  - Enter the pairing code to confirm the connection
+  - You may need to allow ModSync through the firewall. If you see a warning, simply click "Allow in firewall..." to proceed.
 
-- With the launch hook on, pressing Play on Skyrim opens ModSync first: profile, mod count, game version, sync state. Continue goes on to Mod Organizer 2 or the game. Cancel returns to Steam.
-- Turning it on or off needs a Steam restart, which is queued if Steam is open.
+Mod list syncing uses [Syncthing](https://github.com/syncthing/syncthing) under the hood 
 
-## Background service (optional)
+### Background service (optional)
 
-- "Run in background" keeps syncing and applies queued Steam changes after the app is closed.
+"Run in background" allows ModSync to run while closed so you don't have to worry about running it to keep your mods in sync between systems.
 
-## Command line and bug reports
+## Play button (optional)
 
-- Everything on the dashboard is also a `modsync` command. Reference: docs/advanced.md.
-- "Copy diagnostics" on the dashboard (or `modsync diagnostics`) collects what a bug report needs, with secrets redacted.
+You can Launch Skyrim or Mod Organizer 2 through Proton with ModSync directly.
+If you want to have ModSync open when launching the game through Steam, click "Open ModSync before Skyrim", that way your mods can always stay in sync if you change them frequently.
+ - If using this setting, restart steam after enabling it
+
+## Command line
+
+See [advanced.md](docs/advanced.md) for command-line usage.
 
 ## Third-party components and licenses
 
