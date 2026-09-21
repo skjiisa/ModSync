@@ -254,22 +254,22 @@ class LaunchHookStatus:
         if self.enabled:
             if not self.underlying_exists:
                 return (
-                    f"On, but the tool it hands off to ({self.underlying_display}) is missing — "
+                    f"On, but the tool it hands off to ({self.underlying_display}) is missing, so "
                     f"{g} will not start. Turn the hook off or on again."
                 )
-            return f"On — Steam’s Play button opens ModSync, then continues to {self.hands_off_to}."
+            return f"On. Steam's Play button opens ModSync, then continues to {self.hands_off_to}."
         if self.installed:
             via = f" with {self.current_mapping}" if self.current_mapping else ""
             return (
-                f"Installed, but Steam still launches {g}{via}. Pick “{display_name(self.game)}” under "
-                "Properties → Compatibility in Steam, or turn the hook on again."
+                f"Installed, but Steam still launches {g}{via}. Pick \"{display_name(self.game)}\" under "
+                "Properties, then Compatibility in Steam, or turn the hook on again."
             )
         if self.selected:
             return (
-                f"Steam is set to launch {g} through ModSync, but the hook files are gone — "
-                "turn it off to restore the previous launcher, or on to reinstall."
+                f"Steam is set to launch {g} through ModSync, but the hook files are gone. "
+                "Turn it off to restore the previous launcher, or on to reinstall."
             )
-        return f"Off — Steam’s Play button starts {g} directly."
+        return f"Off. Steam's Play button starts {g} directly."
 
 
 def describe_target(underlying_name: str | None, underlying_display: str | None = None) -> str:
@@ -441,7 +441,7 @@ def _resolve_underlying(
         if tool is None:
             raise RuntimeError(
                 "could not tell which Proton Steam uses for the game; pick one under "
-                "Properties → Compatibility in Steam, then try again"
+                "Properties, then Compatibility in Steam, and try again"
             )
     if tool.name == ours or _TOOL_ID_RE.match(tool.name):
         raise RuntimeError("the hook cannot hand off to itself")
@@ -457,7 +457,7 @@ def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None) -> str:
     if env is None:
         raise RuntimeError("Steam was not found on this machine")
     if not env.config_vdf.exists():
-        raise RuntimeError(f"{env.config_vdf} not found — has Steam been run on this machine?")
+        raise RuntimeError(f"{env.config_vdf} not found. Has Steam been run on this machine?")
     cfg = SteamConfig.load(env.config_vdf)
     current_entry = cfg.compat_tool(appid)
     current = str(current_entry["name"]) if current_entry and current_entry.get("name") else None
@@ -501,9 +501,9 @@ def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None) -> str:
         Pending("select", appid, {"name": ours, "config": "", "priority": "250"}).save()
         return (
             f"Launch hook installed; it continues to {hands}. Steam is running, so the switch is "
-            "queued: restart Steam (on the Deck: Power → Restart Steam) and ModSync — the open app "
-            "or its background service — selects the hook while Steam is closed. You can also pick "
-            f"“{display_name(game)}” yourself under Properties → Compatibility."
+            "queued. Restart Steam (on the Deck: Power, then Restart Steam) and ModSync, either the open app "
+            "or its background service, selects the hook while Steam is closed. You can also pick "
+            f"\"{display_name(game)}\" yourself under Properties, then Compatibility."
         )
     cfg.set_compat_tool(appid, ours)
     cfg.save()
@@ -543,7 +543,7 @@ def disable(appid: int = SKYRIM_SE.appid) -> str:
     Record.remove()
     Pending.clear()
     back = f"back to {previous['name']}" if previous and previous.get("name") else "back to Steam's default"
-    return f"Launch hook off — {game.name} launches {back}."
+    return f"Launch hook off. {game.name} launches {back}."
 
 
 def apply_pending() -> str | None:
@@ -569,7 +569,7 @@ def apply_pending() -> str | None:
             cfg.set_compat_entry(pending.appid, pending.mapping)
             cfg.save()
             Pending.clear()
-            return "Launch hook selected for the game — Play now opens ModSync first."
+            return "Launch hook selected for the game. Play now opens ModSync first."
         cfg.set_compat_entry(pending.appid, pending.mapping)
         cfg.save()
         if pending.remove_tool:
@@ -577,7 +577,7 @@ def apply_pending() -> str | None:
             Record.remove()
         Pending.clear()
         name = (pending.mapping or {}).get("name")
-        return f"Launch hook off — the game launches {'with ' + str(name) if name else 'with Steam’s default'} again."
+        return f"Launch hook off. The game launches {'with ' + str(name) if name else 'with Steam\'s default'} again."
     except Exception as exc:  # keep the loop alive; the queue stays for the next try
         log.error("queued launch hook change failed: %s", exc)
         return f"Launch hook: could not apply the queued change: {exc}"

@@ -222,7 +222,7 @@ class StatusEdgeCases(LaunchHookBase):
         st = launchhook.status()
         self.assertTrue(st.installed)
         self.assertFalse(st.selected)
-        self.assertIn("Properties → Compatibility", st.summary())
+        self.assertIn("Properties, then Compatibility", st.summary())
         # Turning it off from here just cleans up; Steam keeps its own choice.
         launchhook.disable()
         self.assertEqual(self.mapping_name(), "GE-Proton10-34")

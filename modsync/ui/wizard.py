@@ -79,8 +79,8 @@ class WelcomePage(Page):
             ("2 · Sync (optional)", "Share mods and load order with another machine, or keep this setup local."),
             (
                 "3 · Game version",
-                "Check Skyrim and SKSE, and keep the version your mods need. If you're copying "
-                "mods from another machine this happens on the dashboard once they've arrived.",
+                "Check Skyrim and SKSE, and keep the version your mods need. If you are copying "
+                "mods from another machine, this happens on the dashboard once they have arrived.",
             ),
         ):
             box = QGroupBox(title)
@@ -161,8 +161,8 @@ class ChooseInstancePage(Page):
 
         note = QLabel(
             "Close Steam before installing. This downloads Mod Organizer 2 and "
-            "configures the game's Proton prefix (can take several minutes). "
-            "SKSE is not installed automatically yet."
+            "sets up the game's Proton prefix, which can take several minutes. "
+            "SKSE can be installed afterwards from the Game version step."
         )
         note.setWordWrap(True)
         role(note, "secondary")
@@ -302,7 +302,7 @@ class GameVersionPage(Page):
     title = "Game version"
     subtitle = (
         "SKSE and native DLL mods only load on the exact game version they were built "
-        "for. Steam updates the game silently; this puts it back."
+        "for. Steam updates the game silently. This step puts it back."
     )
 
     def __init__(self, service: ModSyncService) -> None:
@@ -316,8 +316,8 @@ class GameVersionPage(Page):
         layout = QVBoxLayout(self)
         layout.addWidget(self.card)
         hint = QLabel(
-            "Nothing to fix? Just continue. A downgrade takes a few minutes and about "
-            "1 GB of downloads (kept for next time)."
+            "If there is nothing to fix, continue. A downgrade takes a few minutes and "
+            "about 1 GB of downloads, which are kept for next time."
         )
         hint.setWordWrap(True)
         role(hint, "secondary")
@@ -334,7 +334,7 @@ class GameVersionPage(Page):
 
 class VaultPage(Page):
     title = "Sync with another machine"
-    subtitle = "Optional — keep this exact setup on another machine, e.g. desktop ↔ Steam Deck."
+    subtitle = "Optional. Keep this setup on another machine, such as a desktop and a Steam Deck."
 
     def __init__(self) -> None:
         super().__init__()
@@ -343,15 +343,15 @@ class VaultPage(Page):
 
         layout = QVBoxLayout(self)
 
-        self.local_radio = QRadioButton("Not now  (just use this machine)")
+        self.local_radio = QRadioButton("Not now (just use this machine)")
         self.create_radio = QRadioButton(
-            "Share from this machine  (it has my current mod setup)"
+            "Share from this machine (it has my current mod setup)"
         )
         self.network_radio = QRadioButton(
-            "Find a machine on my network  (easiest for Steam Deck ↔ PC — no code to type)"
+            "Find a machine on my network (no code to type)"
         )
         self.join_radio = QRadioButton(
-            "Join with a pairing code  (paste a code from another machine)"
+            "Join with a pairing code (paste a code from another machine)"
         )
         self.local_radio.setChecked(True)
         group = QButtonGroup(self)
@@ -428,7 +428,7 @@ class VaultPage(Page):
         self._net_list.clear()
         if not anns:
             self._net_list.addItem(
-                "No machines found — start pairing on the other machine, then Scan again."
+                "No machines found. Start \"Pair over network\" on the other machine, then scan again."
             )
             self._net_list.addItem(pairing_lan.FIREWALL_HINT)
         else:
@@ -483,11 +483,11 @@ class VaultPage(Page):
             self._hint.setText("You can set up syncing any time from the dashboard.")
             return True
         if self.mode == "create":
-            self._hint.setText("You'll get a pairing code to share with your other machines.")
+            self._hint.setText("You will get a pairing code to share with your other machines.")
             return True
         if self.mode == "network":
             if self._selected is None:
-                self._hint.setText("Pick the machine you're pairing with, then enter its PIN.")
+                self._hint.setText("Pick the machine to pair with, then enter its PIN.")
                 return False
             if len(self.pin) != 6 or not self.pin.isdigit():
                 self._hint.setText("Enter the 6-digit PIN shown on the other machine.")

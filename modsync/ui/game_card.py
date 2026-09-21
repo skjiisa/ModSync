@@ -72,8 +72,8 @@ class GameCard(QGroupBox):
         row.addWidget(self._adopt)
         self._downgrade = QPushButton("Downgrade…")
         self._downgrade.setToolTip(
-            "Rewrite the game files to the version this setup needs using community "
-            "xdelta patches (Mulderland). Steam keeps launching the game normally."
+            "Rewrite the game files to the version this setup needs, using Mulderland's "
+            "community patches. Steam keeps launching the game normally."
         )
         role(self._downgrade, "primary")
         self._downgrade.clicked.connect(self._start_downgrade)
@@ -82,8 +82,8 @@ class GameCard(QGroupBox):
         self._pin = QPushButton("Keep this version")
         self._pin.setToolTip(
             "Steam wants to update the game. Pin the installed files so Steam treats "
-            "them as current and launches without updating. Needs Steam closed; "
-            "otherwise it is queued and applied when Steam restarts."
+            "them as current and launches without updating. Needs Steam closed. "
+            "If Steam is open, the pin is applied when it next closes."
         )
         self._pin.clicked.connect(self._pin_version)
         self._pin.setVisible(False)
@@ -98,16 +98,16 @@ class GameCard(QGroupBox):
         row.addWidget(self._unpin)
         self._skse = QPushButton("Install SKSE")
         self._skse.setToolTip(
-            "Download the SKSE build made for the installed game version from skse.silverlock.org, "
-            "verify it, and put it in the game folder in place of any other SKSE there."
+            "Download the SKSE build for the installed game version from skse.silverlock.org, "
+            "verify it, and put it in the game folder in place of any SKSE already there."
         )
         self._skse.clicked.connect(self._install_skse)
         self._skse.setVisible(False)
         row.addWidget(self._skse)
         self._restore = QPushButton("Restore original files")
         self._restore.setToolTip(
-            "Undo the downgrade: move the original game files that ModSync backed up "
-            "back into the game folder and remove the backup."
+            "Undo the downgrade. Moves the backed-up original files back into the game "
+            "folder and removes the backup."
         )
         self._restore.clicked.connect(lambda: self._restore_files())
         self._restore.setVisible(False)
@@ -179,7 +179,7 @@ class GameCard(QGroupBox):
     def _on_check_failed(self, message: str) -> None:
         self._refresh_btn.setEnabled(not self.busy)
         role(self._label, "warning")
-        self._label.setText("Couldn’t check Skyrim’s version. Try “Check again”.")
+        self._label.setText("Could not check Skyrim's version. Try \"Check again\".")
         self._label.setToolTip(message)
 
     def _on_game_status(self, st: GameStatus) -> None:
@@ -192,7 +192,7 @@ class GameCard(QGroupBox):
         if vc.installed is None and st.game_dir is None:
             lines.append("Skyrim wasn't found. Install it through Steam first.")
         elif vc.installed is None:
-            lines.append("Couldn't read Skyrim's version. Try “Check again”.")
+            lines.append("Could not read Skyrim's version. Try \"Check again\".")
             warning = True
         else:
             lines.append(f"Skyrim version: {vc.installed}")
@@ -209,15 +209,15 @@ class GameCard(QGroupBox):
 
             build = st.skse_build
             fix = (
-                f" Choose “Install SKSE {build.version}” below."
+                f" Choose \"Install SKSE {build.version}\" below."
                 if build and build.downloadable
-                else f" Get SKSE for {vc.installed} from {build.page.split('/')[2]} — “Get SKSE…” below."
+                else f" Get SKSE for {vc.installed} from {build.page.split('/')[2]} with \"Get SKSE…\" below."
                 if build
                 else ""
             )
             if st.skse_state == "several":
                 lines.append(
-                    "Multiple SKSE versions are in the game folder; only one can run."
+                    "Several SKSE versions are in the game folder, and only one can run."
                     + (fix or " Keep the one built for the installed game.")
                 )
                 warning = True
@@ -225,10 +225,10 @@ class GameCard(QGroupBox):
                 lines.append(f"⚠ The installed SKSE is built for Skyrim {st.skse_runtime}, not {vc.installed}.{fix}")
                 warning = True
             elif st.skse_state == "missing":
-                lines.append(f"SKSE isn't installed here; SKSE mods won't load without it.{fix}")
+                lines.append(f"SKSE is not installed here. SKSE mods will not load without it.{fix}")
 
         if st.suggested_target:
-            lines.append(f"Choose “Downgrade to {st.suggested_target}” below to switch versions.")
+            lines.append(f"Choose \"Downgrade to {st.suggested_target}\" below to switch versions.")
         elif st.needs_downgrade:
             if st.recipe_from and str(st.installed) != st.recipe_from and str(st.wanted) in st.recipe_targets:
                 lines.append(f"Update Skyrim in Steam first, then return here to switch to {st.wanted}.")
@@ -236,9 +236,9 @@ class GameCard(QGroupBox):
                 lines.append(f"ModSync can't switch this install to {st.wanted} yet.")
 
         if st.pending_pin:
-            lines.append("Close Steam to apply “Keep this version”.")
+            lines.append("Close Steam to apply \"Keep this version\".")
         elif st.needs_pin:
-            lines.append("Steam has an update ready. Choose “Keep this version” to stay on this version.")
+            lines.append("Steam has an update ready. Choose \"Keep this version\" to stay on this version.")
             warning = True
         if st.backup_present and st.backup_stale:
             lines.append(
@@ -247,7 +247,7 @@ class GameCard(QGroupBox):
             )
         elif st.backup_present:
             came_from = f" ({st.backup_from})" if st.backup_from else ""
-            lines.append(f"“Restore original files” puts back the files{came_from} from before your last downgrade.")
+            lines.append(f"\"Restore original files\" puts back the files{came_from} from before your last downgrade.")
 
         role(self._label, "warning" if warning else "secondary")
         self._label.setText("\n".join(lines))
@@ -339,8 +339,8 @@ class GameCard(QGroupBox):
 
     def _confirm_downgrade(self, st: GameStatus, target: str) -> None:
         deck_note = (
-            "• On Steam Deck, 1.6.x brings back the on-screen keyboard crash; the "
-            "“Steam Deck Keyboard Fix for Skyrim” SKSE plugin works around it.\n"
+            "On a Steam Deck, 1.6.x brings back the on-screen keyboard crash. The "
+            "\"Steam Deck Keyboard Fix for Skyrim\" SKSE plugin works around it.\n\n"
             if target.startswith(("1.6.", "1.5."))
             else ""
         )
@@ -354,11 +354,11 @@ class GameCard(QGroupBox):
             f"Downgrade {SKYRIM_SE.name} to {target}",
             f"{why}"
             f"This rewrites the {SKYRIM_SE.name} files in Steam's folder from {st.installed} to {target} "
-            "using xdelta patches published by Mulderland (open source, checksummed).\n\n"
-            "• Roughly 1 GB is downloaded and kept for next time.\n"
-            "• Steam keeps launching the game normally afterwards.\n"
-            "• The original files are kept in the game folder; “Restore original files” undoes the downgrade.\n"
-            f"{deck_note}\nProceed?",
+            "using Mulderland's open-source, checksummed patches.\n\n"
+            "About 1 GB is downloaded and kept for next time. Steam keeps launching the game "
+            "normally afterwards. The original files are kept in the game folder, and "
+            "\"Restore original files\" undoes the downgrade.\n\n"
+            f"{deck_note}Proceed?",
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
@@ -415,7 +415,7 @@ class GameCard(QGroupBox):
         self._end_file_operation()
         version = getattr(result, "installed_version", "?")
         notes = " ".join(getattr(result, "notes", []) or [])
-        self.status.emit(f"Downgrade complete — the game now reports {version}. {notes}".strip())
+        self.status.emit(f"Downgrade complete. The game now reports {version}. {notes}".strip())
         self.changed.emit()
 
     def _on_downgrade_failed(self, message: str) -> None:
@@ -443,7 +443,7 @@ class GameCard(QGroupBox):
                 "Restore the original game files",
                 f"This moves the {SKYRIM_SE.name} files ModSync backed up before the downgrade back into "
                 "Steam's folder, replacing the downgraded ones, and removes the backup.\n\n"
-                "Mods built for the downgraded version (SKSE and its plugins) will stop working until "
+                "SKSE and other mods built for the downgraded version will stop working until "
                 "you downgrade again.\n\nProceed?",
             )
             if answer != QMessageBox.StandardButton.Yes:
@@ -459,8 +459,8 @@ class GameCard(QGroupBox):
         msg = f"Restored {len(restored)} original file(s)" + (f" (game version {version})." if version else ".")
         if mismatches:
             msg += (
-                f" ⚠ {len(mismatches)} differ from what was recorded — use “Verify integrity of game "
-                "files” in Steam to be safe."
+                f" ⚠ {len(mismatches)} differ from what was recorded. Use \"Verify integrity of game "
+                "files\" in Steam to be safe."
             )
         self.status.emit(msg)
         self.changed.emit()
@@ -480,7 +480,7 @@ class GameCard(QGroupBox):
             QDesktopServices.openUrl(QUrl(build.page))
             self.status.emit(
                 f"Opened the SKSE download page. Unpack SKSE {build.version} into "
-                f"{self._game.game_dir}, then “Check again”."
+                f"{self._game.game_dir}, then choose \"Check again\"."
             )
             return
         self._begin_file_operation(f"Installing SKSE {build.version}…")
@@ -521,7 +521,7 @@ class GameCard(QGroupBox):
 
     def _on_discard_failed(self, message: str) -> None:
         self._end_file_operation()
-        self.status.emit(f"⚠ Couldn’t delete the old backup: {message}")
+        self.status.emit(f"⚠ Could not delete the old backup: {message}")
 
     def _on_pending_pin_applied(self, out: object) -> None:
         if out is not None:
@@ -541,7 +541,7 @@ class GameCard(QGroupBox):
             return
         self.status.emit(
             "Recorded this machine's game version as the one this setup is built for. "
-            "Machines that share the setup will be warned if theirs differs."
+            "Other machines sharing the setup are warned if theirs differs."
         )
         self.refresh()
         self.changed.emit()

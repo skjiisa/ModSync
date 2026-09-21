@@ -67,8 +67,8 @@ class SyncCard(QGroupBox):
             self._build_offer(layout)
         else:
             hint = QLabel(
-                "Optional. Once an instance is chosen you can keep it identical on "
-                "another machine — desktop ↔ Steam Deck, for example."
+                "Optional. Once an instance is chosen, you can keep it identical on "
+                "another machine, such as a desktop and a Steam Deck."
             )
             hint.setWordWrap(True)
             role(hint, "secondary")
@@ -84,18 +84,18 @@ class SyncCard(QGroupBox):
     # --- offer (instance chosen, not syncing) --------------------------------
     def _build_offer(self, v: QVBoxLayout) -> None:
         intro = QLabel(
-            "Optional. Keep this exact mod setup on another machine too — mods, load "
-            "order and downloads stay identical (desktop ↔ Steam Deck), while each "
-            "machine keeps its own game paths. Pick which side has the mods:"
+            "Optional. Keep this mod setup on another machine too. Mods, load order and "
+            "downloads stay identical, and each machine keeps its own game paths. "
+            "Pick which side has the mods:"
         )
         intro.setWordWrap(True)
         v.addWidget(intro)
         row = QHBoxLayout()
         create = QPushButton("This machine has the mods")
-        create.setToolTip("Share this instance: create a vault and get a pairing code for the other machine")
+        create.setToolTip("Share this instance and get a pairing code for the other machine")
         create.clicked.connect(self._create_vault)
         self._join_btn = QPushButton("Copy from another machine…")
-        self._join_btn.setToolTip("Join the machine that already has the setup (e.g. your Steam Deck)")
+        self._join_btn.setToolTip("Copy the setup from the machine that already has it")
         self._join_btn.clicked.connect(self._toggle_join_panel)
         row.addWidget(create)
         row.addWidget(self._join_btn)
@@ -130,7 +130,7 @@ class SyncCard(QGroupBox):
         alt = QHBoxLayout()
         addr_btn = QPushButton("Not listed? Enter its address…")
         addr_btn.setFlat(True)
-        addr_btn.setToolTip("Pair with the IP address shown under “Pair over network” on that machine")
+        addr_btn.setToolTip("Pair using the address shown under \"Pair over network\" on that machine")
         addr_btn.clicked.connect(self._join_by_address)
         alt.addWidget(addr_btn)
         alt.addStretch(1)
@@ -173,18 +173,18 @@ class SyncCard(QGroupBox):
         self._net_list.clear()
         if not anns:
             self._net_list.addItem(
-                "No machines found — start “Pair over network” on the other machine, then Scan again."
+                "No machines found. Start \"Pair over network\" on the other machine, then scan again."
             )
             if self._firewall is not None and not self._fw_allowed:
                 self._net_list.addItem(
-                    f"{self._firewall.kind} is on here and drops their announcements — "
-                    "use “Allow in firewall…” under “On this machine”, then Scan again."
+                    f"{self._firewall.kind} is on here and drops their announcements. "
+                    "Use \"Allow in firewall…\" under \"On this machine\", then scan again."
                 )
             else:
                 self._net_list.addItem(pairing_lan.FIREWALL_HINT)
             return
         for a in anns:
-            self._net_list.addItem(f"{a.name}   ({a.host})   — click to pair")
+            self._net_list.addItem(f"{a.name}   ({a.host})   click to pair")
 
     def _on_scan_failed(self, message: str) -> None:
         self._announcements = []
@@ -302,7 +302,7 @@ class SyncCard(QGroupBox):
         nl = QVBoxLayout(self._share_normal)
         nl.setContentsMargins(0, 0, 0, 0)
         hint = QLabel(
-            "On another machine, choose “Copy from another machine” — or paste this code:"
+            "On another machine, choose \"Copy from another machine\", or paste this code:"
         )
         hint.setWordWrap(True)
         nl.addWidget(hint)
@@ -407,11 +407,11 @@ class SyncCard(QGroupBox):
     def _on_status(self, status: SyncStatus) -> None:
         self._devices.clear()
         if not status.devices:
-            self._devices.addItem("No other devices yet — pair one to start syncing.")
+            self._devices.addItem("No other devices yet. Pair one to start syncing.")
         for dev in status.devices:
-            mark = "🟢 connected" if dev.connected else "⚪ offline"
+            mark = "connected" if dev.connected else "offline"
             name = dev.name or dev.id[:13]
-            self._devices.addItem(f"{name} — {mark}")
+            self._devices.addItem(f"{name}: {mark}")
 
         state = status.folder_state or "starting"
         pct = int(round((status.completion or 0)))
@@ -470,8 +470,8 @@ class SyncCard(QGroupBox):
         name = socket.gethostname() or "this machine"
         self._pin_label.setText(f"{pin[:3]} {pin[3:]}")
         self._pin_steps.setText(
-            "On the other machine: <b>Copy from another machine</b> → pick "
-            f"<b>{name}</b> from the list → enter this PIN."
+            "On the other machine, choose <b>Copy from another machine</b>, pick "
+            f"<b>{name}</b> from the list, and enter this PIN."
         )
         self._pin_addr.setText("Starting…")
         self._share_normal.setVisible(False)
@@ -534,8 +534,8 @@ class SyncCard(QGroupBox):
             "Stop syncing",
             "Leave the vault on this machine?\n\n"
             "This stops syncing and forgets the paired devices, but keeps using "
-            "the instance here — you can share it again later.\n\n"
-            "Your mods, downloads and profiles are NOT deleted — every file stays "
+            "the instance here. You can share it again later.\n\n"
+            "Your mods, downloads and profiles are not deleted. Every file stays "
             "on disk.",
         )
         if answer != QMessageBox.StandardButton.Yes:

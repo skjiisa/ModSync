@@ -84,7 +84,7 @@ class LaunchHub(QMainWindow):
         self.service = service
         self.game = GAMES.get(appid or SKYRIM_SE.appid, SKYRIM_SE)
         self.decision: int | None = None
-        self.setWindowTitle(f"ModSync {__version__} — {self.game.name}")
+        self.setWindowTitle(f"ModSync {__version__}: {self.game.name}")
         self.resize(1120, 780)
 
         outer = QWidget()
@@ -100,7 +100,7 @@ class LaunchHub(QMainWindow):
         layout.addWidget(title)
         self.hands_off_to = launchhook.describe_target(through)
         subtitle = QLabel(
-            f"{self.game.name} was launched from Steam. Continue goes on to {self.hands_off_to}; "
+            f"{self.game.name} was launched from Steam. Continue goes on to {self.hands_off_to}. "
             "Cancel returns to Steam without starting anything."
         )
         subtitle.setWordWrap(True)
@@ -146,10 +146,10 @@ class LaunchHub(QMainWindow):
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.setToolTip("End this Steam launch; nothing starts. (Esc / B)")
+        self.cancel_button.setToolTip("End this Steam launch without starting anything (Esc or B)")
         self.cancel_button.clicked.connect(self.cancel)
         self.continue_button = QPushButton(launchhook.continue_label(through, self.game))
-        self.continue_button.setToolTip("Carry on with the same Steam launch. (Enter / A)")
+        self.continue_button.setToolTip("Carry on with the same Steam launch (Enter or A)")
         role(self.continue_button, "primary")
         self.continue_button.setDefault(True)
         self.continue_button.clicked.connect(self.proceed)
@@ -169,7 +169,7 @@ class LaunchHub(QMainWindow):
             self._timer.timeout.connect(self._refresh_sync)
             self._refresh_sync()
         elif state.has_instance:
-            self._sync_label.setText("Off — this machine's setup is not shared.")
+            self._sync_label.setText("Off. This machine's setup is not shared.")
             role(self._sync_label, "secondary")
         else:
             self._sync_label.setText("Not set up.")
@@ -178,7 +178,7 @@ class LaunchHub(QMainWindow):
 
         auto = os.environ.get(_AUTO_DECISION_ENV, "").strip().lower()
         if auto in ("continue", "cancel"):
-            self._set_status(f"Test mode: choosing “{auto}” automatically in a moment.")
+            self._set_status(f"Test mode: choosing \"{auto}\" automatically in a moment.")
             QTimer.singleShot(_AUTO_DECISION_MS, self.proceed if auto == "continue" else self.cancel)
 
     # --- sync ----------------------------------------------------------------
@@ -189,21 +189,21 @@ class LaunchHub(QMainWindow):
         connected = sum(1 for d in st.devices if d.connected)
         pct = int(st.completion) if st.completion is not None else None
         if st.folder_state in (None, "idle") and (pct is None or pct >= 100):
-            text = f"✅  In sync — {connected} of {len(st.devices)} paired machine(s) connected."
+            text = f"In sync. {connected} of {len(st.devices)} paired machine(s) connected."
             role(self._sync_label, "secondary")
         elif st.folder_state == "syncing" or (pct is not None and pct < 100):
             text = (
-                f"⚠  Still syncing ({pct if pct is not None else '?'}% here). Mods may still be arriving; "
-                "playing now uses whatever has landed so far."
+                f"⚠  Still syncing ({pct if pct is not None else '?'}% here). Mods may still be arriving. "
+                "Playing now uses whatever has arrived so far."
             )
             role(self._sync_label, "warning")
         else:
-            text = f"•  Vault {st.folder_state or 'unknown'} — {connected} of {len(st.devices)} machine(s) connected."
+            text = f"Vault {st.folder_state or 'unknown'}. {connected} of {len(st.devices)} machine(s) connected."
             role(self._sync_label, "secondary")
         self._sync_label.setText(text)
 
     def _on_sync_failed(self, message: str) -> None:
-        self._sync_label.setText(f"•  Sync state unavailable right now ({message}).")
+        self._sync_label.setText(f"Sync state unavailable right now ({message}).")
         role(self._sync_label, "secondary")
 
     # --- decisions -----------------------------------------------------------
