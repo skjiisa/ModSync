@@ -13,6 +13,14 @@ All notable changes to ModSync are documented here. The format follows
   random one, so a single firewall rule covers pairing. Announcements also go
   to each interface's own broadcast address, not only `255.255.255.255`.
 
+### Changed
+
+- Network pairing is harder to get lost in: the machine with the mods shows
+  the PIN large inside the Sync card (with the joiner's steps and its own
+  address) instead of only in the status line, and on the other machine
+  picking a listed machine opens a "Pair with …" dialog that asks for that
+  PIN. The first-run wizard numbers the same two steps.
+
 ### Added
 
 - The Sync card detects a running `ufw`/`firewalld` and offers **Allow in
