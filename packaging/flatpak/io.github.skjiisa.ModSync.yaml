@@ -9,7 +9,7 @@
 # Keep the build dir OUTSIDE the source tree (/tmp above) so the `dir` source
 # below doesn't recurse into it.
 #
-# The build is fully offline (Flathub requirement): every Python wheel is
+# The build is fully offline: every Python wheel is
 # pinned by URL + sha256 in python3-modules.yaml / python3-hatchling.yaml
 # (generated with flatpak-pip-generator, see README.md), and PySide6 comes from
 # Flathub's io.qt.PySide.BaseApp, which is built against the runtime's own Qt.

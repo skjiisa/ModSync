@@ -74,9 +74,8 @@ jobs:
       # finish-args-flatpak-spawn-access. The manifest needs these today (MO2
       # instances live anywhere under $HOME; the launch hook writes into
       # ~/.local/share/Steam; systemd/pgrep go through flatpak-spawn --host).
-      # They need either a redesign or Flathub exceptions before submission, so
-      # this step reports but does not fail the build. Drop continue-on-error
-      # once the manifest passes cleanly.
+      # ModSync is not published on Flathub, so no exception is needed; this
+      # step reports the errors without failing the build.
       - name: Lint Flatpak manifest (flatpak-builder-lint)
         continue-on-error: true
         run: |
