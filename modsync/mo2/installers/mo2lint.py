@@ -3,7 +3,13 @@
 MO2-LINT installs a portable MO2 instance for a game, reusing the game's existing
 Steam/Proton prefix and wiring it via a Steam launch option. We download a pinned
 prebuilt binary (all current releases are pre-releases, so GitHub's "latest"
-endpoint skips them). Requires ``protontricks`` on the system.
+endpoint skips them).
+
+It needs Steam, Proton and the host's ``xdg-mime`` / ``pgrep``; protontricks is
+bundled inside the binary and winetricks is fetched on demand. Inside the Flatpak
+the binary runs on the host through ``flatpak-spawn --host`` — the sandbox can't
+see Steam or Proton, and the host process gets the host's own environment, so
+MO2-LINT's ``~/.config/mo2-lint`` lands where its Steam-side redirector expects.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+from modsync import background
 from modsync.config import data_dir
 from modsync.games import Game
 
@@ -67,9 +74,23 @@ class Mo2LintBackend(InstallerBackend):
         system = shutil.which("mo2-lint")
         return Path(system) if system else ensure_mo2lint()
 
+    # Host tools MO2-LINT shells out to (procps, xdg-utils). Checked on the
+    # host, not in the sandbox, since that's where the install runs.
+    HOST_TOOLS = ("pgrep", "xdg-mime")
+
     def available(self) -> tuple[bool, str]:
-        if shutil.which("protontricks") is None:
-            return False, "protontricks is not installed (required by MO2-LINT)"
+        try:
+            probe = background.run_host(["sh", "-c", " ".join(f"command -v {t} >/dev/null || echo {t};" for t in self.HOST_TOOLS)])
+        except OSError as exc:
+            return False, f"cannot run commands on this system: {exc}"
+        if probe.returncode != 0:
+            where = "the host system from the Flatpak" if background.in_flatpak() else "this system"
+            return False, f"cannot reach {where}: {(probe.stderr or probe.stdout).strip() or probe.returncode}"
+        missing = probe.stdout.split()
+        if missing:
+            return False, (
+                f"{', '.join(missing)} not installed (MO2-LINT needs procps and xdg-utils)"
+            )
         return True, ""
 
     def install(
@@ -92,6 +113,8 @@ class Mo2LintBackend(InstallerBackend):
         ]
         if script_extender:
             args.append("--script-extender")
+        if background.in_flatpak():
+            args = ["flatpak-spawn", "--host", *args]
 
         log.info("installing MO2 with MO2-LINT: %s", " ".join(args))
         if on_output:

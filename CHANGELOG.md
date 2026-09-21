@@ -8,6 +8,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- "Install MO2…" works from the Flatpak. It refused with "protontricks is not
+  installed" because it looked inside the sandbox, and would then have run
+  MO2-LINT inside the sandbox, where Steam and Proton aren't visible. The
+  check now asks the host for what MO2-LINT really needs (`pgrep`, `xdg-mime`;
+  protontricks is bundled in MO2-LINT) and the install runs on the host.
+
 - Network pairing behind a firewall. The PIN handshake now listens on a fixed
   port (TCP 21029, the same number as the UDP discovery port) instead of a
   random one, so a single firewall rule covers pairing. Announcements also go
