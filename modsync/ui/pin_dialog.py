@@ -52,14 +52,14 @@ class PinDialog(QDialog):
             self._addr_edit = QLineEdit()
             self._addr_edit.setPlaceholderText("192.168.1.20")
             self._addr_edit.setToolTip(
-                "Shown under “Pair over network” on that machine (host, or host:port)"
+                "Shown under \"Pair over network\" on that machine, as host or host:port"
             )
             self._addr_edit.textChanged.connect(self._validate)
             v.addWidget(self._addr_edit)
             v.addSpacing(6)
 
         prompt = QLabel(
-            f"Enter the PIN shown on <b>{name}</b> under “Pair over network”:"
+            f"Enter the PIN shown on <b>{name}</b> under \"Pair over network\":"
         )
         prompt.setWordWrap(True)
         v.addWidget(prompt)

@@ -619,7 +619,7 @@ class ModSyncService:
             raise RuntimeError("Steam's product cache (appinfo.vdf) was not found")
         if shortcuts.steam_is_running():
             if not queue_if_steam_running:
-                raise RuntimeError("Close Steam first — it rewrites the appmanifest while running")
+                raise RuntimeError("Close Steam first. It rewrites the appmanifest while running.")
             self._queue_pin()
             log.info("Steam is running; pin queued for when it exits")
             return PinOutcome(
@@ -628,8 +628,8 @@ class ModSyncService:
                 changes=[],
                 message=(
                     "Steam is running, so the pin is queued. Restart Steam (on the Deck: "
-                    "Power menu → Restart Steam) and ModSync's background service will "
-                    "apply it while Steam is closed."
+                    "Power menu, then Restart Steam) and ModSync applies it while Steam "
+                    "is closed."
                 ),
             )
         info = appinfo.read_app(appinfo_path, SKYRIM_SE.appid)
@@ -646,7 +646,7 @@ class ModSyncService:
         msg = (
             f"Pinned: Steam now treats the installed files as build {info.public_buildid}."
             if changes
-            else "Already pinned — Steam considers this install up to date."
+            else "Already pinned. Steam considers this install up to date."
         )
         return PinOutcome(applied=bool(changes), queued=False, changes=changes, message=msg)
 
@@ -679,7 +679,7 @@ class ModSyncService:
         if not app or not acf or not acf.exists():
             raise RuntimeError(f"{SKYRIM_SE.name} is not installed through Steam on this machine")
         if shortcuts.steam_is_running():
-            raise RuntimeError("Close Steam first — it rewrites the appmanifest while running")
+            raise RuntimeError("Close Steam first. It rewrites the appmanifest while running.")
         record = self._load_pin_record()
         manifest = AppManifest.load(acf)
         changes = manifest.unpin(record)
@@ -697,7 +697,7 @@ class ModSyncService:
                 "next launch. If it does not update, use \"Verify integrity of game files\" in Steam."
             )
         else:
-            msg = "Nothing to unpin — Steam's manifest does not carry a ModSync pin."
+            msg = "Nothing to unpin. Steam's manifest does not carry a ModSync pin."
         return PinOutcome(applied=bool(changes), queued=False, changes=changes, message=msg)
 
     def _queue_pin(self) -> None:

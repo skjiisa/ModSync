@@ -96,7 +96,7 @@ class Dashboard(QWidget):
         footer.addWidget(self._status_line, stretch=1)
         self._diag_button = QPushButton("Copy diagnostics")
         self._diag_button.setToolTip(
-            "Copy the doctor report and the recent ModSync logs to the clipboard for a bug report. "
+            "Copy the doctor report and recent ModSync logs to the clipboard for a bug report. "
             "Pairing codes and keys are redacted."
         )
         self._diag_button.clicked.connect(self._copy_diagnostics)
@@ -133,20 +133,20 @@ class Dashboard(QWidget):
         title.setWordWrap(True)
         row.addWidget(title)
         row.addStretch(1)
-        self._play_button = QPushButton("▶  Play Skyrim")
+        self._play_button = QPushButton("Play Skyrim")
         role(self._play_button, "primary")
         self._play_button.setMinimumHeight(48)
         self._play_button.setMinimumWidth(190)
         self._play_button.setEnabled(state.has_instance)
         self._play_button.setToolTip(
-            "Launch Skyrim through the chosen MO2 instance and its selected profile. "
-            "Uses SKSE when available. Choose an MO2 instance first."
+            "Launch Skyrim through the chosen MO2 instance and its selected profile, "
+            "with SKSE when it is installed. Choose an MO2 instance first."
         )
         self._play_button.clicked.connect(lambda: self._launch_mo2(play=True))
         row.addWidget(self._play_button)
 
         wizard = self._wizard_button = QPushButton("Setup wizard")
-        wizard.setToolTip("Prefer a guided, step-by-step flow? Run the wizard instead.")
+        wizard.setToolTip("Go through the setup one step at a time.")
         wizard.clicked.connect(self.wizardRequested.emit)
         row.addWidget(wizard)
 
@@ -173,7 +173,7 @@ class Dashboard(QWidget):
             "Start over on this machine?\n\n"
             "This forgets the chosen instance, stops any syncing and clears "
             "ModSync's setup so you can set it up differently.\n\n"
-            "Your mods, downloads and profiles are NOT deleted — every file stays "
+            "Your mods, downloads and profiles are not deleted. Every file stays "
             "on disk.",
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -193,16 +193,16 @@ class Dashboard(QWidget):
         state = self.service.state
         self._open_mo2_button = None
         if state.has_instance:
-            path = QLabel(f"✅  {state.instance_path}")
+            path = QLabel(state.instance_path)
             path.setWordWrap(True)
             v.addWidget(path)
             launch_row = QHBoxLayout()
             self._open_mo2_button = QPushButton("Open MO2")
             role(self._open_mo2_button, "primary")
-            self._open_mo2_button.setToolTip("Open the chosen Mod Organizer 2 instance to manage mods and profiles")
+            self._open_mo2_button.setToolTip("Open the chosen Mod Organizer 2 instance")
             self._open_mo2_button.clicked.connect(lambda: self._launch_mo2(play=False))
             launch_row.addWidget(self._open_mo2_button)
-            launch_note = QLabel("Play Skyrim uses MO2’s selected profile and SKSE when available.")
+            launch_note = QLabel("Play Skyrim uses the profile selected in MO2, with SKSE when it is installed.")
             launch_note.setWordWrap(True)
             role(launch_note, "secondary")
             launch_row.addWidget(launch_note, stretch=1)
@@ -333,8 +333,8 @@ class Dashboard(QWidget):
         row = QHBoxLayout()
         self._bg_button = QPushButton("Run in background")
         self._bg_button.setToolTip(
-            f"Install a systemd --user service that runs at login and {what}, "
-            "without the ModSync window."
+            f"Install a user service that starts at login and {what}, "
+            "even when ModSync is closed."
         )
         self._bg_button.clicked.connect(self._toggle_bg)
         self._bg_status = QLabel("Background service: checking…")
@@ -356,9 +356,9 @@ class Dashboard(QWidget):
         hook_row = QHBoxLayout()
         self._hook_button = QPushButton("Open ModSync before Skyrim")
         self._hook_button.setToolTip(
-            "Register a small Steam compatibility tool for the game that opens this hub "
-            "before every launch — mod setup, sync state, game-version and SKSE issues — "
-            "with Continue and Cancel. Turning it off puts Steam's previous choice back."
+            "Make Steam's Play button open ModSync first, so you can check the mod setup, "
+            "sync state and game version before the game starts. Turning it off puts "
+            "Steam's previous launcher back."
         )
         self._hook_button.clicked.connect(self._toggle_hook)
         self._hook_status = QLabel("Steam launch: checking…")
@@ -409,7 +409,7 @@ class Dashboard(QWidget):
         if chk.allowed:
             self._fw_button.setText("Remove firewall rules…")
             self._fw_button.setToolTip(
-                "Delete the rules ModSync added (asks for your password):\n"
+                "Delete the rules ModSync added. Asks for your password.\n"
                 + firewall.manual_instructions(fw, remove=True)
             )
             role(self._fw_status, "secondary")
@@ -417,7 +417,7 @@ class Dashboard(QWidget):
         else:
             self._fw_button.setText("Allow in firewall…")
             self._fw_button.setToolTip(
-                "Adds the rules with pkexec (asks for your password):\n"
+                "Add the rules. Asks for your password.\n"
                 + firewall.manual_instructions(fw)
             )
             role(self._fw_status, "warning")
@@ -503,7 +503,11 @@ class Dashboard(QWidget):
             head = "partly set up"
         else:
             head = "off"
-        self._hook_status.setText(f"Steam launch: {head}\n{st.summary()}")
+        summary = st.summary()
+        for prefix in ("On. ", "Off. "):  # the head line already says which
+            if summary.startswith(prefix):
+                summary = summary[len(prefix):]
+        self._hook_status.setText(f"Steam launch: {head}\n{summary}")
         if st.pending and st.pending.action == "select":
             self._hook_button.setText("Turn off")
         elif st.installed or st.selected:
@@ -574,8 +578,8 @@ class Dashboard(QWidget):
     def _add_to_steam(self) -> None:
         if shortcuts.steam_is_running():
             self._set_status(
-                "⚠ Close Steam first (it rewrites its shortcuts on exit), "
-                "then click “Add ModSync shortcut to Steam” again."
+                "⚠ Close Steam first, because it rewrites its shortcuts on exit. "
+                "Then click \"Add ModSync shortcut to Steam\" again."
             )
             return
         run_async(shortcuts.add_modsync_to_steam, on_done=self._on_steam_added, on_failed=self._on_error)
@@ -583,12 +587,12 @@ class Dashboard(QWidget):
     def _on_steam_added(self, paths: list) -> None:
         if paths:
             self._set_status(
-                f"Added a ModSync non-Steam shortcut ({len(paths)} user(s)). Start Steam to find it "
-                "in your library / Gaming Mode."
+                f"Added a ModSync shortcut for {len(paths)} Steam user(s). Start Steam to find it "
+                "in your library and in Gaming Mode."
             )
         else:
             self._set_status(
-                "No Steam users found — is Steam installed and run at least once?"
+                "No Steam users found. Is Steam installed, and has it been run at least once?"
             )
 
     # --- diagnostics -----------------------------------------------------------
@@ -600,7 +604,7 @@ class Dashboard(QWidget):
     def _on_diagnostics(self, text: str) -> None:
         QGuiApplication.clipboard().setText(text)
         self._diag_button.setEnabled(True)
-        self._set_status("Diagnostics copied to the clipboard — paste them into your bug report.")
+        self._set_status("Diagnostics copied to the clipboard. Paste them into your bug report.")
 
     def _on_diagnostics_failed(self, message: str) -> None:
         self._diag_button.setEnabled(True)

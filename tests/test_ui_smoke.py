@@ -290,7 +290,7 @@ class LaunchHubSmokeTests(_SmokeBase):
         State(instance_path=str(inst), instance_label="My setup").save()
         hub = self._hub()
         self.assertIn("Profile: Default  ·  2 mods enabled", hub._setup_label.text())
-        self.assertIn("Off — this machine's setup is not shared", hub._sync_label.text())
+        self.assertIn("Off. This machine's setup is not shared", hub._sync_label.text())
         hub.proceed()
         self.assertEqual(hub.decision, launchhook.EXIT_CONTINUE)
         hub.cancel()  # a second decision does not overwrite the first

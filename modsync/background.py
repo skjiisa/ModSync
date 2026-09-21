@@ -93,7 +93,7 @@ def install(enable_linger: bool = False) -> str:
     if enable_linger:
         linger = run_host(["loginctl", "enable-linger"])
         if linger.returncode == 0:
-            lines.append("Enabled linger — sync runs even while logged out.")
+            lines.append("Enabled linger, so sync runs even while logged out.")
         else:
             lines.append("Could not enable linger automatically; run: loginctl enable-linger")
     else:

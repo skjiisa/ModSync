@@ -6,6 +6,11 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Plainer wording throughout the app: shorter tooltips and dialogs, no
+  decorative symbols, and the launch hook status no longer says "off" twice.
+
 ## [0.1.0-rc2] - 2026-09-20
 
 Everything the first desktop and Steam Deck pass turned up: pairing through a
