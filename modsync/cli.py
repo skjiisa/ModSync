@@ -325,9 +325,12 @@ def game(args: list[str]) -> int:
         return _game_pin(ModSyncService())
     if sub == "unpin":
         return _game_unpin(ModSyncService())
+    if sub == "skse":
+        return _game_skse(ModSyncService())
     print(
         "usage:\n"
         "  modsync game status                  installed vs this setup's version, Steam state, recipes\n"
+        "  modsync game skse                    install the SKSE build for the installed game version\n"
         "  modsync game downgrade <version> [-y] apply the community patches to reach <version>\n"
         "  modsync game restore [--discard]     put the original files back (undo the downgrade);\n"
         "        (--discard deletes the backup instead, e.g. after Steam re-installed the game)\n"
@@ -353,6 +356,11 @@ def _game_status(service) -> int:
         print(f"SKSE here:      DLLs for several versions: {', '.join(st.skse_runtimes)}")
     else:
         print("SKSE here:      (not found)")
+    build = st.skse_build
+    if build is not None and build.downloadable:
+        print(f"SKSE fix:       'modsync game skse' installs SKSE {build.version} for {build.runtime}")
+    elif build is not None:
+        print(f"SKSE fix:       SKSE {build.version} for {build.runtime} is at {build.page}")
     print(f"Language:       {st.language}")
     if st.steam_updating:
         print("Steam:          updating the game right now — not ready; wait for Steam to finish before pinning or downgrading")
@@ -457,6 +465,50 @@ def _game_downgrade(service, args: list[str]) -> int:
     st = service.game_status(refresh_index=False)
     if st.needs_pin:
         print("Steam wants to update this install — run 'modsync game pin' (with Steam closed) to keep it.")
+    return 0
+
+
+def _game_skse(service) -> int:
+    import sys
+
+    from modsync.downgrade import engine
+
+    st = service.game_status(refresh_index=False)
+    build = st.skse_build
+    if st.installed is None:
+        print("Could not read the installed game version.")
+        return 1
+    if st.skse_state == "ok":
+        print(f"SKSE for Skyrim {st.installed} is already installed ({st.skse_source}).")
+        return 0
+    if st.skse_state == "":
+        print("Fix the game version first ('modsync game status'); SKSE has to match it.")
+        return 1
+    if build is None:
+        print(f"ModSync doesn't know an SKSE build for Skyrim {st.installed}. See https://skse.silverlock.org/")
+        return 1
+    if not build.downloadable:
+        print(f"SKSE {build.version} for Skyrim {build.runtime} isn't available for direct download.")
+        print(f"Get it from {build.page} and unpack it into {st.game_dir}.")
+        return 1
+
+    def progress(p: engine.Progress) -> None:
+        if p.stage == "download" and p.total:
+            line = f"  [{p.stage}] {p.message}: {p.done / 1e6:,.1f}/{p.total / 1e6:,.1f} MB"
+        else:
+            line = f"  [{p.stage}] {p.message}"
+        sys.stdout.write("\r" + line[:118].ljust(118))
+        sys.stdout.flush()
+
+    print(f"Installing SKSE {build.version} for Skyrim {build.runtime} into {st.game_dir}")
+    try:
+        result = service.install_skse(progress)
+    except Exception as exc:
+        print(f"\nSKSE install failed: {exc}")
+        return 1
+    print(f"\nDone: {result.files} files copied in.")
+    if result.removed:
+        print(f"  • Removed the old {', '.join(result.removed)}.")
     return 0
 
 

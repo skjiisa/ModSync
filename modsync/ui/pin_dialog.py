@@ -5,7 +5,7 @@ never in doubt: pick a machine → this pops up → type what's on its screen.""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -65,11 +65,17 @@ class PinDialog(QDialog):
         v.addWidget(prompt)
 
         self._pin_edit = QLineEdit()
-        self._pin_edit.setFont(pin_font(self.font()))
+        font = pin_font(self.font())
+        self._pin_edit.setFont(font)
         self._pin_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._pin_edit.setPlaceholderText("000 000")
         self._pin_edit.setMaxLength(12)  # room for a sloppy paste; regrouped to 6 digits
         self._pin_edit.textChanged.connect(self._on_pin_changed)
+        # A QLineEdit's size hint ignores its font, so at 30pt the default box
+        # clips the digits: size it from the widest six-digit PIN instead.
+        width = QFontMetrics(font).horizontalAdvance("888 888") + 64
+        self._pin_edit.setMinimumWidth(width)
+        self._pin_edit.setMinimumHeight(QFontMetrics(font).height() + 24)
         v.addWidget(self._pin_edit)
 
         self._hint = QLabel("6 digits")
@@ -89,6 +95,8 @@ class PinDialog(QDialog):
 
         self._validate()
         (self._addr_edit or self._pin_edit).setFocus()
+        self.setMinimumWidth(max(420, width + 48))
+        self.adjustSize()
 
     # --- state -----------------------------------------------------------------
     def _on_pin_changed(self, text: str) -> None:

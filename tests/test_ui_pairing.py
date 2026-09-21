@@ -163,6 +163,17 @@ class PinDialogTests(unittest.TestCase):
         dlg._pin_edit.setText("04 28 15 9")  # junk spacing and an extra digit
         self.assertEqual(dlg.pin(), "042815")
 
+    def test_dialog_is_wide_enough_for_six_digits_at_the_big_font(self):
+        from PySide6.QtGui import QFontMetrics
+        from modsync.ui.pin_dialog import PinDialog
+
+        dlg = PinDialog(None, Announcement("steamdeck", "192.0.2.2", 21029, "s"))
+        dlg.show()
+        self.app.processEvents()
+        needed = QFontMetrics(dlg._pin_edit.font()).horizontalAdvance("888 888")
+        self.assertGreater(dlg._pin_edit.width(), needed + 40)  # digits plus padding, never clipped
+        self.assertGreaterEqual(dlg.width(), 420)
+
     def test_address_mode_needs_an_address_and_builds_a_manual_announcement(self):
         from modsync.pairing_lan import PairError
         from modsync.ui.pin_dialog import PinDialog
