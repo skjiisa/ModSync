@@ -249,6 +249,14 @@ class ModSyncService:
         self.ensure_running()
         instance_path = Path(instance_path)
         label = code.label or self.state.instance_label
+        # The vault's game-version record comes from the machine we're copying;
+        # anything written here before joining (choose_instance records the
+        # local runtime) would be newer and win Syncthing's conflict resolution,
+        # overwriting the real one on every machine.
+        local_meta = gameversion.VaultMeta.path(instance_path)
+        if local_meta.exists():
+            log.info("dropping local %s before joining; the vault's copy wins", local_meta.name)
+            local_meta.unlink()
         with self.manager.client() as client:
             pairing.add_peer_device(
                 client,

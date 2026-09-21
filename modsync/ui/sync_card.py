@@ -41,6 +41,7 @@ class SyncCard(QGroupBox):
     status = Signal(str)  # one-line messages for the host's status line
     stateChanged = Signal()  # vault created/joined/left -> host rebuilds
     pairingReady = Signal(str)  # worker -> GUI: address we're announcing
+    synced = Signal()  # the folder just reached 100% (mods from the other machine are here)
 
     def __init__(self, service: ModSyncService, parent: QWidget | None = None) -> None:
         super().__init__("Sync with another machine", parent)
@@ -48,6 +49,7 @@ class SyncCard(QGroupBox):
         self.live = service.state.syncing
 
         self._announcements: list = []
+        self._was_complete: bool | None = None
         self._pairing = False
         self._pair_stop: threading.Event | None = None
         self._firewall: firewall.Firewall | None = None
@@ -415,6 +417,10 @@ class SyncCard(QGroupBox):
         pct = int(round((status.completion or 0)))
         self._folder_state.setText(f"Folder: {state}   ·   {pct}% in sync")
         self._progress.setValue(max(0, min(100, pct)))
+        complete = pct >= 100 and state == "idle"
+        if complete and self._was_complete is False:
+            self.synced.emit()
+        self._was_complete = complete
 
     def _accept_pending(self) -> None:
         # Auto-accept a machine that joined with our code, so pairing needs only

@@ -8,6 +8,11 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Joining a vault no longer carries this machine's own game-version record into
+  it. Choosing an instance records the local runtime in `modsync-vault.json`;
+  on a machine about to copy its mods from another one that file was newer than
+  the vault's and won Syncthing's conflict resolution, so the two machines could
+  end up disagreeing about the version the setup was built for.
 - "Install MO2…" works from the Flatpak. It refused with "protontricks is not
   installed" because it looked inside the sandbox, and would then have run
   MO2-LINT inside the sandbox, where Steam and Proton aren't visible. The
@@ -26,6 +31,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Changed
 
+- The setup wizard asks about sync before the game version, and a machine that
+  copies its mods from another one finishes there: it can't know which version
+  the mods need until they've arrived. The dashboard's Game card now re-checks
+  by itself when the vault's version record changes and when the folder first
+  finishes syncing, so the downgrade / SKSE advice appears without a manual
+  refresh.
 - Network pairing is harder to get lost in: the machine with the mods shows
   the PIN large inside the Sync card (with the joiner's steps and its own
   address) instead of only in the status line, and on the other machine

@@ -76,8 +76,8 @@ class PairingRescanTests(unittest.TestCase):
         from modsync.ui.wizard import WizardWidget
 
         with patch("modsync.ui.game_card.run_async"):
-            wizard = WizardWidget(Mock())
-        wizard._go_to(3)
+            wizard = WizardWidget(Mock(state=State()))
+        wizard._go_to(2)  # sync comes before the game-version step
         page = wizard._vault
         old = Announcement("Old peer", "192.0.2.1", 1234, "old-session")
         new = Announcement("New peer", "192.0.2.2", 1234, "new-session")
@@ -210,3 +210,56 @@ class PinDialogTests(unittest.TestCase):
         card._pair_network()  # cancel
         self.assertFalse(card._pin_panel.isVisibleTo(card))
         self.assertTrue(card._share_normal.isVisibleTo(card))
+
+
+@unittest.skipIf(QApplication is None, "PySide6 not installed")
+class SyncThenVersionTests(unittest.TestCase):
+    """After joining, the vault record and SKSE arrive by sync; the dashboard
+    must notice on its own instead of waiting for a manual refresh."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_game_card_refreshes_when_the_vault_record_changes(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import Mock
+        from modsync import gameversion
+        from modsync.ui.game_card import GameCard
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = State(instance_path=tmp)
+            with patch("modsync.ui.game_card.run_async"):
+                card = GameCard(Mock(state=state))
+            with patch.object(card, "refresh") as refresh:
+                card.poll()  # nothing changed
+                refresh.assert_not_called()
+                gameversion.record_vault_version(tmp, gameversion.GameVersion.parse("1.5.97"))
+                card.poll()
+                refresh.assert_called_once()
+
+    def test_sync_card_announces_the_first_full_sync_only_once(self):
+        from unittest.mock import Mock
+        from modsync.service import SyncStatus
+        from modsync.ui.sync_card import SyncCard
+
+        state = State(instance_path="/unused/MO2", folder_id="modsync-x")
+        with patch("modsync.ui.sync_card.run_async"):
+            card = SyncCard(Mock(state=state))
+        synced = []
+        card.synced.connect(lambda: synced.append(True))
+
+        def status(state_, pct):
+            return SyncStatus("ME", "modsync-x", True, state_, pct, [])
+
+        card._on_status(status("syncing", 40.0))
+        card._on_status(status("syncing", 99.6))
+        self.assertEqual(synced, [])
+        card._on_status(status("idle", 100.0))
+        self.assertEqual(synced, [True])
+        card._on_status(status("idle", 100.0))  # steady state: no repeat
+        self.assertEqual(synced, [True])
+        card._on_status(status("syncing", 80.0))  # more mods arriving...
+        card._on_status(status("idle", 100.0))  # ...and done again
+        self.assertEqual(synced, [True, True])

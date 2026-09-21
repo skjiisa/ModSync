@@ -76,8 +76,12 @@ class WelcomePage(Page):
         layout = QVBoxLayout(self)
         for title, description in (
             ("1 · Mod Organizer 2", "Choose an existing instance or install a fresh one for Skyrim."),
-            ("2 · Game version", "Check Skyrim and SKSE, and keep the version your mods need."),
-            ("3 · Sync (optional)", "Share mods and load order with another machine, or keep this setup local."),
+            ("2 · Sync (optional)", "Share mods and load order with another machine, or keep this setup local."),
+            (
+                "3 · Game version",
+                "Check Skyrim and SKSE, and keep the version your mods need. If you're copying "
+                "mods from another machine this happens on the dashboard once they've arrived.",
+            ),
         ):
             box = QGroupBox(title)
             content = QVBoxLayout(box)
@@ -457,6 +461,12 @@ class VaultPage(Page):
         return "join" if self.join_radio.isChecked() else "create"
 
     @property
+    def joins(self) -> bool:
+        """This machine receives the setup from another one: the game-version
+        step can only be done once it has synced, so the wizard ends here."""
+        return self.mode in ("network", "join")
+
+    @property
     def pairing_code(self) -> str:
         return self.code_edit.text().strip()
 
@@ -508,7 +518,11 @@ class WizardWidget(QWidget):
         self._choose = ChooseInstancePage(installer or Mo2LintBackend(), game, service)
         self._game_page = GameVersionPage(service)
         self._vault = VaultPage()
-        self._pages: list[Page] = [WelcomePage(), self._choose, self._game_page, self._vault]
+        # Sync comes before the game-version check: a machine that copies its
+        # mods from another one can't know which version they need until the
+        # setup (and its modsync-vault.json) has arrived, so for those modes the
+        # wizard ends at the sync step and the dashboard takes over.
+        self._pages: list[Page] = [WelcomePage(), self._choose, self._vault, self._game_page]
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 24, 28, 20)
@@ -579,9 +593,14 @@ class WizardWidget(QWidget):
         page.on_show()
         self._update_nav()
 
+    def _is_last(self) -> bool:
+        if self._index == len(self._pages) - 1:
+            return True
+        return self._pages[self._index] is self._vault and self._vault.joins
+
     def _update_nav(self) -> None:
         page = self._pages[self._index]
-        is_last = self._index == len(self._pages) - 1
+        is_last = self._is_last()
         self._back.setText("Cancel" if self._index == 0 else "Back")
         self._back.setEnabled(not self._busy)
         self._cancel.setVisible(self._index > 0)
@@ -604,7 +623,7 @@ class WizardWidget(QWidget):
     def _on_next(self) -> None:
         if self.busy:
             return
-        if self._index < len(self._pages) - 1:
+        if not self._is_last():
             page = self._pages[self._index]
             self._set_busy(True)
 

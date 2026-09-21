@@ -78,6 +78,7 @@ class Dashboard(QWidget):
         self.sync = SyncCard(service)
         self.sync.status.connect(self._set_status)
         self.sync.stateChanged.connect(self.stateChanged.emit)
+        self.sync.synced.connect(self.game.refresh)  # mods just arrived: re-check SKSE/version
         body_layout.addWidget(self.sync, stretch=1 if self.sync.live else 0)
         body_layout.addWidget(self._build_integration_group())
         body_layout.addStretch(1)

@@ -83,14 +83,16 @@ dialogs, so it works in Gaming Mode:
    one, or install a fresh one into a folder of your choice. The guided install
    drives MO2-LINT and streams its log into the page. The instance is remembered as
    soon as it is chosen.
-2. **Game version** — the installed Skyrim runtime versus the one this setup needs
-   (see [Game version](#game-version)), with **Downgrade** and **Keep this version**
-   right there. Nothing to fix? Just continue.
-3. **Sync with another machine** — optional. **Not now** finishes with just this
+2. **Sync with another machine** — optional. **Not now** keeps just this
    machine; otherwise either share this setup and get a pairing code, or copy
    another machine's setup here by picking it from the LAN list and entering its
    PIN, or by pasting its pairing code. Sync can also be set up later from the
-   dashboard.
+   dashboard. Copying from another machine finishes the wizard here: the mods
+   and their version record arrive by sync, and the dashboard's Game card picks
+   up the version check on its own once they do.
+3. **Game version** — the installed Skyrim runtime versus the one this setup needs
+   (see [Game version](#game-version)), with **Downgrade** and **Keep this version**
+   right there. Nothing to fix? Just finish.
 
 **Reset setup…** on the dashboard forgets the instance and any sync without touching
 a single mod file.
