@@ -193,9 +193,12 @@ modsync serve                       # keep syncing in the foreground
 "Pair over network" finds the other machine with a UDP broadcast, then runs the
 PIN handshake over TCP; Syncthing then needs its own ports. The Steam Deck ships
 without a firewall, but a desktop running `ufw`/`firewalld` will silently drop all
-of this. When ModSync sees one of those running it shows an **Allow in firewall…**
-button on the Sync card that adds the rules (you'll be asked for your password).
-By hand, allow these **on the machine that has the mods**:
+of this. When ModSync sees one of those running, *On this machine* gets a firewall
+row: **Allow in firewall…** adds the rules (you'll be asked for your password) and,
+once they're in, **Remove firewall rules…** takes exactly those rules out again —
+for keeping the ports open only while you sync, or before uninstalling. ModSync
+re-reads the rules every launch, so rules you add or remove by hand are reflected
+too. By hand, allow these **on the machine that has the mods**:
 
 | Port | Used for |
 | --- | --- |
@@ -297,6 +300,7 @@ modsync game status | downgrade <version> | restore | pin | unpin
 modsync sync create | join          # optional
 modsync serve                       # foreground loop; what the background service runs
 modsync service install [--linger] | status | uninstall
+modsync firewall status | allow | remove   # ModSync's ports in ufw/firewalld
 modsync steam shortcut [--remove]   # add ModSync as a non-Steam game (Gaming Mode), or remove it
 modsync launch status | enable | disable   # open ModSync when Skyrim is launched from Steam
 ```

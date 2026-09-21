@@ -259,6 +259,56 @@ def service(args: list[str]) -> int:
     return 2
 
 
+def firewall_cmd(args: list[str]) -> int:
+    """Open or close ModSync's ports in this machine's firewall (ufw/firewalld)."""
+    from modsync import firewall
+    from modsync.state import State
+
+    sub = args[0] if args else "status"
+    state = State.load()
+    chk = firewall.check(state.firewall_rules_stamp)
+    if chk.firewall is None:
+        print("firewall: none detected (ufw / firewalld not running) — nothing to do")
+        return 0 if sub == "status" else 1
+    ports = ", ".join(f"{p}/{pr}" for p, pr, _ in firewall.PORTS)
+    if sub == "status":
+        print(f"firewall: {chk.firewall.kind}")
+        print(f"ports:    {ports}")
+        print(f"allowed:  {'yes' if chk.allowed else 'no'}")
+        return 0
+    if sub == "allow":
+        try:
+            state.firewall_rules_stamp = firewall.allow(chk.firewall)
+        except firewall.FirewallError as exc:
+            print(f"error: {exc}")
+            print("by hand:\n" + firewall.manual_instructions(chk.firewall))
+            return 1
+        state.save()
+        print(f"Allowed {ports} in {chk.firewall.kind}.")
+        return 0
+    if sub == "remove":
+        try:
+            firewall.revoke(chk.firewall)
+        except firewall.FirewallError as exc:
+            print(f"error: {exc}")
+            print("by hand:\n" + firewall.manual_instructions(chk.firewall, remove=True))
+            return 1
+        state.firewall_rules_stamp = ""
+        state.save()
+        after = firewall.check("")
+        print(f"Removed ModSync's rules from {chk.firewall.kind}.")
+        if after.allowed:
+            print("Note: the ports are still allowed by other rules (added by hand?).")
+        return 0
+    print(
+        "usage:\n"
+        "  modsync firewall status   is ufw/firewalld running, and are ModSync's ports allowed?\n"
+        "  modsync firewall allow    open them (asks for your password via pkexec)\n"
+        "  modsync firewall remove   close them again — e.g. before uninstalling"
+    )
+    return 2
+
+
 def game(args: list[str]) -> int:
     """Game runtime management: show versions, downgrade, pin Steam — and undo both."""
     from modsync.service import ModSyncService

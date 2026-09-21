@@ -32,6 +32,8 @@ usage:
   modsync serve                          keep syncing (if set up) and watching Steam, in the foreground
 
   modsync service install [--linger]     run 'modsync serve' at login (systemd --user)
+  modsync firewall status | allow | remove
+                                         open ModSync's ports in ufw/firewalld, or close them again
   modsync steam shortcut [--remove]      add ModSync as a non-Steam game (Gaming Mode), or remove it
   modsync launch status | enable | disable
                                          open ModSync when Skyrim is launched from Steam
@@ -98,6 +100,11 @@ def main(argv: list[str] | None = None) -> int:
         from modsync.cli import steam
 
         return steam(argv[1:])
+
+    if cmd == "firewall":
+        from modsync.cli import firewall_cmd
+
+        return firewall_cmd(argv[1:])
 
     if cmd == "game":
         from modsync.cli import game

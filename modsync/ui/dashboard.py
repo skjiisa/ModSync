@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from modsync import background, diagnostics, launchhook, platforms
+from modsync import background, diagnostics, firewall, launchhook, platforms
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import discover as mo2_discover
 from modsync.service import ModSyncService
@@ -367,7 +367,104 @@ class Dashboard(QWidget):
         v.addLayout(hook_row)
         self._hook: launchhook.LaunchHookStatus | None = None
         self._refresh_hook_status()
+
+        # Firewall: a desktop ufw/firewalld drops pairing and sync traffic until
+        # ModSync's ports are allowed. The row only appears when one is running
+        # (never on a Deck), and the button toggles the rules through pkexec so
+        # they can be closed again after a sync or before uninstalling.
+        self._fw_widget = QWidget()
+        self._fw_widget.setVisible(False)
+        fw_row = QHBoxLayout(self._fw_widget)
+        fw_row.setContentsMargins(0, 0, 0, 0)
+        self._fw_button = QPushButton("Allow in firewall…")
+        self._fw_button.clicked.connect(self._toggle_firewall)
+        self._fw_status = QLabel("")
+        self._fw_status.setWordWrap(True)
+        fw_row.addWidget(self._fw_button)
+        fw_row.addWidget(self._fw_status, stretch=1)
+        v.addWidget(self._fw_widget)
+        self._firewall: firewall.Check | None = None
+        self._refresh_firewall()
         return box
+
+    # --- firewall ------------------------------------------------------------
+    def _refresh_firewall(self) -> None:
+        run_async(
+            firewall.check,
+            self.service.state.firewall_rules_stamp,
+            on_done=self._on_firewall_checked,
+            on_failed=lambda _: None,
+        )
+
+    def _on_firewall_checked(self, chk: firewall.Check) -> None:
+        self._firewall = chk
+        self.sync.firewall_checked(chk)
+        fw = chk.firewall
+        self._fw_widget.setVisible(fw is not None)
+        self._fw_button.setEnabled(True)
+        if fw is None:
+            return
+        ports = ", ".join(f"{p}/{proto}" for p, proto, _ in firewall.PORTS)
+        if chk.allowed:
+            self._fw_button.setText("Remove firewall rules…")
+            self._fw_button.setToolTip(
+                "Delete the rules ModSync added (asks for your password):\n"
+                + firewall.manual_instructions(fw, remove=True)
+            )
+            role(self._fw_status, "secondary")
+            self._fw_status.setText(f"Firewall: ModSync's ports are allowed in {fw.kind}.")
+        else:
+            self._fw_button.setText("Allow in firewall…")
+            self._fw_button.setToolTip(
+                "Adds the rules with pkexec (asks for your password):\n"
+                + firewall.manual_instructions(fw)
+            )
+            role(self._fw_status, "warning")
+            self._fw_status.setText(
+                f"Firewall: {fw.kind} is on and blocks pairing and syncing until "
+                f"ModSync's ports ({ports}) are allowed."
+            )
+
+    def _toggle_firewall(self) -> None:
+        chk = self._firewall
+        if chk is None or chk.firewall is None:
+            return
+        self._fw_button.setEnabled(False)
+        if chk.allowed:
+            self._set_status(f"Removing ModSync's rules from {chk.firewall.kind}…")
+            run_async(
+                firewall.revoke,
+                chk.firewall,
+                on_done=lambda _: self._after_firewall("", "Firewall rules removed."),
+                on_failed=lambda m: self._on_firewall_failed(m, remove=True),
+            )
+        else:
+            self._set_status(f"Adding ModSync's rules to {chk.firewall.kind}…")
+            run_async(
+                firewall.allow,
+                chk.firewall,
+                on_done=lambda stamp: self._after_firewall(str(stamp or ""), "Firewall: ModSync's ports are now allowed."),
+                on_failed=self._on_firewall_failed,
+            )
+
+    def _after_firewall(self, stamp: str, message: str) -> None:
+        self.service.state.firewall_rules_stamp = stamp
+        self.service.state.save()
+        self._set_status(message)
+        self._refresh_firewall()  # re-read the rules rather than assume
+
+    def _on_firewall_failed(self, message: str, *, remove: bool = False) -> None:
+        self._fw_button.setEnabled(True)
+        if "cancelled" in message:
+            self._set_status("Firewall unchanged.")
+            return
+        fw = (self._firewall.firewall if self._firewall else None) or firewall.Firewall("ufw")
+        QMessageBox.warning(
+            self,
+            "Firewall",
+            f"Could not change the firewall: {message}\n\nIn a terminal, run:\n\n"
+            + firewall.manual_instructions(fw, remove=remove),
+        )
 
     def _toggle_hook(self) -> None:
         self._hook_button.setEnabled(False)

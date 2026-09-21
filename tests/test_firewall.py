@@ -54,6 +54,26 @@ class Commands(unittest.TestCase):
     def test_manual_instructions_use_sudo_per_command(self):
         text = firewall.manual_instructions(Firewall("ufw"))
         self.assertEqual(text.count("sudo "), len(firewall.PORTS))
+        self.assertEqual(len(text.splitlines()), len(firewall.PORTS))
+        self.assertIn("sudo ufw delete allow 21029/tcp", firewall.manual_instructions(Firewall("ufw"), remove=True))
+
+    def test_remove_mirrors_allow_exactly(self):
+        for kind in ("ufw", "firewalld"):
+            fw = Firewall(kind)
+            adds = [c for c in fw.allow_commands() if c != ["firewall-cmd", "--reload"]]
+            dels = [c for c in fw.remove_commands() if c != ["firewall-cmd", "--reload"]]
+            self.assertEqual(len(adds), len(dels), kind)
+            for add, dele in zip(adds, dels):
+                if kind == "ufw":
+                    self.assertEqual(dele, [add[0], "delete", *add[1:]])
+                else:
+                    self.assertEqual(dele, [s.replace("--add-port", "--remove-port") for s in add])
+        self.assertEqual(Firewall("firewalld").remove_commands()[-1], ["firewall-cmd", "--reload"])
+
+    def test_remove_script_keeps_going_past_missing_rules(self):
+        script = Firewall("ufw").remove_script()
+        self.assertNotIn("&&", script)
+        self.assertEqual(script.count("; "), len(firewall.PORTS) - 1)
 
 
 class Allow(unittest.TestCase):
@@ -84,6 +104,20 @@ class Allow(unittest.TestCase):
         with patch.object(firewall, "run_host", side_effect=FileNotFoundError("pkexec")):
             with self.assertRaises(FirewallError):
                 firewall.allow(Firewall("ufw"))
+
+    def test_revoke_runs_the_remove_script_and_returns_the_new_stamp(self):
+        def fake(cmd, **kw):
+            return _cp(0, stdout="1789951000\n" if cmd[0] == "stat" else "")
+
+        with patch.object(firewall, "run_host", side_effect=fake) as run:
+            self.assertEqual(firewall.revoke(Firewall("ufw")), "ufw:1789951000")
+        cmd = run.call_args_list[0].args[0]
+        self.assertEqual(cmd[:3], ["pkexec", "sh", "-c"])
+        self.assertEqual(cmd[3], Firewall("ufw").remove_script())
+        with patch.object(firewall, "run_host", return_value=_cp(126)):
+            with self.assertRaises(FirewallError) as ctx:
+                firewall.revoke(Firewall("ufw"))
+            self.assertEqual(str(ctx.exception), "cancelled")
 
 
 UFW_RULES_ALLOWED = """\
@@ -180,6 +214,46 @@ class LaunchCheck(unittest.TestCase):
                 patch.object(Firewall, "rules_stamp", return_value=""), \
                 patch.object(Firewall, "ports_allowed", return_value=None):
             self.assertFalse(firewall.check("").allowed)  # nothing to go on: warn
+
+
+class Cli(unittest.TestCase):
+    def _run(self, args, chk, **patches):
+        import io
+        from contextlib import redirect_stdout
+        from modsync.cli import firewall_cmd
+
+        out = io.StringIO()
+        state = State(instance_path="/x")
+        with patch.object(firewall, "check", return_value=chk), redirect_stdout(out), \
+                patch.object(State, "load", return_value=state), patch.object(State, "save"), \
+                patch.multiple(firewall, **patches) if patches else patch.object(firewall, "PORTS", firewall.PORTS):
+            code = firewall_cmd(args)
+        return code, out.getvalue(), state
+
+    def test_status(self):
+        code, out, _ = self._run(["status"], Check(Firewall("ufw"), True, "ufw:1"))
+        self.assertEqual(code, 0)
+        self.assertIn("allowed:  yes", out)
+        code, out, _ = self._run(["status"], Check(None, True, ""))
+        self.assertEqual(code, 0)
+        self.assertIn("none detected", out)
+
+    def test_allow_and_remove_update_the_remembered_stamp(self):
+        code, out, state = self._run(["allow"], Check(Firewall("ufw"), False, "ufw:1"), allow=lambda fw: "ufw:2")
+        self.assertEqual(code, 0)
+        self.assertEqual(state.firewall_rules_stamp, "ufw:2")
+        code, out, state = self._run(["remove"], Check(Firewall("ufw"), True, "ufw:2"), revoke=lambda fw: "ufw:3")
+        self.assertEqual(code, 0)
+        self.assertEqual(state.firewall_rules_stamp, "")
+        self.assertIn("Removed", out)
+
+    def test_cancel_prints_the_manual_commands(self):
+        def cancelled(fw):
+            raise FirewallError("cancelled")
+
+        code, out, _ = self._run(["allow"], Check(Firewall("ufw"), False, "ufw:1"), allow=cancelled)
+        self.assertEqual(code, 1)
+        self.assertIn("sudo ufw allow 21029/tcp", out)
 
 
 class StateStamp(unittest.TestCase):

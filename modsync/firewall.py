@@ -63,6 +63,26 @@ class Firewall:
         """The same rules as one ``sh -e`` script, for a single password prompt."""
         return " && ".join(shlex.join(c) for c in self.allow_commands())
 
+    def remove_commands(self) -> list[list[str]]:
+        """Undo :meth:`allow_commands` — exactly the rules ModSync adds, nothing
+        the user added by hand (a bare ``ufw allow 21029`` is a different rule)."""
+        if self.kind == "ufw":
+            return [
+                ["ufw", "delete", "allow", f"{port}/{proto}", "comment", purpose]
+                for port, proto, purpose in PORTS
+            ]
+        cmds = [
+            ["firewall-cmd", "--permanent", f"--remove-port={port}/{proto}"] for port, proto, _ in PORTS
+        ]
+        cmds.append(["firewall-cmd", "--reload"])
+        return cmds
+
+    def remove_script(self) -> str:
+        """One script that keeps going past rules that are already gone
+        (``ufw delete`` on a missing rule is an error); the caller re-reads the
+        rules afterwards to show what's actually left."""
+        return "; ".join(shlex.join(c) for c in self.remove_commands())
+
     # --- reading the current rules ---------------------------------------------
     def ports_allowed(self) -> bool | None:
         """Whether every port in :data:`PORTS` is allowed in, or ``None`` when
@@ -191,7 +211,20 @@ def allow(fw: Firewall) -> str:
     return fw.rules_stamp()
 
 
-def manual_instructions(fw: Firewall | None = None) -> str:
+def revoke(fw: Firewall) -> str:
+    """Remove the rules :func:`allow` added, via ``pkexec``. Returns the rules
+    fingerprint afterwards. Raises :class:`FirewallError` if cancelled."""
+    try:
+        result = run_host(["pkexec", "sh", "-c", fw.remove_script()])
+    except OSError as exc:
+        raise FirewallError(f"could not run pkexec: {exc}") from exc
+    if result.returncode in (126, 127):
+        raise FirewallError("cancelled")
+    return fw.rules_stamp()
+
+
+def manual_instructions(fw: Firewall | None = None, *, remove: bool = False) -> str:
     """What to type by hand, for the README-style hint."""
     fw = fw or Firewall("ufw")
-    return "sudo " + fw.allow_script().replace(" && ", " && sudo ")
+    cmds = fw.remove_commands() if remove else fw.allow_commands()
+    return "\n".join("sudo " + shlex.join(c) for c in cmds)
