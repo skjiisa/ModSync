@@ -41,7 +41,8 @@ MODSYNC_IT=1 uv run pytest -q tests/test_sync_integration.py -v
 
 ## Build the Flatpak
 
-[packaging/flatpak/README.md](packaging/flatpak/README.md) has the full notes.
+[packaging/flatpak/README.md](packaging/flatpak/README.md) has the full notes, and
+[docs/advanced.md](docs/advanced.md) covers running from source.
 In short:
 
 ```sh
