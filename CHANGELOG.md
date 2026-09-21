@@ -13,6 +13,11 @@ All notable changes to ModSync are documented here. The format follows
   MO2-LINT inside the sandbox, where Steam and Proton aren't visible. The
   check now asks the host for what MO2-LINT really needs (`pgrep`, `xdg-mime`;
   protontricks is bundled in MO2-LINT) and the install runs on the host.
+- Reinstalling MO2 into a folder MO2-LINT still lists (after "Reset setup" and
+  deleting the instance) no longer fails with "An instance with the specified
+  directory already exists": ModSync has MO2-LINT forget the stale entry first.
+  A folder that really holds a registered instance is refused with a pointer
+  to "Use" instead, and a failed install no longer leaves an empty folder.
 
 - Network pairing behind a firewall. The PIN handshake now listens on a fixed
   port (TCP 21029, the same number as the UDP discovery port) instead of a

@@ -92,6 +92,7 @@ class Mo2LintBackendTests(unittest.TestCase):
                     return False
 
                 def wait(self):
+                    (tmp / "MO2").mkdir(exist_ok=True)  # mo2-lint creates the folder, not ModSync
                     (tmp / "MO2" / "ModOrganizer.exe").write_text("")
                     return 0
 
@@ -101,6 +102,88 @@ class Mo2LintBackendTests(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertEqual(seen["args"][:2], ["flatpak-spawn", "--host"])
             self.assertEqual(seen["args"][2], str(fake))
+
+    def test_failure_leaves_no_empty_folder_behind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            fake = _script(tmp / "fake-mo2-lint", FAKE_FAIL)
+            Mo2LintBackend(binary=fake).install(SKYRIM_SE, tmp / "MO2")
+            self.assertFalse((tmp / "MO2").exists())
+
+    def _registry(self, tmp: Path, instance: Path) -> Path:
+        import json
+
+        state = tmp / "cfg" / "mo2-lint" / "state.json"
+        state.parent.mkdir(parents=True)
+        state.write_text(json.dumps({"instances": [{"index": 1, "instance_path": str(instance)}]}))
+        return state
+
+    def test_stale_registry_entry_is_cleared_through_mo2lint_before_installing(self):
+        """After "Reset setup" and deleting the folder, MO2-LINT's state.json
+        still lists the instance and it refuses to install there again."""
+        from unittest.mock import patch
+
+        from modsync.mo2.installers import mo2lint
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            dest = tmp / "MO2"
+            state = self._registry(tmp, dest)
+            fake = _script(tmp / "fake-mo2-lint", FAKE_OK)
+            calls = []
+
+            def run(args, on_output):
+                calls.append(args[1:])
+                if args[1] == "uninstall":
+                    state.write_text('{"instances": []}')  # what mo2-lint uninstall does
+                    return 0
+                dest.mkdir()
+                (dest / "ModOrganizer.exe").write_text("")
+                return 0
+
+            lines = []
+            with patch.object(mo2lint, "mo2lint_state_path", return_value=state), \
+                    patch.object(Mo2LintBackend, "_run", staticmethod(run)):
+                result = Mo2LintBackend(binary=fake).install(SKYRIM_SE, dest, on_output=lines.append)
+            self.assertTrue(result.success, result.message)
+            self.assertEqual(calls[0], ["uninstall", "--directory", str(dest), "--unattended"])
+            self.assertEqual(calls[1][:3], ["install", "skyrim_se", str(dest)])
+            self.assertTrue(any("no longer exists" in line for line in lines))
+
+    def test_registered_and_present_instance_is_not_reinstalled(self):
+        from unittest.mock import patch
+
+        from modsync.mo2.installers import mo2lint
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            dest = tmp / "MO2"
+            dest.mkdir()
+            (dest / "ModOrganizer.exe").write_text("")
+            state = self._registry(tmp, dest)
+            fake = _script(tmp / "fake-mo2-lint", FAKE_OK)
+            with patch.object(mo2lint, "mo2lint_state_path", return_value=state), \
+                    patch.object(Mo2LintBackend, "_run") as run:
+                result = Mo2LintBackend(binary=fake).install(SKYRIM_SE, dest)
+            run.assert_not_called()
+            self.assertFalse(result.success)
+            self.assertIn("Use", result.message)
+
+    def test_uninstall_that_does_not_clear_the_entry_stops_the_install(self):
+        from unittest.mock import patch
+
+        from modsync.mo2.installers import mo2lint
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            dest = tmp / "MO2"
+            state = self._registry(tmp, dest)
+            fake = _script(tmp / "fake-mo2-lint", FAKE_OK)
+            with patch.object(mo2lint, "mo2lint_state_path", return_value=state), \
+                    patch.object(Mo2LintBackend, "_run", staticmethod(lambda a, o: 0)) :
+                result = Mo2LintBackend(binary=fake).install(SKYRIM_SE, dest)
+            self.assertFalse(result.success)
+            self.assertIn("stale", result.message)
 
     def test_available_checks_host_tools_not_protontricks(self):
         """protontricks is bundled in mo2-lint; what it needs from the system is
