@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import socket
 import struct
@@ -31,9 +32,21 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+log = logging.getLogger(__name__)
+
+# One port number for both halves of pairing, so a single firewall rule
+# ("allow 21029") covers it: announcements go out over UDP and the PIN
+# handshake runs over TCP. The host falls back to an ephemeral TCP port only if
+# 21029 is already taken (say, a second ModSync on the same box).
 DISCOVERY_PORT = 21029  # UDP broadcast port for ModSync pairing announcements
+PAIR_PORT = 21029  # TCP port the host listens on for the PIN handshake
 _MAGIC = "modsync-pair-v1"
 _MAX_FRAME = 65536
+
+FIREWALL_HINT = (
+    "If the machine with the mods runs a firewall, allow port 21029 (TCP and UDP) "
+    "for pairing, plus TCP 22000 and UDP 21027 for Syncthing."
+)
 
 
 class PairError(RuntimeError):
@@ -46,6 +59,23 @@ class Announcement:
     host: str
     port: int
     session: str
+
+    @classmethod
+    def manual(cls, address: str) -> "Announcement":
+        """An announcement typed in by hand (``host`` or ``host:port``) for when
+        broadcast discovery can't cross the network (VLANs, AP client isolation)."""
+        address = address.strip()
+        host, port = address, PAIR_PORT
+        if address.count(":") == 1:  # host:port (a bare IPv6 address has more colons)
+            host, _, port_s = address.partition(":")
+            try:
+                port = int(port_s)
+            except ValueError:
+                raise PairError(f"not a valid address: {address!r}") from None
+        host = host.strip("[]")
+        if not host or not 0 < port < 65536:
+            raise PairError(f"not a valid address: {address!r}")
+        return cls(host, host, port, f"manual:{host}:{port}")
 
 
 @dataclass
@@ -82,6 +112,38 @@ def _local_ip() -> str:
         return "127.0.0.1"
     finally:
         s.close()
+
+
+def _broadcast_targets() -> list[str]:
+    """Where to send announcements: the limited broadcast plus each interface's
+    own directed broadcast (e.g. ``192.168.71.255``).
+
+    ``255.255.255.255`` alone only leaves through the default-route interface,
+    and some Wi-Fi mesh / access points forward one kind of broadcast but not
+    the other, so we send both. Interface lookup is Linux-only (``SIOCGIFBRDADDR``);
+    anywhere else we quietly fall back to the limited broadcast.
+    """
+    targets = ["255.255.255.255", "127.255.255.255"]
+    try:
+        import fcntl
+
+        siocgifbrdaddr = 0x8919
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            for _idx, name in socket.if_nameindex():
+                ifreq = struct.pack("256s", name.encode()[:15])
+                try:
+                    res = fcntl.ioctl(sock.fileno(), siocgifbrdaddr, ifreq)
+                except OSError:  # no IPv4 address / no broadcast (lo, tun, wg)
+                    continue
+                addr = socket.inet_ntoa(res[20:24])
+                if addr not in targets and not addr.startswith("0."):
+                    targets.append(addr)
+        finally:
+            sock.close()
+    except (ImportError, OSError, AttributeError):
+        pass
+    return targets
 
 
 # --- length-prefixed framing over TCP ---------------------------------------
@@ -162,13 +224,21 @@ def _announce_loop(name: str, host: str, port: int, session: str, stop: threadin
     msg = json.dumps(
         {"magic": _MAGIC, "name": name, "host": host, "port": port, "session": session}
     ).encode()
+    targets = _broadcast_targets()
+    log.info(
+        "announcing %r (%s:%d, session %s) to udp/%d via %s",
+        name, host, port, session, DISCOVERY_PORT, ", ".join(targets),
+    )
+    failed: set[str] = set()
     try:
         while not stop.is_set():
-            for target in ("255.255.255.255", "127.255.255.255"):
+            for target in targets:
                 try:
                     sock.sendto(msg, (target, DISCOVERY_PORT))
-                except OSError:
-                    pass
+                except OSError as exc:
+                    if target not in failed:  # log each broken target once
+                        failed.add(target)
+                        log.warning("cannot announce to %s: %s", target, exc)
             stop.wait(1.0)
     finally:
         sock.close()
@@ -181,8 +251,10 @@ def discover(timeout: float = 3.0) -> list[Announcement]:
     try:
         sock.bind(("", DISCOVERY_PORT))
     except OSError as exc:
+        log.warning("cannot bind udp/%d for discovery: %s", DISCOVERY_PORT, exc)
         raise PairError(f"cannot listen for ModSync machines: {exc}") from exc
     sock.settimeout(0.4)
+    log.info("scanning for ModSync machines on udp/%d for %.1fs", DISCOVERY_PORT, timeout)
     found: dict[str, Announcement] = {}
     deadline = time.monotonic() + timeout
     try:
@@ -194,13 +266,18 @@ def discover(timeout: float = 3.0) -> list[Announcement]:
             try:
                 d = json.loads(data.decode())
                 if d.get("magic") != _MAGIC:
+                    log.debug("ignoring non-ModSync packet from %s", addr[0])
                     continue
                 ann = Announcement(d["name"], d.get("host") or addr[0], int(d["port"]), d["session"])
             except (ValueError, KeyError, TypeError):
+                log.debug("ignoring malformed announcement from %s", addr[0])
                 continue
+            if ann.session not in found:
+                log.info("found %r at %s:%d (from %s)", ann.name, ann.host, ann.port, addr[0])
             found[ann.session] = ann
     finally:
         sock.close()
+    log.info("scan finished: %d machine(s)", len(found))
     return list(found.values())
 
 
@@ -226,10 +303,15 @@ def host_pairing(
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(("0.0.0.0", 0))
+    try:
+        srv.bind(("0.0.0.0", PAIR_PORT))
+    except OSError as exc:
+        log.warning("tcp/%d busy (%s); pairing on an ephemeral port instead", PAIR_PORT, exc)
+        srv.bind(("0.0.0.0", 0))
     srv.listen(1)
     srv.settimeout(0.5)
     tcp_port = srv.getsockname()[1]
+    log.info("hosting pairing session %s on tcp/%d", session, tcp_port)
 
     announcer = threading.Thread(
         target=_announce_loop,
@@ -245,17 +327,22 @@ def host_pairing(
     try:
         while not stop.is_set() and time.monotonic() < deadline:
             try:
-                conn, _ = srv.accept()
+                conn, (peer_ip, _) = srv.accept()
             except socket.timeout:
                 continue
             with conn:
                 conn.settimeout(15)
                 try:
-                    return _handshake(conn, pin, payload, is_host=True)
+                    peer = _handshake(conn, pin, payload, is_host=True)
                 except (PairError, OSError) as exc:  # wrong PIN / flaky peer
                     attempts += 1
+                    log.info("pairing attempt %d from %s failed: %s", attempts, peer_ip, exc)
                     if attempts >= max_attempts:
                         raise PairError("too many failed attempts; start pairing again") from exc
+                    continue
+                log.info("paired with %r (%s)", peer.label, peer.device_id[:13])
+                return peer
+        log.info("pairing session %s ended without a peer", session)
         raise PairError("timed out waiting for a machine to pair")
     finally:
         stop.set()
@@ -270,10 +357,15 @@ def join_pairing(
     timeout: float = 15.0,
 ) -> PairPayload:
     """Connect to an announced host and complete the PIN handshake."""
+    log.info("joining %r at %s:%d", announcement.name, announcement.host, announcement.port)
     try:
         sock = socket.create_connection((announcement.host, announcement.port), timeout=timeout)
     except OSError as exc:
-        raise PairError(f"could not reach {announcement.name}: {exc}") from exc
+        log.warning("could not reach %s:%d: %s", announcement.host, announcement.port, exc)
+        raise PairError(
+            f"could not reach {announcement.name} on port {announcement.port}: {exc}. "
+            + FIREWALL_HINT
+        ) from exc
     with sock:
         sock.settimeout(timeout)
         return _handshake(sock, pin, payload, is_host=False)

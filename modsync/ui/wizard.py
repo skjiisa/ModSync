@@ -425,6 +425,7 @@ class VaultPage(Page):
             self._net_list.addItem(
                 "No machines found — start pairing on the other machine, then Scan again."
             )
+            self._net_list.addItem(pairing_lan.FIREWALL_HINT)
         else:
             for a in anns:
                 self._net_list.addItem(f"{a.name}   ({a.host})")

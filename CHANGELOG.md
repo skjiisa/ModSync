@@ -6,6 +6,21 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Network pairing behind a firewall. The PIN handshake now listens on a fixed
+  port (TCP 21029, the same number as the UDP discovery port) instead of a
+  random one, so a single firewall rule covers pairing. Announcements also go
+  to each interface's own broadcast address, not only `255.255.255.255`.
+
+### Added
+
+- The joiner can type the host's address when the scan finds nothing (the host
+  shows its address next to the PIN), and "No machines found" / "could not
+  reach" messages now say which ports to open. The README documents the ports.
+- Pairing logs what it announces, receives and connects to, so a bug report
+  can show where discovery broke.
+
 ## [0.1.0-rc1] - 2026-09-20
 
 First public pre-release. Ships as a Flatpak bundle attached to the GitHub

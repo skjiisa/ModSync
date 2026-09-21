@@ -106,6 +106,18 @@ class SyncCard(QGroupBox):
         self._net_list.setMaximumHeight(110)
         v.addWidget(self._net_list)
 
+        # Broadcast discovery doesn't cross VLANs or isolated Wi-Fi clients, so
+        # the other machine's address can be typed in instead of picked.
+        addr_row = QHBoxLayout()
+        addr_row.addWidget(QLabel("…or its address, if it isn't listed:"))
+        self._addr_edit = QLineEdit()
+        self._addr_edit.setPlaceholderText("192.168.1.20")
+        self._addr_edit.setToolTip(
+            "The IP address shown under “Pair over network” on the other machine"
+        )
+        addr_row.addWidget(self._addr_edit, stretch=1)
+        v.addLayout(addr_row)
+
         pin_row = QHBoxLayout()
         pin_row.addWidget(QLabel("PIN shown on that machine:"))
         self._pin_edit = QLineEdit()
@@ -156,6 +168,7 @@ class SyncCard(QGroupBox):
             self._net_list.addItem(
                 "No machines found — start “Pair over network” on the other machine, then Scan again."
             )
+            self._net_list.addItem(pairing_lan.FIREWALL_HINT)
             return
         for a in anns:
             self._net_list.addItem(f"{a.name}   ({a.host})")
@@ -182,8 +195,18 @@ class SyncCard(QGroupBox):
     def _join_network(self) -> None:
         path = self.service.state.instance_path
         row = self._net_list.currentRow()
-        if not path or not (0 <= row < len(self._announcements)):
-            self._on_error("Pick a machine from the list first.")
+        if not path:
+            return
+        if 0 <= row < len(self._announcements):
+            target = self._announcements[row]
+        elif self._addr_edit.text().strip():
+            try:
+                target = pairing_lan.Announcement.manual(self._addr_edit.text())
+            except pairing_lan.PairError as exc:
+                self._on_error(str(exc))
+                return
+        else:
+            self._on_error("Pick a machine from the list first, or type its address.")
             return
         pin = self._pin_edit.text().replace(" ", "").strip()
         if len(pin) != 6 or not pin.isdigit():
@@ -192,7 +215,7 @@ class SyncCard(QGroupBox):
         self.status.emit("Pairing over the network…")
         run_async(
             self.service.join_via_network,
-            self._announcements[row],
+            target,
             pin,
             path,
             on_done=lambda _: self.stateChanged.emit(),
@@ -385,10 +408,20 @@ class SyncCard(QGroupBox):
             "On the other machine choose “Copy from another machine”, then enter PIN "
             f"<b style='font-size:15pt'>{pin[:3]} {pin[3:]}</b>. Waiting…"
         )
+
+        def on_ready(ann: pairing_lan.Announcement) -> None:
+            where = ann.host if ann.port == pairing_lan.PAIR_PORT else f"{ann.host}:{ann.port}"
+            self.status.emit(
+                "On the other machine choose “Copy from another machine”, then enter PIN "
+                f"<b style='font-size:15pt'>{pin[:3]} {pin[3:]}</b>. "
+                f"Not listed there? Type this machine's address: <b>{where}</b>. Waiting…"
+            )
+
         run_async(
             self.service.host_network_pairing,
             name,
             pin,
+            on_ready=on_ready,
             stop=self._pair_stop,
             on_done=self._on_paired,
             on_failed=self._on_pair_failed,
