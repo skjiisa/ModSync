@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "modsync"
-version = "0.1.0rc1"
+version = "0.1.0rc2"
 description = "Set up Skyrim SE for modding on Steam Deck and Linux: install Mod Organizer 2, keep the game version your mods need, optionally sync between machines"
 readme = "README.md"
 requires-python = ">=3.11"

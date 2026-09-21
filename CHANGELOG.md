@@ -6,6 +6,14 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0-rc2] - 2026-09-20
+
+Everything the first real desktop ↔ Steam Deck pass turned up. Pairing through
+a desktop firewall, a receiving machine that syncs before it checks the game
+version, SKSE installed from the Game card, and MO2 installs from the Flatpak.
+Not yet exercised on the Deck itself: the join-then-auto-refresh flow and the
+desktop-hosts pairing direction — this build is for that.
+
 ### Fixed
 
 - Joining a vault no longer carries this machine's own game-version record into
