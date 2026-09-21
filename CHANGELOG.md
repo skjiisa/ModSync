@@ -6,8 +6,17 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-21
+
+First stable release. Everything in the two release candidates, now tested end
+to end on a Steam Deck and on a fresh Linux user account: the guided Mod
+Organizer 2 install, game version detection with downgrade and Steam pin,
+SKSE installation, the Steam Play button hook, and optional sync between
+machines.
+
 ### Changed
 
+- Rewrote the README and moved the technical detail into `docs/advanced.md`.
 - Plainer wording throughout the app: shorter tooltips and dialogs, no
   decorative symbols, and the launch hook status no longer says "off" twice.
 
