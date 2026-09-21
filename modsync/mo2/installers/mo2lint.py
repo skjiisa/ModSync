@@ -3,11 +3,18 @@
 MO2-LINT installs a portable MO2 instance for a game, reusing the game's existing
 Steam/Proton prefix and wiring it via a Steam launch option. We download a pinned
 prebuilt binary (all current releases are pre-releases, so GitHub's "latest"
-endpoint skips them). Requires ``protontricks`` on the system.
+endpoint skips them).
+
+It needs Steam, Proton and the host's ``xdg-mime`` / ``pgrep``; protontricks is
+bundled inside the binary and winetricks is fetched on demand. Inside the Flatpak
+the binary runs on the host through ``flatpak-spawn --host`` — the sandbox can't
+see Steam or Proton, and the host process gets the host's own environment, so
+MO2-LINT's ``~/.config/mo2-lint`` lands where its Steam-side redirector expects.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -17,6 +24,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+from modsync import background
 from modsync.config import data_dir
 from modsync.games import Game
 
@@ -32,6 +40,29 @@ MO2LINT_URL = (
 
 def mo2lint_path() -> Path:
     return data_dir() / "bin" / "mo2-lint"
+
+
+def mo2lint_state_path() -> Path:
+    """MO2-LINT's registry of the instances it installed. Hard-coded to the
+    host's ~/.config by MO2-LINT and its Steam-side redirector alike, so the
+    same path from inside the Flatpak (home is shared)."""
+    return Path.home() / ".config" / "mo2-lint" / "state.json"
+
+
+def registered_instance(directory: Path) -> dict | None:
+    """The registry entry for ``directory``, if MO2-LINT thinks it manages one
+    there. It refuses to install over such an entry even when the folder is
+    long gone — which is exactly what a ModSync "Reset setup" + reinstall
+    looks like."""
+    try:
+        data = json.loads(mo2lint_state_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    wanted = str(directory)
+    for inst in data.get("instances") or []:
+        if isinstance(inst, dict) and inst.get("instance_path") == wanted:
+            return inst
+    return None
 
 
 def ensure_mo2lint(force: bool = False) -> Path:
@@ -67,9 +98,23 @@ class Mo2LintBackend(InstallerBackend):
         system = shutil.which("mo2-lint")
         return Path(system) if system else ensure_mo2lint()
 
+    # Host tools MO2-LINT shells out to (procps, xdg-utils). Checked on the
+    # host, not in the sandbox, since that's where the install runs.
+    HOST_TOOLS = ("pgrep", "xdg-mime")
+
     def available(self) -> tuple[bool, str]:
-        if shutil.which("protontricks") is None:
-            return False, "protontricks is not installed (required by MO2-LINT)"
+        try:
+            probe = background.run_host(["sh", "-c", " ".join(f"command -v {t} >/dev/null || echo {t};" for t in self.HOST_TOOLS)])
+        except OSError as exc:
+            return False, f"cannot run commands on this system: {exc}"
+        if probe.returncode != 0:
+            where = "the host system from the Flatpak" if background.in_flatpak() else "this system"
+            return False, f"cannot reach {where}: {(probe.stderr or probe.stdout).strip() or probe.returncode}"
+        missing = probe.stdout.split()
+        if missing:
+            return False, (
+                f"{', '.join(missing)} not installed (MO2-LINT needs procps and xdg-utils)"
+            )
         return True, ""
 
     def install(
@@ -80,8 +125,32 @@ class Mo2LintBackend(InstallerBackend):
         script_extender: bool = False,  # see InstallerBackend.install
         on_output: OnOutput | None = None,
     ) -> InstallResult:
-        dest_dir = Path(dest_dir)
-        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_dir = Path(dest_dir)  # MO2-LINT creates it; pre-creating it left an empty folder on failure
+
+        # MO2-LINT refuses a directory that's in its registry. If the instance
+        # is really there, installing is the wrong move; if only the registry
+        # entry survived (folder deleted, ModSync reset), have MO2-LINT forget
+        # it — its own uninstall also drops the Steam launch option and
+        # redirector that pointed at the old instance.
+        stale = registered_instance(dest_dir)
+        if stale is not None:
+            if (dest_dir / "ModOrganizer.exe").exists():
+                message = (
+                    f"MO2-LINT already manages an MO2 instance at {dest_dir}. Choose “Use” on it "
+                    "instead of installing, or pick a different folder."
+                )
+                log.error(message)
+                return InstallResult(False, 1, None, message)
+            log.info("MO2-LINT still lists %s but it's gone; clearing the stale entry", dest_dir)
+            if on_output:
+                on_output(f"MO2-LINT still lists an instance at {dest_dir} that no longer exists; clearing it.")
+            rc = self._run(
+                [str(self.binary()), "uninstall", "--directory", str(dest_dir), "--unattended"], on_output
+            )
+            if rc != 0 or registered_instance(dest_dir) is not None:
+                message = f"mo2-lint could not clear its stale entry for {dest_dir} (exit {rc})"
+                log.error(message)
+                return InstallResult(False, rc, None, message)
 
         args = [
             str(self.binary()),
@@ -92,23 +161,8 @@ class Mo2LintBackend(InstallerBackend):
         ]
         if script_extender:
             args.append("--script-extender")
-
         log.info("installing MO2 with MO2-LINT: %s", " ".join(args))
-        if on_output:
-            on_output("$ " + " ".join(args))
-
-        with subprocess.Popen(
-            args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        ) as proc:
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                if on_output:
-                    on_output(line.rstrip("\n"))
-            returncode = proc.wait()
+        returncode = self._run(args, on_output)
 
         has_exe = (dest_dir / "ModOrganizer.exe").exists()
         success = returncode == 0 and has_exe
@@ -123,3 +177,23 @@ class Mo2LintBackend(InstallerBackend):
         else:
             log.error("MO2 install into %s failed: %s", dest_dir, message)
         return InstallResult(success, returncode, dest_dir if success else None, message)
+
+    @staticmethod
+    def _run(args: list[str], on_output: OnOutput | None) -> int:
+        """Run mo2-lint (on the host when sandboxed), streaming its output."""
+        if background.in_flatpak():
+            args = ["flatpak-spawn", "--host", *args]
+        if on_output:
+            on_output("$ " + " ".join(args))
+        with subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        ) as proc:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                if on_output:
+                    on_output(line.rstrip("\n"))
+            return proc.wait()
