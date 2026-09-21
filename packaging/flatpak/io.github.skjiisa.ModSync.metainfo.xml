@@ -34,6 +34,12 @@
   <url type="homepage">https://github.com/skjiisa/ModSync</url>
   <url type="bugtracker">https://github.com/skjiisa/ModSync/issues</url>
   <releases>
+    <release version="0.1.0~rc2" date="2026-09-20" type="development">
+      <url>https://github.com/skjiisa/ModSync/releases/tag/v0.1.0-rc2</url>
+      <description>
+        <p>Second pre-release, from the first desktop and Steam Deck pairing test: network pairing works through a desktop firewall (fixed port, one-click ufw/firewalld rules that can be removed again, a big on-screen PIN), a machine that copies its mods from another one syncs first and then checks the game version by itself, Install SKSE from the Game card, and MO2 installs from the Flatpak.</p>
+      </description>
+    </release>
     <release version="0.1.0~rc1" date="2026-09-20" type="development">
       <url>https://github.com/skjiisa/ModSync/releases/tag/v0.1.0-rc1</url>
       <description>

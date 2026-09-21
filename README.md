@@ -325,7 +325,7 @@ modsync launch status | enable | disable   # open ModSync when Skyrim is launche
 
 ## Status
 
-Pre-release: `0.1.0-rc1` is the first public build, published as a Flatpak
+Pre-release: `0.1.0-rc2` is the current public build, published as a Flatpak
 bundle on the [releases page](https://github.com/skjiisa/ModSync/releases).
 
 **Works and verified on desktop Linux:** Steam library, game and MO2 instance
