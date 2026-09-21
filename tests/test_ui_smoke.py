@@ -446,6 +446,38 @@ class GameWarningCopyTests(_SmokeBase):
         self.assertLess(len(text.split()), 50)
         self.assertIn("skse64_1_5_97.dll", card._label.toolTip())
 
+    def test_wrong_skse_offers_the_matching_build_or_the_download_page(self):
+        service, card = self._card()
+        version = gameversion.GameVersion.parse
+        status = fake_game_status(service)
+        status.installed = version("1.6.1170")
+        status.expected = version("1.6.1170")
+        status.skse_runtime = version("1.5.97")
+        check = gameversion.VersionCheck(status.installed, status.expected)
+        with patch.object(service, "game_version_check", return_value=check):
+            card._on_game_status(status)
+        self.assertTrue(card._skse.isVisibleTo(card))
+        self.assertEqual(card._skse.text(), "Install SKSE 2.2.6")
+        self.assertIn("built for Skyrim 1.5.97, not 1.6.1170", card._label.text())
+        self.assertIn("Install SKSE 2.2.6", card._label.text())
+
+        # The current Steam build's SKSE is Nexus-only: point there instead.
+        status.installed = status.expected = version("1.7.104")
+        status.skse_runtime = None
+        with patch.object(service, "game_version_check", return_value=check):
+            card._on_game_status(status)
+        self.assertEqual(card._skse.text(), "Get SKSE…")
+        self.assertIn("nexusmods.com", card._label.text())
+        with patch("modsync.ui.game_card.QDesktopServices.openUrl") as open_url:
+            card._install_skse()
+        self.assertIn("nexusmods.com", open_url.call_args.args[0].toString())
+
+        # Matching SKSE: nothing to offer.
+        status.installed = status.expected = status.skse_runtime = version("1.6.1170")
+        with patch.object(service, "game_version_check", return_value=check):
+            card._on_game_status(status)
+        self.assertFalse(card._skse.isVisibleTo(card))
+
     def test_unsupported_target_and_active_update_do_not_suggest_updating_to_downgrade(self):
         service, card = self._card()
         version = gameversion.GameVersion.parse
