@@ -108,7 +108,7 @@ class PairingRescanTests(unittest.TestCase):
 
 
 @unittest.skipIf(QApplication is None, "PySide6 not installed")
-class FirewallBannerTests(unittest.TestCase):
+class FirewallHintTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -117,48 +117,29 @@ class FirewallBannerTests(unittest.TestCase):
         from unittest.mock import Mock
         from modsync.ui.sync_card import SyncCard
 
-        with patch("modsync.ui.sync_card.run_async"):  # no real detection
+        with patch("modsync.ui.sync_card.run_async"):
             return SyncCard(Mock(state=state))
 
-    def test_banner_appears_for_a_detected_firewall_and_tailors_the_empty_scan(self):
-        from modsync.firewall import Firewall
+    def _rows(self, card):
+        return [card._net_list.item(i).text() for i in range(card._net_list.count())]
+
+    def test_empty_scan_points_at_the_firewall_row_when_blocked(self):
+        from modsync.firewall import Check, Firewall
 
         card = self._card(State(instance_path="/unused/MO2"))
-        self.assertFalse(card._fw_banner.isVisibleTo(card))
-        card._on_firewall_detected(Firewall("ufw"))
-        self.assertTrue(card._fw_banner.isVisibleTo(card))
-        self.assertIn("ufw is on", card._fw_label.text())
+        card.firewall_checked(Check(Firewall("ufw"), False, "ufw:1"))
         card._on_scanned([])
-        rows = [card._net_list.item(i).text() for i in range(card._net_list.count())]
-        self.assertTrue(any("ufw is on here" in r for r in rows), rows)
+        self.assertTrue(any("ufw is on here" in r and "On this machine" in r for r in self._rows(card)))
 
-    def test_no_firewall_means_no_banner_and_generic_hint(self):
+    def test_empty_scan_is_generic_when_nothing_blocks(self):
         from modsync import pairing_lan
+        from modsync.firewall import Check, Firewall
 
-        card = self._card(State(instance_path="/unused/MO2"))
-        card._on_firewall_detected(None)
-        self.assertFalse(card._fw_banner.isVisibleTo(card))
-        card._on_scanned([])
-        rows = [card._net_list.item(i).text() for i in range(card._net_list.count())]
-        self.assertIn(pairing_lan.FIREWALL_HINT, rows)
-
-    def test_allowing_hides_the_banner_and_is_remembered(self):
-        import tempfile
-        from pathlib import Path
-        from modsync.firewall import Firewall
-
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(State, "path", return_value=Path(tmp) / "state.json"):
-                state = State(instance_path="/unused/MO2")
-                card = self._card(state)
-                card._on_firewall_detected(Firewall("ufw"))
-                card._on_firewall_allowed(None)
-                self.assertFalse(card._fw_banner.isVisibleTo(card))
-                self.assertTrue(State.load().firewall_allowed)
-                # A machine that already allowed the ports never sees the banner.
-                card2 = self._card(State.load())
-                card2._on_firewall_detected(Firewall("ufw"))
-                self.assertFalse(card2._fw_banner.isVisibleTo(card2))
+        for chk in (Check(None, True, ""), Check(Firewall("ufw"), True, "ufw:1")):
+            card = self._card(State(instance_path="/unused/MO2"))
+            card.firewall_checked(chk)
+            card._on_scanned([])
+            self.assertIn(pairing_lan.FIREWALL_HINT, self._rows(card))
 
 
 @unittest.skipIf(QApplication is None, "PySide6 not installed")

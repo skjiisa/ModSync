@@ -73,6 +73,10 @@ class _SmokeBase(unittest.TestCase):
 
 
 class DashboardSmokeTests(_SmokeBase):
+    def _settle(self):
+        QThreadPool.globalInstance().waitForDone(5000)
+        self.app.processEvents()
+
     def _build(self):
         from modsync.ui.dashboard import Dashboard
 
@@ -117,6 +121,51 @@ class DashboardSmokeTests(_SmokeBase):
         card._on_game_status(fake_game_status(service))
         self.assertNotIn("Steam has an update ready", card._label.text())
         self.assertEqual(card._label.property("role"), "secondary")
+
+    def test_firewall_row_toggles_between_allow_and_remove(self):
+        from modsync.firewall import Check, Firewall
+        from modsync.ui.dashboard import Dashboard
+
+        State(instance_path=str(self.tmp)).save()
+        blocked = Check(Firewall("ufw"), False, "ufw:1")
+        with patch("modsync.ui.dashboard.firewall.check", return_value=blocked):
+            dash = Dashboard(ModSyncService(manager=object()))
+            QThreadPool.globalInstance().waitForDone(5000)
+            self.app.processEvents()
+        try:
+            self.assertTrue(dash._fw_widget.isVisibleTo(dash))
+            self.assertEqual(dash._fw_button.text(), "Allow in firewall…")
+            self.assertEqual(dash._fw_status.property("role"), "warning")
+            self.assertIn("21029/tcp", dash._fw_status.text())
+            self.assertTrue(dash.sync._firewall is not None and not dash.sync._fw_allowed)
+
+            # Allow: the stamp is remembered and the rules are re-read, not assumed.
+            allowed = Check(Firewall("ufw"), True, "ufw:2")
+            with patch("modsync.ui.dashboard.firewall.allow", return_value="ufw:2"), \
+                    patch("modsync.ui.dashboard.firewall.check", return_value=allowed):
+                dash._toggle_firewall()
+                self._settle()  # allow finishes...
+                self._settle()  # ...then the re-check it triggers
+            self.assertEqual(State.load().firewall_rules_stamp, "ufw:2")
+            self.assertEqual(dash._fw_button.text(), "Remove firewall rules…")
+            self.assertEqual(dash._fw_status.property("role"), "secondary")
+            self.assertTrue(dash.sync._fw_allowed)
+
+            # Remove: stamp cleared, and whatever the rules say now is shown.
+            with patch("modsync.ui.dashboard.firewall.revoke", return_value="ufw:3") as revoke, \
+                    patch("modsync.ui.dashboard.firewall.check", return_value=blocked):
+                dash._toggle_firewall()
+                self._settle()
+                self._settle()
+            revoke.assert_called_once()
+            self.assertEqual(State.load().firewall_rules_stamp, "")
+            self.assertEqual(dash._fw_button.text(), "Allow in firewall…")
+
+            # No firewall at all: the row disappears.
+            dash._on_firewall_checked(Check(None, True, ""))
+            self.assertFalse(dash._fw_widget.isVisibleTo(dash))
+        finally:
+            dash.shutdown()
 
     def test_instance_only(self):
         State(instance_path=str(self.tmp), instance_label="MO2").save()
