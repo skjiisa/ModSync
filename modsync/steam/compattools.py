@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from modsync import steamos
 from modsync.steam import appinfo, vdf
 from modsync.steam.libraries import Library, find_app
 
@@ -217,16 +218,6 @@ def find_tool(name: str, steam_root: Path | str, libraries: Iterable[Library]) -
     return None
 
 
-def _steamos_variant() -> str | None:
-    try:
-        lines = Path("/etc/os-release").read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
-    fields = dict(line.split("=", 1) for line in lines if "=" in line)
-    fields = {k: v.strip().strip("\"'") for k, v in fields.items()}
-    return fields.get("VARIANT_ID") if fields.get("ID") == "steamos" else None
-
-
 def recommended_tools(appid: int, steam_root: Path | str) -> list[str]:
     """What Valve recommends for the game before Steam falls back to the
     global default: the device's compatibility profile on a Steam Deck or
@@ -239,7 +230,7 @@ def recommended_tools(appid: int, steam_root: Path | str) -> list[str]:
     except (OSError, appinfo.AppInfoError):
         return []
     names: list[str] = []
-    key = DEVICE_PROFILE_KEYS.get(_steamos_variant() or "")
+    key = DEVICE_PROFILE_KEYS.get(steamos.variant() or "")
     game = infos.get(appid)
     if key and game is not None:
         profile = (game.raw.get("common") or {}).get(key) or {}

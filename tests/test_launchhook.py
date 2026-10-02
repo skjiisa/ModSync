@@ -203,7 +203,7 @@ class WithSteamRunning(LaunchHookBase):
         st = launchhook.status()
         self.assertFalse(st.enabled)
         self.assertEqual(st.pending.action, "select")
-        self.assertIn("Waiting for Steam to be closed", st.summary())
+        self.assertIn("Waiting for Steam to close", st.summary())
         self.assertIsNone(launchhook.apply_pending())  # still running
         self.steam_running = False
         out = launchhook.apply_pending()

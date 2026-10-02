@@ -69,8 +69,29 @@ def run_host(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, **kwargs)
 
 
+def _user_manager_env() -> dict[str, str] | None:
+    """``systemctl --user`` finds the user manager through XDG_RUNTIME_DIR. The
+    Steam Frame's desktop is a nested Plasma session whose XDG_RUNTIME_DIR
+    (``/run/user/1000/nested_plasma``) has no systemd sockets, so point it back
+    at the login session's. None means the inherited environment is fine."""
+    if in_flatpak():
+        return None
+
+    def has_manager(runtime_dir: Path) -> bool:
+        return (runtime_dir / "systemd" / "private").exists() or (runtime_dir / "bus").exists()
+
+    current = os.environ.get("XDG_RUNTIME_DIR")
+    if current and has_manager(Path(current)):
+        return None
+    login = Path(f"/run/user/{os.getuid()}")
+    if has_manager(login):
+        return {**os.environ, "XDG_RUNTIME_DIR": str(login)}
+    return None
+
+
 def _systemctl(*args: str) -> subprocess.CompletedProcess:
-    return run_host(["systemctl", "--user", *args])
+    env = _user_manager_env()
+    return run_host(["systemctl", "--user", *args], **({"env": env} if env else {}))
 
 
 def _checked_systemctl(*args: str) -> None:
