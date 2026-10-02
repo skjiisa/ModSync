@@ -22,6 +22,15 @@ All notable changes to ModSync are documented here. The format follows
   off to the Proton Steam would pick: Valve's recommendation for the game on a
   Steam Deck or Steam Frame, then your global choice, then Proton stable. It
   used to prefer Proton Experimental.
+- On the Steam Frame, where Steam can't be restarted, queued changes (the
+  Play button switch, the update pin) tell you to reboot instead. The background
+  service applies them before Steam starts. Tested on a Frame.
+
+### Fixed
+
+- `modsync service install` failed in the Steam Frame's desktop terminal,
+  because the nested Plasma session's `XDG_RUNTIME_DIR` has no systemd user
+  bus. ModSync now falls back to the login session's.
 
 ## [1.0.0] - 2026-09-21
 

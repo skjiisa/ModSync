@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from modsync import config, gameversion, pairing_lan, platforms, skse
+from modsync import config, gameversion, pairing_lan, platforms, skse, steamos
 from modsync.downgrade import engine, recipe
 from modsync.games import SKYRIM_SE
 from modsync.mo2.launch import Launcher, build_plan
@@ -626,11 +626,7 @@ class ModSyncService:
                 applied=False,
                 queued=True,
                 changes=[],
-                message=(
-                    "Steam is running, so the pin is queued. Restart Steam (on the Deck: "
-                    "Power menu, then Restart Steam) and ModSync applies it while Steam "
-                    "is closed."
-                ),
+                message=f"Steam is running, so the pin is queued. {steamos.steam_restart_hint()}",
             )
         info = appinfo.read_app(appinfo_path, SKYRIM_SE.appid)
         if info is None or info.public_buildid is None:

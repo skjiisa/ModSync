@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from modsync import background, diagnostics, firewall, launchhook, platforms
+from modsync import background, diagnostics, firewall, launchhook, platforms, steamos
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import discover as mo2_discover
 from modsync.service import ModSyncService
@@ -498,7 +498,7 @@ class Dashboard(QWidget):
         if st.enabled and not st.pending:
             head = "on"
         elif st.pending:
-            head = "switching when Steam closes"
+            head = "switching at the next reboot" if steamos.is_steam_frame() else "switching when Steam closes"
         elif st.installed or st.selected:
             head = "partly set up"
         else:

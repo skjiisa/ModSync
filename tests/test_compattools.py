@@ -66,7 +66,7 @@ class SteamDefaultTool(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = fakesteam.make_steam(Path(tmp.name) / "Steam")
         self.libraries = libs.all_libraries([self.root])
-        variant = patch.object(compattools, "_steamos_variant", return_value=None)
+        variant = patch.object(compattools.steamos, "variant", return_value=None)
         variant.start()
         self.addCleanup(variant.stop)
 
@@ -89,7 +89,7 @@ class SteamDefaultTool(unittest.TestCase):
             "configuration": {"recommended_runtime": "proton-11.0-2RC"}}}}
         fakesteam.write_appinfo(self.root, apps={489830: game})
         self.assertEqual(self.default("GE-Proton10-34").name, "GE-Proton10-34")  # not on a Deck
-        with patch.object(compattools, "_steamos_variant", return_value="steamdeck"):
+        with patch.object(compattools.steamos, "variant", return_value="steamdeck"):
             self.assertEqual(self.default("GE-Proton10-34").name, "proton_11")
 
         manifests = {**fakesteam.STEAM_PLAY_MANIFESTS}
@@ -149,7 +149,7 @@ class Arm64CompatTools(unittest.TestCase):
         """Seen on a Steam Frame: Default with Proton 11.0 (ARM64) installed maps
         the game to proton-stable, which is proton_11-arm64."""
         fakesteam.install_tool(self.root, 4628740, "Proton 11.0 (ARM64)")
-        with self.arm64(), patch.object(compattools, "_steamos_variant", return_value="vr"):
+        with self.arm64(), patch.object(compattools.steamos, "variant", return_value="vr"):
             tool = compattools.steam_default_tool(489830, self.root, self.libraries)
         self.assertEqual(tool.name, "proton_11-arm64")
         self.assertEqual(tool.path, self.root / "steamapps/common/Proton 11.0 (ARM64)")

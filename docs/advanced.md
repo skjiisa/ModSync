@@ -130,7 +130,9 @@ launches from Steam as-is. When the next Bethesda patch flips the flag, "Keep
 this version" or `modsync game pin` rewrites the manifest to the current
 public build, read from Steam's own `appinfo.vdf`. That needs Steam closed.
 The background service applies a queued pin the moment Steam exits (on the
-Deck: Power, then Restart Steam). No vault is needed. `modsync game unpin`
+Deck: Power, then Restart Steam). Steam can't be quit on the Steam Frame, so
+reboot it instead: the service starts before Steam and applies the pin first.
+No vault is needed. `modsync game unpin`
 lets Steam update the game again.
 
 ## How sync works

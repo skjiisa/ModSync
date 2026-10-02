@@ -38,7 +38,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from modsync import __version__, config, platforms
+from modsync import __version__, config, platforms, steamos
 from modsync.games import GAMES, SKYRIM_SE, Game
 from modsync.steam import compattools, shortcuts
 from modsync.steam import libraries as libs
@@ -245,12 +245,9 @@ class LaunchHookStatus:
         if not self.steam_found:
             return "Steam was not found on this machine."
         if self.pending and self.pending.action == "select":
-            return (
-                f"Waiting for Steam to be closed to select ModSync for {g}. Restart Steam; "
-                "ModSync (or its background service) makes the switch while Steam is down."
-            )
+            return f"Waiting for Steam to close to select ModSync for {g}. {steamos.steam_restart_hint()}"
         if self.pending and self.pending.action == "restore":
-            return "Waiting for Steam to be closed to restore the previous launcher."
+            return f"Waiting for Steam to close to restore the previous launcher. {steamos.steam_restart_hint()}"
         if self.enabled:
             if not self.underlying_exists:
                 return (
@@ -499,8 +496,7 @@ def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None) -> str:
         Pending("select", appid, {"name": ours, "config": "", "priority": "250"}).save()
         return (
             f"Launch hook installed; it continues to {hands}. Steam is running, so the switch is "
-            "queued. Restart Steam (on the Deck: Power, then Restart Steam) and ModSync, either the open app "
-            "or its background service, selects the hook while Steam is closed. You can also pick "
+            f"queued. {steamos.steam_restart_hint()} You can also pick "
             f"\"{display_name(game)}\" yourself under Properties, then Compatibility."
         )
     cfg.set_compat_tool(appid, ours)
@@ -530,9 +526,9 @@ def disable(appid: int = SKYRIM_SE.appid) -> str:
         if shortcuts.steam_is_running():
             Pending("restore", appid, previous, remove_tool=True).save()
             return (
-                "Steam is running, so restoring the previous launcher is queued: it happens the "
-                "moment Steam is closed (ModSync or its background service must be running). "
-                f"Until then Play still opens ModSync for {game.name}."
+                f"Steam is running, so restoring the previous launcher is queued. {steamos.steam_restart_hint()} "
+                f"Until then Play still opens ModSync for {game.name}. You can also pick the previous "
+                "tool yourself under Properties, then Compatibility, and turn the hook off again."
             )
         cfg = SteamConfig.load(env.config_vdf)
         cfg.set_compat_entry(appid, previous)
