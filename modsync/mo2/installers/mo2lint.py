@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import platform
 import shutil
 import stat
 import subprocess
@@ -36,6 +37,10 @@ MO2LINT_URL = (
     "https://github.com/Furglitch/modorganizer2-linux-installer"
     f"/releases/download/{MO2LINT_VERSION}/mo2-lint"
 )
+# MO2-LINT publishes one build, for x86_64. An ARM64 machine such as the Steam
+# Frame can't run it on the host (FEX only translates what Steam launches), so
+# there it needs an mo2-lint on PATH built for the machine.
+MO2LINT_ARCHES = ("x86_64", "amd64")
 
 
 def mo2lint_path() -> Path:
@@ -103,6 +108,12 @@ class Mo2LintBackend(InstallerBackend):
     HOST_TOOLS = ("pgrep", "xdg-mime")
 
     def available(self) -> tuple[bool, str]:
+        machine = platform.machine()
+        if self._binary is None and machine.lower() not in MO2LINT_ARCHES and not shutil.which("mo2-lint"):
+            return False, (
+                f"MO2-LINT only publishes an x86_64 build, and this machine is {machine}. "
+                "Install an mo2-lint built for this machine on PATH."
+            )
         try:
             probe = background.run_host(["sh", "-c", " ".join(f"command -v {t} >/dev/null || echo {t};" for t in self.HOST_TOOLS)])
         except OSError as exc:
