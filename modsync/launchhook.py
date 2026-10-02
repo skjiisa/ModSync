@@ -402,9 +402,18 @@ def game_proton(appid: int = SKYRIM_SE.appid, env: SteamEnv | None = None) -> Co
     if _TOOL_ID_RE.match(current) or compattools.MO2LINT_TOOL_RE.match(current):
         return None
     tool = compattools.find_tool(current, env.root, env.libraries)
+    if tool is None and compattools.is_arm64():
+        tool = _arm64_fallback(env, appid)
     if tool is None or not (tool.path / "proton").is_file():
         return None
     return tool
+
+
+def _arm64_fallback(env: SteamEnv, appid: int) -> CompatTool | None:
+    """On ARM64 Steam runs a game whose selected tool has no ARM64 build (an
+    x86_64 Proton) with its default instead, as seen on a Steam Frame."""
+    default = SteamConfig.load(env.config_vdf).compat_tool_name(0) if env.config_vdf.exists() else None
+    return compattools.steam_default_tool(appid, env.root, env.libraries, global_choice=default)
 
 
 def _resolve_underlying(
@@ -419,6 +428,8 @@ def _resolve_underlying(
         tool = mo2  # MO2-LINT wired Mod Organizer into this game: keep that
     elif current and current != ours:
         tool = compattools.find_tool(current, env.root, env.libraries)
+        if tool is None and compattools.is_arm64():
+            tool = _arm64_fallback(env, appid)
         if tool is None:
             raise RuntimeError(
                 f"Steam launches the game with {current!r}, but that tool was not found on this machine"

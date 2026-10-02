@@ -31,6 +31,9 @@ All notable changes to ModSync are documented here. The format follows
 - `modsync service install` failed in the Steam Frame's desktop terminal,
   because the nested Plasma session's `XDG_RUNTIME_DIR` has no systemd user
   bus. ModSync now falls back to the login session's.
+- On ARM64, ModSync no longer picks one of Valve's x86_64 Protons, which can't
+  run there. When Skyrim is set to a Proton with no ARM64 build, the launch
+  hook and Open MO2 use Steam's ARM64 default, as Steam does.
 
 ## [1.0.0] - 2026-09-21
 

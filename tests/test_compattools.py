@@ -154,16 +154,25 @@ class Arm64CompatTools(unittest.TestCase):
         self.assertEqual(tool.name, "proton_11-arm64")
         self.assertEqual(tool.path, self.root / "steamapps/common/Proton 11.0 (ARM64)")
 
-    def test_arm64_falls_back_to_the_name_as_given(self):
+    def test_x86_64_valve_protons_are_never_used_on_arm64(self):
+        """Seen on a Steam Frame: Skyrim set to proton_experimental with only the
+        x86_64 Proton Experimental installed ran Proton 11.0 (ARM64), Steam's
+        default, not the x86_64 build."""
         import shutil
 
         shutil.rmtree(self.arm_dir)
         with self.arm64():
+            self.assertIsNone(compattools.find_tool("proton_experimental", self.root, self.libraries))
+            self.assertIsNone(compattools.default_valve_tool(self.root, self.libraries))
+            fakesteam.install_tool(self.root, 4628740, "Proton 11.0 (ARM64)")
+            self.assertEqual(
+                compattools.steam_default_tool(489830, self.root, self.libraries).name, "proton_11-arm64"
+            )
+            self.assertEqual(compattools.find_tool("GE-Proton10-34", self.root, self.libraries).kind, "custom")
+        with self.arm64(False):
             self.assertEqual(
                 compattools.find_tool("proton_experimental", self.root, self.libraries).name, "proton_experimental"
             )
-            self.assertEqual(compattools.default_valve_tool(self.root, self.libraries).name, "proton_experimental")
-
 
 if __name__ == "__main__":
     unittest.main()
