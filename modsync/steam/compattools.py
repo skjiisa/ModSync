@@ -63,6 +63,7 @@ class CompatTool:
     path: Path
     kind: str  # "valve" | "custom"
     aliases: tuple[str, ...] = ()
+    arm64: bool = False  # a Valve tool from the ARM64 manifests app
 
     @property
     def is_mo2lint(self) -> bool:
@@ -127,9 +128,9 @@ def custom_tools(steam_root: Path | str) -> list[CompatTool]:
     return out
 
 
-def _manifest_entries(steam_root: Path | str) -> list[tuple[str, dict]]:
+def _manifest_entries(steam_root: Path | str) -> list[tuple[str, dict, int]]:
     """Every Windows compatibility tool the Steam Play manifests declare,
-    installed or not, as ``(name, spec)``; the main manifest first."""
+    installed or not, as ``(name, spec, manifest appid)``; the main manifest first."""
     path = appinfo.appinfo_path(steam_root)
     if not path.exists():
         return []
@@ -137,7 +138,7 @@ def _manifest_entries(steam_root: Path | str) -> list[tuple[str, dict]]:
         infos = appinfo.read_apps(path, MANIFEST_APPIDS)
     except (OSError, appinfo.AppInfoError):
         return []
-    out: list[tuple[str, dict]] = []
+    out: list[tuple[str, dict, int]] = []
     seen: set[str] = set()
     for manifest_appid in MANIFEST_APPIDS:
         info = infos.get(manifest_appid)
@@ -148,7 +149,7 @@ def _manifest_entries(steam_root: Path | str) -> list[tuple[str, dict]]:
             if name in seen or not isinstance(spec, dict) or str(spec.get("from_oslist", "")) != "windows":
                 continue
             seen.add(name)
-            out.append((str(name), spec))
+            out.append((str(name), spec, manifest_appid))
     return out
 
 
@@ -160,7 +161,7 @@ def valve_tools(steam_root: Path | str, libraries: Iterable[Library]) -> list[Co
     """Valve's Proton builds that are installed, named as ``config.vdf`` names them."""
     libraries = list(libraries)
     out: list[CompatTool] = []
-    for name, spec in _manifest_entries(steam_root):
+    for name, spec, manifest_appid in _manifest_entries(steam_root):
         try:
             tool_appid = int(spec.get("appid"))
         except (TypeError, ValueError):
@@ -175,6 +176,7 @@ def valve_tools(steam_root: Path | str, libraries: Iterable[Library]) -> list[Co
                 path=app.install_path,
                 kind="valve",
                 aliases=_aliases(spec),
+                arm64=manifest_appid == ARM64_MANIFESTS_APPID,
             )
         )
     return out
@@ -192,11 +194,11 @@ def arm64_candidates(name: str, steam_root: Path | str) -> list[str]:
     candidates = [] if name.endswith(ARM64_SUFFIX) else [name + ARM64_SUFFIX]
     entries = _manifest_entries(steam_root)
     names = {name}
-    for entry_name, spec in entries:
+    for entry_name, spec, _ in entries:
         if name == entry_name or name in _aliases(spec):
             names = {entry_name, *_aliases(spec)}
             break
-    for entry_name, spec in entries:
+    for entry_name, spec, _ in entries:
         if entry_name.endswith(ARM64_SUFFIX) and names & {entry_name, *_aliases(spec)}:
             candidates.append(entry_name)
             break
@@ -206,8 +208,14 @@ def arm64_candidates(name: str, steam_root: Path | str) -> list[str]:
 
 def find_tool(name: str, steam_root: Path | str, libraries: Iterable[Library]) -> CompatTool | None:
     """The installed tool Steam runs for ``name`` (a ``config.vdf`` tool name
-    or an alias such as ``proton-stable``)."""
+    or an alias such as ``proton-stable``).
+
+    On ARM64 Valve's x86_64 builds are never the answer: Steam on a Steam Frame
+    with a game set to ``proton_experimental`` and only the x86_64 Proton
+    Experimental installed ran Proton 11.0 (ARM64), its default, instead."""
     tools = all_tools(steam_root, libraries)
+    if is_arm64():
+        tools = [t for t in tools if t.kind != "valve" or t.arm64]
     for candidate in arm64_candidates(name, steam_root) if is_arm64() else [name]:
         for tool in tools:
             if tool.name == candidate:
@@ -269,14 +277,13 @@ def mo2lint_tool(appid: int, steam_root: Path | str) -> CompatTool | None:
 def default_valve_tool(steam_root: Path | str, libraries: Iterable[Library]) -> CompatTool | None:
     """A last resort when :func:`steam_default_tool` finds nothing Steam would
     pick: Proton Experimental, else the newest numbered Proton, else Proton
-    Hotfix. On ARM64 the ARM64 builds of those come first."""
+    Hotfix. On ARM64 only the ARM64 builds of those count."""
     tools = {t.name: t for t in valve_tools(steam_root, libraries)}
     if is_arm64():
         # proton-experimental-arm64 -> proton_experimental, proton_11-arm64 -> proton_11
-        arm = {
-            n.removesuffix(ARM64_SUFFIX).replace("-", "_"): t for n, t in tools.items() if n.endswith(ARM64_SUFFIX)
+        tools = {
+            n.removesuffix(ARM64_SUFFIX).replace("-", "_"): t for n, t in tools.items() if t.arm64
         }
-        tools = arm or tools
     if "proton_experimental" in tools:
         return tools["proton_experimental"]
     numbered = sorted(

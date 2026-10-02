@@ -60,6 +60,15 @@ class EnableOnArm64(LaunchHookBase):
         p.start()
         self.addCleanup(p.stop)
 
+    def test_an_x86_64_selection_hands_off_to_steams_arm64_default(self):
+        import shutil
+
+        shutil.rmtree(self.root / "steamapps/common/Proton - Experimental (ARM64)")
+        arm11 = fakesteam.install_tool(self.root, 4628740, "Proton 11.0 (ARM64)")
+        launchhook.enable()
+        self.assertIn(f'underlying="{arm11}"', (self.tool_dir / "proton").read_text())
+        self.assertEqual(launchhook.game_proton().path, arm11)
+
     def test_hands_off_to_the_arm64_proton(self):
         launchhook.enable()
         arm_dir = self.root / "steamapps/common/Proton - Experimental (ARM64)"
