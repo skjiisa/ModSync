@@ -1,4 +1,4 @@
-# Generated with flatpak-pip-generator --runtime org.kde.Sdk//6.11 --yaml --wheel-arches x86_64 --prefer-wheels=cryptography,cffi --output python3-modules httpx>=0.27 qrcode>=7.4 platformdirs>=4 spake2>=0.8
+# Generated with flatpak-pip-generator --runtime org.kde.Sdk//6.11 --yaml --wheel-arches x86_64,aarch64 --prefer-wheels=cryptography,cffi --output python3-modules httpx>=0.27 qrcode>=7.4 platformdirs>=4 spake2>=0.8
 name: python3-modules
 buildsystem: simple
 build-commands: []
@@ -60,10 +60,20 @@ modules:
         only-arches:
           - x86_64
       - type: file
+        url: https://files.pythonhosted.org/packages/37/6f/3b5ce4c3b2192d250f04908f2bfd91ef34552ec8f7716a5d4abdb8d67bb2/cffi-2.1.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+        sha256: f16c709686a78c727bbbf059f92b0bf41c6fc60deec706d2dc19f529175a6125
+        only-arches:
+          - aarch64
+      - type: file
         url: https://files.pythonhosted.org/packages/57/26/e6d4fc8512a51a5f9ee7bfdbfb853bce1197087df40c9ad993ad370b846f/cryptography-50.0.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
         sha256: ff838d62ec1bfce4f9ba7fa16f4a7b554cd8d0c299e6be37502161a660c84eef
         only-arches:
           - x86_64
+      - type: file
+        url: https://files.pythonhosted.org/packages/90/34/9ce9a62ed9dc82ca9fd6a34445b6904af56e5f38b3eae2ed32e49c36053d/cryptography-50.0.1-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+        sha256: 53e279950892dc102c6b4e52af03ae5ea92fac572a1ddab78ca73a997f62b69f
+        only-arches:
+          - aarch64
       - type: file
         url: https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
         sha256: b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
