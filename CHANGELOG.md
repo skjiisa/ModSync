@@ -34,6 +34,12 @@ All notable changes to ModSync are documented here. The format follows
 - On ARM64, ModSync no longer picks one of Valve's x86_64 Protons, which can't
   run there. When Skyrim is set to a Proton with no ARM64 build, the launch
   hook and Open MO2 use Steam's ARM64 default, as Steam does.
+- MO2 2.5 crashed at start-up, writing hundreds of crash dumps, when Skyrim's
+  Proton prefix had only the 2016 Visual C++ runtime that the game installs.
+  Open MO2 and Play now first copy a current runtime (14.44) next to
+  `ModOrganizer.exe`, unpacked from Microsoft's redistributable. It is
+  downloaded once and checked against a pinned SHA-256; the prefix is not
+  changed. Tested on a Steam Frame.
 
 ## [1.0.0] - 2026-09-21
 
