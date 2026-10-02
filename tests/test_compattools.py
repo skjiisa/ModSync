@@ -14,6 +14,10 @@ class CompatToolDiscovery(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = fakesteam.make_steam(Path(tmp.name) / "Steam", with_mo2lint=True)
         self.libraries = libs.all_libraries([self.root])
+        # An x86_64 Steam; Arm64CompatTools covers ARM64 hosts such as the Steam Frame.
+        machine = patch.object(compattools.platform, "machine", return_value="x86_64")
+        machine.start()
+        self.addCleanup(machine.stop)
 
     def test_custom_tools_read_compatibilitytool_vdf_with_comments(self):
         names = {t.name: t for t in compattools.custom_tools(self.root)}
@@ -66,9 +70,12 @@ class SteamDefaultTool(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = fakesteam.make_steam(Path(tmp.name) / "Steam")
         self.libraries = libs.all_libraries([self.root])
-        variant = patch.object(compattools.steamos, "variant", return_value=None)
-        variant.start()
-        self.addCleanup(variant.stop)
+        for p in (
+            patch.object(compattools.steamos, "variant", return_value=None),
+            patch.object(compattools.platform, "machine", return_value="x86_64"),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
 
     def default(self, global_choice=None):
         return compattools.steam_default_tool(489830, self.root, self.libraries, global_choice=global_choice)
