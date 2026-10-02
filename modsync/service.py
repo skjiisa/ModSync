@@ -21,7 +21,7 @@ from modsync import config, gameversion, pairing_lan, platforms, skse, steamos
 from modsync.downgrade import engine, recipe
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import vcruntime
-from modsync.mo2.launch import Launcher, build_plan
+from modsync.mo2.launch import Launcher, build_plan, nested_desktop_display
 from modsync.pairing_code import PairingCode
 from modsync.state import State
 from modsync.steam import appinfo, libraries as libs, prefixes, shortcuts
@@ -218,7 +218,12 @@ class ModSyncService:
             log.warning("could not add the VC++ runtime to %s: %s", plan.cwd, exc)
             note = (" The Visual C++ runtime MO2 needs could not be downloaded; "
                     "if MO2 closes right away, check the connection and try again.")
-        return self.launcher.start(plan) + note
+        message = self.launcher.start(plan) + note
+        if nested_desktop_display():
+            # The VR pointer arrives there as touch, and Qt's touch handling calls
+            # USER32.GetPointerFrameTouchInfo, which Wine doesn't implement.
+            message += " Use a mouse or the keyboard in MO2 here: the VR pointer makes it close."
+        return message
 
     def forget_instance(self) -> None:
         """Stop using the chosen instance (and its vault, if any). Files stay."""

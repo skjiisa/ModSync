@@ -1,5 +1,6 @@
 """MO2 launch plans use the right instance, profile, Proton and virtual filesystem."""
 
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -36,9 +37,12 @@ class LaunchTests(unittest.TestCase):
             patch("modsync.mo2.launch.background.in_flatpak", return_value=False),
             patch("modsync.mo2.launch.state_dir", return_value=self.tmp / "logs"),
             patch("modsync.mo2.launch.launchhook.game_proton", return_value=None),
+            # A plain desktop unless a test says otherwise (the suite also runs on a Steam Frame).
+            patch.dict(os.environ, {"DISPLAY": ":0"}),
         ):
             item.start()
             self.addCleanup(item.stop)
+        os.environ.pop("STEAM_GAME_DISPLAY_0", None)
 
     def test_open_uses_existing_prefix_runtime_and_selected_profile(self):
         plan = launch.build_plan(self.instance)
@@ -47,6 +51,27 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(plan.env["STEAM_COMPAT_DATA_PATH"], str(self.compat))
         self.assertEqual(plan.env["SteamAppId"], "489830")
         self.assertEqual(plan.cwd, self.instance)
+
+    def test_a_desktop_nested_in_gamescope_runs_wine_on_gamescopes_display(self):
+        self.assertNotIn("DISPLAY", launch.build_plan(self.instance).env)
+        with patch.dict(os.environ, {"DISPLAY": ":2", "STEAM_GAME_DISPLAY_0": ":1"}):
+            env = launch.build_plan(self.instance).env
+        self.assertEqual(env["DISPLAY"], ":1")
+        self.assertEqual((env["ENABLE_GAMESCOPE_WSI"], env["DISABLE_GAMESCOPE_WSI"]), ("0", "1"))
+        # Gaming Mode: ModSync is already on gamescope's display.
+        with patch.dict(os.environ, {"DISPLAY": ":1", "STEAM_GAME_DISPLAY_0": ":1"}):
+            self.assertNotIn("DISPLAY", launch.build_plan(self.instance).env)
+
+    def test_the_nested_desktop_warns_about_the_vr_pointer(self):
+        from modsync.service import ModSyncService
+
+        with tempfile.TemporaryDirectory() as config, patch.dict(os.environ, {"XDG_CONFIG_HOME": config}):
+            service = ModSyncService(manager=object())
+        service.state.instance_path = str(self.instance)
+        with patch.object(service.launcher, "start", return_value="Opening MO2…"):
+            self.assertEqual(service.launch_mo2(), "Opening MO2…")
+            with patch.dict(os.environ, {"DISPLAY": ":2", "STEAM_GAME_DISPLAY_0": ":1"}):
+                self.assertIn("VR pointer", service.launch_mo2())
 
     def test_play_prefers_renamed_configured_skse_and_preserves_arguments(self):
         with self.ini.open("a") as file:
