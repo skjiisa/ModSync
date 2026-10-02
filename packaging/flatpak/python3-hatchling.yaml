@@ -1,4 +1,4 @@
-# Generated with flatpak-pip-generator --runtime org.kde.Sdk//6.11 --yaml --wheel-arches x86_64 --build-only --output python3-hatchling hatchling
+# Generated with flatpak-pip-generator --runtime org.kde.Sdk//6.11 --yaml --wheel-arches x86_64,aarch64 --build-only --output python3-hatchling hatchling
 name: python3-hatchling
 buildsystem: simple
 build-commands:

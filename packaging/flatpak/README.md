@@ -64,13 +64,16 @@ the same arguments.
 ## Release bundle
 
 ModSync is not published on Flathub and there are no plans to submit it. Each
-GitHub release attaches a single-file bundle, `ModSync-<version>-x86_64.flatpak`,
-that users install with Discover or `flatpak install --user`.
+GitHub release attaches two single-file bundles that users install with
+Discover or `flatpak install --user`: `ModSync-<version>-x86_64.flatpak` for
+the Steam Deck and other PCs, and `ModSync-<version>-aarch64.flatpak` for ARM
+machines such as the Steam Frame.
 
-`.github/workflows/release.yml` builds the bundle on every `v*` tag using
-[flatpak-github-actions](https://github.com/flathub-infra/flatpak-github-actions),
-runs `modsync --version` inside it, and publishes the GitHub release together
-with the wheel and sdist. *Run workflow* builds it on demand as an artifact
+`.github/workflows/release.yml` builds both bundles on every `v*` tag using
+[flatpak-github-actions](https://github.com/flathub-infra/flatpak-github-actions).
+The aarch64 bundle is built natively on GitHub's `ubuntu-24.04-arm` runner. The
+workflow runs `modsync --version` inside each bundle and publishes the GitHub
+release together with the wheel and sdist. *Run workflow* builds it on demand as an artifact
 only. Tags with a suffix such as `v1.0.0-rc1` become pre-releases. The version
 in the tag must equal the one in `pyproject.toml` and `modsync/__init__.py`
 (`1.0.0rc1` for `v1.0.0-rc1`).
@@ -130,17 +133,17 @@ It needs `requirements-parser`, `packaging` and `pyyaml`:
 curl -sSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/pip/flatpak-pip-generator.py
 uv run --with requirements-parser --with packaging --with pyyaml \
     python flatpak-pip-generator.py --runtime org.kde.Sdk//6.11 --yaml \
-    --wheel-arches x86_64 --prefer-wheels=cryptography,cffi \
+    --wheel-arches x86_64,aarch64 --prefer-wheels=cryptography,cffi \
     --output python3-modules 'httpx>=0.27' 'qrcode>=7.4' 'platformdirs>=4' 'spake2>=0.8'
 uv run --with requirements-parser --with packaging --with pyyaml \
     python flatpak-pip-generator.py --runtime org.kde.Sdk//6.11 --yaml \
-    --wheel-arches x86_64 --build-only --output python3-hatchling hatchling
+    --wheel-arches x86_64,aarch64 --build-only --output python3-hatchling hatchling
 ```
 
 `--prefer-wheels=cryptography,cffi` picks the manylinux wheels (cryptography's
 `cp311-abi3`, cffi's `cp313`, since the 6.11 SDK ships Python 3.13) so the
-build needs no Rust toolchain. `--wheel-arches x86_64` matches the x86_64-only
-Syncthing binary. Do not list PySide6. The generator exits and points at the
+build needs no Rust toolchain. `--wheel-arches x86_64,aarch64` matches the two
+architectures the manifest pins a Syncthing binary for. Do not list PySide6. The generator exits and points at the
 base app instead.
 
 ## Lint

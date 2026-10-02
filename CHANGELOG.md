@@ -6,6 +6,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- An aarch64 Flatpak bundle next to the x86_64 one, for ARM machines such as
+  the Steam Frame. It bundles the arm64 Syncthing build. Not yet tested on an
+  ARM device.
+
 ## [1.0.0] - 2026-09-21
 
 First stable release. Everything in the two release candidates, now tested end

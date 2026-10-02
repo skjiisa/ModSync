@@ -86,6 +86,11 @@ modules:
         url: https://github.com/syncthing/syncthing/releases/download/v2.1.1/syncthing-linux-amd64-v2.1.1.tar.gz
         sha256: 0b960a67a0391156c2ca45943ed1ceaad9ae1fc3772d967e6aafc5a7c662565d
         strip-components: 1
+      - type: archive
+        only-arches: [aarch64]
+        url: https://github.com/syncthing/syncthing/releases/download/v2.1.1/syncthing-linux-arm64-v2.1.1.tar.gz
+        sha256: 2c831e27c73a5c9217bdbbfcdb695d41b027f9d8bf8303f55590881e7b907f7f
+        strip-components: 1
 
   # --- Game downgrade tools ----------------------------------------------------
   # xdelta3 applies the community downgrade patches; 7zz unpacks them. Both are

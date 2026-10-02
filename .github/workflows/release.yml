@@ -60,18 +60,26 @@ jobs:
           PY
 
   flatpak:
-    name: flatpak bundle
-    runs-on: ubuntu-latest
+    name: flatpak bundle (${{ matrix.arch }})
+    # Each architecture builds natively: aarch64 on GitHub's free ARM runner
+    # (public repositories), so no QEMU emulation is involved.
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     # The image ships flatpak + flatpak-builder with a KDE runtime pre-cached;
     # the action installs whatever the manifest actually needs
     # (org.kde.Platform//6.11, io.qt.PySide.BaseApp//6.11) from Flathub with
     # --install-deps-from, so the image's 6.10 only saves download time when
-    # it matches. Bump the tag when a kde-6.11 image appears.
+    # it matches. Bump the tag when a kde-6.11 image appears. The image is
+    # published for both amd64 and arm64.
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
       options: --privileged
-    outputs:
-      bundle: ${{ steps.name.outputs.bundle }}
     steps:
       - uses: actions/checkout@v4
 
@@ -79,7 +87,7 @@ jobs:
         id: name
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
-          echo "bundle=ModSync-${version}-x86_64.flatpak" >> "$GITHUB_OUTPUT"
+          echo "bundle=ModSync-${version}-${{ matrix.arch }}.flatpak" >> "$GITHUB_OUTPUT"
 
       # Pinned to a commit: the action is not tagged per release.
       - uses: flathub-infra/flatpak-github-actions/flatpak-builder@933e9e8ca36e85046ebca8e211f0785c6becac40
@@ -90,7 +98,8 @@ jobs:
           # when someone installs it.
           repository-url: https://flathub.org/repo/flathub.flatpakrepo
           repository-name: flathub
-          cache-key: flatpak-builder-${{ hashFiles(env.MANIFEST, 'packaging/flatpak/python3-*.yaml') }}
+          arch: ${{ matrix.arch }}
+          cache-key: flatpak-builder-${{ matrix.arch }}-${{ hashFiles(env.MANIFEST, 'packaging/flatpak/python3-*.yaml') }}
           upload-artifact: false
 
       - name: Smoke-test the bundle
@@ -102,7 +111,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: flatpak-bundle
+          name: flatpak-bundle-${{ matrix.arch }}
           path: ${{ steps.name.outputs.bundle }}
           if-no-files-found: error
 
@@ -133,14 +142,17 @@ jobs:
           path: artifacts
       - name: Write release notes
         run: |
+          x86_64_bundle=$(basename artifacts/flatpak-bundle-x86_64/*.flatpak)
+          aarch64_bundle=$(basename artifacts/flatpak-bundle-aarch64/*.flatpak)
           {
             echo "## Install on Steam Deck / Linux"
             echo
-            echo "Download **${{ needs.flatpak.outputs.bundle }}**, then in Desktop Mode either"
-            echo "open it with Discover, or run:"
+            echo "Download the bundle for your machine: **${x86_64_bundle}** for the Steam Deck"
+            echo "and other PCs, or **${aarch64_bundle}** for ARM machines such as the Steam"
+            echo "Frame. Then in Desktop Mode either open it with Discover, or run:"
             echo
             echo '```sh'
-            echo "flatpak install --user ${{ needs.flatpak.outputs.bundle }}"
+            echo "flatpak install --user ${x86_64_bundle}   # or ${aarch64_bundle}"
             echo "flatpak run $APP_ID"
             echo '```'
             echo
@@ -162,4 +174,4 @@ jobs:
             --title "ModSync ${GITHUB_REF_NAME#v}" \
             --notes-file notes.md \
             --verify-tag "${prerelease[@]}" \
-            artifacts/flatpak-bundle/*.flatpak artifacts/python-dist/*
+            artifacts/flatpak-bundle-*/*.flatpak artifacts/python-dist/*
