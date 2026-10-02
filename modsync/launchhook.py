@@ -435,9 +435,7 @@ def _resolve_underlying(
             )
     else:
         default = SteamConfig.load(env.config_vdf).compat_tool_name(0) if env.config_vdf.exists() else None
-        tool = compattools.find_tool(default, env.root, env.libraries) if default else None
-        if tool is None:
-            tool = compattools.default_valve_tool(env.root, env.libraries)
+        tool = compattools.steam_default_tool(appid, env.root, env.libraries, global_choice=default)
         if tool is None:
             raise RuntimeError(
                 "could not tell which Proton Steam uses for the game; pick one under "

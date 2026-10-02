@@ -58,6 +58,50 @@ class CompatToolDiscovery(unittest.TestCase):
         self.assertIsNone(compattools.require_tool_appid(self.root / "nowhere"))
 
 
+class SteamDefaultTool(unittest.TestCase):
+    """What Steam runs for a game left on "Default" in its Compatibility menu."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = fakesteam.make_steam(Path(tmp.name) / "Steam")
+        self.libraries = libs.all_libraries([self.root])
+        variant = patch.object(compattools, "_steamos_variant", return_value=None)
+        variant.start()
+        self.addCleanup(variant.stop)
+
+    def default(self, global_choice=None):
+        return compattools.steam_default_tool(489830, self.root, self.libraries, global_choice=global_choice)
+
+    def test_proton_stable_beats_experimental(self):
+        self.assertEqual(self.default().name, "proton_experimental")  # stable not installed: last resort
+        fakesteam.install_tool(self.root, 4628710, "Proton 11.0")
+        self.assertEqual(self.default().name, "proton_11")
+
+    def test_global_choice_beats_proton_stable(self):
+        fakesteam.install_tool(self.root, 4628710, "Proton 11.0")
+        self.assertEqual(self.default("GE-Proton10-34").name, "GE-Proton10-34")
+        self.assertEqual(self.default("not-installed").name, "proton_11")
+
+    def test_device_profile_and_manifest_mapping_beat_the_global_choice(self):
+        fakesteam.install_tool(self.root, 4628710, "Proton 11.0")
+        game = {"appid": 489830, "common": {"steam_deck_compatibility": {
+            "configuration": {"recommended_runtime": "proton-11.0-2RC"}}}}
+        fakesteam.write_appinfo(self.root, apps={489830: game})
+        self.assertEqual(self.default("GE-Proton10-34").name, "GE-Proton10-34")  # not on a Deck
+        with patch.object(compattools, "_steamos_variant", return_value="steamdeck"):
+            self.assertEqual(self.default("GE-Proton10-34").name, "proton_11")
+
+        manifests = {**fakesteam.STEAM_PLAY_MANIFESTS}
+        manifests["extended"] = {**manifests["extended"], "app_mappings": {"489830": {"tool": "proton_experimental"}}}
+        with patch.object(fakesteam, "STEAM_PLAY_MANIFESTS", manifests):
+            fakesteam.write_appinfo(self.root)
+        self.assertEqual(self.default("GE-Proton10-34").name, "proton_experimental")
+
+    def test_find_tool_matches_aliases(self):
+        self.assertEqual(compattools.find_tool("proton-experimental", self.root, self.libraries).name, "proton_experimental")
+
+
 class Arm64CompatTools(unittest.TestCase):
     """Steam on ARM64 (the Steam Frame) lists Valve's ARM64 Protons in a second
     manifests app and runs the ``-arm64`` counterpart of whatever is selected."""
@@ -100,6 +144,15 @@ class Arm64CompatTools(unittest.TestCase):
                 compattools.find_tool("proton_experimental", self.root, self.libraries).name, "proton_experimental"
             )
             self.assertEqual(compattools.default_valve_tool(self.root, self.libraries).name, "proton_experimental")
+
+    def test_default_is_proton_stable_arm64_like_on_the_frame(self):
+        """Seen on a Steam Frame: Default with Proton 11.0 (ARM64) installed maps
+        the game to proton-stable, which is proton_11-arm64."""
+        fakesteam.install_tool(self.root, 4628740, "Proton 11.0 (ARM64)")
+        with self.arm64(), patch.object(compattools, "_steamos_variant", return_value="vr"):
+            tool = compattools.steam_default_tool(489830, self.root, self.libraries)
+        self.assertEqual(tool.name, "proton_11-arm64")
+        self.assertEqual(tool.path, self.root / "steamapps/common/Proton 11.0 (ARM64)")
 
     def test_arm64_falls_back_to_the_name_as_given(self):
         import shutil

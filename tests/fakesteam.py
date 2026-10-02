@@ -33,6 +33,14 @@ STEAM_PLAY_MANIFESTS = {
                 "to_oslist": "linux",
                 "aliases": "proton-experimental",
             },
+            "proton_11": {
+                "appid": 4628710,
+                "require_tool_appid": SLR4_APPID,
+                "display_name": "Proton 11.0-2",
+                "from_oslist": "windows",
+                "to_oslist": "linux",
+                "aliases": "proton-stable,proton-11.0,proton-11.0-2RC",
+            },
             "proton_9": {
                 "appid": 2805730,
                 "display_name": "Proton 9.0-4",
@@ -166,3 +174,19 @@ def env_without_flatpak() -> dict[str, str]:
     env = dict(os.environ)
     env.pop("FLATPAK_ID", None)
     return env
+
+
+def install_tool(root: Path, appid: int, installdir: str) -> Path:
+    """Install one more Valve tool (an app with a ``proton``) into the fake library."""
+    steamapps = root / "steamapps"
+    (steamapps / f"appmanifest_{appid}.acf").write_text(_acf(appid, installdir, installdir))
+    _executable(steamapps / "common" / installdir / "proton", "#!/usr/bin/env bash\nexit 0\n")
+    return steamapps / "common" / installdir
+
+
+def write_appinfo(root: Path, *, arm64: bool = False, apps: dict[int, dict] | None = None) -> None:
+    """Rewrite appinfo.vdf with the manifests plus ``apps`` (appid -> appinfo KV)."""
+    manifests: dict[int, dict] = {891390: STEAM_PLAY_MANIFESTS}
+    if arm64:
+        manifests[3043620] = ARM64_MANIFESTS
+    (root / "appcache" / "appinfo.vdf").write_bytes(build_appinfo_v29_apps({**manifests, **(apps or {})}))

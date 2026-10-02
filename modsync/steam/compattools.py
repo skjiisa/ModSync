@@ -39,6 +39,12 @@ ARM64_MANIFESTS_APPID = 3043620
 # The main manifest comes first so its names win when both declare one.
 MANIFEST_APPIDS = (STEAM_PLAY_MANIFESTS_APPID, ARM64_MANIFESTS_APPID)
 ARM64_SUFFIX = "-arm64"
+# What "Default" means in a game's Compatibility menu (the manifests'
+# ``selectable_aliases``): Proton 11.0 on x86_64, Proton 11.0 (ARM64) on ARM64.
+STEAM_DEFAULT_TOOL = "proton-stable"
+# Valve's per-device compatibility profile in a game's appinfo, by SteamOS
+# VARIANT_ID; its ``recommended_runtime`` beats the global default.
+DEVICE_PROFILE_KEYS = {"steamdeck": "steam_deck_compatibility", "vr": "steam_frame_compatibility"}
 
 
 def is_arm64() -> bool:
@@ -198,12 +204,67 @@ def arm64_candidates(name: str, steam_root: Path | str) -> list[str]:
 
 
 def find_tool(name: str, steam_root: Path | str, libraries: Iterable[Library]) -> CompatTool | None:
-    """The installed tool Steam runs for ``name`` (a ``config.vdf`` tool name)."""
-    tools = {t.name: t for t in reversed(all_tools(steam_root, libraries))}  # first one wins
+    """The installed tool Steam runs for ``name`` (a ``config.vdf`` tool name
+    or an alias such as ``proton-stable``)."""
+    tools = all_tools(steam_root, libraries)
     for candidate in arm64_candidates(name, steam_root) if is_arm64() else [name]:
-        if candidate in tools:
-            return tools[candidate]
+        for tool in tools:
+            if tool.name == candidate:
+                return tool
+        for tool in tools:
+            if candidate in tool.aliases:
+                return tool
     return None
+
+
+def _steamos_variant() -> str | None:
+    try:
+        lines = Path("/etc/os-release").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    fields = dict(line.split("=", 1) for line in lines if "=" in line)
+    fields = {k: v.strip().strip("\"'") for k, v in fields.items()}
+    return fields.get("VARIANT_ID") if fields.get("ID") == "steamos" else None
+
+
+def recommended_tools(appid: int, steam_root: Path | str) -> list[str]:
+    """What Valve recommends for the game before Steam falls back to the
+    global default: the device's compatibility profile on a Steam Deck or
+    Steam Frame, then the per-game mapping in the Steam Play manifests."""
+    path = appinfo.appinfo_path(steam_root)
+    if not path.exists():
+        return []
+    try:
+        infos = appinfo.read_apps(path, (appid, *MANIFEST_APPIDS))
+    except (OSError, appinfo.AppInfoError):
+        return []
+    names: list[str] = []
+    key = DEVICE_PROFILE_KEYS.get(_steamos_variant() or "")
+    game = infos.get(appid)
+    if key and game is not None:
+        profile = (game.raw.get("common") or {}).get(key) or {}
+        runtime = (profile.get("configuration") or {}).get("recommended_runtime") if isinstance(profile, dict) else None
+        if runtime and runtime != "native":
+            names.append(str(runtime))
+    for manifest_appid in MANIFEST_APPIDS:
+        info = infos.get(manifest_appid)
+        mapping = ((info.raw.get("extended") or {}).get("app_mappings") or {}).get(str(appid)) if info else None
+        if isinstance(mapping, dict) and mapping.get("tool"):
+            names.append(str(mapping["tool"]))
+    return names
+
+
+def steam_default_tool(
+    appid: int, steam_root: Path | str, libraries: Iterable[Library], global_choice: str | None = None
+) -> CompatTool | None:
+    """The tool Steam runs for a game left on "Default", in Steam's order:
+    Valve's recommendation for the game, the user's global choice
+    (``CompatToolMapping`` entry 0), then Proton stable."""
+    libraries = list(libraries)
+    for name in [*recommended_tools(appid, steam_root), global_choice, STEAM_DEFAULT_TOOL]:
+        if name and (tool := find_tool(name, steam_root, libraries)) is not None:
+            return tool
+    return default_valve_tool(steam_root, libraries)
 
 
 def mo2lint_tool(appid: int, steam_root: Path | str) -> CompatTool | None:
@@ -215,9 +276,9 @@ def mo2lint_tool(appid: int, steam_root: Path | str) -> CompatTool | None:
 
 
 def default_valve_tool(steam_root: Path | str, libraries: Iterable[Library]) -> CompatTool | None:
-    """The Proton Steam most likely picks for a game with no explicit choice:
-    Proton Experimental, else the newest numbered Proton, else Proton Hotfix.
-    On ARM64 the ARM64 builds of those come first."""
+    """A last resort when :func:`steam_default_tool` finds nothing Steam would
+    pick: Proton Experimental, else the newest numbered Proton, else Proton
+    Hotfix. On ARM64 the ARM64 builds of those come first."""
     tools = {t.name: t for t in valve_tools(steam_root, libraries)}
     if is_arm64():
         # proton-experimental-arm64 -> proton_experimental, proton_11-arm64 -> proton_11

@@ -18,6 +18,10 @@ All notable changes to ModSync are documented here. The format follows
   Valve's ARM64 Proton builds and hands off to the one Steam would run.
 - On machines other than x86_64, Install MO2 says up front that MO2-LINT
   only ships an x86_64 build. It no longer tries to run that build.
+- When a game is left on "Default" in Steam, the Play button hook now hands
+  off to the Proton Steam would pick: Valve's recommendation for the game on a
+  Steam Deck or Steam Frame, then your global choice, then Proton stable. It
+  used to prefer Proton Experimental.
 
 ## [1.0.0] - 2026-09-21
 
