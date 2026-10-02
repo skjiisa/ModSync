@@ -211,6 +211,27 @@ class Mo2LintBackendTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("host system from the Flatpak", reason)
 
+    def test_the_x86_64_download_is_not_offered_on_arm64(self):
+        """MO2-LINT only ships an x86_64 binary; an ARM64 host can't run it."""
+        import subprocess
+        from unittest.mock import patch
+
+        from modsync.mo2.installers import mo2lint
+
+        ok_probe = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with patch.object(mo2lint.platform, "machine", return_value="aarch64"), \
+                patch.object(mo2lint.shutil, "which", return_value=None), \
+                patch.object(mo2lint.background, "run_host", return_value=ok_probe) as run:
+            ok, reason = Mo2LintBackend().available()
+            self.assertFalse(ok)
+            self.assertIn("x86_64", reason)
+            self.assertIn("aarch64", reason)
+            run.assert_not_called()
+        with patch.object(mo2lint.platform, "machine", return_value="aarch64"), \
+                patch.object(mo2lint.shutil, "which", return_value="/usr/bin/mo2-lint"), \
+                patch.object(mo2lint.background, "run_host", return_value=ok_probe):
+            self.assertEqual(Mo2LintBackend().available(), (True, ""))
+
 
 if __name__ == "__main__":
     unittest.main()

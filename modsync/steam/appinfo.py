@@ -23,6 +23,7 @@ Format (all little-endian):
 from __future__ import annotations
 
 import struct
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -137,13 +138,23 @@ def _iter_apps(data: bytes):
 
 def read_app(path: Path | str, appid: int) -> AppInfo | None:
     """Parse only the requested app out of appinfo.vdf; None if it is not there."""
+    return read_apps(path, [appid]).get(appid)
+
+
+def read_apps(path: Path | str, appids: Iterable[int]) -> dict[int, AppInfo]:
+    """Parse the requested apps out of appinfo.vdf in one pass; apps that are
+    not there are left out of the result."""
+    wanted = set(appids)
+    out: dict[int, AppInfo] = {}
     data = Path(path).read_bytes()
     for aid, kv_pos, reader in _iter_apps(data):
-        if aid != appid:
+        if aid not in wanted:
             continue
         kv, _ = reader.kv(kv_pos)
-        return _to_appinfo(appid, kv.get("appinfo", kv))
-    return None
+        out[aid] = _to_appinfo(aid, kv.get("appinfo", kv))
+        if len(out) == len(wanted):
+            break
+    return out
 
 
 def _to_int(v: Any) -> int | None:

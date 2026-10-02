@@ -12,6 +12,13 @@ All notable changes to ModSync are documented here. The format follows
   the Steam Frame. It bundles the arm64 Syncthing build. Not yet tested on an
   ARM device.
 
+### Changed
+
+- On ARM64 machines such as the Steam Frame, the Play button hook finds
+  Valve's ARM64 Proton builds and hands off to the one Steam would run.
+- On machines other than x86_64, Install MO2 says up front that MO2-LINT
+  only ships an x86_64 build. It no longer tries to run that build.
+
 ## [1.0.0] - 2026-09-21
 
 First stable release. Everything in the two release candidates, now tested end

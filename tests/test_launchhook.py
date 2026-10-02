@@ -20,13 +20,17 @@ class LaunchHookBase(unittest.TestCase):
     with_mo2lint = False
     mapping: dict = {}
 
+    arm64 = False
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
         os.environ["XDG_CONFIG_HOME"] = str(self.tmp / "config")
         self.addCleanup(os.environ.pop, "XDG_CONFIG_HOME", None)
-        self.root = fakesteam.make_steam(self.tmp / "Steam", mapping=self.mapping, with_mo2lint=self.with_mo2lint)
+        self.root = fakesteam.make_steam(
+            self.tmp / "Steam", mapping=self.mapping, with_mo2lint=self.with_mo2lint, arm64=self.arm64
+        )
         env = launchhook.SteamEnv(self.root, libs.all_libraries([self.root]))
         self.steam_running = False
         for p in (
@@ -41,6 +45,26 @@ class LaunchHookBase(unittest.TestCase):
 
     def mapping_name(self):
         return SteamConfig.load(self.root / "config/config.vdf").compat_tool_name(489830)
+
+
+class EnableOnArm64(LaunchHookBase):
+    """On the Steam Frame, "Proton Experimental" in Steam runs the ARM64 build;
+    the hook has to hand off to that one, not the x86_64 build."""
+
+    arm64 = True
+    mapping = {489830: {"name": "proton_experimental", "config": "", "priority": "250"}}
+
+    def setUp(self):
+        super().setUp()
+        p = patch("modsync.steam.compattools.platform.machine", return_value="aarch64")
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_hands_off_to_the_arm64_proton(self):
+        launchhook.enable()
+        arm_dir = self.root / "steamapps/common/Proton - Experimental (ARM64)"
+        self.assertIn(f'underlying="{arm_dir}"', (self.tool_dir / "proton").read_text())
+        self.assertEqual(launchhook.game_proton().path, arm_dir)
 
 
 class EnableWithSteamClosed(LaunchHookBase):

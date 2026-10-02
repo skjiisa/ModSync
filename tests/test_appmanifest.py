@@ -48,6 +48,11 @@ def _bkv_str(s: str) -> bytes:
 
 def build_appinfo_v29(appid: int, kv: dict) -> bytes:
     """Encode a minimal v29 appinfo.vdf with one app (keys via string table)."""
+    return build_appinfo_v29_apps({appid: kv})
+
+
+def build_appinfo_v29_apps(apps: dict[int, dict]) -> bytes:
+    """Encode a minimal v29 appinfo.vdf with the given apps, in order."""
     strings: list[str] = []
 
     def key_idx(k: str) -> int:
@@ -66,10 +71,12 @@ def build_appinfo_v29(appid: int, kv: dict) -> bytes:
                 out += b"\x01" + struct.pack("<I", key_idx(k)) + _bkv_str(str(v))
         return out + b"\x08"
 
-    blob = enc({"appinfo": kv})
     entry_hdr = struct.pack("<IIQ", 0, 0, 0) + b"\0" * 20 + struct.pack("<I", 1) + b"\0" * 20
-    entry = struct.pack("<II", appid, len(entry_hdr) + len(blob)) + entry_hdr + blob
-    body = entry + struct.pack("<I", 0)
+    body = b""
+    for appid, kv in apps.items():
+        blob = enc({"appinfo": kv})
+        body += struct.pack("<II", appid, len(entry_hdr) + len(blob)) + entry_hdr + blob
+    body += struct.pack("<I", 0)
     header_len = 4 + 4 + 8
     strtab_off = header_len + len(body)
     strtab = struct.pack("<I", len(strings)) + b"".join(_bkv_str(s) for s in strings)

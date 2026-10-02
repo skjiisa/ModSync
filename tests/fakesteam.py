@@ -2,7 +2,9 @@
 library with Skyrim, Proton Experimental (a Valve tool needing Steam Linux
 Runtime 4.0) and that runtime installed, a GE-Proton under
 compatibilitytools.d, a config.vdf, and an appinfo.vdf carrying the Steam Play
-manifests app that names Valve's tools."""
+manifests app that names Valve's tools. ``arm64=True`` adds the ARM64
+manifests app and Proton Experimental (ARM64) with its runtime, the way the
+Steam Frame has them."""
 
 from __future__ import annotations
 
@@ -11,11 +13,13 @@ import stat
 from pathlib import Path
 
 from modsync.steam import vdf
-from tests.test_appmanifest import build_appinfo_v29
+from tests.test_appmanifest import build_appinfo_v29_apps
 
 PROTON_EXPERIMENTAL_APPID = 1493710
 SLR4_APPID = 4183110
 SNIPER_APPID = 1628350
+PROTON_EXPERIMENTAL_ARM64_APPID = 4427310
+SLR4_ARM64_APPID = 4185400
 
 STEAM_PLAY_MANIFESTS = {
     "appid": 891390,
@@ -27,6 +31,7 @@ STEAM_PLAY_MANIFESTS = {
                 "display_name": "Proton Experimental",
                 "from_oslist": "windows",
                 "to_oslist": "linux",
+                "aliases": "proton-experimental",
             },
             "proton_9": {
                 "appid": 2805730,
@@ -35,6 +40,31 @@ STEAM_PLAY_MANIFESTS = {
                 "to_oslist": "linux",
             },
             "steamlinuxruntime_4": {"appid": SLR4_APPID, "from_oslist": "linux", "to_oslist": "linux"},
+        }
+    },
+}
+
+# Shaped like the Frame's: names end in -arm64 and Proton Experimental only
+# shares an alias with its x86_64 counterpart.
+ARM64_MANIFESTS = {
+    "appid": 3043620,
+    "extended": {
+        "compat_tools": {
+            "proton-experimental-arm64": {
+                "appid": PROTON_EXPERIMENTAL_ARM64_APPID,
+                "require_tool_appid": SLR4_ARM64_APPID,
+                "display_name": "Proton Experimental (ARM64)",
+                "from_oslist": "windows",
+                "to_oslist": "linux",
+                "aliases": "proton-experimental",
+            },
+            "proton_11-arm64": {
+                "appid": 4628740,
+                "display_name": "Proton 11.0 (ARM64)",
+                "from_oslist": "windows",
+                "to_oslist": "linux",
+                "aliases": "proton-stable-arm64,proton-stable",
+            },
         }
     },
 }
@@ -51,7 +81,7 @@ def _executable(path: Path, text: str) -> Path:
     return path
 
 
-def make_steam(root: Path, *, mapping: dict | None = None, with_mo2lint: bool = False) -> Path:
+def make_steam(root: Path, *, mapping: dict | None = None, with_mo2lint: bool = False, arm64: bool = False) -> Path:
     """Build the fake Steam root and return it. ``mapping`` is what goes into
     CompatToolMapping (appid -> entry)."""
     steamapps = root / "steamapps"
@@ -104,8 +134,25 @@ def make_steam(root: Path, *, mapping: dict | None = None, with_mo2lint: bool = 
             '      "from_oslist" "windows"\n      "to_oslist" "linux"\n    }\n  }\n}\n'
         )
 
+    manifests = {891390: STEAM_PLAY_MANIFESTS}
+    if arm64:
+        manifests[3043620] = ARM64_MANIFESTS
+        (steamapps / f"appmanifest_{PROTON_EXPERIMENTAL_ARM64_APPID}.acf").write_text(
+            _acf(PROTON_EXPERIMENTAL_ARM64_APPID, "Proton Experimental (ARM64)", "Proton - Experimental (ARM64)")
+        )
+        arm_dir = common / "Proton - Experimental (ARM64)"
+        _executable(arm_dir / "proton", "#!/usr/bin/env bash\nprintf 'proton-arm64 %s\\n' \"$*\"\n")
+        (arm_dir / "toolmanifest.vdf").write_text(
+            '"manifest"\n{\n\t"version"\t\t"2"\n\t"commandline"\t\t"/proton %verb%"\n'
+            f'\t"require_tool_appid"\t\t"{SLR4_ARM64_APPID}"\n\t"use_sessions"\t\t"1"\n}}\n'
+        )
+        (steamapps / f"appmanifest_{SLR4_ARM64_APPID}.acf").write_text(
+            _acf(SLR4_ARM64_APPID, "Steam Linux Runtime 4.0 - Arm64", "SteamLinuxRuntime_4-arm64")
+        )
+        _executable(common / "SteamLinuxRuntime_4-arm64" / "_v2-entry-point", "#!/usr/bin/env bash\nexit 0\n")
+
     (root / "appcache").mkdir()
-    (root / "appcache" / "appinfo.vdf").write_bytes(build_appinfo_v29(891390, STEAM_PLAY_MANIFESTS))
+    (root / "appcache" / "appinfo.vdf").write_bytes(build_appinfo_v29_apps(manifests))
 
     store = {"InstallConfigStore": {"Software": {"Valve": {"Steam": {
         "AutoUpdateWindowEnabled": "0",
