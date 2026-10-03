@@ -28,6 +28,11 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- The Flatpak didn't recognise SteamOS: inside the sandbox `/etc/os-release`
+  describes the Flatpak runtime. ModSync now reads the host's
+  `/run/host/os-release`, so on a Steam Frame it says to reboot instead of
+  restarting Steam, and Valve's Steam Deck/Frame Proton recommendations apply.
+  Tested on a Frame.
 - `modsync service install` failed in the Steam Frame's desktop terminal,
   because the nested Plasma session's `XDG_RUNTIME_DIR` has no systemd user
   bus. ModSync now falls back to the login session's.

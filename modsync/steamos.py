@@ -12,12 +12,25 @@ from __future__ import annotations
 from pathlib import Path
 
 
+# Inside the Flatpak, /etc/os-release describes the runtime (org.kde.Platform);
+# Flatpak exposes the host's at /run/host/os-release.
+OS_RELEASE_PATHS = ("/run/host/os-release", "/etc/os-release")
+
+
+def _os_release_lines() -> list[str] | None:
+    for candidate in OS_RELEASE_PATHS:
+        try:
+            return Path(candidate).read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+    return None
+
+
 def variant() -> str | None:
     """SteamOS's ``VARIANT_ID`` (``steamdeck``, ``vr`` for the Steam Frame), or
     None when this isn't SteamOS."""
-    try:
-        lines = Path("/etc/os-release").read_text(encoding="utf-8").splitlines()
-    except OSError:
+    lines = _os_release_lines()
+    if lines is None:
         return None
     fields = dict(line.split("=", 1) for line in lines if "=" in line)
     fields = {k: v.strip().strip("\"'") for k, v in fields.items()}
