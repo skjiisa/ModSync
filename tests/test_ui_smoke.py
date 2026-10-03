@@ -308,6 +308,50 @@ class LaunchHubSmokeTests(_SmokeBase):
         self.assertIn("In sync", hub._sync_label.text())
         hub._timer.stop()
 
+    def test_usvfs_controls_apply_and_restore_from_the_steam_hub(self):
+        from modsync.mo2 import usvfs
+        from modsync.ui.launch_hub import LaunchHub
+
+        service = ModSyncService(manager=object())
+        State(instance_path=str(self.tmp)).save()
+        current = usvfs.Status("available", "ARM64 fix available", True)
+        messages = []
+
+        def apply():
+            nonlocal current
+            current = usvfs.Status("patched", "ARM64 fix installed", can_restore=True)
+            return "applied"
+
+        def restore():
+            nonlocal current
+            current = usvfs.Status("available", "ARM64 fix available", True)
+            return "restored"
+
+        with patch.object(usvfs, "is_arm64", return_value=True), \
+                patch.object(service, "usvfs_status", side_effect=lambda: current), \
+                patch.object(service, "apply_usvfs_fix", side_effect=apply) as apply_call, \
+                patch.object(service, "restore_usvfs", side_effect=restore) as restore_call:
+            hub = LaunchHub(service)
+            hub._usvfs.status.connect(messages.append)
+            for _ in range(2):
+                QThreadPool.globalInstance().waitForDone(5000)
+                self.app.processEvents()
+            self.assertTrue(hub._usvfs.apply_button.isVisibleTo(hub))
+            hub._usvfs.apply_button.click()
+            for _ in range(3):
+                QThreadPool.globalInstance().waitForDone(5000)
+                self.app.processEvents()
+            apply_call.assert_called_once()
+            self.assertTrue(hub._usvfs.restore_button.isVisibleTo(hub))
+            hub._usvfs.restore_button.click()
+            for _ in range(3):
+                QThreadPool.globalInstance().waitForDone(5000)
+                self.app.processEvents()
+            restore_call.assert_called_once()
+            self.assertEqual(messages, ["applied", "restored"])
+            self.assertTrue(hub._usvfs.apply_button.isVisibleTo(hub))
+            hub.cancel()
+
     def test_auto_decision_env_is_a_testing_aid(self):
         from PySide6.QtTest import QTest
 
@@ -319,6 +363,50 @@ class LaunchHubSmokeTests(_SmokeBase):
 
 
 class FileOperationNavigationTests(_SmokeBase):
+    def test_usvfs_replacement_blocks_launch_and_navigation_in_both_windows(self):
+        from threading import Event
+        from modsync.mo2 import usvfs
+        from modsync.ui.dashboard import Dashboard
+        from modsync.ui.launch_hub import LaunchHub
+
+        State(instance_path=str(self.tmp)).save()
+        for widget_type in (Dashboard, LaunchHub):
+            with self.subTest(window=widget_type.__name__):
+                service = ModSyncService(manager=object())
+                release = Event()
+                available = usvfs.Status("available", "ARM64 fix available", True)
+                with patch.object(usvfs, "is_arm64", return_value=True), \
+                        patch.object(service, "usvfs_status", return_value=available), \
+                        patch.object(service, "apply_usvfs_fix", side_effect=lambda: release.wait(5)), \
+                        patch.object(service, "launch_mo2") as launch:
+                    window = widget_type(service)
+                    window.show()
+                    self._settle()
+                    try:
+                        window._usvfs.apply_button.click()
+                        self.assertTrue(window._usvfs.busy)
+                        if widget_type == LaunchHub:
+                            self.assertFalse(window.continue_button.isEnabled())
+                            self.assertFalse(window.game_card.isEnabled())
+                            window.proceed()
+                            window.cancel()
+                            self.assertFalse(window.close())
+                            self.assertIsNone(window.decision)
+                        else:
+                            self.assertTrue(window.busy)
+                            self.assertFalse(window._play_button.isEnabled())
+                            self.assertFalse(window._wizard_button.isEnabled())
+                            self.assertFalse(window.game.isEnabled())
+                            window._launch_mo2(play=True)
+                            launch.assert_not_called()
+                    finally:
+                        release.set()
+                        self._settle()
+                        self._settle()
+                        if widget_type == Dashboard:
+                            window.shutdown()
+                        window.close()
+
     def _settle(self):
         QThreadPool.globalInstance().waitForDone(5000)
         self.app.processEvents()

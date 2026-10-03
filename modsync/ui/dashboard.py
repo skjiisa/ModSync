@@ -38,6 +38,7 @@ from modsync.ui.game_card import GameCard
 from modsync.ui.sync_card import SyncCard
 from modsync.ui.theme import role
 from modsync.ui.worker import run_async
+from modsync.ui.usvfs_controls import UsvfsControls
 
 _POLL_MS = 4000
 _TAGLINE = f"Set up {SKYRIM_SE.name} for modding on this machine."
@@ -192,6 +193,7 @@ class Dashboard(QWidget):
         v = QVBoxLayout(box)
         state = self.service.state
         self._open_mo2_button = None
+        self._usvfs = None
         if state.has_instance:
             path = QLabel(state.instance_path)
             path.setWordWrap(True)
@@ -237,6 +239,11 @@ class Dashboard(QWidget):
             runtime_row.addWidget(self._runtime_status, stretch=1)
             v.addWidget(self._runtime_widget)
             self._refresh_prefix_runtime()
+            self._usvfs = UsvfsControls(self.service)
+            self._usvfs.busyChanged.connect(self._on_busy)
+            self._usvfs.status.connect(self._set_status)
+            self._usvfs.failed.connect(self._on_error)
+            v.addWidget(self._usvfs)
         else:
             intro = QLabel(
                 "No Mod Organizer 2 instance chosen yet. Pick the folder of an existing "
@@ -364,7 +371,7 @@ class Dashboard(QWidget):
         if self._open_mo2_button is not None:
             self._open_mo2_button.setEnabled(ready and not self.service.launcher.running(play=False))
         # Do not rewrite game files while a launch from this app is alive.
-        self.game.setEnabled(not self._launching and not self.service.launcher.running())
+        self.game.setEnabled(not self._launching and not self._usvfs_busy and not self.service.launcher.running())
 
     # --- background service, Steam shortcut, launch hook -----------------------
     def _build_integration_group(self) -> QGroupBox:
@@ -658,7 +665,11 @@ class Dashboard(QWidget):
     # --- plumbing ------------------------------------------------------------
     @property
     def busy(self) -> bool:
-        return self.game.busy or self._launching
+        return self.game.busy or self._launching or self._usvfs_busy
+
+    @property
+    def _usvfs_busy(self) -> bool:
+        return self._usvfs is not None and self._usvfs.busy
 
     def _on_busy(self, _busy: bool) -> None:
         self._update_launch_buttons()

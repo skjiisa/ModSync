@@ -82,6 +82,7 @@ copy of Skyrim Special Edition you already own through Steam.
 | [PySide6](https://pypi.org/project/PySide6-Essentials/) / Qt 6 | the GUI | bundled in the Flatpak on the KDE runtime; a dependency of the source install | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only |
 | [MO2-LINT](https://github.com/Furglitch/modorganizer2-linux-installer) | installs Mod Organizer 2 into the game's Proton prefix | downloaded on demand as a pinned prebuilt binary when you choose Install MO2 | GPL-3.0 |
 | [Mod Organizer 2](https://github.com/ModOrganizer2/modorganizer) | the mod manager | installed by MO2-LINT; not bundled or downloaded by ModSync itself | GPL-3.0 |
+| [USVFS ARM64 backport](https://github.com/ndabas/usvfs/releases/tag/v0.5.6.1-woa.1) | fixes MO2 2.5.2's process injection on ARM64 | downloaded on request, pinned and verified; [source and build details](docs/usvfs-arm64.md) | GPL-3.0 |
 | [Mulderland's Skyrim SE downgrader](https://github.com/Mulderland/MulderLoad) | the downgrade recipe and the community xdelta patches it points to | ModSync converts the recipe to JSON and downloads the patches from Mulderland's CDN only when you ask for a downgrade | no license declared upstream |
 | [httpx](https://github.com/encode/httpx) | HTTP client for the Syncthing API | Python dependency | BSD-3-Clause |
 | [platformdirs](https://github.com/tox-dev/platformdirs) | data and config directories | Python dependency | MIT |

@@ -20,7 +20,7 @@ from pathlib import Path
 from modsync import config, gameversion, pairing_lan, platforms, skse, steamos
 from modsync.downgrade import engine, recipe
 from modsync.games import SKYRIM_SE
-from modsync.mo2 import vcruntime
+from modsync.mo2 import usvfs, vcruntime
 from modsync.mo2.launch import (Launcher, build_plan, nested_desktop_display, plan_system32,
                                 prefix_system32, run_in_prefix)
 from modsync.pairing_code import PairingCode
@@ -240,6 +240,29 @@ class ModSyncService:
         except (RuntimeError, OSError) as exc:  # Steam/Proton not ready: nothing to offer yet
             log.info("could not check the prefix's VC++ runtime: %s", exc)
             return []
+
+    def usvfs_status(self) -> usvfs.Status:
+        path = self.state.instance_path
+        if not path:
+            return usvfs.Status("missing", "Choose an installed Mod Organizer 2 instance first.")
+        if not usvfs.worth_checking(path):
+            return usvfs.Status("not-needed", "This machine does not need the USVFS ARM64 fix.")
+        return usvfs.status(path)
+
+    def apply_usvfs_fix(self) -> str:
+        return self._change_usvfs(usvfs.apply)
+
+    def restore_usvfs(self) -> str:
+        return self._change_usvfs(usvfs.restore)
+
+    def _change_usvfs(self, change) -> str:
+        if not self.state.instance_path:
+            raise RuntimeError("Choose an MO2 instance first.")
+        # A launch from this app that hasn't loaded USVFS yet (Proton still
+        # starting) is invisible to usvfs's own process check.
+        if self.launcher.running():
+            raise RuntimeError("Close Mod Organizer 2 and the game before changing USVFS.")
+        return change(self.state.instance_path)
 
     def install_prefix_runtime(self) -> str:
         """Install Microsoft's VC++ runtime into the game prefix, after backing up

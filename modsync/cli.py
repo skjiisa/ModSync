@@ -48,13 +48,38 @@ def mo2(args: list[str]) -> int:
         return _mo2_use(rest)
     if sub == "install":
         return _mo2_install(rest)
+    if sub == "usvfs":
+        return _mo2_usvfs(rest)
     print(
         "usage:\n"
         "  modsync mo2 status                   the instance in use and whether it is synced\n"
         "  modsync mo2 use <instance-dir>       use an existing portable instance here\n"
-        "  modsync mo2 install <dest-dir>       install a fresh instance with MO2-LINT"
+        "  modsync mo2 install <dest-dir>       install a fresh instance with MO2-LINT\n"
+        "  modsync mo2 usvfs status|apply|restore   inspect, apply, or undo the ARM64 fix"
     )
     return 2
+
+
+def _mo2_usvfs(args: list[str]) -> int:
+    from modsync.mo2 import usvfs
+    from modsync.state import State
+
+    if len(args) != 1 or args[0] not in ("status", "apply", "restore"):
+        print("usage: modsync mo2 usvfs status|apply|restore")
+        return 2
+    instance = State.load().instance_path
+    if not instance:
+        print("Choose an MO2 instance first with 'modsync mo2 use <dir>'.")
+        return 1
+    try:
+        if args[0] == "status":
+            print(usvfs.status(instance).message)
+        else:
+            print(usvfs.apply(instance) if args[0] == "apply" else usvfs.restore(instance))
+    except (OSError, RuntimeError) as exc:
+        print(f"Cannot {args[0]} USVFS: {exc}")
+        return 1
+    return 0
 
 
 def _mo2_status() -> int:

@@ -5,13 +5,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import StringIO
+from pathlib import Path
 
 from modsync import gameversion, launchhook, platforms
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import discover as mo2_discover
 from modsync.mo2 import instance as mo2_instance
 from modsync.mo2 import launch as mo2_launch
-from modsync.mo2 import vcruntime
+from modsync.mo2 import usvfs as usvfs_fix, vcruntime
 from modsync.steam import pe
 from modsync.steam import libraries as libs
 from modsync.state import State
@@ -65,6 +66,14 @@ def build() -> Report:
         line("  ✗ not installed")
     line()
 
+    usvfs_messages: dict[Path, str] = {}
+
+    def usvfs_message(instance: Path) -> str:
+        key = instance.resolve()
+        if key not in usvfs_messages:
+            usvfs_messages[key] = usvfs_fix.status(key).message
+        return usvfs_messages[key]
+
     line("Mod Organizer 2 instances:")
     instances = list(
         mo2_discover.discover_instances(plat.mo2_broad_roots(), plat.mo2_known_roots())
@@ -110,6 +119,8 @@ def build() -> Report:
                 line(f"      usvfs {shown}")
         for issue in info.issues:
             line(f"      ! {issue}")
+        if usvfs_fix.worth_checking(path):
+            line(f"      USVFS ARM64: {usvfs_message(path)}")
 
     hook = launchhook.status()
     line()
@@ -121,6 +132,8 @@ def build() -> Report:
         line()
         line("ModSync setup:")
         line(f"  • instance: {state.instance_path}")
+        if usvfs_fix.worth_checking(state.instance_path):
+            line(f"  • USVFS ARM64: {usvfs_message(Path(state.instance_path))}")
         line(f"  • sync: {'vault ' + str(state.folder_id) if state.syncing else 'off'}")
         vc = gameversion.check(state.instance_path)
         mark = "!" if vc.mismatch else "•"

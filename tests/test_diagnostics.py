@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from modsync import __version__, diagnostics, logging_setup
@@ -159,6 +160,25 @@ class DiagnosticsCommandTests(_StateHome):
         with redirect_stdout(out):
             main(["doctor"])
         self.assertIn(f"Log file:        {self.state_home / 'modsync' / 'modsync.log'}", out.getvalue())
+
+    def test_doctor_reports_the_usvfs_fix_for_the_chosen_instance(self):
+        from modsync.mo2 import usvfs
+        from modsync.state import State
+
+        instance = self.tmp / "MO2"
+        instance.mkdir()
+        (instance / "ModOrganizer.exe").write_bytes(b"MO2")
+        State(instance_path=str(instance)).save()
+        out = io.StringIO()
+        # doctor stops early without Steam; give it an empty one so CI gets as far.
+        steam = self.tmp / "steam"
+        (steam / "steamapps").mkdir(parents=True)
+        plat = SimpleNamespace(name="linux", steam_roots=lambda: [steam], mo2_broad_roots=lambda: [],
+                               mo2_known_roots=lambda: [])
+        with (patch("modsync.report.platforms.current", return_value=plat),
+              patch.object(usvfs, "is_arm64", return_value=True), redirect_stdout(out)):
+            main(["doctor"])
+        self.assertIn("USVFS ARM64: This USVFS build is not recognized", out.getvalue())
 
     def test_help_lists_diagnostics(self):
         out = io.StringIO()
