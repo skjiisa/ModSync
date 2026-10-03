@@ -12,15 +12,20 @@ ARCH = "NAME=CachyOS\nID=cachyos\n"
 
 
 class SteamOSVariant(unittest.TestCase):
-    def with_os_release(self, text):
+    def with_os_release(self, text, host_text=None):
+        """``text`` as /etc/os-release; ``host_text`` as the host's file a
+        Flatpak sees at /run/host/os-release (absent when None)."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        path = Path(tmp.name) / "os-release"
-        path.write_text(text)
+        files = {"/etc/os-release": Path(tmp.name) / "os-release",
+                 "/run/host/os-release": Path(tmp.name) / "host-os-release"}
+        files["/etc/os-release"].write_text(text)
+        if host_text is not None:
+            files["/run/host/os-release"].write_text(host_text)
         real = Path
 
         def fake_path(p, *rest):
-            return path if str(p) == "/etc/os-release" else real(p, *rest)
+            return files.get(str(p)) or real(p, *rest)
 
         patcher = patch.object(steamos, "Path", side_effect=fake_path)
         patcher.start()
@@ -32,6 +37,12 @@ class SteamOSVariant(unittest.TestCase):
         self.assertTrue(steamos.is_steam_frame())
         self.assertIn("reboot", steamos.steam_restart_hint())
         self.assertNotIn("Restart Steam", steamos.steam_restart_hint())
+
+    def test_inside_the_flatpak_the_host_os_release_wins(self):
+        """The Flatpak's /etc/os-release is the KDE runtime's; the host's says Steam Frame."""
+        self.with_os_release('NAME="KDE Flatpak runtime"\nID=org.kde.Platform\n', host_text=FRAME)
+        self.assertEqual(steamos.variant(), "vr")
+        self.assertIn("reboot", steamos.steam_restart_hint())
 
     def test_deck_names_the_power_menu(self):
         self.with_os_release(DECK)
