@@ -39,6 +39,9 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- In the Flatpak, `modsync doctor` and `modsync diagnostics` pointed at a
+  launch hook log inside the sandbox that is never written. Steam runs the
+  hook on the host, so they now read the host's `~/.local/state/modsync/launch-hook.log`.
 - When Steam couldn't be closed and you picked the Play button switch under
   Properties, then Compatibility yourself, ModSync kept saying it was waiting
   for Steam to close, and would have re-applied the switch the next time

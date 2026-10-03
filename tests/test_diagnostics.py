@@ -78,6 +78,15 @@ class ConfigureTests(_StateHome):
     def test_launch_hook_log_lives_next_to_ours(self):
         self.assertEqual(logging_setup.launch_hook_log_path(), self.state_home / "modsync" / "launch-hook.log")
 
+    def test_launch_hook_log_is_read_from_the_host_inside_the_flatpak(self):
+        # The hook script runs on the host, not in the sandbox, so its log is under
+        # the host's ~/.local/state even when the Flatpak's XDG_STATE_HOME differs.
+        with patch.dict(os.environ, {"FLATPAK_ID": "io.github.skjiisa.ModSync", "HOME": str(self.state_home)}):
+            self.assertEqual(
+                logging_setup.launch_hook_log_path(),
+                self.state_home / ".local" / "state" / "modsync" / "launch-hook.log",
+            )
+
 
 class RedactTests(unittest.TestCase):
     def test_shapes(self):
