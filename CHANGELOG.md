@@ -35,6 +35,27 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Changed
 
+- A new interface, designed for a controller first. The dashboard and its
+  dialogs are gone. The window now has five sections (Home, Game, Mod
+  Organizer, Sync and System), switched with LB and RB, Q and E, or by moving
+  up onto the tabs. Every action is a large tile that shows the description a
+  tooltip used to hide. A glowing frame marks the focused tile, and a hint
+  bar shows which button does what, with PlayStation symbols for a
+  PlayStation controller. Questions, text entry, PIN entry and folder picking
+  open in sheets inside the window instead of separate dialogs. Text entry
+  has an on-screen keyboard with a Paste key, and the PIN pad works like a
+  combination lock. Home has a readiness checklist (game version, SKSE, Mod
+  Organizer 2, sync) next to Play, or Continue when Steam's Play button
+  opened ModSync. The setup wizard reuses the same parts and keeps Finish at
+  the top of its last step. ModSync always uses its dark theme now.
+- Controllers work two ways. A Steam Deck in desktop mode works through the
+  arrow keys, Return and Escape that Steam Input's desktop configuration
+  sends. ModSync also reads controllers directly through SDL2, from the
+  Flatpak runtime or SteamOS, which covers the virtual pad Steam provides in
+  Gaming Mode. A press that arrives both ways counts once, and presses are
+  ignored while another window is in front. The Flatpak gains
+  `--device=input` for this. `MODSYNC_GAMEPAD=0` turns direct reading off.
+  The controls are listed in docs/advanced.md.
 - Steam's Play button opens the regular ModSync window instead of a separate
   launch hub. While Steam waits, Play turns into Continue, which hands the
   launch on to MO2-LINT or the game, and "Cancel launch" returns to Steam.

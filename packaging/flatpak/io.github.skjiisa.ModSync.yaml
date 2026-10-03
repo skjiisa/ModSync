@@ -39,6 +39,10 @@ finish-args:
   - --socket=fallback-x11
   # GPU access for Qt's rendering.
   - --device=dri
+  # Game controllers (evdev in /dev/input), read through the runtime's SDL2.
+  # Flatpak before 1.15.6 ignores it; a controller then still works through
+  # the keys Steam Input sends. No --device=all fallback on purpose.
+  - --device=input
   # Syncthing needs the network for device discovery, relays and transfers.
   - --share=network
   # Background service management uses flatpak-spawn --host to reach systemd

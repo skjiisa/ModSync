@@ -70,10 +70,12 @@ jobs:
             --gha-format appstream "/mnt/$FLATPAK_DIR/$APP_ID.metainfo.xml"
 
       # Known failures, tracked separately: finish-args-home-filesystem-access,
-      # finish-args-unnecessary-xdg-data-Steam-rw-access and
-      # finish-args-flatpak-spawn-access. The manifest needs these today (MO2
-      # instances live anywhere under $HOME; the launch hook writes into
-      # ~/.local/share/Steam; systemd/pgrep go through flatpak-spawn --host).
+      # finish-args-unnecessary-xdg-data-Steam-rw-access,
+      # finish-args-flatpak-spawn-access and finish-args-no-required-flatpak.
+      # The manifest needs these today (MO2 instances live anywhere under
+      # $HOME; the launch hook writes into ~/.local/share/Steam; systemd/pgrep
+      # go through flatpak-spawn --host; --device=input for controllers is
+      # ignored by Flatpak before 1.15.6, which is fine).
       # ModSync is not published on Flathub, so no exception is needed; this
       # step reports the errors without failing the build.
       - name: Lint Flatpak manifest (flatpak-builder-lint)

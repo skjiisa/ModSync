@@ -1,46 +1,54 @@
 # UI previews
 
 The screenshots in this folder come from `scripts/preview_ui.py`, which
-renders the dashboard (also as Steam's launch hook opens it) and the setup
-wizard with synthetic game and setup data. Generating them does not read your setup, install anything, modify
-the game or sync.
+renders the window with synthetic game, setup and sync data. Generating them
+does not read your setup, install anything, modify the game or sync. They are
+1280 × 800, the Steam Deck's screen.
 
-## Launching MO2 and Skyrim
+## Home
 
-"Open MO2" opens the chosen portable instance. The "Play Skyrim" button uses
-that instance's selected profile and prefers SKSE. Steam must be running first.
-Both actions use the Proton that Steam has chosen for Skyrim (as seen through
-ModSync's launch hook), or the one that last set up its prefix, plus the
-runtime that Proton needs. Launch errors point to a log file.
+The readiness checklist sits next to Play. Each check opens the section that
+can fix it. The glowing frame marks focus, and the hint bar along the bottom
+shows the buttons of the controller in use.
 
-![Configured dashboard with launch buttons](configured-dark.png)
-
-## Dashboard
-
-![Light dashboard](dashboard-light.png)
-
-![Dark dashboard](dashboard-dark.png)
-
-## Installation
-
-![Install step in dark mode](install-dark.png)
-
-## Sync
-
-Status and progress appear above the pairing code, QR and device list. The
-remaining pairing controls are reachable by scrolling.
-
-![Live sync in light mode](sync-light.png)
+![Home](home.png)
 
 ## Opened from Steam's Play button
 
-With the launch hook on, Steam's Play button opens this same dashboard. Play
-becomes Continue, which hands Steam's launch on to MO2-LINT or the game, and
-Cancel launch returns to Steam. Open MO2 is not shown, because Steam is
-already about to start the game. A warning appears when the vault is still
-syncing.
+With the launch hook on, Steam's Play button opens this same window. Play
+becomes Continue, which hands Steam's launch on to MO2-LINT or the game.
+Cancel launch, one move down, returns to Steam. A warning appears while the
+vault is still syncing. Here a keyboard is in use, so the hints show keys.
 
-![Dashboard opened from Steam, in dark mode](launch-dark.png)
+![Opened from Steam](launch.png)
+
+## Game
+
+![Game version](game.png)
+
+## Sync
+
+The live view with a PlayStation controller connected. The hint bar shows
+PlayStation symbols. Y (triangle) rescans.
+
+![Live sync](sync-live.png)
+
+Pairing with a machine found on the network. Up and down turn each digit of
+the PIN, and left and right move between digits. Typed digits work too.
+
+![PIN pad](pin-pad.png)
+
+Text entry opens an on-screen keyboard with a Paste key.
+
+![On-screen keyboard](keyboard.png)
+
+## System
+
+![System](system.png)
+
+## Setup wizard
+
+![Setup, step 1](setup-1.png)
 
 ## Regenerate the previews
 
@@ -50,7 +58,8 @@ From a source checkout:
 uv run python scripts/preview_ui.py --output scratch/ui-review
 ```
 
-This writes all 16 offline previews, including the welcome screen, the optional
-sync step and a 900 pixel wide dashboard, using Qt's offscreen platform. Copy
-the ones you want into this folder. The installed Flatpak is a separate build
-and does not pick up source edits.
+This writes all 19 offline previews, including the confirmation sheet, the
+folder browser, the install sheet, the network PIN and a 1000 pixel wide
+window used with a mouse, using Qt's offscreen platform. Copy the ones you
+want into this folder and compress them with `optipng`. The installed Flatpak
+is a separate build and does not pick up source edits.

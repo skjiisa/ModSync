@@ -1,38 +1,45 @@
-"""Main window: hosts the ModSync service.
+"""The one ModSync window, built like a console app.
 
-The **dashboard is always the home screen** — even before anything is set up, where
-it shows an inline setup section. The linear wizard is opt-in from there (and can
-be cancelled back out), so the user is never trapped in a one-way flow.
-
-Single, self-maximizing window with no modal dialogs for the main flow, per Steam
-Deck Gaming-Mode constraints.
+A row of sections across the top (Home, Game, Mod Organizer, Sync, System),
+switched with the bumpers or Q/E, or by moving up onto them. The section's
+tiles fill the middle and the hint bar along the bottom says what each button
+does. Everything that used to be a dialog is a sheet over the window, and a
+glowing halo marks focus. The setup wizard takes over the middle when it runs.
 
 The same window serves Steam's launch hook. Given a ``SteamLaunch``, Steam is
-waiting on it: the dashboard's Continue / Cancel launch record the decision and
-close the window, closing it any other way cancels, and the decision outlives
-dashboard rebuilds and trips through the wizard."""
+waiting on it: Continue / Cancel launch on Home record the decision and close
+the window, closing it any other way cancels, and the decision outlives
+rebuilds and trips through the wizard.
+
+While game or USVFS files are being rewritten (or an install or launch is
+under way) the window is busy: it can't close, rebuild, start the wizard or
+decide a Steam launch until that finishes.
+"""
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
+import time
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer
-from PySide6.QtWidgets import (
-    QLabel,
-    QMainWindow,
-    QPushButton,
-    QStackedWidget,
-    QVBoxLayout,
-    QWidget,
-)
+import shiboken6
+from PySide6.QtCore import QThreadPool, Qt, QTimer, Signal
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
 from modsync import __version__, launchhook
-from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService
-from modsync.ui.dashboard import Dashboard
-from modsync.ui.wizard import WizardWidget
-from modsync.ui.worker import run_async
+from modsync.ui import nav, worker
+from modsync.ui.input import Action, DIRECTIONS, InputRouter
+from modsync.ui.overlays import ConfirmSheet, Overlay
+from modsync.ui.pages import Page
+from modsync.ui.pages.game import GamePage
+from modsync.ui.pages.home import HomePage
+from modsync.ui.pages.mods import ModsPage
+from modsync.ui.pages.setup import SetupFlow
+from modsync.ui.pages.sync import SyncPage
+from modsync.ui.pages.system import SystemPage
+from modsync.ui.widgets import (
+    Backdrop, FocusHalo, GlyphLabel, HintBar, Icon, TabButton, Toasts, discard, label, pill,
+)
 
 # Testing aid: MODSYNC_HUB_AUTO_DECISION=continue|cancel decides a Steam launch by
 # itself after a few seconds, so the whole Steam → hook → ModSync → game chain
@@ -40,106 +47,366 @@ from modsync.ui.worker import run_async
 # launch options).
 _AUTO_DECISION_ENV = "MODSYNC_HUB_AUTO_DECISION"
 _AUTO_DECISION_MS = 3000
+_POLL_MS = 4000
+
+PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage)
 
 
-def _centered(text: str, button: QPushButton | None = None) -> QWidget:
-    widget = QWidget()
-    layout = QVBoxLayout(widget)
-    layout.addStretch(1)
-    label = QLabel(text)
-    label.setWordWrap(True)
-    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    layout.addWidget(label)
-    if button is not None:
-        layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignCenter)
-    layout.addStretch(1)
-    return widget
+def alive(w: QWidget | None) -> bool:
+    return w is not None and shiboken6.isValid(w)
+
+
+class TopBar(QWidget):
+    def __init__(self, window: "MainWindow") -> None:
+        super().__init__()
+        self.setFixedHeight(72)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(28, 12, 28, 4)
+        h.setSpacing(10)
+        mark = Icon("sync", 40)
+        h.addWidget(mark)
+        h.addWidget(label("ModSync", "heading", wrap=False))
+        h.addSpacing(18)
+        self.lb = GlyphLabel("prev_tab", window.router)
+        h.addWidget(self.lb)
+        self.tabs_row = QHBoxLayout()
+        self.tabs_row.setSpacing(4)
+        h.addLayout(self.tabs_row)
+        self.rb = GlyphLabel("next_tab", window.router)
+        h.addWidget(self.rb)
+        h.addStretch(1)
+        if window.steam_launch is not None:
+            h.addWidget(pill("Steam is waiting", "info"))
+            h.addSpacing(8)
+        self.clock = label("", "secondary", wrap=False)
+        h.addWidget(self.clock)
+        self._tick()
+        timer = QTimer(self)
+        timer.timeout.connect(self._tick)
+        timer.start(15000)
+
+    def _tick(self) -> None:
+        self.clock.setText(time.strftime("%H:%M"))
+
+    def set_tabs_visible(self, on: bool) -> None:
+        for i in range(self.tabs_row.count()):
+            w = self.tabs_row.itemAt(i).widget()
+            if w is not None:
+                w.setVisible(on)
+        self.lb.setVisible(on)
+        self.rb.setVisible(on)
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, *, steam_launch: launchhook.SteamLaunch | None = None) -> None:
+    busyChanged = Signal(bool)
+    gameChecked = Signal(object, object)  # GameStatus, VersionCheck
+    syncStatus = Signal(object)  # SyncStatus
+    setupDescribed = Signal(list)  # the instance's profile line and problems
+    _call = Signal(object)  # run a callable on the UI thread
+
+    def __init__(self, *, steam_launch: launchhook.SteamLaunch | None = None,
+                 service: ModSyncService | None = None) -> None:
         super().__init__()
         self.setWindowTitle(f"ModSync {__version__}")
-        self.resize(1120, 780)
-
+        self.resize(1280, 800)
         self.steam_launch = steam_launch
-        self.service = ModSyncService()
-        self._stack = QStackedWidget()
-        self.setCentralWidget(self._stack)
+        self.service = service or ModSyncService()
+        self.router = InputRouter.instance()
+        self.firewall_check = None
+        self.messages: list[str] = []
+        self.overlays: list[Overlay] = []
+        self.pages: dict[str, Page] = {}
+        self.tabs: dict[str, TabButton] = {}
+        self.setup: SetupFlow | None = None
+        self._busy: set[str] = set()
+        self._rebuild_pending = False
+        self._current = "home"
+        self._call.connect(lambda fn: fn())
 
-        self._show_dashboard()  # always — it handles the not-set-up case itself
+        self.shell = Backdrop()
+        self.setCentralWidget(self.shell)
+        self.chrome = QWidget(self.shell)
+        col = QVBoxLayout(self.chrome)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        self.topbar = TopBar(self)
+        col.addWidget(self.topbar)
+        self.root = QStackedWidget()
+        col.addWidget(self.root, 1)
+        self.hintbar = HintBar(self.router)
+        col.addWidget(self.hintbar)
+        self.stack = QStackedWidget()
+        self.root.addWidget(self.stack)
+        self.toasts = Toasts(self.shell)
+        self.halo = FocusHalo(self.shell)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.poll)
+        self._build_pages()
+        self._timer.start(_POLL_MS)
+
+        app = QApplication.instance()
+        app.focusChanged.connect(self._on_focus_changed)
+        self.router.modeChanged.connect(self._on_mode_changed)
+        self._on_mode_changed(self.router.mode)
+        self.go("home")
 
         auto = os.environ.get(_AUTO_DECISION_ENV, "").strip().lower()
         if steam_launch is not None and auto in ("continue", "cancel"):
             code = launchhook.EXIT_CONTINUE if auto == "continue" else launchhook.EXIT_CANCEL
-            current = self._stack.currentWidget()
-            if isinstance(current, Dashboard):
-                current._set_status(f"Test mode: choosing \"{auto}\" automatically in a moment.")
+            self.notify(f"Test mode: choosing \"{auto}\" automatically in a moment.")
             QTimer.singleShot(_AUTO_DECISION_MS, self, lambda: self.decide_launch(code))
+
+    # --- pages ---------------------------------------------------------------------
+    def _build_pages(self) -> None:
+        for page_cls in PAGES:
+            page = page_cls(self)
+            self.pages[page.key] = page
+            self.stack.addWidget(page)
+            tab = TabButton(page.key, page.label, page.icon)
+            tab.clicked.connect(lambda _=False, k=page.key: self.go(k, focus=self.router.mode != "mouse"))
+            self.tabs[page.key] = tab
+            self.topbar.tabs_row.addWidget(tab)
+            tab.setVisible(self.setup is None)  # rebuilt while the wizard is open
+        sync = self.pages["sync"]
+        sync.synced.connect(self.pages["game"].panel.refresh)  # mods just arrived: re-check SKSE/version
+
+    def _clear_pages(self) -> None:
+        for page in self.pages.values():
+            page.shutdown()
+            self.stack.removeWidget(page)
+            discard(page)
+        for tab in self.tabs.values():
+            self.topbar.tabs_row.removeWidget(tab)
+            discard(tab)
+        self.pages.clear()
+        self.tabs.clear()
+
+    @property
+    def page(self) -> Page:
+        return self.pages[self._current]
+
+    def go(self, key: str, *, focus: bool = True) -> None:
+        if key not in self.pages or self.setup is not None:
+            return
+        old = self._current
+        self._current = key
+        for k, tab in self.tabs.items():
+            tab.setChecked(k == key)
+        page = self.pages[key]
+        if self.stack.currentWidget() is not page:
+            self.stack.setCurrentWidget(page)
+            keys = list(self.pages)
+            if old in keys:
+                self._slide(page, keys.index(key) - keys.index(old))
+        if focus:
+            page.focus_default()
+        self.refresh_hints()
+
+    def _slide(self, page: QWidget, direction: int) -> None:
+        """A short glide in from the side the new section sits on."""
+        if not direction or not self.isVisible():
+            return
+        from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation
+
+        end = page.pos()
+        anim = QPropertyAnimation(page, b"pos", page)
+        anim.setDuration(180)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.setStartValue(end + QPoint(48 if direction > 0 else -48, 0))
+        anim.setEndValue(end)
+        anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+
+    def cycle(self, step: int) -> None:
+        keys = list(self.pages)
+        self.go(keys[(keys.index(self._current) + step) % len(keys)])
+
+    def prepare_rebuild(self) -> None:
+        """Stop polling and unblock waiting workers before the setup changes."""
+        self._timer.stop()
+        for page in self.pages.values():
+            page.shutdown()
+
+    def rebuild(self) -> None:
+        """The setup changed (instance chosen, vault created/joined/left, reset):
+        build every section again from what is set up now. While something is
+        busy, it happens as soon as that finishes."""
+        if self.busy:
+            self._rebuild_pending = True
+            return
+        self._rebuild_pending = False
+        current = self._current
+        for overlay in list(self.overlays):
+            overlay.dismiss()
+        self._clear_pages()
+        self._build_pages()
+        self._timer.start(_POLL_MS)
+        self._current = current if current in self.pages else "home"
+        self.stack.setCurrentWidget(self.pages[self._current])
+        self.go(self._current)
+
+    # --- setup wizard ---
+    def start_setup(self) -> SetupFlow | None:
+        if self.busy or self.setup is not None:
+            return None
+        self.setup = SetupFlow(self)
+        self.root.addWidget(self.setup)
+        self.root.setCurrentWidget(self.setup)
+        self.topbar.set_tabs_visible(False)
+        self.setup.focus_default()
+        self.refresh_hints()
+        return self.setup
+
+    def finish_setup(self) -> None:
+        if self.busy or self.setup is None:
+            return
+        setup, self.setup = self.setup, None
+        self.root.setCurrentWidget(self.stack)
+        self.root.removeWidget(setup)
+        discard(setup)
+        self.topbar.set_tabs_visible(True)
+        self._current = "home"
+        self.rebuild()
+
+    # --- host services for pages ---------------------------------------------------
+    def notify(self, text: str, tone: str | None = None) -> None:
+        if not text:
+            return
+        text = str(text)
+        self.messages.append(text)
+        if tone is None:
+            tone = "warn" if text.startswith("⚠") else "info"
+        self.toasts.show_message(text.removeprefix("⚠").strip(), tone)
+
+    @property
+    def last_message(self) -> str:
+        return self.messages[-1] if self.messages else ""
+
+    def confirm(self, title, text, choices, on_choice, *, default=None, eyebrow="") -> ConfirmSheet:
+        sheet = ConfirmSheet(self, title, text, choices, on_choice, default=default, eyebrow=eyebrow)
+        sheet.open()
+        return sheet
+
+    # --- sync set-up results ---
+    # These outlive the widget that started them: a join can take seconds, and
+    # the wizard or page may be gone by then. The window is not.
+    def sync_started(self, message: str) -> None:
+        self.set_busy("sync-setup", True)
+        self.notify(message)
+
+    def sync_failed(self, message: str) -> None:
+        self.set_busy("sync-setup", False)
+        self.notify(f"⚠ {message}")
+
+    def vault_created(self) -> None:
+        self.set_busy("sync-setup", False)
+        if self.setup is not None:
+            self.setup.go_to(2)  # sharing from here: the game step comes next
+        else:
+            self.rebuild()
+
+    def vault_joined(self) -> None:
+        """Copying from another machine ends the wizard: the game version can
+        only be checked once the mods have arrived."""
+        self.set_busy("sync-setup", False)
+        if self.setup is not None:
+            self.finish_setup()
+        else:
+            self.rebuild()
+
+    def instance_chosen(self, path: str) -> None:
+        if self.setup is not None:
+            self.setup.go_to(1)
+        else:
+            self.rebuild()
+
+    def call_soon(self, fn) -> None:
+        """Run ``fn`` on the UI thread; safe to call from a worker."""
+        self._call.emit(fn)
+
+    def open_overlay(self, overlay: Overlay) -> None:
+        overlay.restore_focus = self.focusWidget()
+        self.overlays.append(overlay)
+        overlay.setGeometry(self._overlay_rect())
+        overlay.show()
+        overlay.raise_()
+        self.toasts.raise_()
+        self.halo.raise_()
+        overlay.focus_default()
+        self.refresh_hints()
+
+    def close_overlay(self, overlay: Overlay) -> None:
+        if overlay in self.overlays:
+            self.overlays.remove(overlay)
+        discard(overlay)
+        back = overlay.restore_focus
+        if alive(back) and back.isVisible() and back.isEnabled() and self.scope().isAncestorOf(back):
+            back.setFocus(Qt.FocusReason.OtherFocusReason)
+        else:
+            self.focus_scope_default()
+        self.refresh_hints()
+
+    @property
+    def top_overlay(self) -> Overlay | None:
+        return self.overlays[-1] if self.overlays else None
+
+    # --- busy ------------------------------------------------------------------------
+    def set_busy(self, key: str, on: bool) -> None:
+        (self._busy.add if on else self._busy.discard)(key)
+        self._apply_busy()
+
+    def _overlay_rect(self):
+        """Sheets cover everything but the hint bar, which stays clickable."""
+        rect = self.shell.rect()
+        rect.setBottom(rect.bottom() - self.hintbar.height())
+        return rect
+
+    def _apply_busy(self) -> None:
+        busy = self.busy
+        if not busy and self._rebuild_pending:
+            QTimer.singleShot(0, self, self.rebuild)
+        for key in ("mods", "sync"):
+            page = self.pages.get(key)
+            if page is not None:
+                page.content.setEnabled(not busy)
+        self.busyChanged.emit(busy)
 
     @property
     def busy(self) -> bool:
-        current = self._stack.currentWidget()
-        return isinstance(current, (Dashboard, WizardWidget)) and current.busy
+        return bool(self._busy)
 
-    def _set(self, widget: QWidget) -> None:
-        while self._stack.count():
-            old = self._stack.widget(0)
-            if isinstance(old, Dashboard):
-                old.shutdown()
-            self._stack.removeWidget(old)
-            old.deleteLater()
-        self._stack.addWidget(widget)
-        self._stack.setCurrentWidget(widget)
+    def busy_except(self, key: str) -> bool:
+        return bool(self._busy - {key})
 
-    def _show_wizard(self, *, install: bool = False) -> None:
-        if self.busy:
+    @property
+    def launching(self) -> bool:
+        return "launch" in self._busy or self.service.launcher.running()
+
+    # --- launching ---
+    def launch(self, *, play: bool) -> None:
+        if self.busy or self.steam_launch is not None:
             return
-        wizard = WizardWidget(self.service)
-        wizard.completed.connect(self._on_wizard_completed)
-        wizard.cancelled.connect(self._show_dashboard)
-        self._set(wizard)
-        if install:
-            wizard.open_install()
+        self.set_busy("launch", True)
+        self.notify("Starting Skyrim through MO2…" if play else "Opening MO2…")
+        worker.run_async(self.service.launch_mo2, play=play, on_done=self._on_launched,
+                         on_failed=self._on_launch_failed)
 
-    def _on_wizard_completed(self, data: dict) -> None:
-        path = data.get("instance_path")
-        if not path:
-            return
-        mode = data.get("mode")
-        if mode == "local":  # the wizard already remembered the instance
-            self._show_dashboard()
-            return
-        code_text = data.get("pairing_code") or ""
-        label = Path(path).name or "Mod Organizer 2"
+    def _on_launched(self, message: str) -> None:
+        self.set_busy("launch", False)
+        self.notify(message, "ok")
 
-        self._set(_centered("Setting up sync and starting Syncthing…"))
+    def _on_launch_failed(self, message: str) -> None:
+        self.set_busy("launch", False)
+        self.notify(f"⚠ {message}")
 
-        def work() -> object:
-            if mode == "network":
-                return self.service.join_via_network(data["announcement"], data["pin"], path)
-            if mode == "join":
-                return self.service.join_vault(PairingCode.decode(code_text), path)
-            return self.service.create_vault(path, label=label)
+    def poll(self) -> None:
+        for page in self.pages.values():
+            page.poll()
+        for message in self.service.launcher.poll():
+            self.notify(f"⚠ {message}")
+        self._apply_busy()  # a game started from here may have exited
 
-        run_async(work, on_done=lambda _: self._show_dashboard(), on_failed=self._on_setup_failed)
-
-    def _on_setup_failed(self, message: str) -> None:
-        back = QPushButton("Back to dashboard")
-        back.clicked.connect(self._show_dashboard)
-        self._set(_centered(f"Setup failed:\n{message}", back))
-
-    def _show_dashboard(self) -> None:
-        if self.busy:
-            return
-        dashboard = Dashboard(self.service, steam_launch=self.steam_launch)
-        dashboard.wizardRequested.connect(self._show_wizard)
-        dashboard.installRequested.connect(lambda: self._show_wizard(install=True))
-        dashboard.stateChanged.connect(self._show_dashboard)  # rebuild after setup/reset
-        dashboard.launchDecided.connect(self.decide_launch)
-        self._set(dashboard)
-        dashboard.focus_default()
-
+    # --- Steam launch ---
     def decide_launch(self, code: int) -> None:
         """Steam launch: record Continue or Cancel, then close so the hook can act.
         The first decision sticks, and none is taken while files are rewritten."""
@@ -149,7 +416,146 @@ class MainWindow(QMainWindow):
         launch.decision = code
         self.close()
 
-    def closeEvent(self, event) -> None:  # noqa: ANN001 (Qt signature)
+    # --- input ---------------------------------------------------------------------
+    def scope(self) -> QWidget:
+        if self.overlays:
+            return self.overlays[-1]
+        if self.setup is not None:
+            return self.setup
+        return self.chrome
+
+    def focus_scope_default(self) -> None:
+        if self.overlays:
+            self.overlays[-1].focus_default()
+        elif self.setup is not None:
+            self.setup.focus_default()
+        elif self._current in self.pages:
+            self.page.focus_default()
+
+    def handle_action(self, action: Action) -> bool:
+        focus = self.focusWidget()
+        scope = self.scope()
+        inside = alive(focus) and (focus is scope or scope.isAncestorOf(focus))
+        if action in DIRECTIONS:
+            if not inside:
+                self.focus_scope_default()
+                return True
+            direction = action.value
+            if isinstance(focus, TabButton):
+                if action == Action.DOWN:
+                    self.page.focus_default()
+                elif action in (Action.LEFT, Action.RIGHT):
+                    # Moving along the tabs switches sections as you go, console style.
+                    keys = list(self.tabs)
+                    i = keys.index(focus.key) + (1 if action == Action.RIGHT else -1)
+                    if 0 <= i < len(keys):
+                        self.tabs[keys[i]].setFocus(Qt.FocusReason.OtherFocusReason)
+                        self.go(keys[i], focus=False)
+                return True
+            target = nav.neighbour(scope, focus, direction)
+            if isinstance(target, TabButton) and not isinstance(focus, TabButton):
+                self.tabs[self._current].setFocus(Qt.FocusReason.OtherFocusReason)
+                return True
+            if target is not None:
+                nav.move(scope, focus, direction)
+                return True
+            if action in (Action.UP, Action.DOWN):
+                nav.scroll_by(focus, -0.5 if action == Action.UP else 0.5)
+            return True
+        if action == Action.ACCEPT:
+            if inside and hasattr(focus, "click") and focus.isEnabled():
+                if isinstance(focus, TabButton):
+                    self.go(focus.key)
+                else:
+                    focus.click()
+            elif not inside:
+                self.focus_scope_default()
+            return True
+        if action in (Action.NEXT, Action.PREV):
+            nav.step(scope, focus if inside else None, action == Action.NEXT)
+            return True
+        if action in (Action.SCROLL_UP, Action.SCROLL_DOWN):
+            step = -0.8 if action == Action.SCROLL_UP else 0.8
+            if inside and nav.scroll_area_of(focus) is not None:
+                nav.scroll_by(focus, step)
+            elif not self.overlays and self.setup is None:
+                nav.scroll_by(self.page.area.widget(), step)
+            return True
+        if self.setup is not None or self.overlays:
+            return True
+        if action in (Action.PREV_TAB, Action.NEXT_TAB):
+            self.cycle(-1 if action == Action.PREV_TAB else 1)
+            return True
+        if action == Action.MENU:
+            self.go("home")
+            return True
+        if action == Action.BACK:
+            if self._current != "home":
+                self.go("home")
+            return True
+        return True  # AUX / ALT with nothing to do here
+
+    def refresh_hints(self) -> None:
+        if self.overlays:
+            hints = self.overlays[-1].hints()
+        elif self.setup is not None:
+            hints = self.setup.hints()
+        else:
+            hints = [*self.page.hints(), ([Action.ACCEPT], "Select")]
+            if self._current != "home":
+                hints.append(([Action.BACK], "Home"))
+            hints.append(([Action.PREV_TAB, Action.NEXT_TAB], "Sections"))
+        self.hintbar.set_hints(hints)
+
+    def _on_focus_changed(self, old: QWidget | None, new: QWidget | None) -> None:
+        if not alive(new) or new.window() is not self:
+            return
+        # Qt hands focus to the next widget in its chain when the focused one is
+        # hidden (a tile that just went away, a page being switched out). That
+        # can be the tab bar, or a tile underneath an open sheet: put it back.
+        scope = self.scope()
+        escaped = scope is not self.chrome and not (new is scope or scope.isAncestorOf(new))
+        bounced = isinstance(new, TabButton) and alive(old) and not old.isVisible() and self.stack.isAncestorOf(old)
+        if escaped or bounced:
+            QTimer.singleShot(0, self, self.focus_scope_default)
+        for page in self.pages.values():
+            if page.isAncestorOf(new):
+                page.remember(new)
+        if self.router.mode != "mouse":
+            nav.reveal(new)
+        self.halo.follow(new)
+
+    def _on_mode_changed(self, mode: str) -> None:
+        self.halo.enabled = mode != "mouse"
+        self.halo.follow(self.focusWidget())
+        self.refresh_hints()
+
+    # --- Qt ---------------------------------------------------------------------------
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        rect = self.shell.rect()
+        self.chrome.setGeometry(rect)
+        self.halo.setGeometry(rect)
+        for overlay in self.overlays:
+            overlay.setGeometry(self._overlay_rect())
+        self.toasts.relayout()
+        self.halo.raise_()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.chrome.setGeometry(self.shell.rect())
+        self.halo.setGeometry(self.shell.rect())
+        self.halo.raise_()
+        if self.focusWidget() is None or self.focusWidget() is self:
+            self.focus_scope_default()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() == Qt.Key.Key_F11:
+            self.showNormal() if self.isFullScreen() else self.showFullScreen()
+            return
+        super().keyPressEvent(event)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt signature)
         if self.busy:
             event.ignore()
             return
@@ -157,9 +563,7 @@ class MainWindow(QMainWindow):
             self.steam_launch.decision = launchhook.EXIT_CANCEL  # closing never starts the game
         # Order matters: stop polling, let in-flight worker jobs finish (so none
         # emit back into widgets being torn down), then stop the daemon.
-        current = self._stack.currentWidget()
-        if isinstance(current, Dashboard):
-            current.shutdown()
+        self.prepare_rebuild()
         QThreadPool.globalInstance().waitForDone(5000)
         try:
             self.service.shutdown()

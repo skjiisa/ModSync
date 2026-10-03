@@ -1,7 +1,8 @@
 # ModSync in depth
 
-Details that the README leaves out: running from source, every command, and
-how the downgrade, Steam pin, launch hook, sync and background service work.
+Details that the README leaves out: running from source, controls, every
+command, and how the downgrade, Steam pin, launch hook, sync and background
+service work.
 
 ## Running from source
 
@@ -36,9 +37,49 @@ To build the Flatpak yourself, see
 development environment and run the tests, see
 [CONTRIBUTING.md](../CONTRIBUTING.md).
 
+## Controls
+
+Every screen works with a controller alone, in desktop mode or Gaming Mode. A
+keyboard, a mouse and the Deck's touch screen work too.
+
+| Controller | Keyboard | Does |
+| --- | --- | --- |
+| D-pad or left stick | Arrow keys | Move between tiles |
+| A | Enter or Space | Choose |
+| B | Escape or Backspace | Back: close a sheet, go back a wizard step, or return to Home |
+| LB / RB | Q / E, or Ctrl+Tab | Previous / next section |
+| LT / RT, right stick | Page Up / Page Down | Scroll |
+| Start | Home | Home |
+| X, Y | | Shortcuts named in the hint bar, such as "Check again" |
+
+The hint bar along the bottom shows the buttons for the device in use, with
+PlayStation symbols for a PlayStation controller. Moving up from the top of a
+section reaches the section tabs. Moving left and right along them switches
+sections, and moving down goes back into the section.
+
+There are two ways a controller reaches ModSync:
+
+- **As keys.** Steam Input's desktop configuration on a Steam Deck sends
+  arrow keys for the d-pad and left stick, Return for A, Escape for B and
+  Space for Y. That is enough to use all of ModSync, so it works in desktop
+  mode with no setup.
+- **Directly.** ModSync reads controllers through SDL2, which ships in the
+  Flatpak's runtime and on SteamOS. In Gaming Mode this is the virtual pad
+  Steam gives the app it launched. SDL's HIDAPI drivers stay off, so ModSync
+  never opens the Deck's own controls or turns off the trackpad mouse. When
+  Steam turns a press into a key while SDL reads the same press, ModSync acts
+  on it once. Presses are ignored while another window, such as MO2 or the
+  game, is in front. Set `MODSYNC_GAMEPAD=0` to read only the keys.
+
+Text entry (a pairing code, an address, an install folder) opens an on-screen
+keyboard with a Paste key, and the PIN pad works like a combination lock: up
+and down turn a digit, left and right move between digits. Folders are picked
+with a built-in browser rather than a file dialog. Typing on a real keyboard
+works in all of them.
+
 ## Command line
 
-Everything the dashboard does is also a command. `modsync --help` and
+Everything the app does is also a command. `modsync --help` and
 `modsync <group> --help` list the arguments.
 
 ```sh
@@ -63,9 +104,9 @@ When an instance is chosen, or a vault is created from it, ModSync records the
 runtime it is built for in `modsync-vault.json` inside the instance. That is
 the one ModSync-owned file that syncs, so every machine sharing the setup
 compares against the same record. Each machine reads its own `SkyrimSE.exe`
-version, and the dashboard, `modsync doctor` and `modsync serve` warn when it
+version, and the app, `modsync doctor` and `modsync serve` warn when it
 differs. After an intentional upgrade or downgrade, "Use this machine's
-version" on the dashboard re-records it.
+version" under Game re-records it.
 
 The installed SKSE is a second clue. Its runtime DLL is named after the exact
 game version it was built for, such as `skse64_1_6_1170.dll`. ModSync looks
@@ -75,7 +116,7 @@ level or under `Root/`.
 - When an existing MO2 setup is chosen, ModSync records the SKSE runtime
   rather than whatever Steam has patched the game to since. An old mod list
   is offered the right downgrade immediately.
-- When there is no record, the dashboard and `modsync game status` suggest
+- When there is no record, the app and `modsync game status` suggest
   the SKSE runtime as the downgrade target.
 - Otherwise the record wins, and SKSE built for a different version is
   called out as needing a reinstall.
@@ -84,7 +125,7 @@ DLLs for several versions make SKSE ambiguous, and ModSync ignores it.
 
 ### Installing SKSE
 
-Once the game is on the right version, the Game card offers "Install SKSE
+Once the game is on the right version, the Game section offers "Install SKSE
 x.y.z" whenever the SKSE in the game folder is missing, built for another
 version, or present in several versions. ModSync downloads the build for the
 installed game version from skse.silverlock.org, checks it against a known
@@ -92,7 +133,7 @@ SHA-256, removes the old `skse64_*` files from the game folder and copies in
 the loader, the runtime DLL and `Data/Scripts`. These are the same files a
 hand install puts there. The archive is kept for next time. Builds that SKSE
 publishes only on Nexus (currently 2.3.1 for 1.7.104) need a login, so for
-those the button opens the download page instead. `modsync game skse` does
+those the tile opens the download page instead. `modsync game skse` does
 the same from a terminal.
 
 ## How the downgrade works
@@ -114,7 +155,7 @@ only completed downloads enter the cache (about 1.1 GB for 1.7.104 to
 1.6.1170), so a repeat is offline.
 
 The originals stay in `.modsync-downgrade/backup`. `modsync game restore`,
-or "Restore original files" on the dashboard, puts them back.
+or "Restore original files" under Game, puts them back.
 `modsync game restore --discard` drops a stale backup once Steam has
 re-installed the current version.
 
@@ -205,7 +246,8 @@ chain refers to its tool directory and re-reads its `toolmanifest.vdf` on
 every launch, so a reinstalled or upgraded redirector is picked up as-is.
 ModSync starts through a stable command, `flatpak run io.github.skjiisa.ModSync`
 or the installed `modsync`, never a versioned path. Steam's own choice is
-recorded before it is changed and written back by "Turn off". If ModSync
+recorded before it is changed and written back when the hook is turned off.
+If ModSync
 cannot start at all, the launch goes ahead anyway.
 
 Steam reads `config.vdf` and `compatibilitytools.d` only on startup and
@@ -216,9 +258,9 @@ or the background service the moment Steam closes. You can also pick "ModSync
 
 Steam's Play button opens the regular ModSync window, with the launch waiting
 on it. Play turns into Continue, which closes ModSync and lets the hook start
-Mod Organizer 2 or the game. It has keyboard focus, so Enter continues. "Cancel launch" or
-closing the window ends the launch, and Steam goes back to the library.
-ModSync hides Open MO2 while Steam waits. A second Proton started in the same
+Mod Organizer 2 or the game. It has focus, so A or Enter continues. "Cancel
+launch", one move down, or closing the window ends the launch, and Steam goes
+back to the library. ModSync hides Open Mod Organizer 2 while Steam waits. A second Proton started in the same
 prefix would clash with the one Steam is about to run, or outlive the launch
 Steam is tracking. Continue and Cancel stay disabled while game or USVFS files are
 being rewritten. Setting `MODSYNC_HUB_AUTO_DECISION=cancel %command%` in the
@@ -238,10 +280,10 @@ syncing if one exists. If the service initially shares the app's process, it
 starts a replacement on its next poll after the app closes, and transfers
 resume. Both machines still need to be awake and connected.
 
-The dashboard shows "Background service: running, inactive, failed or off".
-Open the ModSync Steam shortcut to check it in Gaming Mode. "Turn off
-background service" stops and removes it without deleting mods. An open app
-can keep syncing.
+Under System, "Run in background" shows whether the service is running,
+inactive, failed or off. Open the ModSync Steam shortcut to check it in
+Gaming Mode. Choosing it again while it is on stops and removes the service
+without deleting mods. An open app can keep syncing.
 
 ## Logs and bug reports
 
@@ -249,6 +291,6 @@ Every way ModSync runs (GUI, CLI, `serve`, a Steam launch) logs to
 `~/.local/state/modsync/modsync.log`. Set `MODSYNC_LOG_LEVEL=DEBUG` for more.
 The launch hook logs to `~/.local/state/modsync/launch-hook.log`.
 
-For a bug report, `modsync diagnostics` or the dashboard's "Copy diagnostics"
-button bundles the doctor report with the last 200 lines of both logs, with
+For a bug report, `modsync diagnostics` or "Copy diagnostics" under System
+bundles the doctor report with the last 200 lines of both logs, with
 pairing codes, API keys and device ids redacted.

@@ -1,4 +1,5 @@
-"""Readable text and usable action layouts in both app color schemes."""
+"""Readable text in the one theme ModSync uses: every text color against
+every surface it sits on, WCAG AA (4.5:1)."""
 
 import os
 import unittest
@@ -6,7 +7,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     from PySide6.QtGui import QColor
-    from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import QApplication, QLabel
 except ImportError:
     QApplication = None
 
@@ -34,50 +35,53 @@ class ThemeTests(unittest.TestCase):
         self.addCleanup(self.app.setFont, font)
         self.addCleanup(self.app.setStyleSheet, stylesheet)
 
-    def test_text_has_readable_contrast_in_both_themes(self):
-        from modsync.ui.theme import DARK, LIGHT, apply_theme, role
+    def test_text_has_readable_contrast_on_every_surface(self):
         from PySide6.QtGui import QPalette
+        from modsync.ui.theme import C, apply_theme, role
 
-        for dark, colors in ((False, LIGHT), (True, DARK)):
-            apply_theme(self.app, dark=dark)
-            label = QLabel("Setup hint")
-            role(label, "secondary")
-            label.ensurePolished()
-            self.assertEqual(label.palette().color(QPalette.ColorRole.WindowText).name(), colors["secondary"])
-            for background in ("window", "surface"):
-                for foreground in ("text", "secondary"):
-                    with self.subTest(dark=dark, foreground=foreground, background=background):
-                        self.assertGreaterEqual(contrast(colors[foreground], colors[background]), 4.5)
-            self.assertGreaterEqual(contrast(colors["warning"], colors["warning_bg"]), 4.5)
-            self.assertGreaterEqual(contrast(colors["text"], colors["progress"]), 4.5)
-            self.assertGreaterEqual(contrast(colors["on_accent"], colors["accent"]), 4.5)
-            self.assertGreaterEqual(contrast(colors["on_accent"], colors["accent_hover"]), 4.5)
+        apply_theme(self.app)
+        label = QLabel("Setup hint")
+        role(label, "secondary")
+        label.ensurePolished()
+        self.assertEqual(label.palette().color(QPalette.ColorRole.WindowText).name(), C["secondary"])
+        for background in ("night", "dusk", "surface", "raised", "sunken"):
+            for foreground in ("text", "secondary", "muted", "accent", "ok", "warn", "danger", "info"):
+                with self.subTest(foreground=foreground, background=background):
+                    self.assertGreaterEqual(contrast(C[foreground], C[background]), 4.5)
+        self.assertGreaterEqual(contrast(C["warn"], C["warn_bg"]), 4.5)
+        self.assertGreaterEqual(contrast(C["danger"], C["danger_bg"]), 4.5)
+        for fill in ("accent", "accent_hi", "accent_deep"):
+            with self.subTest(fill=fill):
+                self.assertGreaterEqual(contrast(C["on_accent"], C[fill]), 4.5)
 
-    def test_actions_wrap_and_hidden_actions_do_not_leave_gaps(self):
-        from modsync.ui.flow_layout import FlowLayout
+    def test_tiles_size_to_their_text(self):
+        from PySide6.QtWidgets import QVBoxLayout, QWidget
         from modsync.ui.theme import apply_theme
+        from modsync.ui.widgets import Tile
 
-        apply_theme(self.app, dark=False)
-        window = QWidget()
-        layout = QVBoxLayout(window)
-        flow = FlowLayout()
-        layout.addLayout(flow)
-        layout.addStretch(1)
-        buttons = [QPushButton(text) for text in (
-            "Use this machine's version", "Downgrade to 1.6.1170…", "Restore original files", "Check again"
-        )]
-        for button in buttons:
-            flow.addWidget(button)
-        window.resize(420, 400)
-        window.show()
-        self.addCleanup(window.close)
+        apply_theme(self.app)
+        host = QWidget()
+        v = QVBoxLayout(host)
+        short = Tile("Check again", "Re-read the version.", "refresh")
+        long = Tile("Use this machine's version", "Record the installed runtime as the version this setup is "
+                    "built for. Do this after you upgrade or downgrade the game on purpose.", "check")
+        v.addWidget(short)
+        v.addWidget(long)
+        v.addStretch(1)
+        host.resize(380, 600)
+        host.show()
+        self.addCleanup(host.close)
         self.app.processEvents()
-        self.assertGreater(buttons[-1].y(), buttons[0].y())
-        for button in buttons:
-            self.assertLessEqual(button.geometry().right(), window.width())
-            self.assertGreaterEqual(button.height(), 40)
-        for button in buttons[:-1]:
-            button.hide()
-        self.app.processEvents()
-        self.assertEqual(buttons[-1].y(), layout.contentsMargins().top())
-        self.assertLess(flow.heightForWidth(420), 60)
+        self.assertGreaterEqual(short.height(), 56)  # big enough to hit and to read across a room
+        self.assertGreater(long.height(), short.height())  # descriptions wrap rather than clip
+        self.assertLessEqual(long.geometry().right(), host.width())
+
+    def test_progress_ring_animates_to_whole_percentages(self):
+        from PySide6.QtTest import QTest
+        from modsync.ui.widgets import ProgressRing
+
+        ring = ProgressRing()
+        ring.set_value(0, "starting", busy=True)
+        ring.set_value(64, "syncing")  # an int after a float: both must interpolate
+        QTest.qWait(800)
+        self.assertEqual(ring._value, 64.0)

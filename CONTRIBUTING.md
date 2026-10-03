@@ -87,6 +87,6 @@ them. ModSync is not published on Flathub, so no exception request is needed.
 
 Use the bug report issue form. It asks for `modsync doctor` output and, for
 Steam launch problems, `~/.local/state/modsync/launch-hook.log`. Both make a
-report much easier to act on. `modsync diagnostics` (or the dashboard's Copy
-diagnostics button) collects the same things with pairing codes and API keys
+report much easier to act on. `modsync diagnostics` (or Copy diagnostics
+under System) collects the same things with pairing codes and API keys
 redacted.

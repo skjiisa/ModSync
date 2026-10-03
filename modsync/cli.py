@@ -206,8 +206,8 @@ def _vault_create(args: list[str]) -> int:
         print(f"Recorded {vc.expected}{src} as the game version this vault is built for.")
         if vc.mismatch:
             print(f"  ! {vc.summary()}")
-            print("    'modsync game status' shows the downgrade, or re-record with the dashboard's")
-            print("    \"Use this machine's version\" if the SKSE here is stale.")
+            print("    'modsync game status' shows the downgrade, or re-record with \"Use this")
+            print("    machine's version\" under Game in the app if the SKSE here is stale.")
     print("\nShare this pairing code with your other machines:\n")
     print(f"  {code.encode()}\n")
     return _run_until_interrupt(service)

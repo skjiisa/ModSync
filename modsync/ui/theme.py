@@ -1,132 +1,181 @@
-"""Shared, readable presentation for the dashboard and wizard.
+"""One dark, console-style look, sized for a Steam Deck held at arm's length.
 
-Qt's Mid palette role is a bevel/border color, not secondary text. Keep text
-colors explicit and test their contrast against both the window and cards.
+ModSync always uses this theme, whatever the desktop's color scheme. Gaming
+Mode is dark, and the backdrop is painted rather than taken from the palette.
+Text colors are explicit, and tests check their contrast against every
+surface they sit on.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication, QLabel, QWidget
+from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtWidgets import QApplication, QWidget
 
-LIGHT = {
-    "window": "#f1f5f7", "surface": "#ffffff", "text": "#182b38",
-    "secondary": "#526572", "border": "#cbd7df", "hover": "#e8f1f3",
-    "accent": "#006c63", "accent_hover": "#00564f", "on_accent": "#ffffff",
-    "focus": "#007f75", "warning": "#704600", "warning_bg": "#fff3d9",
-    "warning_border": "#c99939", "disabled": "#667681", "progress": "#a7d8d0",
+C = {
+    "night": "#070c14",  # top of the backdrop
+    "dusk": "#0d1724",  # bottom of the backdrop
+    "surface": "#132030",  # panels and tiles
+    "raised": "#1b2b3f",  # hovered and focused tiles
+    "sunken": "#0d1622",  # pressed tiles, wells
+    "border": "#29405a",
+    "text": "#eef4f8",
+    "secondary": "#b1c3d1",
+    "muted": "#8499ab",
+    "accent": "#7fe0d0",  # frost
+    "accent_hi": "#b0f2e6",
+    "accent_deep": "#3fb8a6",
+    "on_accent": "#052520",
+    "ok": "#86e3a9",
+    "warn": "#f6c86b",
+    "warn_bg": "#33291a",
+    "danger": "#ff958c",
+    "danger_bg": "#3a1d1f",
+    "info": "#9cc2ff",
+    "aurora_a": "#36d1b5",
+    "aurora_b": "#7a6cf0",
+    "disabled": "#6c7f90",
 }
-DARK = {
-    "window": "#141c24", "surface": "#1e2a35", "text": "#edf3f7",
-    "secondary": "#b0c1ce", "border": "#425565", "hover": "#2b3d4a",
-    "accent": "#8cdece", "accent_hover": "#a8ebde", "on_accent": "#102c28",
-    "focus": "#8cdece", "warning": "#ffe1a2", "warning_bg": "#3c301b",
-    "warning_border": "#b68b39", "disabled": "#96a7b5", "progress": "#345e59",
-}
+
+BASE_POINT_SIZE = 12.0
 
 
-def role(widget: QWidget, name: str) -> None:
-    """Assign a visual role, also refreshing widgets whose status changes."""
-    if widget.property("role") == name:
-        return
-    widget.setProperty("role", name)
-    if isinstance(widget, QLabel):
-        widget.setMargin(12 if name == "warning" else 0)
-    widget.style().unpolish(widget)
-    widget.style().polish(widget)
-    widget.updateGeometry()
+def color(name: str, alpha: int | None = None) -> QColor:
+    c = QColor(C[name])
+    if alpha is not None:
+        c.setAlpha(alpha)
+    return c
+
+
+def font(points: float, weight: QFont.Weight = QFont.Weight.Normal, *, spacing: float = 0.0) -> QFont:
+    f = QFont(QApplication.font())
+    f.setPointSizeF(points)
+    f.setWeight(weight)
+    if spacing:
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, spacing)
+    return f
+
+
+def repolish(widget: QWidget) -> None:
+    """Re-apply the style sheet after a dynamic property changed, children too."""
+    for w in [widget, *widget.findChildren(QWidget)]:
+        w.style().unpolish(w)
+        w.style().polish(w)
     widget.update()
 
 
-def apply_theme(app: QApplication, *, dark: bool | None = None) -> None:
-    if dark is None:
-        scheme = app.styleHints().colorScheme()
-        dark = scheme == Qt.ColorScheme.Dark or (
-            scheme == Qt.ColorScheme.Unknown
-            and app.palette().color(QPalette.ColorRole.Window).lightness() < 128
-        )
-    c = DARK if dark else LIGHT
+def role(widget: QWidget, name: str) -> None:
+    """Give a label (or any widget) a visual role from the style sheet."""
+    if widget.property("role") == name:
+        return
+    widget.setProperty("role", name)
+    repolish(widget)
+    widget.updateGeometry()
+
+
+def apply_theme(app: QApplication) -> None:
     palette = QPalette(app.palette())
-    for name, color in {
-        "Window": c["window"], "WindowText": c["text"], "Base": c["surface"],
-        "AlternateBase": c["hover"], "Text": c["text"], "Button": c["surface"],
-        "ButtonText": c["text"], "Highlight": c["accent"],
-        "HighlightedText": c["on_accent"], "PlaceholderText": c["secondary"],
-        "ToolTipBase": c["surface"], "ToolTipText": c["text"],
+    for name, value in {
+        "Window": C["dusk"], "WindowText": C["text"], "Base": C["sunken"],
+        "AlternateBase": C["surface"], "Text": C["text"], "Button": C["surface"],
+        "ButtonText": C["text"], "Highlight": C["accent"],
+        "HighlightedText": C["on_accent"], "PlaceholderText": C["muted"],
+        "ToolTipBase": C["raised"], "ToolTipText": C["text"], "Link": C["accent"],
     }.items():
-        palette.setColor(getattr(QPalette.ColorRole, name), QColor(color))
+        palette.setColor(getattr(QPalette.ColorRole, name), QColor(value))
+    for group in (QPalette.ColorGroup.Disabled,):
+        palette.setColor(group, QPalette.ColorRole.WindowText, QColor(C["disabled"]))
+        palette.setColor(group, QPalette.ColorRole.Text, QColor(C["disabled"]))
+        palette.setColor(group, QPalette.ColorRole.ButtonText, QColor(C["disabled"]))
     app.setPalette(palette)
-    font = app.font()
-    font.setPointSizeF(max(11.0, font.pointSizeF()))
-    app.setFont(font)
-    app.setStyleSheet("""
-        QMainWindow, QDialog { background: %(window)s; }
-        QLabel { color: %(text)s; background: transparent; }
-        QLabel[role="secondary"] { color: %(secondary)s; }
-        QLabel[role="title"] { font-size: 24pt; font-weight: 700; }
-        QLabel[role="step"] { color: %(secondary)s; font-weight: 600; }
-        QLabel[role="warning"] {
-            color: %(warning)s; background: %(warning_bg)s;
-            border: 1px solid %(warning_border)s; border-radius: 7px;
-        }
-        QGroupBox {
-            background: %(surface)s; border: 1px solid %(border)s;
-            border-radius: 10px; margin-top: 12px; padding: 22px 14px 14px;
-            font-weight: 600;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin; subcontrol-position: top left;
-            left: 18px; padding: 0 6px; color: %(text)s;
-        }
-        QPushButton {
-            color: %(text)s; background: %(surface)s;
-            border: 1px solid %(border)s; border-radius: 6px;
-            min-height: 24px; padding: 8px 14px;
-        }
-        QPushButton:hover { background: %(hover)s; border-color: %(focus)s; }
-        QPushButton:pressed { background: %(hover)s; }
-        QPushButton[role="primary"] {
-            color: %(on_accent)s; background: %(accent)s;
-            border-color: %(accent)s; font-weight: 600;
-        }
-        QPushButton[role="primary"]:hover { background: %(accent_hover)s; }
-        QPushButton:focus, QLineEdit:focus, QListWidget:focus, QPlainTextEdit:focus {
-            border: 2px solid %(focus)s;
-        }
-        QPushButton:disabled {
-            color: %(disabled)s; background: %(window)s; border-color: %(border)s;
-        }
-        QLineEdit, QListWidget, QPlainTextEdit {
-            color: %(text)s; background: %(surface)s;
-            border: 1px solid %(border)s; border-radius: 6px; padding: 8px;
-            selection-background-color: %(accent)s; selection-color: %(on_accent)s;
-        }
-        QListWidget::item { padding: 8px; }
-        QRadioButton { color: %(text)s; spacing: 10px; padding: 8px 0; }
-        QRadioButton:focus { color: %(focus)s; }
-        QRadioButton::indicator {
-            width: 16px; height: 16px; border-radius: 10px;
-            border: 2px solid %(secondary)s; background: %(surface)s;
-        }
-        QRadioButton::indicator:checked {
-            background: %(accent)s; border: 2px solid %(focus)s;
-        }
-        QScrollBar:vertical { background: %(window)s; width: 12px; margin: 0; }
-        QScrollBar::handle:vertical {
-            background: %(border)s; border-radius: 5px; min-height: 36px;
-        }
-        QScrollBar::handle:vertical:hover { background: %(secondary)s; }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
-        QProgressBar {
-            color: %(text)s; background: %(window)s; border: 1px solid %(border)s;
-            border-radius: 5px; min-height: 24px; text-align: center;
-        }
-        QProgressBar::chunk { background: %(progress)s; border-radius: 4px; }
-        QScrollArea { border: none; background: transparent; }
-        QToolTip {
-            color: %(text)s; background: %(surface)s;
-            border: 1px solid %(border)s; padding: 6px;
-        }
-    """ % c)
+    f = app.font()
+    f.setPointSizeF(max(BASE_POINT_SIZE, f.pointSizeF()))
+    app.setFont(f)
+    app.setStyleSheet(STYLE % C)
+
+
+STYLE = """
+QMainWindow { background: %(dusk)s; }
+QLabel { color: %(text)s; background: transparent; }
+QLabel:disabled { color: %(disabled)s; }
+QLabel[role="secondary"] { color: %(secondary)s; }
+QLabel[role="muted"] { color: %(muted)s; }
+QLabel[role="eyebrow"] {
+    color: %(accent)s; font-size: 10pt; font-weight: 700; letter-spacing: 2px;
+}
+QLabel[role="title"] { font-size: 25pt; font-weight: 800; }
+QLabel[role="hero"] { font-size: 34pt; font-weight: 800; }
+QLabel[role="heading"] { font-size: 14pt; font-weight: 700; }
+QLabel[role="bignum"] { font-size: 46pt; font-weight: 800; color: %(text)s; }
+QLabel[role="ok"] { color: %(ok)s; font-weight: 600; }
+QLabel[role="warning"], QLabel[role="danger"], QLabel[role="note"] {
+    border-radius: 12px; padding: 12px 16px;
+}
+QLabel[role="warning"] {
+    color: %(warn)s; background: %(warn_bg)s; border: 1px solid #6b5426;
+}
+QLabel[role="danger"] {
+    color: %(danger)s; background: %(danger_bg)s; border: 1px solid #6e3236;
+}
+QLabel[role="note"] {
+    color: %(secondary)s; background: rgba(156, 194, 255, 18); border: 1px solid #2c4560;
+}
+QLabel[pill] {
+    border-radius: 11px; padding: 3px 11px; font-size: 10pt; font-weight: 700;
+}
+QLabel[pill="ok"] { color: %(ok)s; background: rgba(134, 227, 169, 30); }
+QLabel[pill="warn"] { color: %(warn)s; background: rgba(246, 200, 107, 30); }
+QLabel[pill="danger"] { color: %(danger)s; background: rgba(255, 149, 140, 30); }
+QLabel[pill="off"] { color: %(secondary)s; background: rgba(177, 195, 209, 22); }
+QLabel[pill="info"] { color: %(info)s; background: rgba(156, 194, 255, 26); }
+QLabel[pill="busy"] { color: %(accent)s; background: rgba(127, 224, 208, 26); }
+
+QFrame#panel {
+    background: rgba(19, 32, 48, 222); border: 1px solid rgba(80, 120, 160, 60);
+    border-radius: 20px;
+}
+QFrame#sheet {
+    background: %(surface)s; border: 1px solid %(border)s; border-radius: 24px;
+}
+
+QLabel#tileTitle { font-size: 13pt; font-weight: 700; color: %(text)s; }
+QLabel#tileDesc { color: %(secondary)s; }
+QLabel#tileTitle:disabled, QLabel#tileDesc:disabled { color: %(disabled)s; }
+QAbstractButton[tileRole="primary"] QLabel#tileTitle,
+QAbstractButton[tileRole="primary"] QLabel#tileDesc { color: %(on_accent)s; }
+QAbstractButton[tileRole="danger"] QLabel#tileTitle { color: %(danger)s; }
+QAbstractButton[tileSize="hero"] QLabel#tileTitle { font-size: 21pt; font-weight: 800; }
+QAbstractButton[tileSize="choice"] QLabel#tileTitle { font-size: 16pt; font-weight: 800; }
+QAbstractButton[tileSize="compact"] QLabel#tileTitle { font-size: 12pt; font-weight: 600; }
+
+QLineEdit {
+    color: %(text)s; background: %(sunken)s; border: 2px solid %(border)s;
+    border-radius: 12px; padding: 10px 14px; font-size: 15pt;
+    selection-background-color: %(accent)s; selection-color: %(on_accent)s;
+}
+QLineEdit:focus { border-color: %(accent)s; }
+QPlainTextEdit {
+    color: %(secondary)s; background: %(sunken)s; border: 1px solid %(border)s;
+    border-radius: 12px; padding: 8px; font-family: monospace; font-size: 10pt;
+}
+QProgressBar {
+    color: %(text)s; background: %(sunken)s; border: none; border-radius: 7px;
+    min-height: 14px; max-height: 14px; text-align: center; font-size: 1px;
+}
+QProgressBar::chunk {
+    border-radius: 7px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 %(accent_deep)s, stop:1 %(accent_hi)s);
+}
+QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }
+QScrollBar:vertical { background: transparent; width: 8px; margin: 4px 0; }
+QScrollBar::handle:vertical {
+    background: rgba(177, 195, 209, 60); border-radius: 4px; min-height: 40px;
+}
+QScrollBar::handle:vertical:hover { background: rgba(177, 195, 209, 120); }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+QScrollBar:horizontal { height: 0; }
+QToolTip {
+    color: %(text)s; background: %(raised)s; border: 1px solid %(border)s; padding: 6px;
+}
+"""
