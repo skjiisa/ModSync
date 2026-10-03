@@ -120,15 +120,37 @@ class InstanceRuntimeTests(unittest.TestCase):
         self.assertNotIn("vcruntime140.dll", copied)
         self.assertEqual((self.instance / "vcruntime140.dll").read_bytes(), newer)
 
-    def test_skips_the_download_when_the_prefix_runtime_is_current(self):
+    def current_prefix(self, skip=()):
         system32 = self.tmp / "pfx" / "system32"
-        system32.mkdir(parents=True)
-        for name in vcruntime.PREFIX_RUNTIME_DLLS:
-            (system32 / name).write_bytes(fake_dll(version=vcruntime.PREFIX_MIN_VERSION))
+        system32.mkdir(parents=True, exist_ok=True)
+        for name in vcruntime.DLLS:
+            if name not in skip:
+                (system32 / name).write_bytes(fake_dll(version=vcruntime.PREFIX_MIN_VERSION))
+        return system32
+
+    def test_skips_the_download_when_the_prefix_runtime_is_current(self):
+        system32 = self.current_prefix()
         with self.download() as download:
             self.assertEqual(vcruntime.ensure_instance_runtime(self.instance, system32=system32), [])
         download.assert_not_called()
         self.assertEqual(vcruntime.outdated(self.instance), list(vcruntime.DLLS))
+
+    def test_a_prefix_missing_a_companion_dll_still_gets_the_copy(self):
+        # Plugins import msvcp140_atomic_wait; the three USVFS checks aren't enough.
+        system32 = self.current_prefix(skip=("msvcp140_atomic_wait.dll",))
+        with self.download() as download:
+            copied = vcruntime.ensure_instance_runtime(self.instance, system32=system32)
+        self.assertEqual(sorted(copied), sorted(vcruntime.DLLS))
+        download.assert_called_once()
+
+    def test_an_old_copy_beside_mo2_is_replaced_even_with_a_current_prefix(self):
+        # A DLL next to ModOrganizer.exe comes before system32 in the search order.
+        system32 = self.current_prefix()
+        (self.instance / "msvcp140.dll").write_bytes(fake_dll(version=(14, 0, 24215, 1)))
+        with self.download():
+            copied = vcruntime.ensure_instance_runtime(self.instance, system32=system32)
+        self.assertEqual(copied, ["msvcp140.dll"])
+        self.assertEqual(vcruntime.outdated(self.instance), [n for n in vcruntime.DLLS if n != "msvcp140.dll"])
 
     def test_copies_when_the_prefix_runtime_is_old_or_missing(self):
         system32 = self.tmp / "pfx" / "system32"

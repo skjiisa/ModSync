@@ -200,10 +200,13 @@ def ensure_instance_runtime(instance: Path | str, *, system32: Path | None = Non
     root = Path(instance)
     if not (root / "ModOrganizer.exe").is_file():
         return []
-    if system32 is not None and not prefix_runtime_problems(system32):
-        log.debug("the game prefix at %s has a current VC++ runtime; MO2 uses that", system32)
-        return []
     stale = outdated(root)
+    if system32 is not None and prefix_has_mo2_runtime(system32):
+        # MO2 loads the prefix's copies, except where an old copy beside it
+        # comes first in the DLL search order: those still get replaced.
+        stale = [name for name in stale if (root / name).is_file()]
+        if not stale:
+            log.debug("the game prefix at %s has a current VC++ runtime; MO2 uses that", system32)
     if not stale:
         return []
     source = ensure_cached()
@@ -248,10 +251,21 @@ def is_wine_builtin(path: Path) -> bool:
         return False
 
 
+def prefix_has_mo2_runtime(system32: Path) -> bool:
+    """Whether the prefix holds every runtime DLL MO2 and its plugins import,
+    current and not Wine's stand-in (the full :data:`DLLS` set, not just the
+    three USVFS needs)."""
+    return not _runtime_problems(system32, DLLS)
+
+
 def prefix_runtime_problems(system32: Path) -> list[str]:
     """Why the prefix's runtime is too old for USVFS 0.5.7+, one line per DLL; [] if fine."""
+    return _runtime_problems(system32, PREFIX_RUNTIME_DLLS)
+
+
+def _runtime_problems(system32: Path, names: tuple[str, ...]) -> list[str]:
     problems = []
-    for name in PREFIX_RUNTIME_DLLS:
+    for name in names:
         path = system32 / name
         if not path.is_file():
             problems.append(f"{name} is missing")
