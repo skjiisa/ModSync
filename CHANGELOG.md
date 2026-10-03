@@ -28,6 +28,13 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- When Steam couldn't be closed and you picked the Play button switch under
+  Properties, then Compatibility yourself, ModSync kept saying it was waiting
+  for Steam to close, and would have re-applied the switch the next time
+  Steam closed, undoing any choice made since. A queued switch that is
+  already in place is now dropped. Tested on a Steam Frame.
+- With MO2-LINT's tool selected and the Play button switch off, the status
+  now says Play opens Mod Organizer 2 (MO2-LINT), not the game directly.
 - The Flatpak didn't recognise SteamOS: inside the sandbox `/etc/os-release`
   describes the Flatpak runtime. ModSync now reads the host's
   `/run/host/os-release`, so on a Steam Frame it says to reboot instead of
