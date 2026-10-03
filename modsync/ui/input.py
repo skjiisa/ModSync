@@ -6,6 +6,11 @@ keyboard and a mouse all end up here. Keys and buttons become ``Action``s and
 are offered to the focused widget, then to each of its parents, up to the main
 window, which moves focus spatially or switches sections.
 
+Steam's desktop configurations don't agree on what each button sends (Space
+is Y on a Deck and B on everything else), so keys are read against the
+controller family ``steaminput.family`` finds. Bumpers arrive as a bare tap of
+Ctrl or Alt.
+
 When Steam translates a controller into keys while SDL reads the same
 controller, each press arrives twice, and not always as the same action:
 Steam's desktop configuration sends Space (accept) for Y. So any press within
@@ -58,6 +63,16 @@ PAD = {
 K = Qt.Key
 TEXT_KEYS = {K.Key_Left, K.Key_Right, K.Key_Backspace, K.Key_Delete, K.Key_Space, K.Key_Home, K.Key_End}
 
+# Keys a Steam desktop configuration sends for controller buttons. When one
+# arrives and a controller family is in use, the hints show controller glyphs.
+CONTROLLER_KEYS = {
+    K.Key_Up, K.Key_Down, K.Key_Left, K.Key_Right, K.Key_Return, K.Key_Enter,
+    K.Key_Escape, K.Key_Space, K.Key_PageUp, K.Key_PageDown, K.Key_Tab,
+}
+TAP_KEYS = {K.Key_Control: Action.PREV_TAB, K.Key_Alt: Action.NEXT_TAB}  # LB, RB
+TAP_S = 0.6  # a modifier released this soon, with nothing pressed meanwhile, is a tap
+FAMILY_TTL_S = 5.0
+
 DEDUPE_S = 0.15
 REPEAT_DELAY_MS = 380
 REPEAT_MS = 105
@@ -72,7 +87,9 @@ def is_text_input(w: QWidget | None) -> bool:
     return False
 
 
-def key_action(event: QKeyEvent, focus: QWidget | None) -> Action | None:
+def key_action(event: QKeyEvent, focus: QWidget | None, family: str = "keyboard") -> Action | None:
+    """The action for a key press. ``family`` is ``steaminput.family()``:
+    which button Space and Page Up/Down stand for depends on it."""
     key = event.key()
     mods = event.modifiers()
     ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
@@ -93,7 +110,10 @@ def key_action(event: QKeyEvent, focus: QWidget | None) -> Action | None:
         return Action.LEFT
     if key == K.Key_Right:
         return Action.RIGHT
-    if key in (K.Key_Return, K.Key_Enter, K.Key_Select, K.Key_Space):
+    if key == K.Key_Space:
+        # Y on a Deck, B on other controllers, select on a keyboard.
+        return {"deck": Action.ALT, "steam": Action.BACK}.get(family, Action.ACCEPT)
+    if key in (K.Key_Return, K.Key_Enter, K.Key_Select):
         return Action.ACCEPT
     if key in (K.Key_Escape, K.Key_Backspace, K.Key_Back):
         return Action.BACK
@@ -101,10 +121,10 @@ def key_action(event: QKeyEvent, focus: QWidget | None) -> Action | None:
         return Action.NEXT_TAB if ctrl else Action.NEXT
     if key == K.Key_Backtab:
         return Action.PREV_TAB if ctrl else Action.PREV
-    if key == K.Key_PageUp:
-        return Action.PREV_TAB if ctrl else Action.SCROLL_UP
-    if key == K.Key_PageDown:
-        return Action.NEXT_TAB if ctrl else Action.SCROLL_DOWN
+    if key == K.Key_PageUp:  # X on a Steam Controller; the R5 grip on a Deck
+        return Action.PREV_TAB if ctrl else (Action.AUX if family == "steam" else Action.SCROLL_UP)
+    if key == K.Key_PageDown:  # Y on a Steam Controller; the R4 grip on a Deck
+        return Action.NEXT_TAB if ctrl else (Action.ALT if family == "steam" else Action.SCROLL_DOWN)
     if typing or mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.ControlModifier):
         return None
     if key in (K.Key_Q, K.Key_BracketLeft):
@@ -140,6 +160,8 @@ class InputRouter(QObject):
         self._scroll_timer.setInterval(16)
         self._scroll_timer.timeout.connect(self._on_scroll_tick)
         self._mouse_anchor: QPoint | None = None
+        self._tap: tuple[int, float] | None = None  # modifier pressed alone, and when
+        self._family: tuple[str, float] | None = None
         app.installEventFilter(self)
 
     @classmethod
@@ -158,6 +180,7 @@ class InputRouter(QObject):
         self._on_pads_changed()
 
     def _on_pads_changed(self) -> None:
+        self._family = None
         if self.gamepads is not None:
             self.pad_style = self.gamepads.style
         self.controllersChanged.emit()
@@ -169,6 +192,23 @@ class InputRouter(QObject):
     @property
     def glyph_style(self) -> str:
         return self.pad_style if self.mode == "gamepad" else "keyboard"
+
+    @property
+    def family(self) -> str:
+        """``steaminput.family()``, re-read every few seconds: controllers
+        come and go."""
+        from modsync.ui import steaminput
+
+        now = time.monotonic()
+        if self._family is None or now - self._family[1] > FAMILY_TTL_S:
+            connected = bool(self.gamepads is not None and self.gamepads.names)
+            self._family = (steaminput.family(gamepads_connected=connected), now)
+        return self._family[0]
+
+    def _key_mode(self, key: int) -> str:
+        if key in CONTROLLER_KEYS or key in TAP_KEYS:
+            return "gamepad" if self.family != "keyboard" else "keyboard"
+        return "keyboard"
 
     def _set_mode(self, mode: str) -> None:
         if mode != self.mode:
@@ -236,6 +276,23 @@ class InputRouter(QObject):
         last, self._last_press = self._last_press, (source, now)
         return last is not None and last[0] != source and now - last[1] < DEDUPE_S
 
+    def _tap_released(self, obj: QWidget, key: int) -> bool:
+        """A bare tap of Ctrl or Alt is LB or RB: what every Steam desktop
+        configuration sends for the bumpers."""
+        tap, self._tap = self._tap, None
+        focus = QApplication.focusWidget()
+        if obj is not focus and not (focus is None and obj.isWindow()):
+            return False
+        if tap is None or tap[0] != key or time.monotonic() - tap[1] > TAP_S:
+            return False
+        if not hasattr(obj.window(), "handle_action"):
+            return False
+        action = TAP_KEYS[key]
+        self._set_mode(self._key_mode(key))
+        if not self._duplicate(action, "key"):
+            self.dispatch(action)
+        return False
+
     # --- dispatch ---------------------------------------------------------------------
     def dispatch(self, action: Action) -> bool:
         """Offer ``action`` to the focused widget and its ancestors; the main
@@ -261,12 +318,24 @@ class InputRouter(QObject):
                 return False  # an ignored key bubbling up to a parent: seen already
             if not hasattr(obj.window(), "handle_action"):
                 return False  # a plain Qt dialog or another window: leave it alone
-            action = key_action(event, focus)
+            key = event.key()
+            if key in TAP_KEYS:
+                # Whether the key's own modifier is already set on its press
+                # differs between platforms; any other modifier means a chord.
+                own = (Qt.KeyboardModifier.ControlModifier if key == K.Key_Control
+                       else Qt.KeyboardModifier.AltModifier)
+                others = event.modifiers() & ~own & ~Qt.KeyboardModifier.KeypadModifier
+                alone = others == Qt.KeyboardModifier.NoModifier
+                if not event.isAutoRepeat():
+                    self._tap = (key, time.monotonic()) if alone else None
+                return False
+            self._tap = None
+            action = key_action(event, focus, self.family)
             if action is None:
                 if event.text().strip():
                     self._set_mode("keyboard")
                 return False
-            self._set_mode("keyboard")
+            self._set_mode(self._key_mode(key))
             if event.key() == K.Key_Space:
                 self._swallow.add(event.key())  # a button would click again on release
             if event.isAutoRepeat():
@@ -282,7 +351,11 @@ class InputRouter(QObject):
             self.dispatch(action)
             return True
         if kind == QEvent.Type.KeyRelease:
-            if isinstance(obj, QWidget) and event.key() in self._swallow and not event.isAutoRepeat():
+            if not isinstance(obj, QWidget) or event.isAutoRepeat():
+                return False
+            if event.key() in TAP_KEYS:
+                return self._tap_released(obj, event.key())
+            if event.key() in self._swallow:
                 self._swallow.discard(event.key())
                 return True
             return False
@@ -296,5 +369,6 @@ class InputRouter(QObject):
                 self._set_mode("mouse")
             return False
         if kind in (QEvent.Type.MouseButtonPress, QEvent.Type.Wheel) and isinstance(obj, QWindow):
+            self._tap = None  # Ctrl+click is not a bumper
             self._set_mode("mouse")
         return False

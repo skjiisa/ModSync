@@ -48,9 +48,12 @@ All notable changes to ModSync are documented here. The format follows
   Organizer 2, sync) next to Play, or Continue when Steam's Play button
   opened ModSync. The setup wizard reuses the same parts and keeps Finish at
   the top of its last step. ModSync always uses its dark theme now.
-- Controllers work two ways. A Steam Deck in desktop mode works through the
-  arrow keys, Return and Escape that Steam Input's desktop configuration
-  sends. ModSync also reads controllers directly through SDL2, from the
+- Controllers work two ways. Outside games, Steam Input's desktop
+  configuration turns buttons into keys, and ModSync reads them back as the
+  buttons that sent them: Space is Y on a Steam Deck and B on a Steam
+  Controller, Xbox or PlayStation pad, Page Up/Down are X/Y on the latter, and
+  a tap of Ctrl or Alt is LB or RB. It tells which applies from the hardware
+  in `/sys`. ModSync also reads controllers directly through SDL2, from the
   Flatpak runtime or SteamOS, which covers the virtual pad Steam provides in
   Gaming Mode. A press that arrives both ways counts once, and presses are
   ignored while another window is in front. The Flatpak gains

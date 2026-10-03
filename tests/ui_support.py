@@ -78,6 +78,9 @@ class UiTestCase(unittest.TestCase):
                 SKYRIM_SE, False, None, False, None, None, False, None, False, True)),
             patch("modsync.ui.pages.system.firewall.check", return_value=Check(None, True, "")),
             patch("modsync.ui.pages.mods.scan_instances", return_value=[]),
+            # Don't read this machine's controllers: a plain keyboard unless a
+            # test says otherwise.
+            patch("modsync.ui.steaminput.family", return_value="keyboard"),
         ]
         for p in patches:
             p.start()
@@ -96,6 +99,8 @@ class UiTestCase(unittest.TestCase):
         router._recent.clear()
         router._held.clear()
         router._last_press = None
+        router._family = None
+        router._tap = None
 
     def _no_slot_errors(self):
         self.settle()

@@ -343,9 +343,9 @@ class ReviewRegressionTests(UiTestCase):
         self.addCleanup(p.stop)
         self.router = InputRouter.instance()
 
-    def test_deck_y_as_space_and_sdl_y_act_once(self):
-        """Steam's desktop configuration sends Space for Y while SDL reports Y:
-        different actions, one press."""
+    def test_a_press_arriving_as_two_different_actions_acts_once(self):
+        """Space from Steam (select on a keyboard) and Y from SDL within the
+        dedupe window are one press, even though they map differently."""
         window = self.window()
         window.go("game")
         with patch.object(window.pages["game"].panel, "refresh") as refresh:
@@ -438,3 +438,114 @@ class ReviewRegressionTests(UiTestCase):
         pads._remove(7)
         self.assertEqual(events, [("left", True), ("left", False)])
         pads._sdl = None
+
+
+@unittest.skipIf(QApplication is None, "PySide6 not installed")
+class SteamDesktopConfigTests(UiTestCase):
+    """Steam's default desktop configurations, read back as the buttons that
+    sent them (see modsync/ui/steaminput.py for the tables)."""
+
+    def _family(self, family):
+        from modsync.ui.input import InputRouter
+
+        p = patch("modsync.ui.steaminput.family", return_value=family)
+        p.start()
+        self.addCleanup(p.stop)
+        InputRouter.instance()._family = None
+
+    def test_space_is_y_on_a_deck_b_on_a_steam_controller_and_select_on_a_keyboard(self):
+        from modsync.ui.input import Action, key_action
+
+        button = QPushButton()
+        space = key(Qt.Key.Key_Space, " ")
+        self.assertEqual(key_action(space, button, "deck"), Action.ALT)
+        self.assertEqual(key_action(space, button, "steam"), Action.BACK)
+        self.assertEqual(key_action(space, button, "keyboard"), Action.ACCEPT)
+        self.assertEqual(key_action(key(Qt.Key.Key_PageUp), button, "steam"), Action.AUX)
+        self.assertEqual(key_action(key(Qt.Key.Key_PageDown), button, "steam"), Action.ALT)
+        self.assertEqual(key_action(key(Qt.Key.Key_PageDown), button, "deck"), Action.SCROLL_DOWN)
+        for family in ("deck", "steam", "keyboard"):
+            with self.subTest(family=family):
+                self.assertEqual(key_action(key(Qt.Key.Key_Return), button, family), Action.ACCEPT)
+                self.assertEqual(key_action(key(Qt.Key.Key_Escape), button, family), Action.BACK)
+        self.assertIsNone(key_action(space, QLineEdit(), "steam"))  # typing a space still types
+
+    def test_bumpers_arrive_as_a_tap_of_ctrl_or_alt(self):
+        self._family("steam")
+        window = self.window()
+        focus = self.app.focusWidget()
+        QTest.keyClick(focus, Qt.Key.Key_Alt, Qt.KeyboardModifier.AltModifier)  # RB
+        self.assertEqual(window._current, "game")
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)  # LB
+        self.assertEqual(window._current, "home")
+        from modsync.ui.input import InputRouter
+
+        self.assertEqual(InputRouter.instance().glyph_style, "xbox")  # hints show LB/RB, not keys
+
+    def test_a_held_modifier_used_for_a_shortcut_is_not_a_bumper(self):
+        window = self.window()
+        focus = self.app.focusWidget()
+        QTest.keyPress(focus, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)
+        QTest.keyClick(focus, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+        QTest.keyRelease(focus, Qt.Key.Key_Control)
+        self.assertEqual(window._current, "home")
+        QTest.keyPress(focus, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)
+        time.sleep(0.7)  # held, not tapped
+        QTest.keyRelease(focus, Qt.Key.Key_Control)
+        self.assertEqual(window._current, "home")
+
+    def test_steam_controller_b_goes_back_instead_of_selecting(self):
+        self._family("steam")
+        window = self.window()
+        window.go("system")
+        with patch.object(self.app.focusWidget(), "click") as click:
+            QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Space)  # B
+        click.assert_not_called()
+        self.assertEqual(window._current, "home")
+
+    def test_deck_y_runs_the_section_shortcut(self):
+        self._family("deck")
+        window = self.window()
+        window.go("game")
+        with patch.object(window.pages["game"].panel, "refresh") as refresh, \
+                patch.object(self.app.focusWidget(), "click") as click:
+            QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Space)  # Y
+        refresh.assert_called_once()
+        click.assert_not_called()
+
+
+class SteamInputFamilyTests(unittest.TestCase):
+    def _sysfs(self, tmp, devices=(), dmi=None):
+        from pathlib import Path
+
+        root = Path(tmp)
+        for i, (vendor, product) in enumerate(devices):
+            d = root / "class" / "input" / f"input{i}" / "id"
+            d.mkdir(parents=True)
+            (d / "vendor").write_text(vendor + "\n")
+            (d / "product").write_text(product + "\n")
+        if dmi:
+            d = root / "class" / "dmi" / "id"
+            d.mkdir(parents=True)
+            (d / "sys_vendor").write_text(dmi[0] + "\n")
+            (d / "product_name").write_text(dmi[1] + "\n")
+        return root
+
+    def test_family_detection(self):
+        import tempfile
+        from modsync.ui import steaminput
+
+        cases = [
+            ({"devices": [("046d", "c52b")]}, False, "keyboard"),
+            ({"devices": [("28de", "1304")]}, False, "steam"),  # Steam Controller puck
+            ({"devices": [("28de", "1142")]}, False, "steam"),  # original Steam Controller dongle
+            ({"devices": [("28de", "11ff")]}, False, "keyboard"),  # only Steam's own virtual pad
+            ({"devices": [("045e", "028e")]}, True, "steam"),  # an Xbox pad SDL can see
+            ({"devices": [("28de", "1205")]}, False, "deck"),  # the Deck's built-in controls
+            ({"devices": [("28de", "1304")], "dmi": ("Valve", "Galileo")}, False, "deck"),
+        ]
+        for spec, pads, expected in cases:
+            with self.subTest(spec=spec, pads=pads), tempfile.TemporaryDirectory() as tmp, \
+                    patch.object(steaminput.steamos, "variant", return_value=None):
+                root = self._sysfs(tmp, **spec)
+                self.assertEqual(steaminput.family(root, gamepads_connected=pads), expected)

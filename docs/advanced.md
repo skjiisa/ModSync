@@ -45,12 +45,14 @@ keyboard, a mouse and the Deck's touch screen work too.
 | Controller | Keyboard | Does |
 | --- | --- | --- |
 | D-pad or left stick | Arrow keys | Move between tiles |
-| A | Enter or Space | Choose |
-| B | Escape or Backspace | Back: close a sheet, go back a wizard step, or return to Home |
-| LB / RB | Q / E, or Ctrl+Tab | Previous / next section |
+| A | Enter | Choose |
+| B | Escape | Back: close a sheet, go back a wizard step, or return to Home |
+| LB / RB | Q / E, Ctrl+Tab, or a tap of Ctrl / Alt | Previous / next section |
+| X, Y | | Shortcuts named in the hint bar, such as "Check again" |
 | LT / RT, right stick | Page Up / Page Down | Scroll |
 | Start | Home | Home |
-| X, Y | | Shortcuts named in the hint bar, such as "Check again" |
+
+On a keyboard, Space also chooses and Backspace goes back.
 
 The hint bar along the bottom shows the buttons for the device in use, with
 PlayStation symbols for a PlayStation controller. Moving up from the top of a
@@ -59,10 +61,25 @@ sections, and moving down goes back into the section.
 
 There are two ways a controller reaches ModSync:
 
-- **As keys.** Steam Input's desktop configuration on a Steam Deck sends
-  arrow keys for the d-pad and left stick, Return for A, Escape for B and
-  Space for Y. That is enough to use all of ModSync, so it works in desktop
-  mode with no setup.
+- **As keys.** Outside games, Steam Input applies a desktop configuration
+  that turns buttons into keys, and the defaults differ by controller:
+
+  | Button | Steam Deck | Steam Controller, Xbox, PlayStation |
+  | --- | --- | --- |
+  | A | Return | Enter |
+  | B | Escape | Space |
+  | X | on-screen keyboard | Page Up |
+  | Y | Space | Page Down |
+  | LB / RB | Ctrl / Alt | Ctrl / Alt |
+  | View / Start | Tab / Escape | Tab / Escape |
+
+  ModSync reads these keys back as the buttons that sent them, so A, B, X,
+  Y and the bumpers do the same as on a controller it reads directly. It
+  checks `/sys` for the hardware: a Steam Deck uses the Deck column, and any
+  other Valve controller or a connected game controller uses the other one.
+  On such a machine Space is that controller's button, so a keyboard's Space
+  goes back (B) or runs the Y shortcut rather than choosing. Enter still
+  chooses. Ctrl and Alt only switch sections when tapped on their own.
 - **Directly.** ModSync reads controllers through SDL2, which ships in the
   Flatpak's runtime and on SteamOS. In Gaming Mode this is the virtual pad
   Steam gives the app it launched. SDL's HIDAPI drivers stay off, so ModSync
