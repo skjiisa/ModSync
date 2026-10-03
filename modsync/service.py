@@ -21,7 +21,7 @@ from modsync import config, gameversion, pairing_lan, platforms, skse, steamos
 from modsync.downgrade import engine, recipe
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import vcruntime
-from modsync.mo2.launch import Launcher, build_plan, nested_desktop_display
+from modsync.mo2.launch import Launcher, build_plan, nested_desktop_display, prefix_system32, run_in_prefix
 from modsync.pairing_code import PairingCode
 from modsync.state import State
 from modsync.steam import appinfo, libraries as libs, prefixes, shortcuts
@@ -224,6 +224,48 @@ class ModSyncService:
             # USER32.GetPointerFrameTouchInfo, which Wine doesn't implement.
             message += " Use a mouse or the keyboard in MO2 here: the VR pointer makes it close."
         return message
+
+    def prefix_runtime_problems(self) -> list[str]:
+        """Why the game prefix's VC++ runtime is too old for this instance's USVFS
+        (0.5.7+ uses the runtime of the programs MO2 starts); [] when it's fine or
+        doesn't matter."""
+        path = self.state.instance_path
+        if not path or not vcruntime.usvfs_needs_prefix_runtime(path):
+            return []
+        try:
+            return vcruntime.prefix_runtime_problems(prefix_system32(path))
+        except (RuntimeError, OSError) as exc:  # Steam/Proton not ready: nothing to offer yet
+            log.info("could not check the prefix's VC++ runtime: %s", exc)
+            return []
+
+    def install_prefix_runtime(self) -> str:
+        """Install Microsoft's VC++ runtime into the game prefix, after backing up
+        the DLLs it replaces. Only ever run on the user's request."""
+        path = self.state.instance_path
+        if not path:
+            raise RuntimeError("Choose an MO2 instance first.")
+        if self.launcher.running():
+            raise RuntimeError("Close Mod Organizer 2 and the game first.")
+        system32 = prefix_system32(path)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup = vcruntime.backup_prefix_runtime(system32, config.data_dir() / "backups" / f"prefix-vcruntime-{stamp}")
+        installer = vcruntime.redist_installer()
+        log.info("installing the VC++ runtime into %s (backup in %s)", system32, backup)
+        result = run_in_prefix(path, installer, ["/install", "/quiet", "/norestart"])
+        # 3010: installed, reboot requested (meaningless in a prefix); 1638: a newer one is there.
+        if result.returncode not in (0, 3010, 1638):
+            log.error("VC++ runtime install failed (%s): %s", result.returncode, result.stdout[-2000:])
+            raise RuntimeError(
+                f"The Visual C++ runtime installer exited with code {result.returncode}. "
+                f"The previous DLLs are backed up in {backup}."
+            )
+        left = vcruntime.prefix_runtime_problems(system32)
+        if left:
+            raise RuntimeError(
+                "The Visual C++ runtime installer finished, but the prefix still has "
+                + "; ".join(left) + f". The previous DLLs are backed up in {backup}."
+            )
+        return "Installed the Visual C++ runtime into the game's Proton prefix."
 
     def forget_instance(self) -> None:
         """Stop using the chosen instance (and its vault, if any). Files stay."""

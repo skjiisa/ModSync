@@ -199,3 +199,77 @@ def ensure_instance_runtime(instance: Path | str) -> list[str]:
         shutil.copyfile(source / name, root / name)
     log.info("copied VC++ runtime %s into %s: %s", ".".join(map(str, VERSION)), root, ", ".join(stale))
     return stale
+
+
+# --- the game prefix's runtime ---------------------------------------------------
+#
+# From 0.5.7, USVFS links the VC++ runtime dynamically. MO2 injects it into the
+# programs it starts (the game, SKSE, tools), where it uses *that* process's
+# runtime: the game folder's or the prefix's system32. A Skyrim prefix typically
+# has the 2016 msvcp140.dll the game's own redistributable installed, plus Wine's
+# built-in vcruntime140_1.dll, and the injected USVFS then dies on its first C++
+# exception, so nothing started from MO2 runs. The copy next to ModOrganizer.exe
+# can't help there. Installing Microsoft's redistributable into the prefix does
+# (MO2-LINT does this too); ModSync offers it, never does it on its own.
+
+USVFS_DYNAMIC_RUNTIME = (0, 5, 7, 0)
+PREFIX_RUNTIME_DLLS = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+PREFIX_MIN_VERSION = (14, 40, 0, 0)  # VS2022 17.10 (constexpr std::mutex)
+# Everything vc_redist.x64.exe may replace in system32.
+PREFIX_BACKUP_GLOBS = ("msvcp140*.dll", "vcruntime140*.dll", "concrt140.dll", "vcomp140.dll",
+                       "vccorlib140.dll", "vcamp140.dll", "mfc140*.dll", "mfcm140*.dll")
+_WINE_BUILTIN = b"Wine builtin DLL"
+
+
+def usvfs_needs_prefix_runtime(instance: Path | str) -> bool:
+    """Whether the instance's USVFS uses the runtime of the programs it's injected into."""
+    version = pe.file_version(Path(instance) / "usvfs_x64.dll")
+    return version is not None and version >= USVFS_DYNAMIC_RUNTIME
+
+
+def is_wine_builtin(path: Path) -> bool:
+    """Wine's own stand-in DLLs carry this marker in their DOS stub."""
+    try:
+        with open(path, "rb") as fh:
+            return _WINE_BUILTIN in fh.read(0x400)
+    except OSError:
+        return False
+
+
+def prefix_runtime_problems(system32: Path) -> list[str]:
+    """Why the prefix's runtime is too old for USVFS 0.5.7+, one line per DLL; [] if fine."""
+    problems = []
+    for name in PREFIX_RUNTIME_DLLS:
+        path = system32 / name
+        if not path.is_file():
+            problems.append(f"{name} is missing")
+        elif is_wine_builtin(path):
+            problems.append(f"{name} is Wine's built-in stand-in")
+        else:
+            version = pe.file_version(path)
+            if version is None or version < PREFIX_MIN_VERSION:
+                shown = ".".join(map(str, version)) if version else "unknown version"
+                problems.append(f"{name} is {shown}")
+    return problems
+
+
+def backup_prefix_runtime(system32: Path, dest: Path) -> Path:
+    """Copy the runtime DLLs the redistributable may replace into ``dest``."""
+    dest.mkdir(parents=True, exist_ok=True)
+    for pattern in PREFIX_BACKUP_GLOBS:
+        for path in system32.glob(pattern):
+            if path.is_file():
+                shutil.copy2(path, dest / path.name)
+    return dest
+
+
+def redist_installer() -> Path:
+    """The pinned, verified VC_redist.x64.exe, downloaded once."""
+    path = cache_dir().parent / f"VC_redist.x64-{'.'.join(map(str, VERSION))}.exe"
+    if not path.is_file():
+        data = _download()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".part")
+        tmp.write_bytes(data)
+        tmp.replace(path)
+    return path

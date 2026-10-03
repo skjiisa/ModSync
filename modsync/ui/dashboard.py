@@ -222,6 +222,21 @@ class Dashboard(QWidget):
                 row.addWidget(note)
             row.addStretch(1)
             v.addLayout(row)
+            # USVFS 0.5.7+ needs a current VC++ runtime in the game prefix. Only
+            # shown when it's missing; installing it is always the user's click.
+            self._runtime_widget = QWidget()
+            self._runtime_widget.setVisible(False)
+            runtime_row = QHBoxLayout(self._runtime_widget)
+            runtime_row.setContentsMargins(0, 0, 0, 0)
+            self._runtime_button = QPushButton("Install Visual C++ runtime…")
+            self._runtime_button.clicked.connect(self._install_prefix_runtime)
+            self._runtime_status = QLabel("")
+            self._runtime_status.setWordWrap(True)
+            role(self._runtime_status, "warning")
+            runtime_row.addWidget(self._runtime_button)
+            runtime_row.addWidget(self._runtime_status, stretch=1)
+            v.addWidget(self._runtime_widget)
+            self._refresh_prefix_runtime()
         else:
             intro = QLabel(
                 "No Mod Organizer 2 instance chosen yet. Pick the folder of an existing "
@@ -244,6 +259,36 @@ class Dashboard(QWidget):
             run_async(self._scan_instances, on_done=self._on_instances_found, on_failed=lambda _: None)
         v.addStretch(1)
         return box
+
+    # --- VC++ runtime in the game prefix ---------------------------------------
+    def _refresh_prefix_runtime(self) -> None:
+        run_async(self.service.prefix_runtime_problems, on_done=self._on_prefix_runtime_checked,
+                  on_failed=lambda _: None)
+
+    def _on_prefix_runtime_checked(self, problems: list[str]) -> None:
+        self._runtime_widget.setVisible(bool(problems))
+        self._runtime_button.setEnabled(True)
+        if problems:
+            self._runtime_status.setText(
+                "This MO2's virtual file system needs a newer Visual C++ runtime in the game's "
+                "Proton prefix, or nothing started from MO2 will run (" + "; ".join(problems) + ")."
+            )
+
+    def _install_prefix_runtime(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Install Visual C++ runtime",
+            "ModSync will download Microsoft's Visual C++ 2015-2022 runtime (x64), check it, and "
+            "install it silently into Skyrim's Proton prefix, the game's private copy of Windows. "
+            "The DLLs it replaces are backed up first. Close MO2 and the game before continuing.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._runtime_button.setEnabled(False)
+        self._set_status("Installing the Visual C++ runtime into the game's prefix…")
+        run_async(self.service.install_prefix_runtime,
+                  on_done=lambda msg: (self._set_status(msg), self._refresh_prefix_runtime()),
+                  on_failed=lambda msg: (self._on_error(msg), self._refresh_prefix_runtime()))
 
     @staticmethod
     def _scan_instances() -> list[str]:

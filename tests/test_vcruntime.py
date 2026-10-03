@@ -170,3 +170,112 @@ class LaunchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrefixRuntimeTests(unittest.TestCase):
+    """USVFS 0.5.7+ needs a current runtime in the game prefix, not just next to MO2."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.system32 = self.tmp / "system32"
+        self.system32.mkdir()
+
+    def write(self, name, data):
+        (self.system32 / name).write_bytes(data)
+
+    def current_runtime(self):
+        for name in vcruntime.PREFIX_RUNTIME_DLLS:
+            self.write(name, fake_dll())
+
+    def test_a_2016_runtime_and_wines_stand_in_are_reported(self):
+        self.write("msvcp140.dll", fake_dll(version=(14, 0, 24215, 1)))
+        self.write("vcruntime140_1.dll", b"MZ" + b"\0" * 62 + b"Wine builtin DLL" + fake_dll())
+        problems = vcruntime.prefix_runtime_problems(self.system32)
+        self.assertEqual(problems, [
+            "msvcp140.dll is 14.0.24215.1",
+            "vcruntime140.dll is missing",
+            "vcruntime140_1.dll is Wine's built-in stand-in",
+        ])
+
+    def test_a_current_runtime_is_fine(self):
+        self.current_runtime()
+        self.assertEqual(vcruntime.prefix_runtime_problems(self.system32), [])
+
+    def test_only_usvfs_057_and_later_need_it(self):
+        instance = self.tmp / "MO2"
+        instance.mkdir()
+        self.assertFalse(vcruntime.usvfs_needs_prefix_runtime(instance))
+        (instance / "usvfs_x64.dll").write_bytes(fake_dll(version=(0, 5, 6, 1)))
+        self.assertFalse(vcruntime.usvfs_needs_prefix_runtime(instance))
+        (instance / "usvfs_x64.dll").write_bytes(fake_dll(version=(0, 5, 7, 2)))
+        self.assertTrue(vcruntime.usvfs_needs_prefix_runtime(instance))
+
+    def test_backup_takes_only_the_runtime(self):
+        self.current_runtime()
+        self.write("concrt140.dll", b"x")
+        self.write("kernel32.dll", b"x")
+        backup = vcruntime.backup_prefix_runtime(self.system32, self.tmp / "backup")
+        self.assertEqual(sorted(p.name for p in backup.iterdir()),
+                         sorted([*vcruntime.PREFIX_RUNTIME_DLLS, "concrt140.dll"]))
+
+
+class InstallPrefixRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        import subprocess
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        env = patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.tmp / "config"),
+                                      "XDG_DATA_HOME": str(self.tmp / "data")})
+        env.start()
+        self.addCleanup(env.stop)
+        self.system32 = self.tmp / "system32"
+        self.system32.mkdir()
+        (self.system32 / "msvcp140.dll").write_bytes(fake_dll(version=(14, 0, 24215, 1)))
+        self.service = ModSyncService(manager=object())
+        self.service.state.instance_path = str(self.tmp / "MO2")
+        self.runs = []
+
+        def run(instance, exe, args, **kw):
+            self.runs.append((exe.name, args))
+            if self.installs:
+                for name in vcruntime.PREFIX_RUNTIME_DLLS:
+                    (self.system32 / name).write_bytes(fake_dll())
+            return subprocess.CompletedProcess([], self.code, stdout="", stderr="")
+
+        self.installs, self.code = True, 0
+        for p in (
+            patch("modsync.service.prefix_system32", return_value=self.system32),
+            patch("modsync.service.run_in_prefix", side_effect=run),
+            patch.object(vcruntime, "redist_installer", return_value=self.tmp / "VC_redist.x64.exe"),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def backups(self):
+        return list((self.tmp / "data" / "modsync" / "backups").iterdir())
+
+    def test_installs_after_backing_up(self):
+        self.assertIn("Installed", self.service.install_prefix_runtime())
+        self.assertEqual(self.runs, [("VC_redist.x64.exe", ["/install", "/quiet", "/norestart"])])
+        (backup,) = self.backups()
+        self.assertEqual((backup / "msvcp140.dll").read_bytes(), fake_dll(version=(14, 0, 24215, 1)))
+
+    def test_a_failed_install_says_where_the_backup_is(self):
+        self.installs, self.code = False, 1603
+        with self.assertRaisesRegex(RuntimeError, "code 1603.*backed up in"):
+            self.service.install_prefix_runtime()
+
+    def test_a_runtime_still_too_old_afterwards_is_an_error(self):
+        self.installs = False
+        with self.assertRaisesRegex(RuntimeError, "still has msvcp140.dll is 14.0.24215.1"):
+            self.service.install_prefix_runtime()
+
+    def test_refuses_while_mo2_runs(self):
+        with patch.object(self.service.launcher, "running", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "Close Mod Organizer 2"):
+                self.service.install_prefix_runtime()
+        self.assertEqual(self.runs, [])

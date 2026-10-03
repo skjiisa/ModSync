@@ -179,6 +179,30 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False) -> Launc
     return LaunchPlan(argv, env, instance, target, play)
 
 
+
+def run_in_prefix(instance_path: Path | str, exe: Path, args: list[str], *, timeout: float = 600) -> subprocess.CompletedProcess:
+    """Run a Windows program to completion in the game's Proton prefix, the same
+    way MO2 is started (Steam's Proton, inside its Steam Linux Runtime)."""
+    plan = build_plan(instance_path)
+    at = next(i for i, a in enumerate(plan.argv) if a.endswith("ModOrganizer.exe"))
+    argv = [*plan.argv[:at], str(exe), *args]
+    env = dict(os.environ)
+    for key in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH"):
+        env.pop(key, None)
+    env.update(plan.env)
+    if background.in_flatpak():
+        argv = ["flatpak-spawn", "--host", f"--directory={plan.cwd}",
+                "env", *(f"{k}={v}" for k, v in plan.env.items()), *argv]
+    log.info("running %s %s in the prefix", exe.name, " ".join(args))
+    return subprocess.run(argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                          text=True, errors="replace", timeout=timeout)
+
+
+def prefix_system32(instance_path: Path | str) -> Path:
+    """The game prefix's system32, as Proton lays it out."""
+    plan = build_plan(instance_path)
+    return Path(plan.env["STEAM_COMPAT_DATA_PATH"]) / "pfx" / "drive_c" / "windows" / "system32"
+
 class Launcher:
     """Track our launch processes without tying their lifetime to the GUI."""
 

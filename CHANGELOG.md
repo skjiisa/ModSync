@@ -8,6 +8,14 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
+- When an instance's USVFS is 0.5.7 or newer and the game's Proton prefix
+  only has the old Visual C++ runtime (or Wine's stand-in), the dashboard
+  offers to install Microsoft's current runtime into the prefix. USVFS 0.5.7+
+  uses the runtime of the programs MO2 starts, so without it nothing started
+  from MO2 runs. The pinned, checked redistributable is installed silently
+  through the game's Proton after backing up the DLLs it replaces; it never
+  happens without a click. `modsync doctor` shows each instance's USVFS
+  version and this check. Tested on a Steam Frame, from the Flatpak too.
 - An aarch64 Flatpak bundle next to the x86_64 one, for ARM machines such as
   the Steam Frame. It bundles the arm64 Syncthing build. Not yet tested on an
   ARM device.
