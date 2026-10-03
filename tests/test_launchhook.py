@@ -38,6 +38,8 @@ class LaunchHookBase(unittest.TestCase):
             patch.object(shortcuts, "steam_is_running", lambda: self.steam_running),
             patch.object(launchhook, "modsync_command", lambda: ["/usr/bin/flatpak", "run", "io.github.skjiisa.ModSync"]),
             patch.object(launchhook.time, "sleep", lambda s: None),
+            # The host's own architecture must not leak in (the suite also runs on a Steam Frame).
+            patch("modsync.steam.compattools.platform.machine", return_value="aarch64" if self.arm64 else "x86_64"),
         ):
             p.start()
             self.addCleanup(p.stop)
@@ -53,12 +55,6 @@ class EnableOnArm64(LaunchHookBase):
 
     arm64 = True
     mapping = {489830: {"name": "proton_experimental", "config": "", "priority": "250"}}
-
-    def setUp(self):
-        super().setUp()
-        p = patch("modsync.steam.compattools.platform.machine", return_value="aarch64")
-        p.start()
-        self.addCleanup(p.stop)
 
     def test_an_x86_64_selection_hands_off_to_steams_arm64_default(self):
         import shutil

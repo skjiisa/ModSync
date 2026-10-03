@@ -196,6 +196,10 @@ class Mo2LintBackendTests(unittest.TestCase):
         def probe(stdout="", rc=0, stderr=""):
             return subprocess.CompletedProcess([], rc, stdout=stdout, stderr=stderr)
 
+        # An x86_64 host; test_the_x86_64_download_is_not_offered_on_arm64 covers ARM64.
+        machine = patch.object(mo2lint.platform, "machine", return_value="x86_64")
+        machine.start()
+        self.addCleanup(machine.stop)
         with patch.object(mo2lint.background, "run_host", return_value=probe()) as run:
             self.assertEqual(Mo2LintBackend().available(), (True, ""))
         self.assertEqual(run.call_args.args[0][:2], ["sh", "-c"])
