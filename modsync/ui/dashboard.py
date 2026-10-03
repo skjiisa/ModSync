@@ -9,9 +9,18 @@
 Each card decides its own content from what is actually set up, so someone who
 only wants the downgrader never sees a vault. "Reset setup…" forgets everything
 without touching a single mod file.
+
+When Steam's launch hook opened ModSync, Steam is waiting on this window. Play
+then becomes **Continue**, which closes ModSync and lets the hook hand the same
+launch on (to MO2-LINT's redirector or the game's Proton), and **Cancel launch**
+returns to Steam. ModSync's own launches (Play through MO2, Open MO2) are left
+out in that case: they would start a second Proton in the prefix next to the
+one Steam is about to run, or outlive the launch Steam is tracking.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from PySide6.QtCore import QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication
@@ -32,6 +41,7 @@ from PySide6.QtWidgets import (
 from modsync import background, diagnostics, firewall, launchhook, platforms, steamos
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import discover as mo2_discover
+from modsync.mo2 import instance as mo2_instance
 from modsync.service import ModSyncService
 from modsync.steam import shortcuts
 from modsync.ui.game_card import GameCard
@@ -44,14 +54,44 @@ _POLL_MS = 4000
 _TAGLINE = f"Set up {SKYRIM_SE.name} for modding on this machine."
 
 
+def describe_setup(instance_path: str | None) -> list[str]:
+    """The selected profile, its enabled mod count and any instance problems.
+    Cheap and file-system only."""
+    if not instance_path or not Path(instance_path).is_dir():
+        return []
+    info = mo2_instance.inspect(instance_path)
+    if not info.has_ini:
+        return ["Mod Organizer 2 has not been started yet (no ModOrganizer.ini)."]
+    enabled: int | None = None
+    profiles_dir = info.content_dirs["profiles"].path if "profiles" in info.content_dirs else None
+    if profiles_dir and info.selected_profile:
+        modlist = profiles_dir / info.selected_profile / "modlist.txt"
+        try:
+            enabled = sum(1 for line in modlist.read_text(encoding="utf-8", errors="replace").splitlines() if line.startswith("+"))
+        except OSError:
+            enabled = None
+    detail = f"Profile: {info.selected_profile or '(none)'}"
+    if enabled is not None:
+        detail += f"  ·  {enabled} mods enabled"
+    return [detail, *(f"⚠  {issue}" for issue in info.issues)]
+
+
 class Dashboard(QWidget):
     installRequested = Signal()
     wizardRequested = Signal()  # user wants the linear wizard instead
     stateChanged = Signal()  # instance chosen/forgotten, vault created/joined/left -> rebuild
+    launchDecided = Signal(int)  # Steam launch only: launchhook.EXIT_CONTINUE or EXIT_CANCEL
 
-    def __init__(self, service: ModSyncService, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        service: ModSyncService,
+        parent: QWidget | None = None,
+        *,
+        steam_launch: launchhook.SteamLaunch | None = None,
+    ) -> None:
         super().__init__(parent)
         self.service = service
+        self.steam_launch = steam_launch
         self._launching = False
 
         outer = QVBoxLayout(self)
@@ -66,7 +106,9 @@ class Dashboard(QWidget):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(14)
 
-        self.game = GameCard(service)
+        # With Steam waiting to start the game, use the recipe index already on
+        # disk rather than fetching the latest one.
+        self.game = GameCard(service, refresh_index=steam_launch is None)
         self.game.status.connect(self._set_status)
         self.game.changed.connect(self._on_game_changed)
         self.mo2 = self._build_mo2_group()
@@ -80,6 +122,7 @@ class Dashboard(QWidget):
         self.sync.status.connect(self._set_status)
         self.sync.stateChanged.connect(self.stateChanged.emit)
         self.sync.synced.connect(self.game.refresh)  # mods just arrived: re-check SKSE/version
+        self.sync.progress.connect(self._on_sync_progress)
         body_layout.addWidget(self.sync, stretch=1 if self.sync.live else 0)
         body_layout.addWidget(self._build_integration_group())
         body_layout.addStretch(1)
@@ -134,16 +177,30 @@ class Dashboard(QWidget):
         title.setWordWrap(True)
         row.addWidget(title)
         row.addStretch(1)
-        self._play_button = QPushButton("Play Skyrim")
+        steam = self.steam_launch
+        self._cancel_launch_button = None
+        if steam is not None:
+            cancel = self._cancel_launch_button = QPushButton("Cancel launch")
+            cancel.setToolTip("Close ModSync and return to Steam without starting anything.")
+            cancel.setMinimumHeight(48)
+            cancel.clicked.connect(lambda: self.launchDecided.emit(launchhook.EXIT_CANCEL))
+            row.addWidget(cancel)
+        self._play_button = QPushButton(steam.continue_label if steam else "Play Skyrim")
         role(self._play_button, "primary")
         self._play_button.setMinimumHeight(48)
         self._play_button.setMinimumWidth(190)
-        self._play_button.setEnabled(state.has_instance)
-        self._play_button.setToolTip(
-            "Launch Skyrim through the chosen MO2 instance and its selected profile, "
-            "with SKSE when it is installed. Choose an MO2 instance first."
-        )
-        self._play_button.clicked.connect(lambda: self._launch_mo2(play=True))
+        if steam is not None:
+            self._play_button.setToolTip(
+                f"Close ModSync and carry on with the Steam launch, which starts {steam.hands_off_to}."
+            )
+            self._play_button.clicked.connect(lambda: self.launchDecided.emit(launchhook.EXIT_CONTINUE))
+        else:
+            self._play_button.setEnabled(state.has_instance)
+            self._play_button.setToolTip(
+                "Launch Skyrim through the chosen MO2 instance and its selected profile, "
+                "with SKSE when it is installed. Choose an MO2 instance first."
+            )
+            self._play_button.clicked.connect(lambda: self._launch_mo2(play=True))
         row.addWidget(self._play_button)
 
         wizard = self._wizard_button = QPushButton("Setup wizard")
@@ -163,7 +220,37 @@ class Dashboard(QWidget):
         role(subtitle, "secondary")
         subtitle.setWordWrap(True)
         col.addWidget(subtitle)
+        if steam is not None:
+            self._steam_note = QLabel(
+                f"{steam.game.name} was launched from Steam. \"{steam.continue_label}\" goes on to "
+                f"{steam.hands_off_to}. \"Cancel launch\" or closing ModSync returns to Steam "
+                "without starting anything."
+            )
+            self._steam_note.setWordWrap(True)
+            col.addWidget(self._steam_note)
+            self._sync_warning = QLabel("")
+            self._sync_warning.setWordWrap(True)
+            role(self._sync_warning, "warning")
+            self._sync_warning.setVisible(False)
+            col.addWidget(self._sync_warning)
         return col
+
+    def _on_sync_progress(self, state: str, pct: int) -> None:
+        """Steam launch: say so up top when the mod list may still be arriving."""
+        if self.steam_launch is None:
+            return
+        arriving = state == "syncing" or pct < 100
+        self._sync_warning.setVisible(arriving)
+        if arriving:
+            self._sync_warning.setText(
+                f"⚠ Still syncing ({pct}% here). Mods may still be arriving, and continuing now "
+                "uses whatever has arrived so far."
+            )
+
+    def focus_default(self) -> None:
+        """Steam launch: put keyboard focus on Continue, so Enter goes straight on."""
+        if self.steam_launch is not None:
+            self._play_button.setFocus()
 
     def _reset(self) -> None:
         if self.busy:
@@ -198,17 +285,24 @@ class Dashboard(QWidget):
             path = QLabel(state.instance_path)
             path.setWordWrap(True)
             v.addWidget(path)
-            launch_row = QHBoxLayout()
-            self._open_mo2_button = QPushButton("Open MO2")
-            role(self._open_mo2_button, "primary")
-            self._open_mo2_button.setToolTip("Open the chosen Mod Organizer 2 instance")
-            self._open_mo2_button.clicked.connect(lambda: self._launch_mo2(play=False))
-            launch_row.addWidget(self._open_mo2_button)
-            launch_note = QLabel("Play Skyrim uses the profile selected in MO2, with SKSE when it is installed.")
-            launch_note.setWordWrap(True)
-            role(launch_note, "secondary")
-            launch_row.addWidget(launch_note, stretch=1)
-            v.addLayout(launch_row)
+            self._setup_label = QLabel("")
+            self._setup_label.setWordWrap(True)
+            self._setup_label.setVisible(False)
+            v.addWidget(self._setup_label)
+            run_async(describe_setup, state.instance_path, on_done=self._on_setup_described,
+                      on_failed=lambda _: None)
+            if self.steam_launch is None:
+                launch_row = QHBoxLayout()
+                self._open_mo2_button = QPushButton("Open MO2")
+                role(self._open_mo2_button, "primary")
+                self._open_mo2_button.setToolTip("Open the chosen Mod Organizer 2 instance")
+                self._open_mo2_button.clicked.connect(lambda: self._launch_mo2(play=False))
+                launch_row.addWidget(self._open_mo2_button)
+                launch_note = QLabel("Play Skyrim uses the profile selected in MO2, with SKSE when it is installed.")
+                launch_note.setWordWrap(True)
+                role(launch_note, "secondary")
+                launch_row.addWidget(launch_note, stretch=1)
+                v.addLayout(launch_row)
             row = QHBoxLayout()
             open_folder = QPushButton("Open instance folder")
             open_folder.clicked.connect(self._open_folder)
@@ -266,6 +360,10 @@ class Dashboard(QWidget):
             run_async(self._scan_instances, on_done=self._on_instances_found, on_failed=lambda _: None)
         v.addStretch(1)
         return box
+
+    def _on_setup_described(self, lines: list[str]) -> None:
+        self._setup_label.setText("\n".join(lines))
+        self._setup_label.setVisible(bool(lines))
 
     # --- VC++ runtime in the game prefix ---------------------------------------
     def _refresh_prefix_runtime(self) -> None:
@@ -362,7 +460,12 @@ class Dashboard(QWidget):
 
     def _update_launch_buttons(self) -> None:
         ready = self.service.state.has_instance and not self.busy
-        self._play_button.setEnabled(ready and not self.service.launcher.running(play=True))
+        if self.steam_launch is not None:
+            # Neither start the game nor walk away while game files are rewritten.
+            self._play_button.setEnabled(not self.busy)
+            self._cancel_launch_button.setEnabled(not self.busy)
+        else:
+            self._play_button.setEnabled(ready and not self.service.launcher.running(play=True))
         self._wizard_button.setEnabled(not self.busy)
         if self._reset_button is not None:
             self._reset_button.setEnabled(not self.busy)

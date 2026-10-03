@@ -679,7 +679,7 @@ def launch(args: list[str]) -> int:
         "  modsync launch status                show whether Play opens ModSync first\n"
         "  modsync launch enable [--through T]  open ModSync when the game is launched from Steam\n"
         "  modsync launch disable               restore the previous launch behaviour\n"
-        "  modsync launch hub --appid N         (run by Steam) the pre-launch window"
+        "  modsync launch hub --appid N         (run by Steam) open ModSync before the game"
     )
     return 2
 
@@ -706,6 +706,6 @@ def _launch_hub(args: list[str]) -> int:
     try:
         from modsync.ui.app import run_hub
     except ImportError as exc:
-        print(f"ModSync hub unavailable (PySide6 missing: {exc}); continuing the launch.")
+        print(f"ModSync window unavailable (PySide6 missing: {exc}); continuing the launch.")
         return launchhook.EXIT_CONTINUE
     return run_hub(appid=appid, through=through)
