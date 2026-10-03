@@ -10,6 +10,9 @@ from modsync import gameversion, launchhook, platforms
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import discover as mo2_discover
 from modsync.mo2 import instance as mo2_instance
+from modsync.mo2 import launch as mo2_launch
+from modsync.mo2 import vcruntime
+from modsync.steam import pe
 from modsync.steam import libraries as libs
 from modsync.state import State
 from modsync.steam import prefixes
@@ -89,6 +92,22 @@ def build() -> Report:
             line(f"      {name:<9} [{tag}] {cd.path}{miss}")
         if info.profiles:
             line(f"      profiles: {', '.join(info.profiles)}")
+        usvfs = pe.file_version(path / "usvfs_x64.dll")
+        if usvfs:
+            shown = ".".join(map(str, usvfs))
+            if vcruntime.usvfs_needs_prefix_runtime(path):
+                try:
+                    problems = vcruntime.prefix_runtime_problems(mo2_launch.prefix_system32(path))
+                except (RuntimeError, OSError):
+                    problems = None
+                if problems is None:
+                    line(f"      usvfs {shown}: needs a current VC++ runtime in the game prefix (not checked)")
+                elif problems:
+                    line(f"      ! usvfs {shown} needs a current VC++ runtime in the game prefix: {'; '.join(problems)}")
+                else:
+                    line(f"      usvfs {shown}: game prefix has a current VC++ runtime")
+            else:
+                line(f"      usvfs {shown}")
         for issue in info.issues:
             line(f"      ! {issue}")
 
