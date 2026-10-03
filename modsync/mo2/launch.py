@@ -198,10 +198,14 @@ def run_in_prefix(instance_path: Path | str, exe: Path, args: list[str], *, time
                           text=True, errors="replace", timeout=timeout)
 
 
-def prefix_system32(instance_path: Path | str) -> Path:
-    """The game prefix's system32, as Proton lays it out."""
-    plan = build_plan(instance_path)
+def plan_system32(plan: LaunchPlan) -> Path:
+    """The game prefix's system32 for a launch plan, as Proton lays it out."""
     return Path(plan.env["STEAM_COMPAT_DATA_PATH"]) / "pfx" / "drive_c" / "windows" / "system32"
+
+
+def prefix_system32(instance_path: Path | str) -> Path:
+    """The game prefix's system32 for an instance."""
+    return plan_system32(build_plan(instance_path))
 
 class Launcher:
     """Track our launch processes without tying their lifetime to the GUI."""

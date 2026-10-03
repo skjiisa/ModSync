@@ -21,7 +21,8 @@ from modsync import config, gameversion, pairing_lan, platforms, skse, steamos
 from modsync.downgrade import engine, recipe
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import vcruntime
-from modsync.mo2.launch import Launcher, build_plan, nested_desktop_display, prefix_system32, run_in_prefix
+from modsync.mo2.launch import (Launcher, build_plan, nested_desktop_display, plan_system32,
+                                prefix_system32, run_in_prefix)
 from modsync.pairing_code import PairingCode
 from modsync.state import State
 from modsync.steam import appinfo, libraries as libs, prefixes, shortcuts
@@ -212,7 +213,9 @@ class ModSyncService:
         plan = build_plan(self.state.instance_path, play=play)
         note = ""
         try:
-            vcruntime.ensure_instance_runtime(plan.cwd)
+            # Only when the prefix's own runtime is too old for MO2 (a hand-made
+            # or synced instance); MO2-LINT's prefixes already have a current one.
+            vcruntime.ensure_instance_runtime(plan.cwd, system32=plan_system32(plan))
         except (OSError, RuntimeError, ValueError) as exc:
             # MO2 may still work if the prefix has a current runtime; don't block it.
             log.warning("could not add the VC++ runtime to %s: %s", plan.cwd, exc)

@@ -120,6 +120,32 @@ class InstanceRuntimeTests(unittest.TestCase):
         self.assertNotIn("vcruntime140.dll", copied)
         self.assertEqual((self.instance / "vcruntime140.dll").read_bytes(), newer)
 
+    def test_skips_the_download_when_the_prefix_runtime_is_current(self):
+        system32 = self.tmp / "pfx" / "system32"
+        system32.mkdir(parents=True)
+        for name in vcruntime.PREFIX_RUNTIME_DLLS:
+            (system32 / name).write_bytes(fake_dll(version=vcruntime.PREFIX_MIN_VERSION))
+        with self.download() as download:
+            self.assertEqual(vcruntime.ensure_instance_runtime(self.instance, system32=system32), [])
+        download.assert_not_called()
+        self.assertEqual(vcruntime.outdated(self.instance), list(vcruntime.DLLS))
+
+    def test_copies_when_the_prefix_runtime_is_old_or_missing(self):
+        system32 = self.tmp / "pfx" / "system32"
+        system32.mkdir(parents=True)
+        (system32 / "msvcp140.dll").write_bytes(fake_dll(version=(14, 0, 24215, 1)))
+        with self.download() as download:
+            copied = vcruntime.ensure_instance_runtime(self.instance, system32=system32)
+        self.assertEqual(sorted(copied), sorted(vcruntime.DLLS))
+        download.assert_called_once()
+        # No prefix yet at all (first launch creates it): the copy still happens.
+        other = self.tmp / "Other"
+        other.mkdir()
+        (other / "ModOrganizer.exe").write_bytes(b"MZ")
+        with self.download():
+            self.assertEqual(len(vcruntime.ensure_instance_runtime(other, system32=self.tmp / "nope")),
+                             len(vcruntime.DLLS))
+
     def test_does_nothing_without_mo2(self):
         (self.instance / "ModOrganizer.exe").unlink()
         with self.download() as download:
@@ -147,7 +173,9 @@ class LaunchTests(unittest.TestCase):
         self.addCleanup(env.stop)
         os.environ.pop("STEAM_GAME_DISPLAY_0", None)
         self.service = ModSyncService(manager=object())
-        self.plan = LaunchPlan(["proton", "run", "ModOrganizer.exe"], {}, Path(tmp.name), "Mod Organizer 2", False)
+        self.compat = Path(tmp.name) / "compatdata"
+        self.plan = LaunchPlan(["proton", "run", "ModOrganizer.exe"], {"STEAM_COMPAT_DATA_PATH": str(self.compat)},
+                               Path(tmp.name), "Mod Organizer 2", False)
         for p in (
             patch("modsync.service.build_plan", return_value=self.plan),
             patch.object(self.service.launcher, "start", return_value="Starting Mod Organizer 2…"),
@@ -158,7 +186,9 @@ class LaunchTests(unittest.TestCase):
     def test_launch_adds_the_runtime_first(self):
         with patch.object(vcruntime, "ensure_instance_runtime", return_value=[]) as ensure:
             self.assertEqual(self.service.launch_mo2(), "Starting Mod Organizer 2…")
-        ensure.assert_called_once_with(self.plan.cwd)
+        ensure.assert_called_once_with(
+            self.plan.cwd, system32=self.compat / "pfx" / "drive_c" / "windows" / "system32"
+        )
 
     def test_launch_goes_ahead_when_the_download_fails(self):
         with patch.object(vcruntime, "ensure_instance_runtime", side_effect=OSError("offline")):

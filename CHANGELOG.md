@@ -59,10 +59,12 @@ All notable changes to ModSync are documented here. The format follows
   hook and Open MO2 use Steam's ARM64 default, as Steam does.
 - MO2 2.5 crashed at start-up, writing hundreds of crash dumps, when Skyrim's
   Proton prefix had only the 2016 Visual C++ runtime that the game installs.
+  When the prefix's runtime is missing, Wine's stand-in or older than 14.40,
   Open MO2 and Play now first copy a current runtime (14.44) next to
   `ModOrganizer.exe`, unpacked from Microsoft's redistributable. It is
   downloaded once and checked against a pinned SHA-256; the prefix is not
-  changed. Tested on a Steam Frame.
+  changed. Prefixes set up by Install MO2 already have a current runtime, so
+  nothing is downloaded there. Tested on a Steam Frame.
 - On the Steam Frame's desktop, MO2 opened with Open MO2 or Play closed as soon
   as one of its dialogs closed. The desktop is nested inside gamescope, and
   Proton put MO2 on gamescope's display but the rest of Wine on the desktop's.
