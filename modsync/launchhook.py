@@ -266,6 +266,8 @@ class LaunchHookStatus:
                 f"Steam is set to launch {g} through ModSync, but the hook files are gone. "
                 "Turn it off to restore the previous launcher, or on to reinstall."
             )
+        if self.current_mapping and compattools.MO2LINT_TOOL_RE.match(self.current_mapping):
+            return "Off. Steam's Play button opens Mod Organizer 2 (MO2-LINT) directly."
         return f"Off. Steam's Play button starts {g} directly."
 
 
@@ -298,6 +300,13 @@ def status(appid: int = SKYRIM_SE.appid) -> LaunchHookStatus:
         current = SteamConfig.load(env.config_vdf).compat_tool_name(appid)
     except (OSError, ValueError):
         current = None
+    if pending and _pending_satisfied(pending, current):
+        # The user already made that choice in Steam (e.g. picked the tool by hand
+        # because Steam couldn't be closed). Left queued, it would be re-applied the
+        # next time Steam closes and could undo whatever they've chosen since.
+        log.info("queued launch hook %s for %s is already in place; dropping it", pending.action, appid)
+        Pending.clear()
+        pending = None
     underlying_name = record.underlying_name if record else None
     underlying_display = record.underlying_display if record else None
     underlying_exists = bool(record and Path(record.underlying_path, "proton").exists())
@@ -315,6 +324,13 @@ def status(appid: int = SKYRIM_SE.appid) -> LaunchHookStatus:
         steam_found=True,
         outdated=outdated,
     )
+
+
+def _pending_satisfied(pending: Pending, current: str | None) -> bool:
+    """Whether a queued select is already in place. (A queued restore also removes
+    the hook's tool directory, so it stays queued until it runs.)"""
+    wanted = (pending.mapping or {}).get("name") or None
+    return pending.action == "select" and wanted is not None and current == wanted
 
 
 # --- rendering ----------------------------------------------------------------------

@@ -168,6 +168,14 @@ class GameProtonWithMo2Lint(LaunchHookBase):
     with_mo2lint = True
     mapping = {489830: "mo2_489830_redirector"}
 
+    def test_off_status_names_mo2lint(self):
+        cfg = SteamConfig.load(self.root / "config/config.vdf")
+        cfg.set_compat_tool(489830, "mo2_489830_redirector")
+        cfg.save(backup=False)
+        self.assertEqual(
+            launchhook.status().summary(), "Off. Steam's Play button opens Mod Organizer 2 (MO2-LINT) directly."
+        )
+
     def test_redirector_is_not_a_proton(self):
         self.assertIsNone(launchhook.game_proton())
         launchhook.enable()
@@ -230,6 +238,27 @@ class WithSteamRunning(LaunchHookBase):
         self.assertEqual(self.mapping_name(), "GE-Proton10-34")
         self.assertFalse(self.tool_dir.exists())
         self.assertIsNone(launchhook.Record.load())
+
+    def test_queued_select_already_picked_by_hand_is_dropped(self):
+        """Found on a Steam Frame, where Steam can't be closed: the user picks the
+        hook under Properties, then Compatibility instead of waiting for the switch."""
+        self.steam_running = True
+        launchhook.enable()
+        cfg = SteamConfig.load(self.root / "config/config.vdf")
+        cfg.set_compat_tool(489830, "modsync_489830_hub")
+        cfg.save(backup=False)
+        st = launchhook.status()
+        self.assertTrue(st.enabled)
+        self.assertIsNone(st.pending)
+        self.assertTrue(st.summary().startswith("On."))
+        self.assertIsNone(launchhook.Pending.load())
+        # A later choice of their own must survive Steam closing.
+        cfg = SteamConfig.load(self.root / "config/config.vdf")
+        cfg.set_compat_tool(489830, "GE-Proton10-34")
+        cfg.save(backup=False)
+        self.steam_running = False
+        self.assertIsNone(launchhook.apply_pending())
+        self.assertEqual(self.mapping_name(), "GE-Proton10-34")
 
     def test_queued_select_is_dropped_if_files_vanished(self):
         self.steam_running = True
