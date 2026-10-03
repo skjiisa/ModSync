@@ -68,7 +68,8 @@ class LaunchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as config, patch.dict(os.environ, {"XDG_CONFIG_HOME": config}):
             service = ModSyncService(manager=object())
         service.state.instance_path = str(self.instance)
-        with patch.object(service.launcher, "start", return_value="Opening MO2…"):
+        with patch.object(service.launcher, "start", return_value="Opening MO2…"), \
+                patch("modsync.service.vcruntime.ensure_instance_runtime", return_value=[]):
             self.assertEqual(service.launch_mo2(), "Opening MO2…")
             with patch.dict(os.environ, {"DISPLAY": ":2", "STEAM_GAME_DISPLAY_0": ":1"}):
                 self.assertIn("VR pointer", service.launch_mo2())

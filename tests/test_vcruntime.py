@@ -141,9 +141,11 @@ class LaunchTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        env = patch.dict(os.environ, {"XDG_CONFIG_HOME": str(Path(tmp.name) / "config")})
+        # A plain desktop, so the nested-desktop note can't leak in from the session running the tests.
+        env = patch.dict(os.environ, {"XDG_CONFIG_HOME": str(Path(tmp.name) / "config"), "DISPLAY": ":0"})
         env.start()
         self.addCleanup(env.stop)
+        os.environ.pop("STEAM_GAME_DISPLAY_0", None)
         self.service = ModSyncService(manager=object())
         self.plan = LaunchPlan(["proton", "run", "ModOrganizer.exe"], {}, Path(tmp.name), "Mod Organizer 2", False)
         for p in (
