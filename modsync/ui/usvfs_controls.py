@@ -1,4 +1,4 @@
-"""The same USVFS repair controls in the dashboard and Steam launch hub."""
+"""The USVFS repair controls in the dashboard's Mod Organizer 2 card."""
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget

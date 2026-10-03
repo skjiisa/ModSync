@@ -62,28 +62,22 @@ def run(argv: list[str] | None = None) -> int:
 
 
 def run_hub(*, appid: int | None = None, through: str | None = None) -> int:
-    """The pre-launch window the Steam launch hook opens. Returns the exit code
-    the hook reads: 0 = continue the launch, 10 = cancel it."""
-    from PySide6.QtCore import QThreadPool
-
+    """The window the Steam launch hook opens: the regular one, with Steam's
+    launch waiting on it. Returns the exit code the hook reads: 0 = continue the
+    launch, 10 = cancel it."""
     from modsync import launchhook
+    from modsync.games import GAMES, SKYRIM_SE
     from modsync.logging_setup import configure
-    from modsync.service import ModSyncService
-    from modsync.ui.launch_hub import LaunchHub
+    from modsync.ui.main_window import MainWindow
 
     configure("hub", ["launch", "hub", f"--appid={appid}", f"--through={through}"])
     app = _application(None)
-    service = ModSyncService()
-    hub = LaunchHub(service, appid=appid, through=through)
-    hub.showMaximized()
-    code = app.exec()
-    QThreadPool.globalInstance().waitForDone(5000)
-    try:
-        service.shutdown()  # stops a Syncthing the hub started; leaves the service's alone
-    except Exception:
-        pass
-    result = hub.decision if hub.decision is not None else (
+    launch = launchhook.SteamLaunch(GAMES.get(appid or SKYRIM_SE.appid, SKYRIM_SE), through)
+    window = MainWindow(steam_launch=launch)
+    window.showMaximized()
+    code = app.exec()  # the window's close stops polling, drains workers and its Syncthing
+    result = launch.decision if launch.decision is not None else (
         code if code in (launchhook.EXIT_CONTINUE, launchhook.EXIT_CANCEL) else launchhook.EXIT_CANCEL
     )
-    log.info("hub closed: %s (exit %d)", "cancel" if result == launchhook.EXIT_CANCEL else "continue", result)
+    log.info("Steam launch: %s (exit %d)", "cancel" if result == launchhook.EXIT_CANCEL else "continue", result)
     return result

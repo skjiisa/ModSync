@@ -1,4 +1,4 @@
-"""File logging for every way ModSync runs (GUI, CLI, ``serve``, the launch hub).
+"""File logging for every way ModSync runs (GUI, CLI, ``serve``, a Steam launch).
 
 Everything goes to one rotating file, ``$XDG_STATE_HOME/modsync/modsync.log``
 (default ``~/.local/state/modsync``, next to the launch hook's own

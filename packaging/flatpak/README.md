@@ -169,7 +169,7 @@ matter for a Flathub listing, which is not planned.
   launched from Gaming Mode.
 - **Launch hook.** `modsync launch enable` writes a compatibility tool into
   `~/.local/share/Steam/compatibilitytools.d` (covered by `xdg-data/Steam:rw`).
-  Its `proton` script runs on the host and starts the hub with
+  Its `proton` script runs on the host and opens ModSync with
   `/usr/bin/flatpak run io.github.skjiisa.ModSync launch hub ...`. Inside the
   sandbox, "is Steam running" is answered through `flatpak-spawn --host pgrep`.
 - **Install MO2.** The protontricks check and MO2-LINT itself run on the host

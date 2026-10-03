@@ -1,4 +1,4 @@
-"""Shared, readable presentation for the dashboard, wizard and launch hub.
+"""Shared, readable presentation for the dashboard and wizard.
 
 Qt's Mid palette role is a bevel/border color, not secondary text. Keep text
 colors explicit and test their contrast against both the window and cards.

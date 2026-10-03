@@ -4,16 +4,16 @@ Pressing Play runs whatever compatibility tool Steam has selected for the game.
 The hook is one more such tool, registered under ``compatibilitytools.d`` as
 ``modsync_<appid>_hub`` (the approach MO2-LINT took in PR #1096 for its own
 ``mo2_<appid>_redirector``): a ``proton`` script that Steam calls in place of
-Proton. Ours opens the ModSync hub window and then hands the **same** launch on
+Proton. Ours opens the ModSync window and then hands the **same** launch on
 to the tool Steam used before — MO2-LINT's redirector when it is installed
 (Play → ModSync → Mod Organizer 2), otherwise the plain Proton — inside the
-Steam Linux Runtime container that tool asks for. Cancel in the hub ends the
+Steam Linux Runtime container that tool asks for. Cancel in ModSync ends the
 launch with a clean exit, so Steam just returns to the library.
 
 Two facts make it survive updates. Nothing of MO2-LINT's is copied: the chain
 refers to its tool directory by path and re-reads its ``toolmanifest.vdf`` on
 every launch, so a reinstalled or upgraded redirector (new Proton, new
-runtime) is picked up as-is. And the hub is started through a stable command
+runtime) is picked up as-is. And ModSync is started through a stable command
 (``flatpak run io.github.skjiisa.ModSync`` or the installed ``modsync``), never
 a versioned path.
 
@@ -233,7 +233,7 @@ class LaunchHookStatus:
 
     @property
     def hands_off_to(self) -> str:
-        """What Continue in the hub leads to."""
+        """What Continue in ModSync leads to."""
         return describe_target(self.underlying_name, self.underlying_display)
 
     @property
@@ -281,6 +281,25 @@ def continue_label(underlying_name: str | None, game: Game = SKYRIM_SE) -> str:
     if underlying_name and compattools.MO2LINT_TOOL_RE.match(underlying_name):
         return "Continue to Mod Organizer"
     return f"Continue to {game.name}"
+
+
+@dataclass
+class SteamLaunch:
+    """A Play press in Steam that is waiting on the open ModSync window. The
+    window records ``EXIT_CONTINUE`` or ``EXIT_CANCEL`` here, and the hook's
+    script reads it as the exit code."""
+
+    game: Game
+    through: str | None = None  # the compatibility tool the hook hands the launch on to
+    decision: int | None = None
+
+    @property
+    def hands_off_to(self) -> str:
+        return describe_target(self.through)
+
+    @property
+    def continue_label(self) -> str:
+        return continue_label(self.through, self.game)
 
 
 def status(appid: int = SKYRIM_SE.appid) -> LaunchHookStatus:

@@ -35,6 +35,13 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Changed
 
+- Steam's Play button opens the regular ModSync window instead of a separate
+  launch hub. While Steam waits, Play turns into Continue, which hands the
+  launch on to MO2-LINT or the game, and "Cancel launch" returns to Steam.
+  Open MO2 is hidden then, so ModSync never starts a second Proton in the
+  game's prefix next to Steam's. The Mod Organizer 2 card shows the selected
+  profile and its enabled mod count. A warning above Continue says when the
+  vault is still syncing. Esc no longer cancels the launch.
 - Install MO2 uses MO2-LINT 7.0.1 (was 7.0.0-rc7). The download is checked
   against the release's SHA-256, and the cached copy is named by version so
   a new pin replaces the old binary instead of reusing it.

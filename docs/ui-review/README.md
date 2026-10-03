@@ -1,8 +1,8 @@
 # UI previews
 
 The screenshots in this folder come from `scripts/preview_ui.py`, which
-renders the dashboard, setup wizard and launch hub with synthetic game and
-setup data. Generating them does not read your setup, install anything, modify
+renders the dashboard (also as Steam's launch hook opens it) and the setup
+wizard with synthetic game and setup data. Generating them does not read your setup, install anything, modify
 the game or sync.
 
 ## Launching MO2 and Skyrim
@@ -32,9 +32,15 @@ remaining pairing controls are reachable by scrolling.
 
 ![Live sync in light mode](sync-light.png)
 
-## Steam launch hub
+## Opened from Steam's Play button
 
-![Launch hub in dark mode](launch-dark.png)
+With the launch hook on, Steam's Play button opens this same dashboard. Play
+becomes Continue, which hands Steam's launch on to MO2-LINT or the game, and
+Cancel launch returns to Steam. Open MO2 is not shown, because Steam is
+already about to start the game. A warning appears when the vault is still
+syncing.
+
+![Dashboard opened from Steam, in dark mode](launch-dark.png)
 
 ## Regenerate the previews
 

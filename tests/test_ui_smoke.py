@@ -262,24 +262,81 @@ class WizardSmokeTests(_SmokeBase):
         self.assertTrue(wizard._next.isEnabled())
 
 
-class LaunchHubSmokeTests(_SmokeBase):
-    def _hub(self, through=None):
-        from modsync.ui.launch_hub import LaunchHub
+class SteamLaunchSmokeTests(_SmokeBase):
+    """Steam's launch hook opens the regular window with the launch waiting on it."""
 
-        hub = LaunchHub(ModSyncService(manager=object()), appid=489830, through=through)
-        hub.resize(1120, 780)
+    def _settle(self):
         QThreadPool.globalInstance().waitForDone(5000)
         self.app.processEvents()
-        return hub
 
-    def test_labels_follow_the_underlying_tool(self):
-        hub = self._hub(through="mo2_489830_redirector")
-        self.assertEqual(hub.continue_button.text(), "Continue to Mod Organizer")
-        self.assertTrue(hub.continue_button.isDefault())
-        self.assertIn("No Mod Organizer 2 instance", hub._setup_label.text())
-        self.assertIn("Not set up", hub._sync_label.text())
-        hub2 = self._hub(through="GE-Proton10-34")
-        self.assertEqual(hub2.continue_button.text(), "Continue to Skyrim Special Edition")
+    def _window(self, through=None):
+        from modsync.ui.dashboard import Dashboard
+        from modsync.ui.main_window import MainWindow
+
+        launch = launchhook.SteamLaunch(SKYRIM_SE, through)
+        with patch.object(Dashboard, "_scan_instances", return_value=[]):
+            window = MainWindow(steam_launch=launch)
+            window.show()
+            self._settle()
+        self.addCleanup(window.close)
+        return window
+
+    def test_play_becomes_continue_and_names_the_next_step(self):
+        window = self._window(through="mo2_489830_redirector")
+        dash = window._stack.currentWidget()
+        self.assertEqual(dash._play_button.text(), "Continue to Mod Organizer")
+        self.assertTrue(dash._play_button.isEnabled())  # no instance needed to go on
+        self.assertTrue(dash._cancel_launch_button.isEnabled())
+        self.assertIn("Mod Organizer 2 (MO2-LINT)", dash._steam_note.text())
+        other = self._window(through="GE-Proton10-34")
+        self.assertEqual(other._stack.currentWidget()._play_button.text(), "Continue to Skyrim Special Edition")
+
+    def test_enter_continues_and_space_on_cancel_cancels(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            with self.subTest(key=key):
+                window = self._window(through="mo2_489830_redirector")
+                window.activateWindow()
+                dash = window._stack.currentWidget()
+                self.assertIs(self.app.focusWidget(), dash._play_button)
+                QTest.keyClick(self.app.focusWidget(), key)
+                self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+        window = self._window()
+        dash = window._stack.currentWidget()
+        dash._cancel_launch_button.setFocus()
+        QTest.keyClick(dash._cancel_launch_button, Qt.Key.Key_Return)  # Enter belongs to Continue only
+        self.assertIsNone(window.steam_launch.decision)
+        QTest.keyClick(dash._cancel_launch_button, Qt.Key.Key_Space)
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CANCEL)
+
+    def test_launched_from_the_desktop_nothing_changes(self):
+        from modsync.ui.main_window import MainWindow
+
+        from modsync.ui.dashboard import Dashboard
+
+        with patch.object(Dashboard, "_scan_instances", return_value=[]):
+            window = MainWindow()
+            window.show()
+            self._settle()
+        self.addCleanup(window.close)
+        dash = window._stack.currentWidget()
+        self.assertEqual(dash._play_button.text(), "Play Skyrim")
+        self.assertIsNone(dash._cancel_launch_button)
+        window.decide_launch(launchhook.EXIT_CONTINUE)  # no Steam launch to decide
+        self.assertTrue(window.isVisible())
+
+    def test_own_launches_are_left_to_steam(self):
+        State(instance_path=str(self.tmp)).save()
+        with patch.object(ModSyncService, "launch_mo2") as launch:
+            window = self._window()
+            dash = window._stack.currentWidget()
+            self.assertIsNone(dash._open_mo2_button)
+            dash._play_button.click()
+            launch.assert_not_called()
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+        self.assertFalse(window.isVisible())
 
     def test_setup_summary_and_decisions(self):
         inst = self.tmp / "MO2"
@@ -288,124 +345,142 @@ class LaunchHubSmokeTests(_SmokeBase):
         (inst / "ModOrganizer.ini").write_text("[General]\ngameName=Skyrim Special Edition\nselected_profile=@ByteArray(Default)\n")
         (inst / "profiles/Default/modlist.txt").write_text("+SkyUI\n-Unused\n+USSEP\n")
         State(instance_path=str(inst), instance_label="My setup").save()
-        hub = self._hub()
-        self.assertIn("Profile: Default  ·  2 mods enabled", hub._setup_label.text())
-        self.assertIn("Off. This machine's setup is not shared", hub._sync_label.text())
-        hub.proceed()
-        self.assertEqual(hub.decision, launchhook.EXIT_CONTINUE)
-        hub.cancel()  # a second decision does not overwrite the first
-        self.assertEqual(hub.decision, launchhook.EXIT_CONTINUE)
-        other = self._hub()
-        other.cancel()
-        self.assertEqual(other.decision, launchhook.EXIT_CANCEL)
-        closed = self._hub()
+        window = self._window()
+        dash = window._stack.currentWidget()
+        self.assertIn("Profile: Default  ·  2 mods enabled", dash._setup_label.text())
+        dash._play_button.click()
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+        window.decide_launch(launchhook.EXIT_CANCEL)  # a second decision does not overwrite the first
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+        other = self._window()
+        other._stack.currentWidget()._cancel_launch_button.click()
+        self.assertEqual(other.steam_launch.decision, launchhook.EXIT_CANCEL)
+        closed = self._window()
         closed.close()
-        self.assertEqual(closed.decision, launchhook.EXIT_CANCEL)
+        self.assertEqual(closed.steam_launch.decision, launchhook.EXIT_CANCEL)
 
-    def test_syncing_shows_live_state(self):
+    def test_decision_survives_a_trip_through_the_wizard(self):
+        from modsync.ui.dashboard import Dashboard
+        from modsync.ui.wizard import WizardWidget
+
+        window = self._window(through="mo2_489830_redirector")
+        with patch("modsync.ui.wizard.ChooseInstancePage._scan", return_value=[]):
+            window._show_wizard()
+        self.assertIsInstance(window._stack.currentWidget(), WizardWidget)
+        with patch.object(Dashboard, "_scan_instances", return_value=[]):
+            window._stack.currentWidget()._cancel.click()
+            self._settle()
+        dash = window._stack.currentWidget()
+        self.assertIsInstance(dash, Dashboard)
+        self.assertEqual(dash._play_button.text(), "Continue to Mod Organizer")
+        self.assertIsNone(window.steam_launch.decision)
+        window._show_wizard()
+        window.close()  # closing from the wizard cancels too
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CANCEL)
+
+    def test_unfinished_sync_is_flagged_next_to_continue(self):
         State(instance_path=str(self.tmp), folder_id="modsync-1").save()
-        hub = self._hub()
-        self.assertIn("In sync", hub._sync_label.text())
-        hub._timer.stop()
+        window = self._window()
+        dash = window._stack.currentWidget()
+        self.assertFalse(dash._sync_warning.isVisibleTo(dash))  # fake status: idle, 100%
+        dash.sync._on_status(SyncStatus("ME", "modsync-1", True, "syncing", 64.0, []))
+        self.assertTrue(dash._sync_warning.isVisibleTo(dash))
+        self.assertIn("64%", dash._sync_warning.text())
+        dash.sync._on_status(SyncStatus("ME", "modsync-1", True, "idle", 100.0, []))
+        self.assertFalse(dash._sync_warning.isVisibleTo(dash))
 
-    def test_usvfs_controls_apply_and_restore_from_the_steam_hub(self):
+    def test_usvfs_controls_apply_and_restore_while_steam_waits(self):
         from modsync.mo2 import usvfs
-        from modsync.ui.launch_hub import LaunchHub
 
-        service = ModSyncService(manager=object())
         State(instance_path=str(self.tmp)).save()
         current = usvfs.Status("available", "ARM64 fix available", True)
         messages = []
 
-        def apply():
+        def apply(self):
             nonlocal current
             current = usvfs.Status("patched", "ARM64 fix installed", can_restore=True)
             return "applied"
 
-        def restore():
+        def restore(self):
             nonlocal current
             current = usvfs.Status("available", "ARM64 fix available", True)
             return "restored"
 
         with patch.object(usvfs, "is_arm64", return_value=True), \
-                patch.object(service, "usvfs_status", side_effect=lambda: current), \
-                patch.object(service, "apply_usvfs_fix", side_effect=apply) as apply_call, \
-                patch.object(service, "restore_usvfs", side_effect=restore) as restore_call:
-            hub = LaunchHub(service)
-            hub._usvfs.status.connect(messages.append)
-            for _ in range(2):
-                QThreadPool.globalInstance().waitForDone(5000)
-                self.app.processEvents()
-            self.assertTrue(hub._usvfs.apply_button.isVisibleTo(hub))
-            hub._usvfs.apply_button.click()
+                patch.object(ModSyncService, "usvfs_status", lambda self: current), \
+                patch.object(ModSyncService, "apply_usvfs_fix", apply), \
+                patch.object(ModSyncService, "restore_usvfs", restore):
+            window = self._window()
+            dash = window._stack.currentWidget()
+            dash._usvfs.status.connect(messages.append)
+            self._settle()
+            self.assertTrue(dash._usvfs.apply_button.isVisibleTo(dash))
+            dash._usvfs.apply_button.click()
             for _ in range(3):
-                QThreadPool.globalInstance().waitForDone(5000)
-                self.app.processEvents()
-            apply_call.assert_called_once()
-            self.assertTrue(hub._usvfs.restore_button.isVisibleTo(hub))
-            hub._usvfs.restore_button.click()
+                self._settle()
+            self.assertTrue(dash._usvfs.restore_button.isVisibleTo(dash))
+            dash._usvfs.restore_button.click()
             for _ in range(3):
-                QThreadPool.globalInstance().waitForDone(5000)
-                self.app.processEvents()
-            restore_call.assert_called_once()
+                self._settle()
             self.assertEqual(messages, ["applied", "restored"])
-            self.assertTrue(hub._usvfs.apply_button.isVisibleTo(hub))
-            hub.cancel()
+            self.assertTrue(dash._usvfs.apply_button.isVisibleTo(dash))
+            self.assertTrue(dash._play_button.isEnabled())
+            self.assertIsNone(window.steam_launch.decision)
 
     def test_auto_decision_env_is_a_testing_aid(self):
         from PySide6.QtTest import QTest
 
         with patch.dict(os.environ, {"MODSYNC_HUB_AUTO_DECISION": "cancel"}):
-            hub = self._hub()
-        self.assertIn("Test mode", hub._status_line.text())
+            window = self._window()
+        self.assertIn("Test mode", window._stack.currentWidget()._status_line.text())
         QTest.qWait(3500)
-        self.assertEqual(hub.decision, launchhook.EXIT_CANCEL)
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CANCEL)
 
 
 class FileOperationNavigationTests(_SmokeBase):
-    def test_usvfs_replacement_blocks_launch_and_navigation_in_both_windows(self):
+    def test_usvfs_replacement_blocks_launch_and_navigation(self):
         from threading import Event
         from modsync.mo2 import usvfs
         from modsync.ui.dashboard import Dashboard
-        from modsync.ui.launch_hub import LaunchHub
+        from modsync.ui.main_window import MainWindow
 
         State(instance_path=str(self.tmp)).save()
-        for widget_type in (Dashboard, LaunchHub):
-            with self.subTest(window=widget_type.__name__):
-                service = ModSyncService(manager=object())
+        for steam in (False, True):
+            with self.subTest(steam_launch=steam):
                 release = Event()
                 available = usvfs.Status("available", "ARM64 fix available", True)
                 with patch.object(usvfs, "is_arm64", return_value=True), \
-                        patch.object(service, "usvfs_status", return_value=available), \
-                        patch.object(service, "apply_usvfs_fix", side_effect=lambda: release.wait(5)), \
-                        patch.object(service, "launch_mo2") as launch:
-                    window = widget_type(service)
+                        patch.object(ModSyncService, "usvfs_status", return_value=available), \
+                        patch.object(ModSyncService, "apply_usvfs_fix", side_effect=lambda: release.wait(5)), \
+                        patch.object(ModSyncService, "launch_mo2") as launch, \
+                        patch.object(Dashboard, "_scan_instances", return_value=[]):
+                    window = MainWindow(steam_launch=launchhook.SteamLaunch(SKYRIM_SE) if steam else None)
                     window.show()
                     self._settle()
+                    dash = window._stack.currentWidget()
                     try:
-                        window._usvfs.apply_button.click()
-                        self.assertTrue(window._usvfs.busy)
-                        if widget_type == LaunchHub:
-                            self.assertFalse(window.continue_button.isEnabled())
-                            self.assertFalse(window.game_card.isEnabled())
-                            window.proceed()
-                            window.cancel()
-                            self.assertFalse(window.close())
-                            self.assertIsNone(window.decision)
+                        dash._usvfs.apply_button.click()
+                        self.assertTrue(dash._usvfs.busy)
+                        self.assertTrue(dash.busy)
+                        self.assertFalse(dash._play_button.isEnabled())
+                        self.assertFalse(dash._wizard_button.isEnabled())
+                        self.assertFalse(dash.game.isEnabled())
+                        self.assertFalse(window.close())
+                        if steam:
+                            self.assertFalse(dash._cancel_launch_button.isEnabled())
+                            window.decide_launch(launchhook.EXIT_CONTINUE)
+                            window.decide_launch(launchhook.EXIT_CANCEL)
+                            self.assertIsNone(window.steam_launch.decision)
                         else:
-                            self.assertTrue(window.busy)
-                            self.assertFalse(window._play_button.isEnabled())
-                            self.assertFalse(window._wizard_button.isEnabled())
-                            self.assertFalse(window.game.isEnabled())
-                            window._launch_mo2(play=True)
+                            dash._launch_mo2(play=True)
                             launch.assert_not_called()
                     finally:
                         release.set()
                         self._settle()
                         self._settle()
-                        if widget_type == Dashboard:
-                            window.shutdown()
                         window.close()
+                if steam:
+                    self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CANCEL)
 
     def _settle(self):
         QThreadPool.globalInstance().waitForDone(5000)
@@ -513,34 +588,36 @@ class FileOperationNavigationTests(_SmokeBase):
         self.assertIn("installer failed", wizard._choose._log.toPlainText())
         self.assertTrue(window.close())
 
-    def test_launch_hub_cannot_launch_or_close_during_restore(self):
+    def test_steam_launch_cannot_continue_or_close_during_restore(self):
         from threading import Event
         from PySide6.QtWidgets import QMessageBox
-        from modsync.ui.launch_hub import LaunchHub
+        from modsync.ui.dashboard import Dashboard
+        from modsync.ui.main_window import MainWindow
 
-        service = ModSyncService()
-        hub = LaunchHub(service)
-        hub.show()
-        self._settle()
+        with patch.object(Dashboard, "_scan_instances", return_value=[]):
+            window = MainWindow(steam_launch=launchhook.SteamLaunch(SKYRIM_SE))
+            window.show()
+            self._settle()
+        dash = window._stack.currentWidget()
         release = Event()
-        with patch.object(service, "restore_game_files", side_effect=lambda: release.wait(5)), patch.object(
+        with patch.object(window.service, "restore_game_files", side_effect=lambda: release.wait(5)), patch.object(
             QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
         ):
             try:
-                hub.game_card._restore_files()
-                self.assertFalse(hub.continue_button.isEnabled())
-                self.assertFalse(hub.cancel_button.isEnabled())
-                hub.proceed()
-                hub.cancel()
-                self.assertFalse(hub.close())
-                self.assertIsNone(hub.decision)
+                dash.game._restore_files()
+                self.assertFalse(dash._play_button.isEnabled())
+                self.assertFalse(dash._cancel_launch_button.isEnabled())
+                window.decide_launch(launchhook.EXIT_CONTINUE)
+                window.decide_launch(launchhook.EXIT_CANCEL)
+                self.assertFalse(window.close())
+                self.assertIsNone(window.steam_launch.decision)
             finally:
                 release.set()
                 self._settle()
                 self._settle()
-        self.assertTrue(hub.continue_button.isEnabled())
-        hub.cancel()
-        self.assertEqual(hub.decision, launchhook.EXIT_CANCEL)
+        self.assertTrue(dash._play_button.isEnabled())
+        dash._cancel_launch_button.click()
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CANCEL)
 
 
 class UiNavigationTests(_SmokeBase):

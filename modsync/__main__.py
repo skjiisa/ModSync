@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ModSync {__version__}")
         return 0
 
-    # The GUI, the hub and `serve` configure logging themselves with their own
+    # The GUI (also when Steam opens it) and `serve` configure logging themselves with their own
     # component tag; every other command is "cli".
     if cmd not in {None, "serve"} and not (cmd == "launch" and argv[1:2] == ["hub"]):
         from modsync.logging_setup import configure

@@ -24,7 +24,6 @@ from modsync.service import DeviceStatus, GameStatus, ModSyncService, SyncStatus
 from modsync.state import State
 from modsync.ui.app import _application
 from modsync.ui.dashboard import Dashboard
-from modsync.ui.launch_hub import LaunchHub
 from modsync.ui.theme import apply_theme
 from modsync.ui.wizard import WizardWidget
 
@@ -62,7 +61,7 @@ def main():
         patch("modsync.ui.dashboard.launchhook.status", return_value=hook),
         patch.object(Dashboard, "_scan_instances", return_value=["/home/you/Games/ModOrganizer2-SkyrimSE"]),
         patch("modsync.ui.wizard.ChooseInstancePage._scan", return_value=["/home/you/Games/ModOrganizer2-SkyrimSE"]),
-        patch("modsync.ui.launch_hub.describe_setup", return_value=["Skyrim setup", "Profile: Default · 42 mods enabled"]),
+        patch("modsync.ui.dashboard.describe_setup", return_value=["Profile: Default  ·  42 mods enabled"]),
     ]
     for item in patches:
         item.start()
@@ -84,8 +83,6 @@ def main():
                 raise RuntimeError(f"Content exceeds the requested width: {name}")
             if isinstance(widget, Dashboard):
                 widget.shutdown()
-            if isinstance(widget, LaunchHub):
-                widget._timer.stop()
             widget.hide()
 
         for dark in (False, True):
@@ -97,7 +94,8 @@ def main():
             capture(Dashboard(service), f"configured-{theme}")
             service.state.folder_id = "example"
             capture(Dashboard(service), f"sync-{theme}")
-            capture(LaunchHub(service, through="mo2_489830_redirector"), f"launch-{theme}")
+            steam = launchhook.SteamLaunch(SKYRIM_SE, "mo2_489830_redirector")
+            capture(Dashboard(service, steam_launch=steam), f"launch-{theme}")
             wizard = WizardWidget(service, installer=Mock())
             capture(wizard, f"welcome-{theme}")
             wizard.open_install()

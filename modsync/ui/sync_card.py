@@ -42,6 +42,7 @@ class SyncCard(QGroupBox):
     stateChanged = Signal()  # vault created/joined/left -> host rebuilds
     pairingReady = Signal(str)  # worker -> GUI: address we're announcing
     synced = Signal()  # the folder just reached 100% (mods from the other machine are here)
+    progress = Signal(str, int)  # every status poll: folder state, percent in sync here
 
     def __init__(self, service: ModSyncService, parent: QWidget | None = None) -> None:
         super().__init__("Sync with another machine", parent)
@@ -417,6 +418,7 @@ class SyncCard(QGroupBox):
         pct = int(round((status.completion or 0)))
         self._folder_state.setText(f"Folder: {state}   ·   {pct}% in sync")
         self._progress.setValue(max(0, min(100, pct)))
+        self.progress.emit(state, pct)
         complete = pct >= 100 and state == "idle"
         if complete and self._was_complete is False:
             self.synced.emit()
