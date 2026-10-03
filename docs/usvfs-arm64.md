@@ -80,23 +80,35 @@ ModSync's pinned hashes.
 
 ## Validation
 
-The stack-alignment fix was tested on the Steam Frame in
-[ModSync #62](https://github.com/skjiisa/ModSync/issues/62), using another build.
-The exact backport selected here still needs a Frame test through ModSync.
+Tested on a Steam Frame (SteamOS, aarch64, 4 KiB pages) on 2026-10-03 with the
+aarch64 Flatpak built from this change, Proton 11.0 (ARM64) in the Steam Linux
+Runtime 4, and an MO2 2.5.2 instance installed by MO2-LINT with its four
+original USVFS files:
+
+- **Game through MO2.** With the backport applied, Steam's Play button, the
+  launch hub's Continue, and MO2's Run started Skyrim with a plugin from an
+  MO2 mod. The usvfs log showed `inithooks in process <pid> successful` for
+  `SkyrimSE.exe`, and a new game started in that mod's alternate start.
+  Explore Virtual Folder (Explorer++) was hooked the same way and listed the
+  mods' files in `Data`.
+- **Prefix.** Nothing beyond what Open MO2 and Play already do. Like the
+  original, the backport imports only Windows system DLLs, not the VC++
+  runtime, and ModSync doesn't offer the USVFS 0.5.7+ prefix runtime for it.
+- **In-use check.** Under Proton ARM64, Wine maps `usvfs_x64.dll` from its
+  Linux path into MO2 and every program it starts, so the check sees them
+  from inside the Flatpak. Apply and Restore were refused while MO2 ran, while
+  Explorer++ or Skyrim was still running after MO2 had been closed, and while
+  both ran. They were allowed once everything had exited. Wine processes
+  that stay behind without USVFS, such as `nxmhandler.exe`, don't block it.
+- **Launch hub.** Apply (with the download), Restore, and Apply from the
+  cache worked while the hub was open. Continue and Cancel were disabled
+  during each change.
+- **Restore and cache.** Restore put back files matching the backup. A
+  second Restore reported that the originals were in place and changed
+  nothing. With the network disconnected, Apply reinstalled the fix from the
+  cache. Without a cache, it reported the download failure and left the
+  instance unchanged.
 
 The offline suite covers corrupt downloads and backups, unknown builds,
 interrupted replacements, rollback, restoration after updates, host process
-checks, and GUI actions. A local check also exercises extraction, installation,
-and restoration using the actual release binaries, without executing them.
-
-For the hardware check, use an unmodified MO2 2.5.2 instance on a Steam Frame:
-
-1. Apply the fix from the aarch64 Flatpak and confirm the dashboard and
-   `doctor` show it installed.
-2. Launch through Steam, open MO2's virtual folder, and start Skyrim with a
-   real mod. Confirm the game sees that mod.
-3. Close MO2 and its programs, restore the originals, and verify their hashes
-   match the backup. Reapply the fix with the network disconnected.
-4. Apply and restore from the Steam launch hub (Play with the hook on). Both
-   must work while the hub is open, and the hub must not close or continue the
-   launch during replacement.
+checks against real processes, and GUI actions.
