@@ -194,6 +194,8 @@ class Dashboard(QWidget):
                 f"Close ModSync and carry on with the Steam launch, which starts {steam.hands_off_to}."
             )
             self._play_button.clicked.connect(lambda: self.launchDecided.emit(launchhook.EXIT_CONTINUE))
+            # Outside a dialog a focused button only takes Enter when it is the default.
+            self._play_button.setDefault(True)
         else:
             self._play_button.setEnabled(state.has_instance)
             self._play_button.setToolTip(

@@ -216,7 +216,7 @@ or the background service the moment Steam closes. You can also pick "ModSync
 
 Steam's Play button opens the regular ModSync window, with the launch waiting
 on it. Play turns into Continue, which closes ModSync and lets the hook start
-Mod Organizer 2 or the game, and has keyboard focus. "Cancel launch" or
+Mod Organizer 2 or the game. It has keyboard focus, so Enter continues. "Cancel launch" or
 closing the window ends the launch, and Steam goes back to the library.
 ModSync hides Open MO2 while Steam waits. A second Proton started in the same
 prefix would clash with the one Steam is about to run, or outlive the launch

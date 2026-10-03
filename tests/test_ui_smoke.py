@@ -291,6 +291,26 @@ class SteamLaunchSmokeTests(_SmokeBase):
         other = self._window(through="GE-Proton10-34")
         self.assertEqual(other._stack.currentWidget()._play_button.text(), "Continue to Skyrim Special Edition")
 
+    def test_enter_continues_and_space_on_cancel_cancels(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        for key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            with self.subTest(key=key):
+                window = self._window(through="mo2_489830_redirector")
+                window.activateWindow()
+                dash = window._stack.currentWidget()
+                self.assertIs(self.app.focusWidget(), dash._play_button)
+                QTest.keyClick(self.app.focusWidget(), key)
+                self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+        window = self._window()
+        dash = window._stack.currentWidget()
+        dash._cancel_launch_button.setFocus()
+        QTest.keyClick(dash._cancel_launch_button, Qt.Key.Key_Return)  # Enter belongs to Continue only
+        self.assertIsNone(window.steam_launch.decision)
+        QTest.keyClick(dash._cancel_launch_button, Qt.Key.Key_Space)
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CANCEL)
+
     def test_launched_from_the_desktop_nothing_changes(self):
         from modsync.ui.main_window import MainWindow
 
