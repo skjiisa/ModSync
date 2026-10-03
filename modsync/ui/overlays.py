@@ -105,7 +105,12 @@ class Overlay(QWidget):
             order[0].setFocus(Qt.FocusReason.OtherFocusReason)
 
     def hints(self) -> list[tuple[list[Action], str]]:
-        return [([Action.ACCEPT], "Select"), ([Action.BACK], "Close")]
+        return [([Action.ACCEPT], self.accept_hint()), ([Action.BACK], "Close")]
+
+    def accept_hint(self) -> str:
+        """What A does on the focused control. The window refreshes the hint
+        bar on every focus change."""
+        return "Select"
 
     def handle_action(self, action: Action) -> bool:
         if action == Action.BACK:
@@ -149,6 +154,10 @@ class ConfirmSheet(Overlay):
             tile = _tile(name, description, role, icon, lambda k=key: self.choose(k))
             self.tiles[key] = tile
             self.body.addWidget(tile)
+
+    def accept_hint(self) -> str:
+        focus = self.host.focusWidget()
+        return focus.text() if focus in self.tiles.values() else "Select"
 
     def choose(self, key: str | None) -> None:
         if self._done:
@@ -248,6 +257,8 @@ class KeyButton(QAbstractButton):
 
 class KeyboardSheet(Overlay):
     ROWS = ("1234567890", "qwertyuiop", "asdfghjkl:", "zxcvbnm.-/")
+    # The "#+=" layer: every printable ASCII symbol the letter rows don't have.
+    SYMBOLS = ("1234567890", "!@#$%^&*()", "_=+[]{};'\"", "~`\\|,.<>?/")
 
     def __init__(self, host, title: str, prompt: str, on_done: Callable[[str], None], *,
                  text: str = "", placeholder: str = "",
@@ -279,8 +290,11 @@ class KeyboardSheet(Overlay):
         bottom.setSpacing(8)
         self.shift = KeyButton("Shift", self, wide=1.5, special=True)
         self.shift.setCheckable(True)
-        self.shift.toggled.connect(self._on_shift)
-        space = KeyButton("Space", self, wide=3, special=True)
+        self.shift.toggled.connect(self._relabel)
+        self.symbols = KeyButton("#+=", self, wide=1.5, special=True)
+        self.symbols.setCheckable(True)
+        self.symbols.toggled.connect(self._relabel)
+        space = KeyButton("Space", self, wide=2.5, special=True)
         space.clicked.connect(lambda: self.type_text(" "))
         back = KeyButton("Delete", self, wide=1.5, special=True)
         back.clicked.connect(self.backspace)
@@ -288,7 +302,7 @@ class KeyboardSheet(Overlay):
         paste.clicked.connect(self.paste)
         done = KeyButton("Done", self, wide=1.5, special=True)
         done.clicked.connect(self.done)
-        for key in (self.shift, space, back, paste, done):
+        for key in (self.shift, self.symbols, space, back, paste, done):
             bottom.addWidget(key)
         bottom.addStretch(1)
         self.body.addLayout(bottom)
@@ -301,10 +315,13 @@ class KeyboardSheet(Overlay):
             self.field.end(False)
 
     def hints(self) -> list[tuple[list[Action], str]]:
+        focus = self.host.focusWidget()
+        accept = "Done" if focus is self.field else (focus.text() if isinstance(focus, KeyButton) and
+                                                       focus.special else "Type")
         if self.host.router.mode == "gamepad":
-            return [([Action.ACCEPT], "Type"), ([Action.AUX], "Space"), ([Action.ALT], "Delete"),
+            return [([Action.ACCEPT], accept), ([Action.AUX], "Space"), ([Action.ALT], "Delete"),
                     ([Action.MENU], "Done"), ([Action.BACK], "Cancel")]
-        return [([Action.ACCEPT], "Done"), ([Action.BACK], "Cancel")]
+        return [([Action.ACCEPT], accept), ([Action.BACK], "Cancel")]
 
     def handle_action(self, action: Action) -> bool:
         focus = self.host.focusWidget()
@@ -325,9 +342,16 @@ class KeyboardSheet(Overlay):
             return True
         return super().handle_action(action)
 
-    def _on_shift(self, on: bool) -> None:
-        for key in self.keys:
-            key.setText(key.text().upper() if on else key.text().lower())
+    def _relabel(self, *_args) -> None:
+        symbols = self.symbols.isChecked()
+        self.symbols.setText("abc" if symbols else "#+=")
+        self.shift.setEnabled(not symbols)
+        rows = self.SYMBOLS if symbols else self.ROWS
+        text = "".join(rows)
+        if self.shift.isChecked() and not symbols:
+            text = text.upper()
+        for key, ch in zip(self.keys, text):
+            key.setText(ch)
 
     def type_text(self, text: str) -> None:
         self.field.insert(text)
@@ -501,7 +525,18 @@ class PinSheet(Overlay):
             self.cells[0].setFocus(Qt.FocusReason.OtherFocusReason)
 
     def hints(self) -> list[tuple[list[Action], str]]:
-        return [([Action.UP], "Change digit"), ([Action.ACCEPT], "Next"), ([Action.BACK], "Cancel")]
+        focus = self.host.focusWidget()
+        if isinstance(focus, DigitCell):
+            # A on a wheel moves on, and pairs once all six digits are in.
+            return [([Action.UP], "Change digit"), ([Action.ACCEPT], "Pair" if self.complete() else "Next digit"),
+                    ([Action.BACK], "Cancel")]
+        if focus is self.pair_button:
+            accept = "Pair"
+        elif focus is not None and focus is self.address_tile:
+            accept = "Enter address"
+        else:
+            accept = "Select"
+        return [([Action.ACCEPT], accept), ([Action.BACK], "Cancel")]
 
     # --- state ---
     def pin(self) -> str:
@@ -532,6 +567,8 @@ class PinSheet(Overlay):
         filled = len(self.pin())
         self.hint.setText("Ready to pair" if self.complete() else (
             "Enter the address first" if filled == 6 else f"{filled} of 6 digits"))
+        if self in self.host.overlays:
+            self.host.refresh_hints()  # A turns from "Next digit" into "Pair"
 
     def move(self, index: int) -> bool:
         if 0 <= index < len(self.cells):
@@ -645,7 +682,16 @@ class FolderSheet(Overlay):
         self.navigate(start_path, focus=False)
 
     def hints(self) -> list[tuple[list[Action], str]]:
-        return [([Action.ACCEPT], "Open"), ([Action.ALT], "Up one level"), ([Action.BACK], "Cancel")]
+        focus = self.host.focusWidget()
+        if focus in self.entries:
+            accept = "Open"
+        elif focus is self.use:
+            accept = self.use.text()
+        elif focus is self.up:
+            accept = "Up one level"
+        else:
+            accept = "Go there"  # Home and SD card shortcuts
+        return [([Action.ACCEPT], accept), ([Action.ALT], "Up one level"), ([Action.BACK], "Cancel")]
 
     def handle_action(self, action: Action) -> bool:
         if action == Action.ALT:

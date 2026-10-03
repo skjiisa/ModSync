@@ -42,12 +42,14 @@ All notable changes to ModSync are documented here. The format follows
   tooltip used to hide. A glowing frame marks the focused tile, and a hint
   bar shows which button does what, with PlayStation symbols for a
   PlayStation controller. Questions, text entry, PIN entry and folder picking
-  open in sheets inside the window instead of separate dialogs. Text entry
-  has an on-screen keyboard with a Paste key, and the PIN pad works like a
+  open in sheets inside the window instead of separate dialogs, and the hint
+  bar names what A does on the focused control. Text entry has an on-screen
+  keyboard with a symbols layer and a Paste key, and the PIN pad works like a
   combination lock. Home has a readiness checklist (game version, SKSE, Mod
   Organizer 2, sync) next to Play, or Continue when Steam's Play button
-  opened ModSync. The setup wizard reuses the same parts and keeps Finish at
-  the top of its last step. B on Home, or "Quit ModSync" under System, asks to
+  opened ModSync. The setup wizard reuses the same parts. Its last step keeps
+  Finish at the top, or "Finish anyway" with the repair focused when the game
+  version still doesn't match. B on Home, or "Quit ModSync" under System, asks to
   quit, so ModSync can be closed without a mouse. ModSync always uses its
   dark theme now.
 - Controllers work two ways. Outside games, Steam Input's desktop
@@ -84,15 +86,6 @@ All notable changes to ModSync are documented here. The format follows
   service applies them before Steam starts. Tested on a Frame.
 
 ### Fixed
-
-- Keep discovered MO2 instances and pairing peers visible when their scan
-  finishes on another section. Instance changes, reset, stopping sync and
-  Visual C++ runtime installation now block competing setup changes and
-  launches until they finish. Polling resumes after failed setup changes.
-- Stop right-stick scrolling when another application takes focus.
-- Count a bumper press once when SDL and Steam desktop keys both report it,
-  including taps held longer than the input deduplication interval. Ignore
-  results from cancelled pairing attempts after starting another attempt.
 
 - In the Flatpak, `modsync doctor` and `modsync diagnostics` pointed at a
   launch hook log inside the sandbox that is never written. Steam runs the

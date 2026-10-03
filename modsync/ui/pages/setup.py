@@ -138,6 +138,8 @@ class SetupFlow(QWidget):
         self.game = GamePanel(host)
         self.game.status.connect(host.notify)
         self.game.busyChanged.connect(lambda on: host.set_busy("setup-game", on))
+        self.game.checked.connect(self._on_game_checked)
+        self._unresolved = ""
         v3.addWidget(self.game)
         v3.addStretch(1)
 
@@ -178,11 +180,45 @@ class SetupFlow(QWidget):
         if focus:
             self.focus_default()
 
+    @staticmethod
+    def unresolved(st, vc) -> str:
+        """Why finishing now would leave the game unready for the mods, or ""."""
+        if st.steam_updating:
+            return ""
+        if st.needs_downgrade or vc.mismatch:
+            return f"Skyrim is {st.installed}, but your mods need {st.wanted or vc.expected}."
+        if st.skse_state in ("wrong", "several"):
+            return "SKSE doesn't match this version of Skyrim."
+        if st.needs_pin:
+            return "Steam has an update waiting that would change Skyrim's version."
+        return ""
+
+    def _on_game_checked(self, st, vc) -> None:
+        self._unresolved = self.unresolved(st, vc)
+        if self._unresolved:
+            self.finish_tile.setText("Finish anyway")
+            self.finish_tile.set_role("normal")
+            self.finish_tile.set_description(f"{self._unresolved} You can fix it later under Game.")
+        else:
+            self.finish_tile.setText("Finish")
+            self.finish_tile.set_role("primary")
+            self.finish_tile.set_description("Go to Home. Everything here stays available there.")
+        repair = self.repair_tile()
+        if self.index == 2 and repair is not None and self.host.focusWidget() is self.finish_tile:
+            repair.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def repair_tile(self) -> Tile | None:
+        """The action that fixes what is unresolved, when there is one."""
+        if not self._unresolved:
+            return None
+        g = self.game
+        return next((t for t in (g.downgrade, g.skse, g.pin, g.adopt) if t.isVisibleTo(self)), None)
+
     def focus_default(self) -> None:
         page = self.stack.currentWidget()
         preferred = {0: self.keep or (self.chooser.found_tiles[0] if self.chooser.found_tiles else None),
                      1: self.local or getattr(self, "keep_sync", None),
-                     2: self.finish_tile}.get(self.index)
+                     2: self.repair_tile() or self.finish_tile}.get(self.index)
         candidates = nav.focusables(page)
         target = preferred if preferred in candidates else (nav.reading_order(candidates, page) or [None])[0]
         if target is not None:

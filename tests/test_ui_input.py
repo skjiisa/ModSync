@@ -565,3 +565,51 @@ class SteamInputFamilyTests(unittest.TestCase):
                     patch.object(steaminput.steamos, "variant", return_value=None):
                 root = self._sysfs(tmp, **spec)
                 self.assertEqual(steaminput.family(root, gamepads_connected=pads), expected)
+
+
+@unittest.skipIf(QApplication is None, "PySide6 not installed")
+class SheetDetailTests(UiTestCase):
+    def test_on_screen_keyboard_has_every_symbol(self):
+        import string
+        from modsync.ui.overlays import KeyboardSheet
+
+        window = self.window()
+        typed = []
+        sheet = KeyboardSheet(window, "Type", "Prompt", typed.append)
+        sheet.open()
+        sheet.symbols.click()
+        self.assertEqual(sheet.symbols.text(), "abc")
+        self.assertFalse(sheet.shift.isEnabled())
+        reachable = {k.text() for k in sheet.keys}
+        sheet.symbols.click()
+        reachable |= {k.text() for k in sheet.keys}
+        self.assertEqual(set(string.punctuation) - reachable, set())
+        sheet.symbols.click()
+        next(k for k in sheet.keys if k.text() == "@").click()
+        next(k for k in sheet.keys if k.text() == "_").click()
+        sheet.done()
+        self.assertEqual(typed, ["@_"])
+
+    def test_hints_name_what_a_does_on_the_focused_control(self):
+        from modsync.pairing_lan import Announcement
+        from modsync.ui.overlays import FolderSheet, PinSheet
+
+        window = self.window()
+        sheet = PinSheet(window, Announcement("Deck", "192.0.2.2", 21029, "s"), lambda *a: None)
+        sheet.open()
+        self.assertIn("Next digit", window.hintbar.texts)
+        sheet.set_pin("123456")
+        self.assertIn("Pair", window.hintbar.texts)
+        sheet.cancel()
+
+        root = self.tmp / "tree"
+        (root / "Games").mkdir(parents=True)
+        folders = FolderSheet(window, "Pick", root, lambda p: None, confirm="Use this instance")
+        folders.open()
+        self.assertIn("Open", window.hintbar.texts)
+        folders.use.setFocus()
+        self.assertIn("Use this instance", window.hintbar.texts)
+        folders.cancel()
+
+        window.request_quit()
+        self.assertIn("Quit ModSync", window.hintbar.texts)

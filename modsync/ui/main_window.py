@@ -576,6 +576,7 @@ class MainWindow(QMainWindow):
         if self.router.mode != "mouse":
             nav.reveal(new)
         self.halo.follow(new)
+        self.refresh_hints()  # sheets name what A does on the focused control
 
     def _on_mode_changed(self, mode: str) -> None:
         self.halo.enabled = mode != "mouse"

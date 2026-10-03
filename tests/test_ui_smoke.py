@@ -705,3 +705,33 @@ class QuitTests(UiTestCase):
         self.assertIsNone(window.top_overlay)
         self.assertIn("still working", window.last_message)
         self.assertTrue(window.isVisible())
+
+
+class SetupFinishTests(UiTestCase):
+    def test_finishing_with_a_version_mismatch_is_explicit(self):
+        version = gameversion.GameVersion.parse
+        status = fake_game_status()
+        status.installed = version("1.6.1170")
+        status.expected = version("1.5.97")
+        status.recipe_from = "1.6.1170"
+        status.recipe_targets = ["1.5.97"]
+        check = gameversion.VersionCheck(status.installed, status.expected)
+        with patch.object(ModSyncService, "game_status", lambda self, refresh_index=True: status), \
+                patch.object(ModSyncService, "game_version_check", lambda self: check):
+            window = self.window()
+            setup = window.start_setup()
+            setup.go_to(2)
+            self.settle()
+        self.assertEqual(setup.finish_tile.text(), "Finish anyway")
+        self.assertEqual(setup.finish_tile.property("tileRole"), "normal")
+        self.assertIn("need 1.5.97", setup.finish_tile.description)
+        self.assertIs(self.app.focusWidget(), setup.game.downgrade)  # the repair, not Finish
+
+    def test_finish_stays_the_main_action_when_nothing_needs_fixing(self):
+        window = self.window()
+        setup = window.start_setup()
+        setup.go_to(2)
+        self.settle()
+        self.assertEqual(setup.finish_tile.text(), "Finish")
+        self.assertEqual(setup.finish_tile.property("tileRole"), "primary")
+        self.assertIs(self.app.focusWidget(), setup.finish_tile)
