@@ -11,7 +11,9 @@ All notable changes to ModSync are documented here. The format follows
 - An ARM64 USVFS fix for the files shipped with MO2 2.5.2. "Apply ARM64 fix"
   appears in the dashboard and Steam launch hub. It downloads a pinned build
   with the injection-stub stack-alignment fix, verifies the archive and each
-  binary, and backs up the originals. "Restore original USVFS" reverses it.
+  binary, and backs up the originals. The build comes from ModSync's mirror of
+  ndabas's release, which also carries the source, with the original release
+  as a fallback. "Restore original USVFS" reverses it.
   Unknown builds are left unchanged. The same actions are available through
   `modsync mo2 usvfs status|apply|restore`; `doctor` reports the fix's status.
   Changes are refused while MO2, or any game or tool it started, still has

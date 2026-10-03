@@ -31,7 +31,13 @@ log = logging.getLogger(__name__)
 
 PATCH_ID = "v0.5.6.1-woa.1"
 SOURCE_COMMIT = "866ce70040c4fc34fd2ddb59b3567a97f20cd50e"
-ARCHIVE_URL = f"https://github.com/ndabas/usvfs/releases/download/{PATCH_ID}/usvfs_{PATCH_ID}.7z"
+# Tried in order; both serve the same file, checked against the same hash. The
+# first is ModSync's own mirror (skjiisa/usvfs, a fork carrying the source), so
+# Apply keeps working if the original release is ever removed.
+ARCHIVE_URLS = (
+    f"https://github.com/skjiisa/usvfs/releases/download/{PATCH_ID}/usvfs_{PATCH_ID}.7z",
+    f"https://github.com/ndabas/usvfs/releases/download/{PATCH_ID}/usvfs_{PATCH_ID}.7z",
+)
 ARCHIVE_SHA256 = "acfbdb928078686d3f5709fc57e416ebb524292174878a297f1b6cf8d3a88f8e"
 ARCHIVE_SIZE = 12_822_348
 ORIGINAL = {
@@ -134,22 +140,17 @@ def ensure_cached() -> Path:
     with tempfile.TemporaryDirectory(prefix=".usvfs-", dir=cache.parent) as tmp:
         staging = Path(tmp)
         archive = staging / "usvfs.7z"
-        request = urllib.request.Request(ARCHIVE_URL, headers={"User-Agent": "ModSync"})
-        digest = hashlib.sha256()
-        total = 0
-        try:
-            with urllib.request.urlopen(request, timeout=180) as response, archive.open("wb") as out:
-                while chunk := response.read(1 << 20):
-                    total += len(chunk)
-                    if total > ARCHIVE_SIZE:
-                        raise UsvfsError("The USVFS archive is larger than the pinned release.")
-                    digest.update(chunk)
-                    out.write(chunk)
-        except (OSError, http.client.HTTPException, ValueError) as exc:
-            # A dropped connection, a truncated body or a bad proxy setting.
-            raise UsvfsError(f"Could not download the USVFS fix: {exc}") from exc
-        if total != ARCHIVE_SIZE or digest.hexdigest() != ARCHIVE_SHA256:
-            raise UsvfsError("The USVFS download did not match its pinned SHA-256. No instance files were changed.")
+        failures = []
+        for url in ARCHIVE_URLS:
+            try:
+                _download(url, archive)
+                break
+            except UsvfsError as exc:
+                log.warning("USVFS download from %s failed: %s", url, exc)
+                failures.append(exc)
+        else:
+            # Every mirror failed; the last reason is the one worth showing.
+            raise failures[-1]
         extracted = staging / "extracted"
         try:
             extractor.extract(archive, extracted)
@@ -171,6 +172,26 @@ def ensure_cached() -> Path:
 # doesn't match command lines, so the Steam launch chain waiting on the launch
 # hub (whose arguments end in SkyrimSELauncher.exe) doesn't count.
 _IN_USE_SCRIPT = 'for m in /proc/[0-9]*/maps; do [ -O "$m" ] && grep -qsF "$@" -- "$m" && exit 0; done; exit 1'
+
+
+def _download(url: str, archive: Path) -> None:
+    """Fetch the pinned archive from one mirror, checking its size and hash."""
+    request = urllib.request.Request(url, headers={"User-Agent": "ModSync"})
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response, archive.open("wb") as out:
+            while chunk := response.read(1 << 20):
+                total += len(chunk)
+                if total > ARCHIVE_SIZE:
+                    raise UsvfsError("The USVFS archive is larger than the pinned release.")
+                digest.update(chunk)
+                out.write(chunk)
+    except (OSError, http.client.HTTPException, ValueError) as exc:
+        # A dropped connection, a truncated body or a bad proxy setting.
+        raise UsvfsError(f"Could not download the USVFS fix: {exc}") from exc
+    if total != ARCHIVE_SIZE or digest.hexdigest() != ARCHIVE_SHA256:
+        raise UsvfsError("The USVFS download did not match its pinned SHA-256. No instance files were changed.")
 
 
 def _require_closed(root: Path) -> None:

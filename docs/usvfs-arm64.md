@@ -51,8 +51,14 @@ MO2 itself still needs a current runtime, which ModSync checks when opening it.
 
 ## Pinned build and source
 
-The binaries come from ndabas's
+The binaries are ndabas's
 [v0.5.6.1-woa.1 release](https://github.com/ndabas/usvfs/releases/tag/v0.5.6.1-woa.1).
+ModSync downloads them from a byte-identical
+[mirror on skjiisa/usvfs](https://github.com/skjiisa/usvfs/releases/tag/v0.5.6.1-woa.1),
+a fork that also carries the source, and falls back to ndabas's release. Both
+are checked against the same SHA-256, so the mirror can't change what gets
+installed. The mirror keeps the fix available if the original release is
+removed.
 ModSync replaces the matching DLLs and proxy executables as a set:
 `usvfs_x64.dll`, `usvfs_x86.dll`, `usvfs_proxy_x64.exe`, and `usvfs_proxy_x86.exe`.
 The x64 proxy participates in injection as well as the DLL. Individual file
@@ -63,6 +69,9 @@ hashes are recorded in [`modsync/mo2/usvfs.py`](../modsync/mo2/usvfs.py).
 - Base commit: `9f7fd9660d51784aa2117cb45f2095e87312d558`.
 - Archive: `usvfs_v0.5.6.1-woa.1.7z`.
 - Archive SHA-256: `acfbdb928078686d3f5709fc57e416ebb524292174878a297f1b6cf8d3a88f8e`.
+- Source archive: `usvfs-v0.5.6.1-woa.1-src.tar.gz` on the mirror release, the
+  pinned commit with its asmjit, spdlog and udis86 submodules, made with
+  `git archive`.
 - License: [GPL-3.0](https://github.com/ndabas/usvfs/blob/866ce70040c4fc34fd2ddb59b3567a97f20cd50e/LICENSE).
 
 The source change saves `rsp` in `rbp` after saving the registers, aligns `rsp`

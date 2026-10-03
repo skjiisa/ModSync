@@ -266,6 +266,28 @@ class CacheTests(unittest.TestCase):
                         usvfs.ensure_cached()
         self.extractor.extract.assert_not_called()
 
+    def test_falls_back_to_the_original_release_when_the_mirror_fails(self):
+        mirror, original = usvfs.ARCHIVE_URLS
+        seen = []
+
+        def fetch(request, timeout):
+            seen.append(request.full_url)
+            if request.full_url == mirror:
+                return io.BytesIO(b"tampered or truncated")
+            return io.BytesIO(self.archive)
+
+        with patch.object(usvfs.urllib.request, "urlopen", side_effect=fetch):
+            cache = usvfs.ensure_cached()
+        self.assertEqual(seen, [mirror, original])
+        self.assertEqual((cache / "usvfs_x64.dll").read_bytes(), self.payload["usvfs_x64.dll"])
+
+    def test_the_mirror_is_used_first_and_alone_when_it_works(self):
+        with patch.object(usvfs.urllib.request, "urlopen", return_value=io.BytesIO(self.archive)) as fetch:
+            usvfs.ensure_cached()
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[0].full_url, usvfs.ARCHIVE_URLS[0])
+        self.assertIn("skjiisa/usvfs", usvfs.ARCHIVE_URLS[0])
+
     def test_network_and_unpack_failures_are_usvfs_errors(self):
         # The CLI and UI report UsvfsError; anything else would be a traceback.
         import http.client
