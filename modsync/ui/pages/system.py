@@ -66,9 +66,12 @@ class SystemPage(Page):
         self.reset_tile = None
         if state.has_instance:
             self.reset_tile = Tile("Reset setup…", "Forget the instance and any sync on this machine. Mods are "
-                                   "not deleted.", "power", role="danger", size="compact")
+                                   "not deleted.", "undo", role="danger", size="compact")
             self.reset_tile.clicked.connect(self._reset)
             right.addWidget(self.reset_tile)
+        self.quit_tile = Tile("Quit ModSync", "Close the app. B on Home does the same.", "power", size="compact")
+        self.quit_tile.clicked.connect(host.request_quit)
+        right.addWidget(self.quit_tile)
         right.addWidget(self._controls_panel())
         right.addStretch(1)
         self.finish_layout()
@@ -89,7 +92,7 @@ class SystemPage(Page):
         for row, (key, text) in enumerate((
             ("dpad", "Move between tiles"),
             ("accept", "Choose"),
-            ("back", "Back or close"),
+            ("back", "Back, or quit from Home"),
             ("prev_tab", "Previous section"),
             ("next_tab", "Next section"),
         )):

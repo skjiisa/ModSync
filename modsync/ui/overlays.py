@@ -128,7 +128,9 @@ class Overlay(QWidget):
 def _tile(title: str, description: str, role: str, icon: str | None, on_click: Callable[[], None], *,
           size: str = "normal") -> Tile:
     t = Tile(title, description, icon, role=role, size=size)
-    t.clicked.connect(on_click)
+    # Swallow clicked's ``checked`` argument: it would replace a callback's
+    # default argument (``lambda k=key: ...``) with False.
+    t.clicked.connect(lambda _checked=False: on_click())
     return t
 
 

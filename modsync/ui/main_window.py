@@ -406,6 +406,33 @@ class MainWindow(QMainWindow):
             self.notify(f"⚠ {message}")
         self._apply_busy()  # a game started from here may have exited
 
+    # --- quitting ---
+    def request_quit(self) -> None:
+        """Ask before closing: B on Home, Quit under System, or Ctrl+Q. Closing
+        while Steam waits cancels its launch, which the question says."""
+        if self.overlays and isinstance(self.top_overlay, ConfirmSheet) and self.top_overlay.property("quit"):
+            return
+        if self.busy:
+            self.notify("⚠ ModSync is still working. Quit once it has finished.")
+            return
+        steam = self.steam_launch
+        text = (
+            f"Steam is waiting to start {steam.game.name}. Quitting returns to Steam without starting "
+            "anything." if steam is not None else
+            "Syncing and a queued Steam pin carry on only if the background service is on (under System)."
+        )
+
+        def chosen(key: str | None) -> None:
+            if key == "quit":
+                self.close()
+
+        sheet = self.confirm(
+            "Quit ModSync?", text,
+            [("quit", "Quit and return to Steam" if steam is not None else "Quit ModSync", "", "primary", "power"),
+             ("stay", "Stay", "", "normal", "close")],
+            chosen, eyebrow="ModSync")
+        sheet.setProperty("quit", True)
+
     # --- Steam launch ---
     def decide_launch(self, code: int) -> None:
         """Steam launch: record Continue or Cancel, then close so the hook can act.
@@ -492,6 +519,8 @@ class MainWindow(QMainWindow):
         if action == Action.BACK:
             if self._current != "home":
                 self.go("home")
+            else:
+                self.request_quit()  # B at the top level, console style
             return True
         return True  # AUX / ALT with nothing to do here
 
@@ -502,8 +531,7 @@ class MainWindow(QMainWindow):
             hints = self.setup.hints()
         else:
             hints = [*self.page.hints(), ([Action.ACCEPT], "Select")]
-            if self._current != "home":
-                hints.append(([Action.BACK], "Home"))
+            hints.append(([Action.BACK], "Home" if self._current != "home" else "Quit"))
             hints.append(([Action.PREV_TAB, Action.NEXT_TAB], "Sections"))
         self.hintbar.set_hints(hints)
 
@@ -550,6 +578,9 @@ class MainWindow(QMainWindow):
             self.focus_scope_default()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() == Qt.Key.Key_Q and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            self.request_quit()
+            return
         if event.key() == Qt.Key.Key_F11:
             self.showNormal() if self.isFullScreen() else self.showFullScreen()
             return

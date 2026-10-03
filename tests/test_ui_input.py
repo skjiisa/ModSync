@@ -145,6 +145,11 @@ class SheetTests(UiTestCase):
         answers = []
         sheet = window.confirm("Question", "Text", [("yes", "Yes", "", "primary", None),
                                                     ("no", "No", "", "normal", None)], answers.append)
+        sheet.tiles["no"].click()  # a click answers with its own key
+        self.assertEqual(answers, ["no"])
+        answers.clear()
+        sheet = window.confirm("Question", "Text", [("yes", "Yes", "", "primary", None),
+                                                    ("no", "No", "", "normal", None)], answers.append)
         self.assertIs(self.app.focusWidget(), sheet.tiles["yes"])
         for _ in range(4):  # can't wander out to the page underneath
             QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Down)
@@ -207,6 +212,17 @@ class SheetTests(UiTestCase):
         self.app.focusWidget().click()
         sheet.use.click()
         self.assertEqual(chosen, [root / "Games"])
+
+    def test_folder_places_open_their_folder(self):
+        from pathlib import Path
+        from modsync.ui.overlays import FolderSheet
+
+        window = self.window()
+        sheet = FolderSheet(window, "Pick", self.tmp, lambda p: None)
+        sheet.open()
+        home = next(t for t in sheet.findChildren(type(sheet.use)) if t.text() == "Home")
+        home.click()
+        self.assertEqual(sheet.path, Path.home())
 
 
 @unittest.skipIf(QApplication is None, "PySide6 not installed")

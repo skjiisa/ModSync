@@ -47,7 +47,9 @@ All notable changes to ModSync are documented here. The format follows
   combination lock. Home has a readiness checklist (game version, SKSE, Mod
   Organizer 2, sync) next to Play, or Continue when Steam's Play button
   opened ModSync. The setup wizard reuses the same parts and keeps Finish at
-  the top of its last step. ModSync always uses its dark theme now.
+  the top of its last step. B on Home, or "Quit ModSync" under System, asks to
+  quit, so ModSync can be closed without a mouse. ModSync always uses its
+  dark theme now.
 - Controllers work two ways. Outside games, Steam Input's desktop
   configuration turns buttons into keys, and ModSync reads them back as the
   buttons that sent them: Space is Y on a Steam Deck and B on a Steam

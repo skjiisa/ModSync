@@ -452,7 +452,7 @@ class BusyTests(UiTestCase):
                                 panel._start_downgrade()
                             else:
                                 panel._restore_files()
-                            window.top_overlay.choose("go")  # the confirmation sheet
+                            window.top_overlay.tiles["go"].click()  # the confirmation sheet, as A would
                             self.assertTrue(panel.busy)
                             self.assertFalse(window.pages["system"].wizard_tile.isEnabled())
                             self.assertFalse(window.pages["mods"].content.isEnabled())
@@ -646,3 +646,62 @@ class LaunchTests(UiTestCase):
         window = self.window()
         self.assertFalse(window.pages["home"].play.isEnabled())
         self.assertIsNone(window.pages["mods"].open_mo2)
+
+
+class QuitTests(UiTestCase):
+    def test_b_on_home_asks_then_quits(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        window = self.window()
+        self.assertIn("Quit", window.hintbar.texts)
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Escape)  # B
+        sheet = window.top_overlay
+        self.assertEqual(sheet.title.text(), "Quit ModSync?")
+        self.assertIs(self.app.focusWidget(), sheet.tiles["quit"])
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Escape)  # B again: stay
+        self.assertIsNone(window.top_overlay)
+        self.assertTrue(window.isVisible())
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Escape)
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Return)  # A on Quit
+        self.assertFalse(window.isVisible())
+
+    def test_b_elsewhere_still_goes_home_first(self):
+        from modsync.ui.input import Action, InputRouter
+
+        window = self.window()
+        window.go("system")
+        InputRouter.instance().dispatch(Action.BACK)
+        self.assertEqual(window._current, "home")
+        self.assertIsNone(window.top_overlay)
+
+    def test_quit_from_system_and_ctrl_q(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        window = self.window()
+        window.pages["system"].quit_tile.click()
+        self.assertEqual(window.top_overlay.title.text(), "Quit ModSync?")
+        window.pages["system"].quit_tile.click()  # never stacks a second question
+        self.assertEqual(len(window.overlays), 1)
+        window.top_overlay.cancel()
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Q, Qt.KeyboardModifier.ControlModifier)
+        window.top_overlay.tiles["quit"].click()
+        self.assertFalse(window.isVisible())
+
+    def test_quitting_while_steam_waits_cancels_the_launch(self):
+        window = self.window(steam=launchhook.SteamLaunch(SKYRIM_SE))
+        window.request_quit()
+        sheet = window.top_overlay
+        self.assertIn("without starting anything", sheet.text.text())
+        self.assertEqual(sheet.tiles["quit"].text(), "Quit and return to Steam")
+        sheet.tiles["quit"].click()
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CANCEL)
+
+    def test_quit_waits_for_file_changes(self):
+        window = self.window()
+        window.set_busy("game", True)
+        window.request_quit()
+        self.assertIsNone(window.top_overlay)
+        self.assertIn("still working", window.last_message)
+        self.assertTrue(window.isVisible())
