@@ -64,6 +64,12 @@ class Server:
             if vc.skse_note():
                 self.log(f"    {vc.skse_note()}")
             self.log("")
+        try:
+            hook = launchhook.upgrade()
+            if hook is not None:
+                self.log(f"  {hook}")
+        except Exception as exc:
+            self.log(f"  (launch hook update failed: {exc})")
         if self.syncing:
             self.service.ensure_running()
             self.log("Syncing — press Ctrl-C to stop.")

@@ -26,11 +26,11 @@ class SteamConfigTests(unittest.TestCase):
     def test_set_and_remove_round_trip_untouched_content(self):
         before = self.path.read_text()
         cfg = SteamConfig.load(self.path)
-        cfg.set_compat_tool(489830, "modsync_489830_hub")
+        cfg.set_compat_tool(489830, "modsync_489830_proton")
         cfg.save()
         self.assertEqual(self.path.with_name("config.vdf.modsync-bak").read_text(), before)
         again = SteamConfig.load(self.path)
-        self.assertEqual(again.compat_tool_name(489830), "modsync_489830_hub")
+        self.assertEqual(again.compat_tool_name(489830), "modsync_489830_proton")
         self.assertEqual(again.compat_tool_name(2074920), "GE-Proton10-34")
         self.assertEqual(
             again.data["InstallConfigStore"]["Software"]["Valve"]["Steam"]["AutoUpdateWindowEnabled"], "0"

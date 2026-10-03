@@ -59,6 +59,16 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Steam Cloud stopped syncing Skyrim saves while the Play button switch was
+  on. Steam maps a game's Windows save folders into its Proton prefix only
+  for a compatibility tool whose internal name contains "proton", and the
+  hook was named `modsync_489830_hub`. Steam couldn't resolve the save folder,
+  so it skipped every save while still reporting the sync as complete. The
+  hook is now `modsync_489830_proton`. When the dashboard opens or the
+  background service starts, an existing hook is moved to the new name and
+  Steam is switched over to it, after a Steam restart if Steam is running.
+  Saves made under the old name are still in the prefix, where Steam finds
+  them again once the game launches through the new name.
 - In the Flatpak, `modsync doctor` and `modsync diagnostics` pointed at a
   launch hook log inside the sandbox that is never written. Steam runs the
   hook on the host, so they now read the host's `~/.local/state/modsync/launch-hook.log`.

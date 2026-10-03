@@ -524,7 +524,11 @@ class Dashboard(QWidget):
         hook_row.addWidget(self._hook_status, stretch=1)
         v.addLayout(hook_row)
         self._hook: launchhook.LaunchHookStatus | None = None
-        self._refresh_hook_status()
+        run_async(
+            launchhook.upgrade,
+            on_done=self._after_hook_upgrade,
+            on_failed=lambda _: self._refresh_hook_status(),
+        )
 
         # Firewall: a desktop ufw/firewalld drops pairing and sync traffic until
         # ModSync's ports are allowed. The row only appears when one is running
@@ -641,6 +645,11 @@ class Dashboard(QWidget):
     def _on_hook_failed(self, message: str) -> None:
         self._hook_button.setEnabled(True)
         self._on_error(message)
+        self._refresh_hook_status()
+
+    def _after_hook_upgrade(self, message: object) -> None:
+        if message:
+            self._set_status(str(message))
         self._refresh_hook_status()
 
     def _refresh_hook_status(self) -> None:

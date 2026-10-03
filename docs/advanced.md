@@ -188,7 +188,7 @@ code works regardless.
 ## How the launch hook works
 
 Steam runs whatever compatibility tool is selected for a game, and the hook
-is one more such tool: `compatibilitytools.d/modsync_489830_hub`. MO2-LINT
+is one more such tool: `compatibilitytools.d/modsync_489830_proton`. MO2-LINT
 introduced the approach in
 [PR #1096](https://github.com/Furglitch/modorganizer2-linux-installer/pull/1096)
 for its own `mo2_489830_redirector`. The hook's `proton` script opens ModSync
@@ -207,6 +207,17 @@ ModSync starts through a stable command, `flatpak run io.github.skjiisa.ModSync`
 or the installed `modsync`, never a versioned path. Steam's own choice is
 recorded before it is changed and written back by "Turn off". If ModSync
 cannot start at all, the launch goes ahead anyway.
+
+The "proton" in the name matters. Steam Cloud maps a game's Windows save
+folders, such as Documents, into the Proton prefix only for a tool whose
+internal name contains "proton". Under any other name Steam can't resolve the
+save folder: `logs/cloud_log.txt` shows `Unable to resolve path with root
+WinMyDocuments`, saves are neither downloaded nor uploaded, and Steam still
+reports the sync as complete. The hook used to be called `modsync_489830_hub`,
+which broke cloud saves in exactly this way. ModSync renames an existing hook
+when the dashboard opens or the background service starts. Steam Tinker Launch
+found the same rule
+([#185](https://github.com/sonic2kk/steamtinkerlaunch/issues/185)).
 
 Steam reads `config.vdf` and `compatibilitytools.d` only on startup and
 rewrites the former on exit, so turning the hook on or off ends with a Steam
