@@ -253,7 +253,7 @@ class InputRouter(QObject):
     def _on_scroll_tick(self) -> None:
         from modsync.ui import nav
 
-        if not self._scroll_speed:
+        if not self._scroll_speed or not self._app_active():
             self._scroll_timer.stop()
             return
         area = nav.scroll_area_of(QApplication.focusWidget())
@@ -289,6 +289,11 @@ class InputRouter(QObject):
             return False
         action = TAP_KEYS[key]
         self._set_mode(self._key_mode(key))
+        # SDL acts on the press; Steam's modifier acts on release. Compare
+        # their press times so holding a bumper past DEDUPE_S still acts once.
+        pad_press = self._recent.get(action)
+        if pad_press is not None and pad_press[0] == "pad" and abs(pad_press[1] - tap[1]) < DEDUPE_S:
+            return False
         if not self._duplicate(action, "key"):
             self.dispatch(action)
         return False

@@ -116,7 +116,7 @@ class JoinPanel(QWidget):
             tile = Tile(ann.name, f"{ann.host}  ·  showing a PIN", "devices", role="primary", chevron=True)
             tile.clicked.connect(lambda _=False, a=ann: self.ask_pin(a))
             self.results.addWidget(tile)
-            tile.setVisible(self.isVisible())
+            tile.show()  # remain available when the page is opened again
             self.machine_tiles.append(tile)
         if self.isVisible():
             self.machine_tiles[0].setFocus()
@@ -387,14 +387,23 @@ class SyncPage(Page):
         self.beacon.open()
         self.host.notify(f"Waiting for another machine to enter PIN {pin[:3]} {pin[3:]}…")
         beacon = self.beacon
+        stop = self._pair_stop
 
         def on_ready(ann: pairing_lan.Announcement) -> None:
             where = ann.host if ann.port == pairing_lan.PAIR_PORT else f"{ann.host}:{ann.port}"
             # The beacon may have been cancelled, or the page rebuilt, by now.
             self.host.call_soon(lambda: beacon.set_address(where) if shiboken6.isValid(beacon) else None)
 
-        worker.run_async(self.service.host_network_pairing, name, pin, on_ready=on_ready, stop=self._pair_stop,
-                         on_done=self._on_paired, on_failed=self._on_pair_failed)
+        def paired(peer: object) -> None:
+            if self._pair_stop is stop:
+                self._on_paired(peer)
+
+        def failed(message: str) -> None:
+            if self._pair_stop is stop:
+                self._on_pair_failed(message)
+
+        worker.run_async(self.service.host_network_pairing, name, pin, on_ready=on_ready, stop=stop,
+                         on_done=paired, on_failed=failed)
 
     def cancel_pairing(self) -> None:
         if self._pair_stop is not None:
@@ -437,10 +446,7 @@ class SyncPage(Page):
         def chosen(key: str | None) -> None:
             if key != "stop":
                 return
-            self.host.prepare_rebuild()
-            self.host.notify("Stopping sync…")
-            worker.run_async(self.service.stop_sync, on_done=lambda _: self.host.rebuild(),
-                             on_failed=lambda m: self.host.notify(f"⚠ {m}"))
+            self.host.change_setup(self.service.stop_sync, message="Stopping sync…")
 
         self.host.confirm(
             "Stop syncing",

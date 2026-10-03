@@ -85,6 +85,15 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Keep discovered MO2 instances and pairing peers visible when their scan
+  finishes on another section. Instance changes, reset, stopping sync and
+  Visual C++ runtime installation now block competing setup changes and
+  launches until they finish. Polling resumes after failed setup changes.
+- Stop right-stick scrolling when another application takes focus.
+- Count a bumper press once when SDL and Steam desktop keys both report it,
+  including taps held longer than the input deduplication interval. Ignore
+  results from cancelled pairing attempts after starting another attempt.
+
 - In the Flatpak, `modsync doctor` and `modsync diagnostics` pointed at a
   launch hook log inside the sandbox that is never written. Steam runs the
   hook on the host, so they now read the host's `~/.local/state/modsync/launch-hook.log`.

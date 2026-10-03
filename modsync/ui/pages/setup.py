@@ -156,6 +156,10 @@ class SetupFlow(QWidget):
         for tile in (self.local, self.share, self.copy, self.keep):
             if tile is not None:
                 tile.setEnabled(not busy)
+        self.chooser.setEnabled(not busy)
+        keep_sync = getattr(self, "keep_sync", None)
+        if keep_sync is not None:
+            keep_sync.setEnabled(not busy)
         self.join_panel.setEnabled(not busy)
         self.game.setEnabled(self.game.busy or not (self.host.launching or self.host.busy_except("setup-game")))
         self.finish_tile.setEnabled(not busy)

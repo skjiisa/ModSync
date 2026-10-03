@@ -214,7 +214,7 @@ class Mo2Chooser(QWidget):
             tile = Tile(Path(path).name or path, path, "box", role="primary" if i == 0 else "normal", chevron=True)
             tile.clicked.connect(lambda _=False, p=path: self.use(p))
             self.found.addWidget(tile)
-            tile.setVisible(self.isVisible())
+            tile.show()  # inherit the chooser's visibility, including when opened later
             self.found_tiles.append(tile)
         if self.host.focusWidget() in (None, self.browse) and self.isVisible():
             self.found_tiles[0].setFocus()
@@ -231,12 +231,11 @@ class Mo2Chooser(QWidget):
 
     def use(self, path: str) -> None:
         host = self.host  # the chooser may be gone when this finishes; the window isn't
-        host.notify("Reading the instance…")
-        worker.run_async(
+        host.change_setup(
             self.service.choose_instance,
             path,
-            on_done=lambda _: host.instance_chosen(path),
-            on_failed=lambda m: host.notify(f"⚠ {m}"),
+            message="Reading the instance…",
+            on_done=lambda: host.instance_chosen(path),
         )
 
 
@@ -354,9 +353,7 @@ class ModsPage(Page):
 
     def _change(self) -> None:
         def use(path: Path) -> None:
-            self.host.notify("Reading the instance…")
-            worker.run_async(self.service.choose_instance, str(path), on_done=lambda _: self.host.rebuild(),
-                             on_failed=lambda m: self.host.notify(f"⚠ {m}"))
+            self.host.change_setup(self.service.choose_instance, str(path), message="Reading the instance…")
 
         FolderSheet(self.host, "Select your Mod Organizer 2 instance folder", self.service.state.instance_path,
                     use, confirm="Use this instance").open()
@@ -376,7 +373,7 @@ class ModsPage(Page):
     def _on_runtime_checked(self, problems: list[str]) -> None:
         self.runtime_tile.setVisible(bool(problems))
         self.runtime_note.setVisible(bool(problems))
-        self.runtime_tile.setEnabled(not self.host.busy)
+        self._update_enabled()
         if problems:
             self.runtime_note.setText(
                 "This MO2's virtual file system needs a newer Visual C++ runtime in the game's Proton prefix, "
@@ -384,13 +381,13 @@ class ModsPage(Page):
 
     def _install_runtime(self) -> None:
         def chosen(key: str | None) -> None:
-            if key != "go":
+            if key != "go" or self.host.busy or self.host.launching:
                 return
-            self.runtime_tile.setEnabled(False)
+            self.host.set_busy("runtime", True)
             self.host.notify("Installing the Visual C++ runtime into the game's prefix…")
             worker.run_async(self.service.install_prefix_runtime,
-                             on_done=lambda msg: (self.host.notify(msg, "ok"), self._refresh_runtime()),
-                             on_failed=lambda msg: (self.host.notify(f"⚠ {msg}"), self._refresh_runtime()))
+                             on_done=lambda msg: self._runtime_finished(msg, "ok"),
+                             on_failed=lambda msg: self._runtime_finished(f"⚠ {msg}", "warn"))
 
         self.host.confirm(
             "Install Visual C++ runtime",
@@ -400,6 +397,11 @@ class ModsPage(Page):
             [("go", "Install", "", "primary", "download"), ("cancel", "Cancel", "", "normal", "close")],
             chosen,
         )
+
+    def _runtime_finished(self, message: str, tone: str) -> None:
+        self.host.set_busy("runtime", False)
+        self.host.notify(message, tone)
+        self._refresh_runtime()
 
     # --- USVFS ---
     def usvfs_refresh(self) -> None:

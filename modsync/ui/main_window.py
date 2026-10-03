@@ -320,6 +320,30 @@ class MainWindow(QMainWindow):
         else:
             self.rebuild()
 
+    def change_setup(self, operation, *args, message: str, on_done=None) -> None:
+        """Serialize instance changes, reset and stopping sync with other work.
+        Resume polling on failure too, including a partially changed setup."""
+        if self.busy:
+            return
+        self.prepare_rebuild()
+        self.set_busy("setup-change", True)
+        self.notify(message)
+
+        def finished(_result) -> None:
+            self.set_busy("setup-change", False)
+            self._timer.start(_POLL_MS)
+            if on_done is not None:
+                on_done()
+            else:
+                self.rebuild()
+
+        def failed(error: str) -> None:
+            self.set_busy("setup-change", False)
+            self.notify(f"⚠ {error}")
+            self.rebuild()
+
+        worker.run_async(operation, *args, on_done=finished, on_failed=failed)
+
     def call_soon(self, fn) -> None:
         """Run ``fn`` on the UI thread; safe to call from a worker."""
         self._call.emit(fn)

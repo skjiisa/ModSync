@@ -116,10 +116,7 @@ class SystemPage(Page):
         def chosen(key: str | None) -> None:
             if key != "reset":
                 return
-            self.host.prepare_rebuild()
-            self.host.notify("Resetting…")
-            worker.run_async(self.service.reset, on_done=lambda _: self.host.rebuild(),
-                             on_failed=lambda m: self.host.notify(f"⚠ {m}"))
+            self.host.change_setup(self.service.reset, message="Resetting…")
 
         self.host.confirm(
             "Reset setup",
