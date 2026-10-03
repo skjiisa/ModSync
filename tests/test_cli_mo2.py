@@ -50,6 +50,25 @@ class Mo2CommandTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Not a directory", out)
 
+    def test_usvfs_requires_an_instance_and_routes_actions(self):
+        from modsync.mo2 import usvfs
+
+        code, out = self.run_cli("mo2", "usvfs", "apply")
+        self.assertEqual(code, 1)
+        self.assertIn("Choose an MO2 instance", out)
+        State(instance_path=str(self.tmp)).save()
+        with patch.object(usvfs, "status", return_value=usvfs.Status("available", "fix available")):
+            self.assertEqual(self.run_cli("mo2", "usvfs", "status"), (0, "fix available\n"))
+        for action in ("apply", "restore"):
+            with patch.object(usvfs, action, return_value="done") as call:
+                self.assertEqual(self.run_cli("mo2", "usvfs", action), (0, "done\n"))
+                call.assert_called_once_with(str(self.tmp))
+        with patch.object(usvfs, "apply", side_effect=usvfs.UsvfsError("unrecognized build")):
+            code, out = self.run_cli("mo2", "usvfs", "apply")
+            self.assertEqual(code, 1)
+            self.assertIn("unrecognized build", out)
+        self.assertEqual(self.run_cli("mo2", "usvfs", "unknown")[0], 2)
+
     def test_sync_and_vault_are_the_same_command(self):
         for name in ("sync", "vault"):
             code, out = self.run_cli(name)

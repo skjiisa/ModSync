@@ -91,6 +91,22 @@ class InstanceLifecycleTests(unittest.TestCase):
         self.assertEqual(loaded.instance_path, str(self.instance))
         self.assertEqual(loaded.instance_label, "MO2")
 
+    def test_usvfs_changes_require_a_chosen_instance_and_a_stopped_launcher(self):
+        from modsync.mo2 import usvfs
+
+        service = ModSyncService(manager=self.manager)
+        for method in (service.apply_usvfs_fix, service.restore_usvfs):
+            with self.assertRaisesRegex(RuntimeError, "Choose an MO2"):
+                method()
+        service.state.instance_path = str(self.instance)
+        with patch.object(service.launcher, "running", return_value=True), \
+                patch.object(usvfs, "apply") as apply, patch.object(usvfs, "restore") as restore:
+            for method in (service.apply_usvfs_fix, service.restore_usvfs):
+                with self.assertRaisesRegex(RuntimeError, "Close Mod Organizer"):
+                    method()
+            apply.assert_not_called()
+            restore.assert_not_called()
+
     def test_choose_instance_records_version_from_skse(self):
         (self.instance / "mods" / "SKSE" / "Root").mkdir(parents=True)
         (self.instance / "mods" / "SKSE" / "Root" / "skse64_1_6_1170.dll").write_bytes(b"")

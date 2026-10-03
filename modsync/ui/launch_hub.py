@@ -40,6 +40,7 @@ from modsync.service import ModSyncService, SyncStatus
 from modsync.ui.game_card import GameCard
 from modsync.ui.theme import role
 from modsync.ui.worker import run_async
+from modsync.ui.usvfs_controls import UsvfsControls
 
 _POLL_MS = 4000
 # Testing aid: MODSYNC_HUB_AUTO_DECISION=continue|cancel decides by itself after a
@@ -117,6 +118,10 @@ class LaunchHub(QMainWindow):
         self._setup_label = QLabel("\n".join(describe_setup(state.instance_path)))
         self._setup_label.setWordWrap(True)
         setup_layout.addWidget(self._setup_label)
+        self._usvfs = UsvfsControls(service)
+        self._usvfs.busyChanged.connect(self._on_busy)
+        self._usvfs.status.connect(self._set_status)
+        setup_layout.addWidget(self._usvfs)
         body_layout.addWidget(setup_box)
 
         self.game_card = GameCard(service, refresh_index=False)
@@ -213,8 +218,11 @@ class LaunchHub(QMainWindow):
     def _on_busy(self, busy: bool) -> None:
         # A downgrade or restore is rewriting the game files: neither start the game nor
         # walk away from the rewrite mid-way.
+        busy = self.game_card.busy or self._usvfs.busy
         self.continue_button.setEnabled(not busy)
         self.cancel_button.setEnabled(not busy)
+        self.game_card.setEnabled(not self._usvfs.busy)
+        self._usvfs.setEnabled(not self.game_card.busy)
 
     def proceed(self) -> None:
         self._finish(launchhook.EXIT_CONTINUE)
@@ -223,7 +231,7 @@ class LaunchHub(QMainWindow):
         self._finish(launchhook.EXIT_CANCEL)
 
     def _finish(self, code: int) -> None:
-        if self.decision is not None or self.game_card.busy:
+        if self.decision is not None or self.game_card.busy or self._usvfs.busy:
             return
         self.decision = code
         self._timer.stop()
@@ -233,7 +241,7 @@ class LaunchHub(QMainWindow):
         self.close()
 
     def closeEvent(self, event) -> None:  # noqa: ANN001 (Qt signature)
-        if self.game_card.busy:
+        if self.game_card.busy or self._usvfs.busy:
             event.ignore()
             return
         if self.decision is None:

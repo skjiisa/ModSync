@@ -11,7 +11,7 @@ from modsync.games import SKYRIM_SE
 from modsync.mo2 import discover as mo2_discover
 from modsync.mo2 import instance as mo2_instance
 from modsync.mo2 import launch as mo2_launch
-from modsync.mo2 import vcruntime
+from modsync.mo2 import usvfs as usvfs_fix, vcruntime
 from modsync.steam import pe
 from modsync.steam import libraries as libs
 from modsync.state import State
@@ -110,6 +110,8 @@ def build() -> Report:
                 line(f"      usvfs {shown}")
         for issue in info.issues:
             line(f"      ! {issue}")
+        if usvfs_fix.is_arm64() or usvfs_fix.backup_dir(path).exists():
+            line(f"      USVFS ARM64: {usvfs_fix.status(path).message}")
 
     hook = launchhook.status()
     line()
@@ -121,6 +123,8 @@ def build() -> Report:
         line()
         line("ModSync setup:")
         line(f"  • instance: {state.instance_path}")
+        if usvfs_fix.is_arm64():
+            line(f"  • USVFS ARM64: {usvfs_fix.status(state.instance_path).message}")
         line(f"  • sync: {'vault ' + str(state.folder_id) if state.syncing else 'off'}")
         vc = gameversion.check(state.instance_path)
         mark = "!" if vc.mismatch else "•"

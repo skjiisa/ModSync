@@ -20,6 +20,8 @@ usage:
   modsync mo2 status                     the Mod Organizer 2 instance in use
   modsync mo2 use <instance-dir>         use an existing portable instance
   modsync mo2 install <dest-dir>         install a fresh instance with MO2-LINT
+  modsync mo2 usvfs status | apply | restore
+                                         inspect, apply, or undo the MO2 2.5.2 ARM64 fix
 
   modsync game status                    installed game version vs this setup, Steam state
   modsync game downgrade <version>       downgrade the game with community xdelta patches
