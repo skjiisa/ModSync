@@ -13,6 +13,11 @@ fixes it without touching the prefix. The DLLs come from Microsoft's own
 redistributable, pinned by URL and SHA-256 and unpacked here: it is a WiX bundle
 whose payload cabinets are MSZIP, which ``zlib`` reads. Nothing is installed or
 run. The instance root is machine-local and never synced (see ``stignore``).
+
+Most prefixes never need this: MO2-LINT installs Microsoft's redistributable
+into the prefix as part of Install MO2, and MO2 then loads that copy. The
+download only happens when the prefix's runtime is missing, Wine's stand-in, or
+too old (see :func:`prefix_runtime_problems`).
 """
 
 from __future__ import annotations
@@ -186,13 +191,23 @@ def outdated(instance: Path | str) -> list[str]:
     return [name for name in DLLS if (pe.file_version(root / name) or (0,)) < VERSION]
 
 
-def ensure_instance_runtime(instance: Path | str) -> list[str]:
+def ensure_instance_runtime(instance: Path | str, *, system32: Path | None = None) -> list[str]:
     """Copy a current runtime next to the instance's ``ModOrganizer.exe``.
 
-    Returns the DLLs it copied. Newer copies already there are left alone."""
+    Returns the DLLs it copied. Newer copies already there are left alone. When
+    ``system32`` (the game prefix's) is given and already holds a current
+    runtime, nothing is copied or downloaded: MO2 loads the prefix's copy."""
     root = Path(instance)
+    if not (root / "ModOrganizer.exe").is_file():
+        return []
     stale = outdated(root)
-    if not stale or not (root / "ModOrganizer.exe").is_file():
+    if system32 is not None and prefix_has_mo2_runtime(system32):
+        # MO2 loads the prefix's copies, except where an old copy beside it
+        # comes first in the DLL search order: those still get replaced.
+        stale = [name for name in stale if (root / name).is_file()]
+        if not stale:
+            log.debug("the game prefix at %s has a current VC++ runtime; MO2 uses that", system32)
+    if not stale:
         return []
     source = ensure_cached()
     for name in stale:
@@ -236,10 +251,21 @@ def is_wine_builtin(path: Path) -> bool:
         return False
 
 
+def prefix_has_mo2_runtime(system32: Path) -> bool:
+    """Whether the prefix holds every runtime DLL MO2 and its plugins import,
+    current and not Wine's stand-in (the full :data:`DLLS` set, not just the
+    three USVFS needs)."""
+    return not _runtime_problems(system32, DLLS)
+
+
 def prefix_runtime_problems(system32: Path) -> list[str]:
     """Why the prefix's runtime is too old for USVFS 0.5.7+, one line per DLL; [] if fine."""
+    return _runtime_problems(system32, PREFIX_RUNTIME_DLLS)
+
+
+def _runtime_problems(system32: Path, names: tuple[str, ...]) -> list[str]:
     problems = []
-    for name in PREFIX_RUNTIME_DLLS:
+    for name in names:
         path = system32 / name
         if not path.is_file():
             problems.append(f"{name} is missing")
