@@ -47,7 +47,13 @@ def log_path() -> Path:
 
 
 def launch_hook_log_path() -> Path:
-    """Where the shell launch hook writes (see steam/launchhook_template/proton)."""
+    """Where the shell launch hook writes (see steam/launchhook_template/proton).
+
+    Steam runs that script on the host, so inside the Flatpak (whose own
+    ``XDG_STATE_HOME`` is under ``~/.var/app``) the file is at the host's
+    ``~/.local/state/modsync``, which ``--filesystem=home`` lets us read."""
+    if os.environ.get("FLATPAK_ID") or Path("/.flatpak-info").exists():
+        return Path.home() / ".local" / "state" / APP_NAME / LAUNCH_HOOK_LOG_NAME
     return state_dir() / LAUNCH_HOOK_LOG_NAME
 
 
