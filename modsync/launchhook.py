@@ -538,8 +538,9 @@ def _resolve_underlying(
     return tool
 
 
-def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None) -> str:
-    """Install the hook for the game and make Steam use it. Returns what happened."""
+def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None, command: list[str] | None = None) -> str:
+    """Install the hook for the game and make Steam use it. Returns what happened.
+    ``command`` is how the hook starts ModSync; by default, the way this ModSync runs."""
     game = GAMES.get(appid, SKYRIM_SE)
     env = steam_env()
     if env is None:
@@ -557,12 +558,13 @@ def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None) -> str:
     # the user had before ModSync ever touched it.
     previous = record.previous if (record and _is_ours(current, appid)) else current_entry
 
+    command = command or modsync_command()
     target = env.tool_dir(appid)
     render(
         target,
         game=game,
         underlying=underlying,
-        command=modsync_command(),
+        command=command,
         library_paths=[lib.path for lib in env.libraries],
     )
     new_record = Record(
@@ -573,7 +575,7 @@ def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None) -> str:
         underlying_path=str(underlying.path),
         underlying_display=underlying.display_name,
         previous=previous,
-        command=modsync_command(),
+        command=command,
         enabled_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
     )
     new_record.save()
@@ -699,13 +701,17 @@ def refresh_if_outdated(appid: int = SKYRIM_SE.appid) -> bool:
     return _rerender(env, appid, record)
 
 
+def _recorded_command(record: Record) -> list[str] | None:
+    return record.command if record.command and Path(record.command[0]).exists() else None
+
+
 def _rerender(env: SteamEnv, appid: int, record: Record) -> bool:
     """Write the hook's directory under its current name from what the record
     says it hands off to, keeping the record's other choices."""
     underlying = compattools.find_tool(record.underlying_name, env.root, env.libraries)
     if underlying is None:
         return False
-    command = record.command if record.command and Path(record.command[0]).exists() else modsync_command()
+    command = _recorded_command(record) or modsync_command()
     target = env.tool_dir(appid)
     render(
         target,
@@ -744,7 +750,8 @@ def upgrade(appid: int = SKYRIM_SE.appid) -> str | None:
         if current == legacy_tool_id(appid):
             log.info("launch hook for %s still has its old name; renaming it", appid)
             try:
-                return enable(appid, through=record.underlying_name)
+                # Keep the ModSync the hook starts (say, the Flatpak), whichever one runs this.
+                return enable(appid, through=record.underlying_name, command=_recorded_command(record))
             except RuntimeError as exc:
                 log.warning("could not rename the launch hook: %s", exc)
                 return None

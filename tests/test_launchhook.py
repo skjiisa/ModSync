@@ -384,6 +384,19 @@ class LegacyName(LaunchHookBase):
         self.assertFalse(self.legacy_dir.exists())
         self.assertTrue(launchhook.status().enabled)
 
+    def test_upgrade_keeps_the_modsync_the_hook_starts(self):
+        """A development checkout must not repoint a Flatpak user's hook at itself."""
+        import sys
+
+        self.install_legacy()
+        record = launchhook.Record.load()
+        record.command = [sys.executable, "-m", "modsync"]
+        record.save()
+        record.write_marker()
+        launchhook.upgrade()
+        self.assertIn(f"modsync=({sys.executable} -m modsync)", (self.tool_dir / "proton").read_text())
+        self.assertEqual(launchhook.Record.load().command, [sys.executable, "-m", "modsync"])
+
     def test_upgrade_when_not_selected_only_renames(self):
         self.install_legacy(selected=False)
         self.assertIsNone(launchhook.upgrade())
