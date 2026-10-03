@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import StringIO
+from pathlib import Path
 
 from modsync import gameversion, launchhook, platforms
 from modsync.games import SKYRIM_SE

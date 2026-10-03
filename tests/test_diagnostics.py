@@ -160,6 +160,19 @@ class DiagnosticsCommandTests(_StateHome):
             main(["doctor"])
         self.assertIn(f"Log file:        {self.state_home / 'modsync' / 'modsync.log'}", out.getvalue())
 
+    def test_doctor_reports_the_usvfs_fix_for_the_chosen_instance(self):
+        from modsync.mo2 import usvfs
+        from modsync.state import State
+
+        instance = self.tmp / "MO2"
+        instance.mkdir()
+        (instance / "ModOrganizer.exe").write_bytes(b"MO2")
+        State(instance_path=str(instance)).save()
+        out = io.StringIO()
+        with patch.object(usvfs, "is_arm64", return_value=True), redirect_stdout(out):
+            self.assertEqual(main(["doctor"]), 0)
+        self.assertIn("USVFS ARM64: This USVFS build is not recognized", out.getvalue())
+
     def test_help_lists_diagnostics(self):
         out = io.StringIO()
         with redirect_stdout(out):
