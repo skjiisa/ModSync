@@ -20,6 +20,7 @@ from pathlib import Path
 from modsync import config, gameversion, pairing_lan, platforms, skse, steamos
 from modsync.downgrade import engine, recipe
 from modsync.games import SKYRIM_SE
+from modsync.mo2 import vcruntime
 from modsync.mo2.launch import Launcher, build_plan
 from modsync.pairing_code import PairingCode
 from modsync.state import State
@@ -209,7 +210,15 @@ class ModSyncService:
 
     def launch_mo2(self, *, play: bool = False) -> str:
         plan = build_plan(self.state.instance_path, play=play)
-        return self.launcher.start(plan)
+        note = ""
+        try:
+            vcruntime.ensure_instance_runtime(plan.cwd)
+        except (OSError, RuntimeError, ValueError) as exc:
+            # MO2 may still work if the prefix has a current runtime; don't block it.
+            log.warning("could not add the VC++ runtime to %s: %s", plan.cwd, exc)
+            note = (" The Visual C++ runtime MO2 needs could not be downloaded; "
+                    "if MO2 closes right away, check the connection and try again.")
+        return self.launcher.start(plan) + note
 
     def forget_instance(self) -> None:
         """Stop using the chosen instance (and its vault, if any). Files stay."""
