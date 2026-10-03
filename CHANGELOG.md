@@ -14,6 +14,9 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Changed
 
+- Install MO2 uses MO2-LINT 7.0.1 (was 7.0.0-rc7). The download is checked
+  against the release's SHA-256, and the cached copy is named by version so
+  a new pin replaces the old binary instead of reusing it.
 - On ARM64 machines such as the Steam Frame, the Play button hook finds
   Valve's ARM64 Proton builds and hands off to the one Steam would run.
 - On machines other than x86_64, Install MO2 says up front that MO2-LINT

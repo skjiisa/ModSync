@@ -14,6 +14,7 @@ MO2-LINT's ``~/.config/mo2-lint`` lands where its Steam-side redirector expects.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -32,19 +33,25 @@ from modsync.games import Game
 log = logging.getLogger(__name__)
 from modsync.mo2.installers.base import InstallerBackend, InstallResult, OnOutput
 
-MO2LINT_VERSION = "7.0.0-rc7"
+MO2LINT_VERSION = "7.0.1"
 MO2LINT_URL = (
     "https://github.com/Furglitch/modorganizer2-linux-installer"
     f"/releases/download/{MO2LINT_VERSION}/mo2-lint"
 )
+# The release asset's SHA-256 (as GitHub lists it), so ModSync never runs a
+# binary it didn't expect.
+MO2LINT_SHA256 = "a027ee0c1fe6b8ecc125d72e3674fe4e76700cce48a1460e731db88924a0bd8e"
 # MO2-LINT publishes one build, for x86_64. An ARM64 machine such as the Steam
-# Frame can't run it on the host (FEX only translates what Steam launches), so
-# there it needs an mo2-lint on PATH built for the machine.
+# Frame can't run it on the host: SteamOS's FEX runs x86_64 Linux programs only
+# inside Steam's x86_64 runtime container, with no simple way to start other
+# tools there. So it needs an mo2-lint on PATH built for the machine.
 MO2LINT_ARCHES = ("x86_64", "amd64")
 
 
 def mo2lint_path() -> Path:
-    return data_dir() / "bin" / "mo2-lint"
+    """The downloaded MO2-LINT for the pinned version. The version is in the
+    name so a new pin downloads afresh instead of reusing an older binary."""
+    return data_dir() / "bin" / f"mo2-lint-{MO2LINT_VERSION}"
 
 
 def mo2lint_state_path() -> Path:
@@ -81,13 +88,24 @@ def ensure_mo2lint(force: bool = False) -> Path:
     fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=".mo2-lint.")
     tmp = Path(tmp_name)
     try:
+        digest = hashlib.sha256()
         with os.fdopen(fd, "wb") as out, urllib.request.urlopen(req, timeout=180) as resp:  # noqa: S310 (trusted host)
-            shutil.copyfileobj(resp, out)
+            while chunk := resp.read(1 << 20):
+                digest.update(chunk)
+                out.write(chunk)
+        if digest.hexdigest() != MO2LINT_SHA256:
+            raise RuntimeError(
+                f"the MO2-LINT {MO2LINT_VERSION} download did not match its checksum (got {digest.hexdigest()})"
+            )
         tmp.chmod(tmp.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         tmp.replace(dest)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+    # Older pins (and the unversioned name used before) are no longer needed.
+    for old in dest.parent.glob("mo2-lint*"):
+        if old != dest and not old.name.startswith("."):
+            old.unlink(missing_ok=True)
     return dest
 
 

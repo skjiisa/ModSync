@@ -239,3 +239,47 @@ class Mo2LintBackendTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnsureMo2LintTests(unittest.TestCase):
+    """Downloading the pinned MO2-LINT: checksum, versioned name, old copies."""
+
+    def setUp(self):
+        import hashlib
+        import io
+        import os
+        from unittest.mock import patch
+
+        from modsync.mo2.installers import mo2lint
+
+        self.mo2lint = mo2lint
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        env = patch.dict(os.environ, {"XDG_DATA_HOME": tmp.name})
+        env.start()
+        self.addCleanup(env.stop)
+        self.payload = b"\x7fELF fake mo2-lint"
+        self.sha = hashlib.sha256(self.payload).hexdigest()
+        self.urlopen = patch.object(mo2lint.urllib.request, "urlopen", side_effect=lambda *a, **k: io.BytesIO(self.payload))
+        self.bin = Path(tmp.name) / "modsync" / "bin"
+
+    def test_downloads_verifies_and_replaces_older_copies(self):
+        from unittest.mock import patch
+
+        self.bin.mkdir(parents=True)
+        (self.bin / "mo2-lint").write_bytes(b"old unversioned")
+        (self.bin / "mo2-lint-7.0.0-rc7").write_bytes(b"old pin")
+        with self.urlopen as urlopen, patch.object(self.mo2lint, "MO2LINT_SHA256", self.sha):
+            path = self.mo2lint.ensure_mo2lint()
+            self.assertEqual(path, self.bin / f"mo2-lint-{self.mo2lint.MO2LINT_VERSION}")
+            self.assertEqual(path.read_bytes(), self.payload)
+            self.assertTrue(path.stat().st_mode & stat.S_IXUSR)
+            self.assertEqual(sorted(p.name for p in self.bin.iterdir()), [path.name])
+            self.assertEqual(self.mo2lint.ensure_mo2lint(), path)  # cached: no second download
+        urlopen.assert_called_once()
+
+    def test_a_wrong_checksum_leaves_nothing_behind(self):
+        with self.urlopen:
+            with self.assertRaisesRegex(RuntimeError, "checksum"):
+                self.mo2lint.ensure_mo2lint()
+        self.assertEqual(list(self.bin.iterdir()), [])
