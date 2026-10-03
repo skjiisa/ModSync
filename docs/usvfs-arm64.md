@@ -14,6 +14,12 @@ card and in the Steam launch hub when ModSync recognizes the original files.
 The download is about 13 MB. This is an explicit action, and the fix remains
 installed for launches through Steam as well as ModSync.
 
+Before it changes anything, ModSync checks on the host whether any of your
+processes has this instance's USVFS files loaded. Wine maps every DLL it loads
+from its Linux path, so this catches MO2 and every game or tool MO2 started,
+whatever its name. Another MO2 instance, or Steam waiting on the launch hub,
+doesn't count.
+
 ModSync only replaces the four USVFS files shipped with the official MO2 2.5.2
 archive. It checks their SHA-256 hashes, the download's hash, and each replacement's
 hash. A version number alone cannot distinguish the original from patched builds.
@@ -91,5 +97,6 @@ For the hardware check, use an unmodified MO2 2.5.2 instance on a Steam Frame:
    real mod. Confirm the game sees that mod.
 3. Close MO2 and its programs, restore the originals, and verify their hashes
    match the backup. Reapply the fix with the network disconnected.
-4. Check the controls from the Steam launch hub and verify that the hub cannot
-   close or continue a launch during replacement.
+4. Apply and restore from the Steam launch hub (Play with the hook on). Both
+   must work while the hub is open, and the hub must not close or continue the
+   launch during replacement.

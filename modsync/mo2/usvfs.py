@@ -11,6 +11,7 @@ Source and build instructions: docs/usvfs-arm64.md.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import logging
 import os
 import shutil
@@ -75,6 +76,14 @@ def backup_dir(instance: Path) -> Path:
     return instance / ".modsync-usvfs" / "backup"
 
 
+def worth_checking(instance: Path | str) -> bool:
+    """Whether hashing the instance's USVFS files can tell the user anything:
+    on ARM64, or wherever ModSync has already made a backup. On an x86_64 PC or
+    a Steam Deck that never applied the fix, the answer is known without reading
+    about 10 MB of binaries."""
+    return is_arm64() or backup_dir(Path(instance)).exists()
+
+
 def status(instance: Path | str) -> Status:
     root = Path(instance)
     if not (root / "ModOrganizer.exe").is_file():
@@ -128,17 +137,24 @@ def ensure_cached() -> Path:
         request = urllib.request.Request(ARCHIVE_URL, headers={"User-Agent": "ModSync"})
         digest = hashlib.sha256()
         total = 0
-        with urllib.request.urlopen(request, timeout=180) as response, archive.open("wb") as out:
-            while chunk := response.read(1 << 20):
-                total += len(chunk)
-                if total > ARCHIVE_SIZE:
-                    raise UsvfsError("The USVFS archive is larger than the pinned release.")
-                digest.update(chunk)
-                out.write(chunk)
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response, archive.open("wb") as out:
+                while chunk := response.read(1 << 20):
+                    total += len(chunk)
+                    if total > ARCHIVE_SIZE:
+                        raise UsvfsError("The USVFS archive is larger than the pinned release.")
+                    digest.update(chunk)
+                    out.write(chunk)
+        except (OSError, http.client.HTTPException, ValueError) as exc:
+            # A dropped connection, a truncated body or a bad proxy setting.
+            raise UsvfsError(f"Could not download the USVFS fix: {exc}") from exc
         if total != ARCHIVE_SIZE or digest.hexdigest() != ARCHIVE_SHA256:
             raise UsvfsError("The USVFS download did not match its pinned SHA-256. No instance files were changed.")
         extracted = staging / "extracted"
-        extractor.extract(archive, extracted)
+        try:
+            extractor.extract(archive, extracted)
+        except (OSError, RuntimeError) as exc:  # ToolError is a RuntimeError
+            raise UsvfsError(f"Could not unpack the USVFS fix: {exc}") from exc
         source = extracted / "bin"
         if not _matches(source, PATCHED):
             raise UsvfsError("The USVFS archive does not contain the expected binaries.")
@@ -148,15 +164,28 @@ def ensure_cached() -> Path:
     return cache
 
 
-def _require_closed() -> None:
-    """Check the host too: MO2 launched through Steam isn't in our Launcher."""
-    pattern = r"(^|[ /\\])(ModOrganizer\.exe|SkyrimSE(Launcher)?\.exe|skse64_loader\.exe|usvfs_proxy_[^ /\\]*\.exe)([[:space:]]|$)"
+# Exit 0 when one of the user's processes has a given file mapped, else 1. Wine
+# maps every DLL and EXE it loads from its Linux path, so this finds MO2 (which
+# loads usvfs_x64.dll itself), every program MO2 injected USVFS into (the game,
+# SKSE, xEdit, LOOT…), and the USVFS proxies, whatever they are called. It
+# doesn't match command lines, so the Steam launch chain waiting on the launch
+# hub (whose arguments end in SkyrimSELauncher.exe) doesn't count.
+_IN_USE_SCRIPT = 'for m in /proc/[0-9]*/maps; do [ -O "$m" ] && grep -qsF "$@" -- "$m" && exit 0; done; exit 1'
+
+
+def _require_closed(root: Path) -> None:
+    """Refuse while any process has this instance's USVFS files loaded. It runs
+    on the host: MO2 launched through Steam isn't in our Launcher, and the
+    Flatpak sandbox can't see host processes."""
+    patterns = [arg for name in ORIGINAL for arg in ("-e", str(root / name))]
     try:
-        result = background.run_host(["pgrep", "-u", str(os.getuid()), "-fi", pattern], timeout=10)
+        result = background.run_host(["sh", "-c", _IN_USE_SCRIPT, "sh", *patterns], timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise UsvfsError("Could not check whether MO2 is running on the host. Close it and try again.") from exc
     if result.returncode == 0:
-        raise UsvfsError("Close Mod Organizer 2, Skyrim, and programs started by MO2 before changing USVFS.")
+        raise UsvfsError(
+            "Mod Organizer 2, or a game or tool started from it, is still running. Close them before changing USVFS."
+        )
     if result.returncode != 1:
         raise UsvfsError("Could not check whether MO2 is running on the host. Close it and try again.")
 
@@ -189,10 +218,10 @@ def apply(instance: Path | str) -> str:
             return current.message
         if not current.can_apply:
             raise UsvfsError(current.message)
-        _require_closed()
+        _require_closed(root)
         source = ensure_cached()
         # Recheck after the download: a user may have started MO2 or updated it.
-        _require_closed()
+        _require_closed(root)
         current = status(root)
         if not current.can_apply:
             raise UsvfsError("The instance changed while preparing the fix. Check its USVFS status and try again.")
@@ -225,18 +254,28 @@ def apply(instance: Path | str) -> str:
     return "Applied the USVFS ARM64 fix. You can now try launching the game through MO2."
 
 
+_ALREADY_ORIGINAL = "The original USVFS files are already in place."
+
+
 def restore(instance: Path | str) -> str:
     root = Path(instance).resolve()
+    # Checked before taking the lock, so an untouched instance gets no
+    # .modsync-usvfs directory.
+    if status(root).state in ("available", "not-needed"):
+        return _ALREADY_ORIGINAL
     with _locked(root):
         backup = backup_dir(root)
         if not _matches(backup, ORIGINAL):
             raise UsvfsError("No complete, verified original USVFS backup is available.")
         current = status(root)
         if current.state in ("available", "not-needed"):
-            return "The original USVFS files are already in place."
+            return _ALREADY_ORIGINAL
         if not current.can_restore:
             raise UsvfsError("USVFS has changed since the fix was applied. Restoration would overwrite another build.")
-        _require_closed()
+        _require_closed(root)
+        # Recheck after the probe, as apply() does: MO2 may have updated itself.
+        if not status(root).can_restore:
+            raise UsvfsError("The instance changed while preparing to restore. Check its USVFS status and try again.")
         for name in ORIGINAL:
             _atomic_copy(backup / name, root / name)
     log.info("restored original USVFS in %s", root)

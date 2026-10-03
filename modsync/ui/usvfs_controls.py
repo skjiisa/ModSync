@@ -11,6 +11,7 @@ from modsync.ui.worker import run_async
 class UsvfsControls(QWidget):
     busyChanged = Signal(bool)
     status = Signal(str)
+    failed = Signal(str)
 
     def __init__(self, service, parent=None):
         super().__init__(parent)
@@ -69,10 +70,14 @@ class UsvfsControls(QWidget):
         run_async(operation, on_done=self._finished, on_failed=self._failed)
 
     def _finished(self, message):
-        self.busy = False
-        self.busyChanged.emit(False)
+        self._done()
         self.status.emit(message)
-        self.refresh()
 
     def _failed(self, message):
-        self._finished(f"Could not change USVFS: {message}")
+        self._done()
+        self.failed.emit(f"Could not change USVFS: {message}")
+
+    def _done(self):
+        self.busy = False
+        self.busyChanged.emit(False)
+        self.refresh()

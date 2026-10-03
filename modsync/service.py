@@ -242,22 +242,27 @@ class ModSyncService:
             return []
 
     def usvfs_status(self) -> usvfs.Status:
-        return usvfs.status(self.state.instance_path) if self.state.instance_path else usvfs.Status(
-            "missing", "Choose an installed Mod Organizer 2 instance first.")
+        path = self.state.instance_path
+        if not path:
+            return usvfs.Status("missing", "Choose an installed Mod Organizer 2 instance first.")
+        if not usvfs.worth_checking(path):
+            return usvfs.Status("not-needed", "This machine does not need the USVFS ARM64 fix.")
+        return usvfs.status(path)
 
     def apply_usvfs_fix(self) -> str:
-        if not self.state.instance_path:
-            raise RuntimeError("Choose an MO2 instance first.")
-        if self.launcher.running():
-            raise RuntimeError("Close Mod Organizer 2 and the game before changing USVFS.")
-        return usvfs.apply(self.state.instance_path)
+        return self._change_usvfs(usvfs.apply)
 
     def restore_usvfs(self) -> str:
+        return self._change_usvfs(usvfs.restore)
+
+    def _change_usvfs(self, change) -> str:
         if not self.state.instance_path:
             raise RuntimeError("Choose an MO2 instance first.")
+        # A launch from this app that hasn't loaded USVFS yet (Proton still
+        # starting) is invisible to usvfs's own process check.
         if self.launcher.running():
             raise RuntimeError("Close Mod Organizer 2 and the game before changing USVFS.")
-        return usvfs.restore(self.state.instance_path)
+        return change(self.state.instance_path)
 
     def install_prefix_runtime(self) -> str:
         """Install Microsoft's VC++ runtime into the game prefix, after backing up

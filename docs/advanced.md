@@ -45,7 +45,7 @@ Everything the dashboard does is also a command. `modsync --help` and
 modsync doctor                      # Steam libraries, game, MO2 instances, current setup
 modsync diagnostics                 # doctor plus recent logs, secrets redacted: paste into a bug report
 modsync mo2 status | use <dir> | install <dest>
-modsync mo2 usvfs status | apply | restore   # MO2 2.5.2's ARM64 workaround
+modsync mo2 usvfs status | apply | restore   # MO2 2.5.2's ARM64 workaround, see usvfs-arm64.md
 modsync game status | downgrade <version> | restore | pin | unpin | skse
 modsync sync create <instance-dir> | join <code> <instance-dir>
 modsync serve                       # foreground loop; what the background service runs

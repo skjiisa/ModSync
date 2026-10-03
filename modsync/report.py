@@ -65,6 +65,14 @@ def build() -> Report:
         line("  ✗ not installed")
     line()
 
+    usvfs_messages: dict[Path, str] = {}
+
+    def usvfs_message(instance: Path) -> str:
+        key = instance.resolve()
+        if key not in usvfs_messages:
+            usvfs_messages[key] = usvfs_fix.status(key).message
+        return usvfs_messages[key]
+
     line("Mod Organizer 2 instances:")
     instances = list(
         mo2_discover.discover_instances(plat.mo2_broad_roots(), plat.mo2_known_roots())
@@ -110,8 +118,8 @@ def build() -> Report:
                 line(f"      usvfs {shown}")
         for issue in info.issues:
             line(f"      ! {issue}")
-        if usvfs_fix.is_arm64() or usvfs_fix.backup_dir(path).exists():
-            line(f"      USVFS ARM64: {usvfs_fix.status(path).message}")
+        if usvfs_fix.worth_checking(path):
+            line(f"      USVFS ARM64: {usvfs_message(path)}")
 
     hook = launchhook.status()
     line()
@@ -123,8 +131,8 @@ def build() -> Report:
         line()
         line("ModSync setup:")
         line(f"  • instance: {state.instance_path}")
-        if usvfs_fix.is_arm64():
-            line(f"  • USVFS ARM64: {usvfs_fix.status(state.instance_path).message}")
+        if usvfs_fix.worth_checking(state.instance_path):
+            line(f"  • USVFS ARM64: {usvfs_message(Path(state.instance_path))}")
         line(f"  • sync: {'vault ' + str(state.folder_id) if state.syncing else 'off'}")
         vc = gameversion.check(state.instance_path)
         mark = "!" if vc.mismatch else "•"

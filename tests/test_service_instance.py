@@ -107,6 +107,18 @@ class InstanceLifecycleTests(unittest.TestCase):
             apply.assert_not_called()
             restore.assert_not_called()
 
+    def test_usvfs_status_skips_hashing_where_the_fix_cannot_matter(self):
+        from modsync.mo2 import usvfs
+
+        service = ModSyncService(manager=self.manager)
+        service.state.instance_path = str(self.instance)
+        with patch.object(usvfs, "is_arm64", return_value=False), patch.object(usvfs, "status") as status:
+            self.assertEqual(service.usvfs_status().state, "not-needed")
+            status.assert_not_called()
+            usvfs.backup_dir(self.instance).mkdir(parents=True)
+            service.usvfs_status()  # a backup exists: Restore must be offered
+            status.assert_called_once()
+
     def test_choose_instance_records_version_from_skse(self):
         (self.instance / "mods" / "SKSE" / "Root").mkdir(parents=True)
         (self.instance / "mods" / "SKSE" / "Root" / "skse64_1_6_1170.dll").write_bytes(b"")

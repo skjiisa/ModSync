@@ -121,6 +121,7 @@ class LaunchHub(QMainWindow):
         self._usvfs = UsvfsControls(service)
         self._usvfs.busyChanged.connect(self._on_busy)
         self._usvfs.status.connect(self._set_status)
+        self._usvfs.failed.connect(lambda message: self._set_status(f"⚠ {message}"))
         setup_layout.addWidget(self._usvfs)
         body_layout.addWidget(setup_box)
 

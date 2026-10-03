@@ -62,11 +62,6 @@ You can Launch Skyrim or Mod Organizer 2 through Proton with ModSync directly.
 If you want to have ModSync open when launching the game through Steam, click "Open ModSync before Skyrim", that way your mods can always stay in sync if you change them frequently.
  - If using this setting, restart steam after enabling it
 
-On Steam Frame and other ARM64 Linux machines, ModSync offers an
-**Apply ARM64 fix** action for the USVFS files shipped with MO2 2.5.2. See
-[the USVFS workaround](docs/usvfs-arm64.md) for supported builds, backups,
-restoration, and hardware validation status.
-
 ## Command line
 
 See [advanced.md](docs/advanced.md) for command-line usage.

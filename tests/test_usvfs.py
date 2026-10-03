@@ -4,6 +4,7 @@ import hashlib
 import io
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -150,6 +151,23 @@ class UsvfsTests(unittest.TestCase):
         usvfs.restore(self.instance)
         self.assert_files(self.instance, self.old)
 
+    def test_restore_on_an_untouched_instance_is_a_no_op(self):
+        self.assertEqual(usvfs.restore(self.instance), "The original USVFS files are already in place.")
+        self.assertFalse((self.instance / ".modsync-usvfs").exists())
+        usvfs.background.run_host.assert_not_called()
+
+    def test_restore_rechecks_the_files_after_the_process_probe(self):
+        usvfs.apply(self.instance)
+
+        def update_during_probe(*_args, **_kwargs):
+            (self.instance / "usvfs_x64.dll").write_bytes(b"MO2 updated itself")
+            return subprocess.CompletedProcess([], 1)
+
+        with patch.object(usvfs.background, "run_host", side_effect=update_during_probe):
+            with self.assertRaisesRegex(usvfs.UsvfsError, "instance changed"):
+                usvfs.restore(self.instance)
+        self.assertEqual((self.instance / "usvfs_x64.dll").read_bytes(), b"MO2 updated itself")
+
     def test_restore_requires_verified_backup(self):
         usvfs.apply(self.instance)
         (usvfs.backup_dir(self.instance) / "usvfs_x64.dll").write_bytes(b"damaged backup")
@@ -164,7 +182,7 @@ class UsvfsTests(unittest.TestCase):
 
     def test_host_process_prevents_apply_and_restore(self):
         with patch.object(usvfs.background, "run_host", return_value=subprocess.CompletedProcess([], 0)):
-            with self.assertRaisesRegex(usvfs.UsvfsError, "Close Mod Organizer"):
+            with self.assertRaisesRegex(usvfs.UsvfsError, "still running"):
                 usvfs.apply(self.instance)
         usvfs.ensure_cached.assert_not_called()
         usvfs.apply(self.instance)
@@ -177,7 +195,7 @@ class UsvfsTests(unittest.TestCase):
         with patch.object(usvfs.background, "run_host", side_effect=[
             subprocess.CompletedProcess([], 1), subprocess.CompletedProcess([], 0),
         ]):
-            with self.assertRaisesRegex(usvfs.UsvfsError, "Close Mod Organizer"):
+            with self.assertRaisesRegex(usvfs.UsvfsError, "still running"):
                 usvfs.apply(self.instance)
         self.assert_files(self.instance, self.old)
 
@@ -248,6 +266,20 @@ class CacheTests(unittest.TestCase):
                         usvfs.ensure_cached()
         self.extractor.extract.assert_not_called()
 
+    def test_network_and_unpack_failures_are_usvfs_errors(self):
+        # The CLI and UI report UsvfsError; anything else would be a traceback.
+        import http.client
+
+        for failure in (http.client.IncompleteRead(b"partial"), ValueError("bad proxy URL"), OSError("offline")):
+            with self.subTest(failure=failure):
+                with patch.object(usvfs.urllib.request, "urlopen", side_effect=failure):
+                    with self.assertRaisesRegex(usvfs.UsvfsError, "Could not download"):
+                        usvfs.ensure_cached()
+        self.extractor.extract.side_effect = RuntimeError("7z failed")
+        with patch.object(usvfs.urllib.request, "urlopen", return_value=io.BytesIO(self.archive)):
+            with self.assertRaisesRegex(usvfs.UsvfsError, "Could not unpack"):
+                usvfs.ensure_cached()
+
     def test_wrong_extracted_file_is_not_cached(self):
         self.payload["usvfs_x64.dll"] = b"wrong DLL"
         with patch.object(usvfs.urllib.request, "urlopen", return_value=io.BytesIO(self.archive)):
@@ -256,18 +288,55 @@ class CacheTests(unittest.TestCase):
         self.assertFalse((self.root / "usvfs" / usvfs.PATCH_ID).exists())
 
 
-@unittest.skipUnless(shutil.which("sleep"), "needs sleep for a real process-probe test")
 class HostProcessTests(unittest.TestCase):
-    def test_probe_sees_windows_paths_on_the_host(self):
-        from modsync import background
+    """The real probe, run against real processes that map (or don't map) files."""
 
-        for name in ("ModOrganizer.exe", "SkyrimSE.exe", "SkyrimSELauncher.exe", "usvfs_proxy_x64.exe"):
-            with self.subTest(name=name):
-                process = subprocess.Popen([rf"Z:\Games\MO2\{name}", "60"], executable=shutil.which("sleep"))
-                try:
-                    with patch.object(background, "in_flatpak", return_value=False):
-                        with self.assertRaisesRegex(usvfs.UsvfsError, "Close Mod Organizer"):
-                            usvfs._require_closed()
-                finally:
-                    process.terminate()
-                    process.wait()
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.instance = Path(tmp.name).resolve() / "MO2"
+        self.instance.mkdir()
+        for name in usvfs.ORIGINAL:
+            (self.instance / name).write_bytes(b"\0" * 4096)
+        flatpak = patch.object(usvfs.background, "in_flatpak", return_value=False)
+        flatpak.start()
+        self.addCleanup(flatpak.stop)
+
+    def spawn(self, code, *args):
+        process = subprocess.Popen([sys.executable, "-c", code, *args], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(process.wait)
+        self.addCleanup(process.kill)
+        self.assertEqual(process.stdout.readline().strip(), "ready")
+        return process
+
+    def test_a_process_with_the_dll_mapped_blocks_changes(self):
+        # What Wine does with every DLL it loads; checked against MO2 under Proton.
+        self.spawn(
+            "import mmap, sys, time\n"
+            "f = open(sys.argv[1], 'rb'); m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)\n"
+            "print('ready', flush=True); time.sleep(60)",
+            str(self.instance / "usvfs_x64.dll"),
+        )
+        with self.assertRaisesRegex(usvfs.UsvfsError, "still running"):
+            usvfs._require_closed(self.instance)
+
+    def test_the_steam_launch_chain_waiting_on_the_hub_does_not(self):
+        # Steam's hook script stays alive while the hub is open, and its arguments
+        # end in SkyrimSELauncher.exe; a command-line match used to trip on it.
+        self.spawn(
+            "import time; print('ready', flush=True); time.sleep(60)",
+            "waitforexitandrun", str(self.instance.parent / "Skyrim Special Edition" / "SkyrimSELauncher.exe"),
+        )
+        usvfs._require_closed(self.instance)
+
+    def test_another_instance_in_use_does_not(self):
+        other = self.instance.parent / "Other"
+        other.mkdir()
+        (other / "usvfs_x64.dll").write_bytes(b"\0" * 4096)
+        self.spawn(
+            "import mmap, sys, time\n"
+            "f = open(sys.argv[1], 'rb'); m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)\n"
+            "print('ready', flush=True); time.sleep(60)",
+            str(other / "usvfs_x64.dll"),
+        )
+        usvfs._require_closed(self.instance)
