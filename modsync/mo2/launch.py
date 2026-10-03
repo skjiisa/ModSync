@@ -85,6 +85,21 @@ def _proton_for(compat: Path, libs: list) -> Path:
     )
 
 
+def nested_desktop_display() -> str | None:
+    """Gamescope's X display, when ModSync runs in a desktop nested inside gamescope.
+
+    The Steam Frame's Desktop Mode is a Plasma session with its own X server,
+    shown inside gamescope. Proton still puts the game process (MO2) on
+    gamescope's display, ``STEAM_GAME_DISPLAY_0``, while the rest of the Wine
+    session uses the desktop's, so window calls between them fail with BadWindow
+    and MO2 exits whenever one of its dialogs closes. Elsewhere (a Steam Deck's
+    Desktop Mode, or Gaming Mode) this is None and nothing changes."""
+    game_display = os.environ.get("STEAM_GAME_DISPLAY_0")
+    if game_display and game_display != os.environ.get("DISPLAY"):
+        return game_display
+    return None
+
+
 def build_plan(instance_path: Path | str | None, *, play: bool = False) -> LaunchPlan:
     if not instance_path:
         raise RuntimeError("Choose an MO2 instance first.")
@@ -156,6 +171,11 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False) -> Launc
         "SteamGameId": str(SKYRIM_SE.appid),
         "STEAM_COMPAT_APP_ID": str(SKYRIM_SE.appid),
     }
+    display = nested_desktop_display()
+    if display:
+        # Run the whole Wine session on gamescope's display. Gamescope's Vulkan
+        # layer only knows windows gamescope launched itself, so it is turned off.
+        env.update({"DISPLAY": display, "ENABLE_GAMESCOPE_WSI": "0", "DISABLE_GAMESCOPE_WSI": "1"})
     return LaunchPlan(argv, env, instance, target, play)
 
 

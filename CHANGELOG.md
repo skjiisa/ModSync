@@ -40,6 +40,13 @@ All notable changes to ModSync are documented here. The format follows
   `ModOrganizer.exe`, unpacked from Microsoft's redistributable. It is
   downloaded once and checked against a pinned SHA-256; the prefix is not
   changed. Tested on a Steam Frame.
+- On the Steam Frame's desktop, MO2 opened with Open MO2 or Play closed as soon
+  as one of its dialogs closed. The desktop is nested inside gamescope, and
+  Proton put MO2 on gamescope's display but the rest of Wine on the desktop's.
+  ModSync now runs the whole launch on gamescope's display, with gamescope's
+  Vulkan layer off, and says to use a mouse or the keyboard there: the VR
+  pointer still makes MO2 close (Wine lacks a touch function Qt calls).
+  Tested on a Frame.
 
 ## [1.0.0] - 2026-09-21
 
