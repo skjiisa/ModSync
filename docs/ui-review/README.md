@@ -38,8 +38,11 @@ PlayStation symbols. Y (triangle) rescans.
 
 ![Live sync](sync-live.png)
 
-Pairing with a machine found on the network. Up and down turn each digit of
-the PIN, and left and right move between digits. Typed digits work too.
+Pairing with a machine found on the network, here with a mouse. With a
+controller, up and down turn each digit and left and right move between
+digits; with a mouse or touch screen, the digit row fills them in. Typed
+digits work too. With a mouse or touch screen the hint bar turns into
+buttons for what can't be tapped elsewhere, such as Cancel.
 
 ![PIN pad](pin-pad.png)
 

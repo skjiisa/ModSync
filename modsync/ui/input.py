@@ -28,7 +28,7 @@ import enum
 import time
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QGuiApplication, QKeyEvent, QWindow
+from PySide6.QtGui import QGuiApplication, QInputDevice, QKeyEvent, QWindow
 from PySide6.QtWidgets import QApplication, QLineEdit, QPlainTextEdit, QWidget
 
 
@@ -163,6 +163,7 @@ class InputRouter(QObject):
         self._tap: tuple[int, float] | None = None  # modifier pressed alone, and when
         self._family: tuple[str, float] | None = None
         self.last_input = 0.0  # monotonic time of the last press of any kind
+        self.pointer = "mouse"  # "mouse" or "touch": which kind drove the last pointer press
         app.installEventFilter(self)
 
     @classmethod
@@ -375,7 +376,20 @@ class InputRouter(QObject):
                 self._mouse_anchor = pos
                 self._set_mode("mouse")
             return False
+        if kind == QEvent.Type.TouchBegin and isinstance(obj, QWindow):
+            previous, self.pointer = self.pointer, "touch"
+            self.last_input = time.monotonic()
+            self._tap = None
+            if previous != "touch" and self.mode == "mouse":
+                self.modeChanged.emit("mouse")  # relabel "Mouse" as "Touch"
+            self._set_mode("mouse")
+            return False
         if kind in (QEvent.Type.MouseButtonPress, QEvent.Type.Wheel) and isinstance(obj, QWindow):
+            touch = event.device() is not None and event.device().type() == QInputDevice.DeviceType.TouchScreen
+            if kind == QEvent.Type.MouseButtonPress or not touch:
+                previous, self.pointer = self.pointer, "touch" if touch else "mouse"
+                if previous != self.pointer and self.mode == "mouse":
+                    self.modeChanged.emit("mouse")
             self._tap = None  # Ctrl+click is not a bumper
             if kind == QEvent.Type.MouseButtonPress:
                 self.last_input = time.monotonic()

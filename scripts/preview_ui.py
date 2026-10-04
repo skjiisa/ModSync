@@ -216,6 +216,20 @@ def main():
 
         w = window_for(State(**configured), mode="mouse")
         capture(w, "compact-mouse", width=1000)
+        router.pointer = "touch"  # what the Deck's screen and the Steam Frame's pointer report
+        capture(w, "touch-home")
+        w.go("sync")
+        w.pages["sync"].toggle_join()
+        w.pages["sync"].join.ask_pin(Announcement("steamdeck", "192.168.1.31", 21029, "s")).set_pin("0428")
+        router._set_mode("mouse")
+        capture(w, "touch-pin-pad")
+        w.top_overlay.cancel()
+        w.close()
+        w = window_for(State(), mode="mouse")
+        w.start_setup()
+        w.setup.go_to(1)
+        capture(w, "touch-setup-2")
+        router.pointer = "mouse"
         w.close()
     finally:
         QThreadPool.globalInstance().waitForDone(5000)

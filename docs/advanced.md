@@ -93,6 +93,14 @@ There are two ways a controller reaches ModSync:
   SteamOS and Steam's udev rules grant that for controllers. If a system
   doesn't, ModSync falls back to the keys Steam sends.
 
+A mouse or a touch screen works on its own too, which is how first setup on a
+Steam Frame (its pointer arrives as touch) or a Deck held like a tablet tends
+to go. Every action is a tile to tap, and sections scroll with a finger. The
+hint bar becomes buttons for what has no tile, such as Back, Cancel, Quit and
+Leave setup. The PIN sheet adds a row of digits to tap. Focus styling stays
+hidden until a controller or keyboard is used again, so nothing looks
+selected that wasn't tapped. A press that moves is a scroll, not a choice.
+
 Text entry (a pairing code, an address, an install folder) opens an on-screen
 keyboard with a symbols layer, Paste and Clear. LB and RB move the cursor.
 The PIN pad works like a combination lock: up and down turn a digit, and

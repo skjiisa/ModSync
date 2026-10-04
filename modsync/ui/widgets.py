@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QScrollArea,
+    QScroller,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -122,6 +123,22 @@ class Panel(QFrame):
         return widget
 
 
+def shows_focus(w: QWidget) -> bool:
+    """Whether to draw ``w`` as focused. With a mouse or touch screen, the
+    focused tile is only where Qt's keyboard focus happens to sit, and
+    lighting it would look like a selection the user never made."""
+    from modsync.ui.input import InputRouter
+
+    router = InputRouter._instance
+    return w.hasFocus() and (router is None or router.mode != "mouse")
+
+
+def touch_scroll(area) -> None:
+    """Let a finger (or the Steam Frame's pointer, which arrives as touch)
+    drag the content with momentum. Taps still click what's under them."""
+    QScroller.grabGesture(area.viewport(), QScroller.ScrollerGestureType.TouchGesture)
+
+
 def scroller(content: QWidget) -> QScrollArea:
     area = QScrollArea()
     area.setWidgetResizable(True)
@@ -129,6 +146,7 @@ def scroller(content: QWidget) -> QScrollArea:
     area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     area.setWidget(content)
     area.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    touch_scroll(area)
     return area
 
 
@@ -291,6 +309,35 @@ class Tile(QAbstractButton):
             self.icon.update()
         super().changeEvent(event)
 
+    # A press that travels is a scroll, not a choice. With touch scrolling the
+    # tile moves along with the finger, so the release still lands on it and
+    # Qt would count a click; compare screen positions instead.
+    DRAG_CANCEL_PX = 16
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self._press_at = event.globalPosition()
+        super().mousePressEvent(event)
+
+    def _travelled(self, event) -> bool:
+        start = getattr(self, "_press_at", None)
+        return start is not None and (event.globalPosition() - start).manhattanLength() > self.DRAG_CANCEL_PX
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._travelled(event):
+            self.setDown(False)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._travelled(event):
+            self._press_at = None
+            self.setDown(False)
+            event.accept()
+            return
+        self._press_at = None
+        super().mouseReleaseEvent(event)
+
     # --- painting ---
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
@@ -300,7 +347,7 @@ class Tile(QAbstractButton):
         radius = 22 if size in ("hero", "choice") else 16
         role_ = self.property("tileRole")
         hot = self.isDown()
-        lit = self.hasFocus() or self.underMouse()
+        lit = shows_focus(self) or self.underMouse()
         if not self.isEnabled():
             p.setOpacity(0.5)
         if role_ == "primary":
@@ -869,9 +916,17 @@ ACTION_GLYPH = {
 }
 
 
+# Hints that mean nothing to tap: choosing, moving and switching sections are
+# done on the screen itself with a mouse or a finger.
+POINTER_SKIP = {Action.ACCEPT, Action.UP, Action.DOWN, Action.LEFT, Action.RIGHT,
+                Action.PREV_TAB, Action.NEXT_TAB, Action.SCROLL_UP, Action.SCROLL_DOWN}
+
+
 class HintButton(QAbstractButton):
     """One "glyph + label" entry of the hint bar; clicking it does the same as
-    pressing the button, so mouse users get the shortcuts too."""
+    pressing the button. With a mouse or touch screen it drops the glyph and
+    becomes a plain button, the only on-screen way to some actions (Back,
+    Cancel, Leave setup)."""
 
     def __init__(self, actions: list[Action], text: str, router, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -887,14 +942,29 @@ class HintButton(QAbstractButton):
         style = self.router.glyph_style
         return [(ACTION_GLYPH[a], icons.glyph_width(ACTION_GLYPH[a], style, 26, theme.font(11))) for a in self.actions]
 
+    @property
+    def pointer(self) -> bool:
+        return self.router.mode == "mouse"
+
     def sizeHint(self) -> QSize:  # noqa: N802
         fm = QFontMetricsF(theme.font(11.5, QFont.Weight.DemiBold))
+        if self.pointer:
+            return QSize(int(fm.horizontalAdvance(self.text()) + 40), 44)
         glyphs = sum(w + 6 for _, w in self._glyphs())
         return QSize(int(glyphs + fm.horizontalAdvance(self.text()) + 22), 40)
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self.pointer:
+            r = QRectF(self.rect()).adjusted(1, 3, -1, -3)
+            p.setPen(QPen(theme.color("border"), 1.2))
+            p.setBrush(theme.color("raised" if self.underMouse() or self.isDown() else "surface"))
+            p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+            p.setPen(theme.color("text"))
+            p.setFont(theme.font(11.5, QFont.Weight.DemiBold))
+            p.drawText(r, Qt.AlignmentFlag.AlignCenter, self.text())
+            return
         if self.underMouse():
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(theme.color("raised", 200))
@@ -936,6 +1006,7 @@ class HintBar(QWidget):
         self.slots.setSpacing(6)
         h.addLayout(self.slots)
         self._hints: list[tuple[list[Action], str]] = []
+        self._rendered_pointer: bool | None = None
         router.modeChanged.connect(self._refresh_device)
         router.controllersChanged.connect(self._refresh_device)
         self._refresh_device()
@@ -944,8 +1015,14 @@ class HintBar(QWidget):
         if hints == self._hints:
             return
         self._hints = hints
+        self._render()
+
+    def _render(self) -> None:
         clear_layout(self.slots)
-        for actions, text in hints:
+        pointer = self.router.mode == "mouse"
+        for actions, text in self._hints:
+            if pointer and all(a in POINTER_SKIP for a in actions):
+                continue
             self.slots.addWidget(HintButton(actions, text, self.router))
 
     @property
@@ -955,13 +1032,17 @@ class HintBar(QWidget):
     def _refresh_device(self, *_args) -> None:
         names = self.router.controller_names
         mode = self.router.mode
+        if (mode == "mouse") != self._rendered_pointer:
+            self._rendered_pointer = mode == "mouse"
+            self._render()
         if names:
             self.device_icon.set("gamepad", "accent" if mode == "gamepad" else "muted")
             self.device_label.setText(names[-1] if len(names) == 1 else f"{len(names)} controllers")
         else:
             icon = {"mouse": "pointer", "keyboard": "keyboard"}.get(mode, "gamepad")
             self.device_icon.set(icon, "muted")
-            self.device_label.setText({"mouse": "Mouse", "keyboard": "Keyboard"}.get(mode, "Controller"))
+            pointer = "Touch" if self.router.pointer == "touch" else "Mouse"
+            self.device_label.setText({"mouse": pointer, "keyboard": "Keyboard"}.get(mode, "Controller"))
         for i in range(self.slots.count()):
             w = self.slots.itemAt(i).widget()
             if w is not None:

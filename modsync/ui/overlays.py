@@ -37,7 +37,7 @@ from modsync import pairing_lan
 from modsync.pairing_lan import Announcement
 from modsync.ui import nav, theme
 from modsync.ui.input import Action
-from modsync.ui.widgets import Tile, clear_layout, label, scroller
+from modsync.ui.widgets import Tile, clear_layout, label, scroller, shows_focus
 
 Choice = tuple[str, str, str, str, str | None]  # key, title, description, role, icon
 
@@ -240,6 +240,9 @@ class KeyButton(QAbstractButton):
             self.sheet.select_all()
         elif event.text() and event.text().isprintable():
             self.sheet.type_text(event.text())
+            if self.sheet.host.router.mode == "keyboard":
+                # Someone is typing on a real keyboard: from here, Enter means Done.
+                self.sheet.field.setFocus(Qt.FocusReason.OtherFocusReason)
         else:
             super().keyPressEvent(event)
 
@@ -247,7 +250,7 @@ class KeyButton(QAbstractButton):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        lit = self.hasFocus() or self.underMouse()
+        lit = shows_focus(self) or self.underMouse()
         bg = theme.color("sunken" if self.isDown() else ("raised" if lit else "surface"))
         if self.isChecked():
             bg = theme.color("accent", 70)
@@ -354,11 +357,13 @@ class KeyboardSheet(Overlay):
         self.body.addLayout(edit)
 
     def focus_default(self) -> None:
-        if self.host.router.mode == "gamepad":
-            self.keys[0].setFocus(Qt.FocusReason.OtherFocusReason)
-        else:
+        # Only a keyboard user starts in the field. Focusing it after a tap can
+        # bring up the desktop's own on-screen keyboard on top of this one.
+        if self.host.router.mode == "keyboard":
             self.field.setFocus(Qt.FocusReason.OtherFocusReason)
             self.field.end(False)
+        else:
+            self.keys[0].setFocus(Qt.FocusReason.OtherFocusReason)
 
     def hints(self) -> list[tuple[list[Action], str]]:
         focus = self.host.focusWidget()
@@ -551,6 +556,25 @@ class DigitCell(QWidget):
                             QPointF(mid + 8, self.height() - 12)])
 
 
+class PadKey(KeyButton):
+    """A key of the PIN sheet's digit row. Typing on a real keyboard while it
+    has focus still enters digits."""
+
+    def __init__(self, text: str, pad: "PinSheet", *, special: bool = False) -> None:
+        super().__init__(text, pad, special=special)
+        self.setFixedSize(54, 54)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.text() and event.text().isdigit():
+            self.sheet.type_digit(event.text())
+        elif event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
+            self.sheet.delete_digit()
+        elif event.matches(QKeySequence.StandardKey.Paste):
+            self.sheet.set_pin(QGuiApplication.clipboard().text())
+        else:
+            QAbstractButton.keyPressEvent(self, event)
+
+
 class PinSheet(Overlay):
     """Enter the PIN another machine shows, and its address when it wasn't
     found by the scan. ``on_done(announcement, pin)`` runs once both are valid."""
@@ -583,6 +607,23 @@ class PinSheet(Overlay):
         self.hint = label("6 digits", "muted")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.body.addWidget(self.hint)
+        # Digits to tap, for a mouse or touch screen; the wheels above suit a
+        # controller, and typing works anywhere.
+        keypad = QHBoxLayout()
+        keypad.setSpacing(8)
+        keypad.addStretch(1)
+        self.keypad: list[PadKey] = []
+        for digit in "1234567890":
+            key = PadKey(digit, self)
+            key.clicked.connect(lambda _=False, d=digit: self.type_digit(d))
+            keypad.addWidget(key)
+            self.keypad.append(key)
+        self.delete_key = PadKey("Delete", self, special=True)
+        self.delete_key.setFixedWidth(92)
+        self.delete_key.clicked.connect(self.delete_digit)
+        keypad.addWidget(self.delete_key)
+        keypad.addStretch(1)
+        self.body.addLayout(keypad)
         buttons = QHBoxLayout()
         self.pair_button = _tile("Pair", "", "primary", "link", self.submit, size="compact")
         cancel = _tile("Cancel", "", "normal", "close", self.cancel, size="compact")
@@ -605,6 +646,10 @@ class PinSheet(Overlay):
                     ([Action.BACK], "Cancel")]
         if focus is self.pair_button:
             accept = "Pair"
+        elif focus in self.keypad:
+            accept = f"Enter {focus.text()}"
+        elif focus is not None and focus is self.delete_key:
+            accept = "Delete digit"
         elif focus is not None and focus is self.address_tile:
             accept = "Enter address"
         else:
@@ -642,6 +687,17 @@ class PinSheet(Overlay):
             "Enter the address first" if filled == 6 else f"{filled} of 6 digits"))
         if self in self.host.overlays:
             self.host.refresh_hints()  # A turns from "Next digit" into "Pair"
+
+    def type_digit(self, digit: str) -> None:
+        """Fill the first empty wheel."""
+        empty = next((c for c in self.cells if not c.value), None)
+        if empty is not None:
+            empty.set(digit)
+
+    def delete_digit(self) -> None:
+        filled = [c for c in self.cells if c.value]
+        if filled:
+            filled[-1].set("")
 
     def move(self, index: int) -> bool:
         if 0 <= index < len(self.cells):

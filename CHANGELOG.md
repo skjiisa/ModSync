@@ -55,7 +55,9 @@ All notable changes to ModSync are documented here. The format follows
   version still doesn't match. System and Game use shorter tile
   descriptions, and System's settings details and controls open in their own
   sheets. B on Home, or "Quit ModSync" under System, asks to quit, so ModSync
-  can be closed without a mouse. ModSync always uses its dark theme now.
+  can be closed without a mouse. A mouse or touch screen works on its own
+  too: sections scroll with a finger, the hint bar becomes buttons for Back,
+  Cancel and Quit, and the PIN sheet has digits to tap. ModSync always uses its dark theme now.
 - Controllers work two ways. Outside games, Steam Input's desktop
   configuration turns buttons into keys, and ModSync reads them back as the
   buttons that sent them: Space is Y on a Steam Deck and B on a Steam

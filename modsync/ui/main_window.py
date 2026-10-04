@@ -80,6 +80,10 @@ class TopBar(QWidget):
             h.addSpacing(8)
         self.clock = label("", "secondary", wrap=False)
         h.addWidget(self.clock)
+        self._tabs_on = True
+        self.router = window.router
+        window.router.modeChanged.connect(self._update_glyphs)
+        self._update_glyphs()
         self._tick()
         timer = QTimer(self)
         timer.timeout.connect(self._tick)
@@ -93,8 +97,13 @@ class TopBar(QWidget):
             w = self.tabs_row.itemAt(i).widget()
             if w is not None:
                 w.setVisible(on)
-        self.lb.setVisible(on)
-        self.rb.setVisible(on)
+        self._tabs_on = on
+        self._update_glyphs()
+
+    def _update_glyphs(self, *_args) -> None:
+        show = self._tabs_on and self.router.mode != "mouse"
+        self.lb.setVisible(show)
+        self.rb.setVisible(show)
 
 
 class MainWindow(QMainWindow):
@@ -603,6 +612,7 @@ class MainWindow(QMainWindow):
         self.halo.enabled = mode != "mouse"
         self.halo.follow(self.focusWidget())
         self.refresh_hints()
+        self.shell.update()  # tiles drop or regain their focus styling
 
     # --- Qt ---------------------------------------------------------------------------
     def resizeEvent(self, event) -> None:  # noqa: N802

@@ -23,7 +23,7 @@ from modsync.mo2.installers import InstallerBackend, InstallResult, Mo2LintBacke
 from modsync.ui import theme, worker
 from modsync.ui.overlays import FolderSheet, KeyboardSheet, Overlay
 from modsync.ui.pages import Page
-from modsync.ui.widgets import Panel, Tile, label
+from modsync.ui.widgets import Panel, Tile, label, touch_scroll
 
 
 def describe_setup(instance_path: str | None) -> list[str]:
@@ -90,6 +90,7 @@ class InstallSheet(Overlay):
         # Focusable, so focus stays in the sheet while the tiles are disabled
         # and the d-pad and right stick scroll the output.
         self.log.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        touch_scroll(self.log)
         self.log.setVisible(False)
         self.log.setMinimumHeight(180)
         self.body.addWidget(self.log, 1)
