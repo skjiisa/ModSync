@@ -73,7 +73,8 @@ def _user_manager_env() -> dict[str, str] | None:
     """``systemctl --user`` finds the user manager through XDG_RUNTIME_DIR. The
     Steam Frame's desktop is a nested Plasma session whose XDG_RUNTIME_DIR
     (``/run/user/1000/nested_plasma``) has no systemd sockets, so point it back
-    at the login session's. None means the inherited environment is fine."""
+    at the login session's. None means the inherited environment is fine.
+    Inside the Flatpak, see _systemctl."""
     if in_flatpak():
         return None
 
@@ -90,6 +91,12 @@ def _user_manager_env() -> dict[str, str] | None:
 
 
 def _systemctl(*args: str) -> subprocess.CompletedProcess:
+    if in_flatpak():
+        # flatpak-spawn --host runs systemctl in the environment of the host
+        # session that owns the portal, which on the Frame's desktop is the
+        # nested one. The sandbox's own XDG_RUNTIME_DIR can't tell, so name the
+        # login session's outright; under systemd it is /run/user/$UID anyway.
+        return run_host(["env", f"XDG_RUNTIME_DIR=/run/user/{os.getuid()}", "systemctl", "--user", *args])
     env = _user_manager_env()
     return run_host(["systemctl", "--user", *args], **({"env": env} if env else {}))
 

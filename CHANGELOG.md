@@ -86,7 +86,9 @@ All notable changes to ModSync are documented here. The format follows
   Tested on a Frame.
 - `modsync service install` failed in the Steam Frame's desktop terminal,
   because the nested Plasma session's `XDG_RUNTIME_DIR` has no systemd user
-  bus. ModSync now falls back to the login session's.
+  bus. ModSync now falls back to the login session's. The Flatpak failed the
+  same way, since `flatpak-spawn --host` runs `systemctl` in that nested
+  session, and now passes the login session's directory to the host.
 - On ARM64, ModSync no longer picks one of Valve's x86_64 Protons, which can't
   run there. When Skyrim is set to a Proton with no ARM64 build, the launch
   hook and Open MO2 use Steam's ARM64 default, as Steam does.
