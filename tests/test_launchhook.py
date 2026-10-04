@@ -430,5 +430,29 @@ class LegacyName(LaunchHookBase):
         self.assertFalse(self.legacy_dir.exists())
 
 
+class HandoffTests(unittest.TestCase):
+    def test_fields_end_in_nul_and_keep_spaces_and_unicode(self):
+        from modsync.mo2.launch import LaunchPlan
+
+        command = ["/home/me/Mod Organizer/ModOrganizer.exe", "-p", "Légendaire", "run", "-e", "SKSE"]
+        plan = LaunchPlan([], {}, Path("/home/me/Mod Organizer"), "SKSE", True, Path("/p/Proton 9.0"), command)
+        fields = launchhook.encode_handoff(plan).split(b"\0")
+        self.assertEqual(fields[-1], b"")  # each field ends in a NUL, as `mapfile -d ''` expects
+        self.assertEqual([f.decode() for f in fields[:-1]],
+                         [launchhook.HANDOFF_TAG, "/p/Proton 9.0", "/home/me/Mod Organizer", *command])
+
+    def test_a_plan_without_proton_or_command_is_refused(self):
+        from modsync.mo2.launch import LaunchPlan
+
+        for plan in (LaunchPlan([], {}, Path("/i"), "MO2", False, None, ["/i/ModOrganizer.exe"]),
+                     LaunchPlan([], {}, Path("/i"), "MO2", False, Path("/p"), [])):
+            with self.assertRaises(ValueError):
+                launchhook.encode_handoff(plan)
+
+    def test_the_template_tag_matches(self):
+        text = (launchhook.TEMPLATE_DIR / "proton").read_text()
+        self.assertIn("@@HANDOFF_TAG@@", text)
+
+
 if __name__ == "__main__":
     unittest.main()

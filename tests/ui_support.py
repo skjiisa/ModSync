@@ -25,7 +25,17 @@ from modsync import background, gameversion, launchhook
 from modsync.firewall import Check
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import usvfs
+from modsync.mo2.launch import LaunchPlan
 from modsync.service import GameStatus, ModSyncService, SyncStatus
+
+
+def handoff_plan(instance: Path, play: bool = True) -> LaunchPlan:
+    """What ModSyncService.prepare_mo2 returns, for a Steam launch to hand back."""
+    exe = str(Path(instance) / "ModOrganizer.exe")
+    command = [exe, "run", "-e", "SKSE"] if play else [exe]
+    proton = Path(instance) / "Proton"
+    return LaunchPlan([str(proton / "proton"), "run", *command], {}, Path(instance),
+                      "SKSE" if play else "Mod Organizer 2", play, proton, command)
 
 
 def fake_game_status(self=None, *, refresh_index=True):

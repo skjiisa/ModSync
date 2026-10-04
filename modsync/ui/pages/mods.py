@@ -298,12 +298,11 @@ class ModsPage(Page):
         left.addWidget(self.usvfs_note)
         left.addStretch(1)
 
-        if self.host.steam_launch is None:
-            self.open_mo2 = Tile("Open Mod Organizer 2", "Open the chosen instance. Play Skyrim on Home uses "
-                                 "the profile selected in MO2, with SKSE when it is installed.", "play-circle",
-                                 role="primary")
-            self.open_mo2.clicked.connect(lambda: self.host.launch(play=False))
-            right.addWidget(self.open_mo2)
+        self.open_mo2 = Tile("Open Mod Organizer 2", "Open the chosen instance. Play Skyrim on Home uses "
+                             "the profile selected in MO2, with SKSE when it is installed.", "play-circle",
+                             role="primary")
+        self.open_mo2.clicked.connect(lambda: self.host.launch(play=False))
+        right.addWidget(self.open_mo2)
         folder = Tile("Open instance folder", "Show the instance in the file manager.", "folder")
         folder.clicked.connect(self._open_folder)
         right.addWidget(folder)

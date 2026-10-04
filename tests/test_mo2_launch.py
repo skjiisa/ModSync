@@ -83,6 +83,10 @@ class LaunchTests(unittest.TestCase):
         plan = launch.build_plan(self.instance, play=True)
         self.assertEqual(plan.argv[-3:], ["run", "-e", "My SKSE"])
         self.assertEqual(plan.target, "My SKSE")
+        # What a Steam launch hands to the hook: the same Proton and command line.
+        self.assertEqual(plan.proton, self.proton)
+        self.assertEqual(plan.command, [str(self.instance / "ModOrganizer.exe"), "-p", "My Profile", "run", "-e", "My SKSE"])
+        self.assertEqual(plan.argv[-len(plan.command) - 2:], [str(self.proton / "proton"), "run", *plan.command])
         self.assertEqual(self.ini.read_bytes(), before)
 
     def test_stale_saved_entry_falls_back_to_the_file_on_disk(self):
@@ -146,6 +150,12 @@ class LaunchTests(unittest.TestCase):
         data["AppState"]["StateFlags"] = "1024"
         manifest.write_text(vdf.dumps(data))
         with self.assertRaisesRegex(RuntimeError, "Steam is updating"):
+            launch.build_plan(self.instance, play=True)
+
+    def test_an_instance_without_its_game_opens_but_does_not_play(self):
+        self.ini.write_text("[PluginPersistance]\n")
+        launch.build_plan(self.instance)  # MO2 asks which game it manages
+        with self.assertRaisesRegex(RuntimeError, "finish setting up"):
             launch.build_plan(self.instance, play=True)
 
     def test_steam_must_be_running_to_play_but_not_to_open_mo2(self):

@@ -7,7 +7,7 @@ from modsync.firewall import Check, Firewall
 from modsync.games import SKYRIM_SE
 from modsync.service import ModSyncService
 from modsync.state import State
-from tests.ui_support import UiTestCase, fake_game_status
+from tests.ui_support import UiTestCase, fake_game_status, handoff_plan
 
 
 class HomeGuidanceTests(UiTestCase):
@@ -78,7 +78,9 @@ class HomeGuidanceTests(UiTestCase):
         self.assertFalse(window.pages["home"].next_step.isEnabled())
         self.assertFalse(window.pages["home"].play.isEnabled())
         window.set_busy("game", False)
-        window.pages["home"].play.click()
+        with patch.object(ModSyncService, "prepare_mo2", return_value=(handoff_plan(self.tmp), "")):
+            window.pages["home"].play.click()
+            self.settle()
         self.assertEqual(steam.decision, launchhook.EXIT_CONTINUE)
 
     def test_skse_mismatch_and_waiting_updates_have_specific_recommendations(self):

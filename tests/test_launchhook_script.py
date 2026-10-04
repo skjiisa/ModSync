@@ -14,6 +14,7 @@ from pathlib import Path
 
 from modsync import launchhook
 from modsync.games import SKYRIM_SE
+from modsync.mo2.launch import LaunchPlan
 from modsync.steam import libraries as libs
 from modsync.steam.compattools import CompatTool
 from tests import fakesteam
@@ -23,11 +24,14 @@ python3 - "$0" "$@" <<'PY'
 import json, os, sys
 name, *args = sys.argv[1:]
 out = os.environ["RECORD_DIR"] + "/" + os.path.basename(os.path.dirname(name)) + ".json"
-json.dump({"argv": args, "env": {k: v for k, v in os.environ.items() if k.startswith(("STEAM_COMPAT", "MODSYNC", "LD_"))}}, open(out, "w"))
+json.dump({"argv": args, "cwd": os.getcwd(), "env": {k: v for k, v in os.environ.items() if k.startswith(("STEAM_COMPAT", "MODSYNC", "LD_"))}}, open(out, "w"))
 PY
 exit 0
 """
-HUB_RECORDER = RECORDER.replace("exit 0", "exit ${HUB_EXIT:-0}")
+# The hub also says something on stderr, and hands a launch back on stdout when asked to.
+HUB_RECORDER = RECORDER.replace("exit 0", """echo "hub: a log line" >&2
+[[ -n "${HUB_HANDOFF:-}" ]] && cat "$HUB_HANDOFF"
+exit ${HUB_EXIT:-0}""")
 
 
 @unittest.skipIf(shutil.which("bash") is None, "bash required")
@@ -56,8 +60,12 @@ class RenderedScript(unittest.TestCase):
         )
         self.game_exe = str(self.root / "steamapps/common/Skyrim Special Edition/SkyrimSELauncher.exe")
 
-    def run_hook(self, *args, hub_exit=0, extra_env=None, drop_libs=False):
+    def run_hook(self, *args, hub_exit=0, extra_env=None, drop_libs=False, handoff=None):
         env = fakesteam.env_without_flatpak()
+        if handoff is not None:
+            path = self.tmp / "handoff.bin"
+            path.write_bytes(handoff)
+            env["HUB_HANDOFF"] = str(path)
         env.update({
             "RECORD_DIR": str(self.records),
             "HUB_EXIT": str(hub_exit),
@@ -103,6 +111,75 @@ class RenderedScript(unittest.TestCase):
         self.assertEqual(entry["env"]["LD_LIBRARY_PATH"], "/fake/steam-runtime/lib")
         self.assertIsNone(self.record("Proton - Experimental"))  # exec'd by the runtime, not by us
         self.assertIn("continue", self.log())
+
+    def mo2_plan(self, proton_dir=None):
+        instance = self.tmp / "My MO2"
+        instance.mkdir(exist_ok=True)
+        exe = str(instance / "ModOrganizer.exe")
+        command = [exe, "-p", "Survival run", "run", "-e", "SKSE"]
+        proton_dir = proton_dir or self.proton_dir
+        return LaunchPlan([str(proton_dir / "proton"), "run", *command], {}, instance, "SKSE", True,
+                          proton_dir, command)
+
+    def test_play_runs_the_handed_back_mo2_launch_as_steams_launch(self):
+        plan = self.mo2_plan()
+        result = self.run_hook("waitforexitandrun", self.game_exe, "-steamarg",
+                               handoff=launchhook.encode_handoff(plan))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        entry = self.record("SteamLinuxRuntime_4")
+        # Steam's verb and runtime stay; MO2 and its arguments replace the game's program.
+        self.assertEqual(
+            entry["argv"],
+            ["--verb=waitforexitandrun", "--", str(self.proton_dir / "proton"), "waitforexitandrun", *plan.command],
+        )
+        self.assertEqual(entry["cwd"], str(plan.cwd))  # where ModSync starts MO2 itself, too
+        self.assertEqual(entry["env"]["STEAM_COMPAT_APP_ID"], "489830")  # still Steam's launch of the game
+        self.assertEqual(entry["env"]["LD_PRELOAD"], "/fake/gameoverlayrenderer.so")
+        log = self.log()
+        self.assertIn("playing through ModSync", log)
+        self.assertIn("hub: a log line", log)  # stderr is logged; only stdout is the handoff
+        self.assertEqual(list((self.tmp / "state/modsync").glob("handoff.*")), [])
+
+    def test_the_handed_back_proton_and_its_runtime_are_used(self):
+        # MO2-LINT's redirector is what Steam would run; ModSync's own Play picks a real Proton.
+        other = self.root / "steamapps/common/Proton 9.0"
+        fakesteam._executable(other / "proton", RECORDER)
+        (other / "toolmanifest.vdf").write_text(
+            f'"manifest"\n{{\n\t"require_tool_appid"\t\t"{fakesteam.SNIPER_APPID}"\n}}\n'
+        )
+        (self.root / f"steamapps/appmanifest_{fakesteam.SNIPER_APPID}.acf").write_text(
+            fakesteam._acf(fakesteam.SNIPER_APPID, "SLR sniper", "SteamLinuxRuntime_sniper")
+        )
+        fakesteam._executable(self.root / "steamapps/common/SteamLinuxRuntime_sniper/_v2-entry-point", RECORDER)
+        plan = self.mo2_plan(other)
+        self.run_hook("waitforexitandrun", self.game_exe, handoff=launchhook.encode_handoff(plan))
+        self.assertIsNone(self.record("SteamLinuxRuntime_4"))
+        entry = self.record("SteamLinuxRuntime_sniper")
+        self.assertEqual(entry["argv"][2:4], [str(other / "proton"), "waitforexitandrun"])
+        self.assertEqual(entry["env"]["STEAM_COMPAT_TOOL_PATHS"],
+                         f"{other}:{self.root}/steamapps/common/SteamLinuxRuntime_sniper")
+
+    def test_no_handoff_runs_the_game_as_before(self):
+        self.run_hook("waitforexitandrun", self.game_exe, handoff=b"")
+        entry = self.record("SteamLinuxRuntime_4")
+        self.assertEqual(entry["argv"][-2:], ["waitforexitandrun", self.game_exe])
+
+    def test_a_handoff_is_ignored_unless_the_hub_continued(self):
+        handoff = launchhook.encode_handoff(self.mo2_plan())
+        self.run_hook("waitforexitandrun", self.game_exe, hub_exit=launchhook.EXIT_CANCEL, handoff=handoff)
+        self.assertIsNone(self.record("SteamLinuxRuntime_4"))
+        self.run_hook("waitforexitandrun", self.game_exe, hub_exit=3, handoff=handoff)
+        self.assertEqual(self.record("SteamLinuxRuntime_4")["argv"][-1], self.game_exe)
+
+    def test_unusable_handoffs_launch_the_game(self):
+        plan = self.mo2_plan(self.tmp / "no-such-proton")
+        for output, warning in ((launchhook.encode_handoff(plan), "which are not there"),
+                                (b"some stray print\n", "unexpected output")):
+            with self.subTest(warning=warning):
+                result = self.run_hook("waitforexitandrun", self.game_exe, handoff=output)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.record("SteamLinuxRuntime_4")["argv"][-1], self.game_exe)
+                self.assertIn(warning, self.log())
 
     def test_cancel_ends_the_launch_cleanly(self):
         result = self.run_hook("waitforexitandrun", self.game_exe, hub_exit=launchhook.EXIT_CANCEL)

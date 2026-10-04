@@ -4,11 +4,16 @@ Pressing Play runs whatever compatibility tool Steam has selected for the game.
 The hook is one more such tool, registered under ``compatibilitytools.d`` as
 ``modsync_<appid>_proton`` (the approach MO2-LINT took in PR #1096 for its own
 ``mo2_<appid>_redirector``): a ``proton`` script that Steam calls in place of
-Proton. Ours opens the ModSync window and then hands the **same** launch on
-to the tool Steam used before — MO2-LINT's redirector when it is installed
-(Play → ModSync → Mod Organizer 2), otherwise the plain Proton — inside the
-Steam Linux Runtime container that tool asks for. Cancel in ModSync ends the
-launch with a clean exit, so Steam just returns to the library.
+Proton. Ours opens the ModSync window and then carries on with the **same**
+launch, inside the Steam Linux Runtime container its Proton asks for. Play or
+Open Mod Organizer 2 in the window hand back the launch ModSync would start on
+its own (its Proton, ``ModOrganizer.exe`` and arguments; see
+:data:`HANDOFF_TAG`), which runs in place of the game's program. With no MO2
+instance chosen, Continue runs what Steam was about to: the tool Steam used
+before, MO2-LINT's redirector when it is installed, otherwise the plain
+Proton. Cancel in ModSync ends the launch with a clean exit, so Steam just
+returns to the library. Either way the game is Steam's launch, so Steam tracks
+it and syncs its cloud saves when it exits.
 
 Two facts make it survive updates. Nothing of MO2-LINT's is copied: the chain
 refers to its tool directory by path and re-reads its ``toolmanifest.vdf`` on
@@ -37,6 +42,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from modsync import __version__, config, platforms, steamos
 from modsync.games import GAMES, SKYRIM_SE, Game
@@ -45,14 +51,23 @@ from modsync.steam import libraries as libs
 from modsync.steam.compattools import CompatTool
 from modsync.steam.steamconfig import SteamConfig, config_vdf_path
 
+if TYPE_CHECKING:
+    from modsync.mo2.launch import LaunchPlan
+
 log = logging.getLogger(__name__)
 
-TEMPLATE_VERSION = 1
+TEMPLATE_VERSION = 2  # 2: runs the MO2 launch the window hands back
 TEMPLATE_DIR = Path(__file__).parent / "steam" / "launchhook_template"
 MARKER = ".modsync-launch-hook"  # only directories carrying this are ever removed
 
 EXIT_CONTINUE = 0
 EXIT_CANCEL = 10
+
+# On Continue the window may hand the hook a launch of its own on stdout: this
+# tag, the Proton directory, the folder to start in, then the program and its
+# arguments, each ending in a NUL. The hook runs that through Steam's launch in
+# place of the game's own program; with nothing handed back it runs the game's.
+HANDOFF_TAG = "modsync-handoff-1"
 
 # Steam Cloud maps a game's Windows save locations (WinMyDocuments and the like)
 # into the Proton prefix only when the tool's internal name contains "proton".
@@ -319,11 +334,12 @@ def continue_label(underlying_name: str | None, game: Game = SKYRIM_SE) -> str:
 class SteamLaunch:
     """A Play press in Steam that is waiting on the open ModSync window. The
     window records ``EXIT_CONTINUE`` or ``EXIT_CANCEL`` here, and the hook's
-    script reads it as the exit code."""
+    script reads it as the exit code, plus the MO2 launch to hand back."""
 
     game: Game
     through: str | None = None  # the compatibility tool the hook hands the launch on to
     decision: int | None = None
+    plan: "LaunchPlan | None" = None  # Continue: what to run instead of the game's own program
 
     @property
     def hands_off_to(self) -> str:
@@ -332,6 +348,14 @@ class SteamLaunch:
     @property
     def continue_label(self) -> str:
         return continue_label(self.through, self.game)
+
+
+def encode_handoff(plan: "LaunchPlan") -> bytes:
+    """The hook's half of :data:`HANDOFF_TAG`: the plan's Proton, folder and command."""
+    fields = [HANDOFF_TAG, str(plan.proton), str(plan.cwd), *plan.command]
+    if plan.proton is None or not plan.command or any("\0" in f for f in fields):
+        raise ValueError("this launch plan cannot be handed to the hook")
+    return b"".join(f.encode("utf-8", "surrogateescape") + b"\0" for f in fields)
 
 
 def status(appid: int = SKYRIM_SE.appid) -> LaunchHookStatus:
@@ -416,6 +440,7 @@ def render(
         "@@UNDERLYING_PATH@@": str(underlying.path),
         "@@MODSYNC_COMMAND@@": _bash_array(command),
         "@@LIBRARY_PATHS@@": _bash_array([str(p) for p in library_paths]),
+        "@@HANDOFF_TAG@@": HANDOFF_TAG,
     }
     target.mkdir(parents=True, exist_ok=True)
     (target / MARKER).write_text(

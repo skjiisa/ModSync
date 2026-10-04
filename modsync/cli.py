@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import sys
+
 
 def doctor(args: list[str]) -> int:
     from modsync.report import build
@@ -703,9 +706,15 @@ def _launch_hub(args: list[str]) -> int:
             through, i = args[i + 1], i + 2
         else:
             i += 1
-    try:
-        from modsync.ui.app import run_hub
-    except ImportError as exc:
-        print(f"ModSync window unavailable (PySide6 missing: {exc}); continuing the launch.")
-        return launchhook.EXIT_CONTINUE
-    return run_hub(appid=appid, through=through)
+    # stdout is how a launch is handed back to the hook (launchhook.HANDOFF_TAG);
+    # anything else printed goes to stderr, which the hook logs.
+    sys.stdout.flush()
+    handoff = os.fdopen(os.dup(1), "wb")
+    os.dup2(2, 1)
+    with handoff:
+        try:
+            from modsync.ui.app import run_hub
+        except ImportError as exc:
+            print(f"ModSync window unavailable (PySide6 missing: {exc}); continuing the launch.")
+            return launchhook.EXIT_CONTINUE
+        return run_hub(appid=appid, through=through, handoff=handoff)

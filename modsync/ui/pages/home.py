@@ -4,12 +4,12 @@ A readiness checklist (game version, SKSE, Mod Organizer 2, sync) sits next
 to the main action. Each check opens the section that can fix it. Before
 anything is set up, the main action starts the setup wizard instead.
 
-When Steam's launch hook opened ModSync, Steam is waiting on this window:
-Play becomes **Continue**, which closes ModSync and lets the hook hand the
-same launch on (to MO2-LINT's redirector or the game's Proton), and
-**Cancel launch** returns to Steam. ModSync's own launches are left out then:
-they would start a second Proton in the prefix next to the one Steam is about
-to run, or outlive the launch Steam is tracking.
+When Steam's launch hook opened ModSync, Steam is waiting on this window.
+Play and Open Mod Organizer 2 do the same as ever, except that the hook runs
+them as Steam's own launch (so Steam tracks the game and syncs its cloud
+saves), and **Cancel launch** returns to Steam. Before an MO2 instance is
+chosen, Play is **Continue** instead: the hook carries on with what Steam was
+about to start (MO2-LINT's redirector or the game itself).
 """
 
 from __future__ import annotations
@@ -43,9 +43,11 @@ class HomePage(Page):
         self.sync_warning = label("", "warning")
         self.sync_warning.setVisible(False)
         if steam is not None:
-            self.steam_note = label(
-                f"\"{steam.continue_label}\" goes on to {steam.hands_off_to}. \"Cancel launch\" or closing "
-                "ModSync returns to Steam without starting anything.", "note")
+            starts = ("Play Skyrim and Open Mod Organizer 2 start as this Steam launch, so Steam syncs "
+                      "your cloud saves when you quit." if state.has_instance else
+                      f"\"{steam.continue_label}\" goes on to {steam.hands_off_to}.")
+            self.steam_note = label(f"{starts} \"Cancel launch\" or closing ModSync returns to Steam "
+                                    "without starting anything.", "note")
             self.content_layout.addWidget(self.steam_note)
         self.content_layout.addWidget(self.sync_warning)
 
@@ -75,25 +77,19 @@ class HomePage(Page):
         self.cancel_launch: Tile | None = None
         self.open_mo2: Tile | None = None
         self.setup: Tile | None = None
-        if steam is not None:
-            self.play = HeroTile(steam.continue_label, f"Carry on to {steam.hands_off_to}.", "play")
-            self.play.clicked.connect(lambda: host.decide_launch(launchhook.EXIT_CONTINUE))
-            self.cancel_launch = Tile("Cancel launch", "Close ModSync and return to Steam without starting "
-                                      "anything.", "close")
-            self.cancel_launch.clicked.connect(lambda: host.decide_launch(launchhook.EXIT_CANCEL))
-            actions.addWidget(self.play)
-            actions.addWidget(self.cancel_launch)
-            if not state.has_instance:
-                self.setup = Tile("Setup wizard", "Choose or install Mod Organizer 2 first.", "layers")
-                self.setup.clicked.connect(lambda: host.start_setup())
-                actions.addWidget(self.setup)
-        elif state.has_instance:
+        if state.has_instance:
             self.play = HeroTile("Play Skyrim", "Use your selected MO2 profile and SKSE when installed.", "play")
             self.play.clicked.connect(lambda: host.launch(play=True))
             self.open_mo2 = Tile("Open Mod Organizer 2", "Manage mods, profiles and load order.", "box")
             self.open_mo2.clicked.connect(lambda: host.launch(play=False))
             actions.addWidget(self.play)
             actions.addWidget(self.open_mo2)
+        elif steam is not None:
+            self.play = HeroTile(steam.continue_label, f"Carry on to {steam.hands_off_to}.", "play")
+            self.play.clicked.connect(lambda: host.decide_launch(launchhook.EXIT_CONTINUE))
+            actions.addWidget(self.play)
+            self.setup = Tile("Setup wizard", "Choose or install Mod Organizer 2 first.", "layers")
+            self.setup.clicked.connect(lambda: host.start_setup())
         else:
             self.setup = HeroTile("Set up ModSync", "Three steps: Mod Organizer 2, sync (optional), and the "
                                   "game version.", "rocket")
@@ -102,6 +98,13 @@ class HomePage(Page):
             self.play.setEnabled(False)
             actions.addWidget(self.setup)
             actions.addWidget(self.play)
+        if steam is not None:
+            self.cancel_launch = Tile("Cancel launch", "Close ModSync and return to Steam without starting "
+                                      "anything.", "close")
+            self.cancel_launch.clicked.connect(lambda: host.decide_launch(launchhook.EXIT_CANCEL))
+            actions.addWidget(self.cancel_launch)
+            if self.setup is not None:
+                actions.addWidget(self.setup)
         self.profile = label("", "muted")
         self.profile.setVisible(False)
         actions.addWidget(self.profile)
@@ -228,10 +231,9 @@ class HomePage(Page):
         self.next_step.setEnabled(not busy)
         if self.host.steam_launch is not None:
             # Neither start the game nor walk away while game files are rewritten.
-            self.play.setEnabled(not busy)
-            self.cancel_launch.setEnabled(not busy)
-            if self.setup is not None:
-                self.setup.setEnabled(not busy)
+            for tile in (self.play, self.open_mo2, self.cancel_launch, self.setup):
+                if tile is not None:
+                    tile.setEnabled(not busy)
             return
         launcher = self.service.launcher
         if self.open_mo2 is not None:  # what this page was built for, not what is set up now

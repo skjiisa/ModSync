@@ -1,9 +1,11 @@
 """Launch the chosen portable MO2 instance using Skyrim's existing Proton prefix.
 
-The Steam launch hook (``modsync.launchhook``) covers the other direction:
-Steam's Play button starting ModSync. This module is for ModSync's own buttons,
-where Steam is not the caller, and shares the hook's view of which Proton and
-runtime the game uses.
+A :class:`LaunchPlan` is what ModSync's Play and Open MO2 run, from either
+side. Opened directly, ModSync starts it itself (:class:`Launcher`). Opened by
+Steam's launch hook (``modsync.launchhook``), it hands the plan's Proton,
+folder and command back to the hook, which runs them as Steam's own launch so
+Steam keeps tracking the game and syncs its cloud saves when it exits. Both
+use the hook's view of which Proton and runtime the game uses.
 
 Direct play uses MO2's `run` command, so its virtual filesystem and selected
 profile remain active. Steam launch mappings and MO2 settings are never edited.
@@ -11,7 +13,7 @@ profile remain active. Steam launch mappings and MO2 settings are never edited.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import os
 from pathlib import Path, PureWindowsPath
@@ -36,6 +38,8 @@ class LaunchPlan:
     cwd: Path
     target: str
     play: bool
+    proton: Path | None = None  # the Proton directory argv runs
+    command: list[str] = field(default_factory=list)  # what Proton runs: ModOrganizer.exe and its arguments
 
 
 def _game_target(sections: dict, game_dir: Path) -> tuple[list[str], str]:
@@ -139,7 +143,9 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False) -> Launc
     if play:
         if not shortcuts.steam_is_running():
             raise RuntimeError("Start Steam, then try Play Skyrim again.")
-        if not sections:
+        if not name:
+            # MO2 stops at "Select the game managed by this instance" (seen with
+            # an instance that had only ever been opened once).
             raise RuntimeError("Open MO2 and finish setting up the instance before playing.")
         raw_game_dir = ini.unwrap_bytearray(ini.get_ci(general, "gamePath"))
         configured_dir = ini.wine_to_local(raw_game_dir)
@@ -153,7 +159,8 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False) -> Launc
         game_dir = configured_dir or app.install_path
         args, target = _game_target(sections, game_dir)
         mo2_args += args
-    argv = [str(proton / "proton"), "run", str(exe), *mo2_args]
+    command = [str(exe), *mo2_args]
+    argv = [str(proton / "proton"), "run", *command]
     runtime_id = compattools.require_tool_appid(proton)
     tool_paths = [str(proton)]
     if runtime_id is not None:
@@ -176,7 +183,7 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False) -> Launc
         # Run the whole Wine session on gamescope's display. Gamescope's Vulkan
         # layer only knows windows gamescope launched itself, so it is turned off.
         env.update({"DISPLAY": display, "ENABLE_GAMESCOPE_WSI": "0", "DISABLE_GAMESCOPE_WSI": "1"})
-    return LaunchPlan(argv, env, instance, target, play)
+    return LaunchPlan(argv, env, instance, target, play, proton, command)
 
 
 
@@ -207,6 +214,13 @@ def prefix_system32(instance_path: Path | str) -> Path:
     """The game prefix's system32 for an instance."""
     return plan_system32(build_plan(instance_path))
 
+def mark_portable(plan: LaunchPlan) -> None:
+    """MO2's own marker for a portable install: it makes MO2 open the instance
+    next to ModOrganizer.exe even when the prefix remembers a different global
+    instance. Nothing else is written."""
+    (plan.cwd / "portable.txt").touch(exist_ok=True)
+
+
 class Launcher:
     """Track our launch processes without tying their lifetime to the GUI."""
 
@@ -227,10 +241,7 @@ class Launcher:
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists() and path.stat().st_size > 1_000_000 and not any(p.poll() is None for p, _, _ in self._processes):
                 path.replace(path.with_suffix(".log.1"))
-            # MO2's own marker for a portable install: it makes MO2 open the
-            # instance next to ModOrganizer.exe even when the prefix remembers a
-            # different global instance. Nothing else is written.
-            (plan.cwd / "portable.txt").touch(exist_ok=True)
+            mark_portable(plan)
             env = dict(os.environ)
             # Steam/Qt preload settings belong to the calling GUI, not Proton.
             for key in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH"):

@@ -219,6 +219,15 @@ class LaunchTests(unittest.TestCase):
         self.assertIn("Visual C++ runtime", message)
         self.service.launcher.start.assert_called_once_with(self.plan)
 
+    def test_a_steam_launch_gets_the_same_preparation_without_starting_anything(self):
+        with patch.object(vcruntime, "ensure_instance_runtime", return_value=[]) as ensure:
+            plan, note = self.service.prepare_mo2(play=True)
+        self.assertIs(plan, self.plan)
+        self.assertEqual(note, "")
+        ensure.assert_called_once()
+        self.assertTrue((self.plan.cwd / "portable.txt").is_file())
+        self.service.launcher.start.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

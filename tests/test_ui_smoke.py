@@ -12,7 +12,7 @@ from modsync import gameversion, launchhook
 from modsync.games import SKYRIM_SE
 from modsync.service import ModSyncService, SyncStatus
 from modsync.state import State
-from tests.ui_support import UiTestCase, fake_game_status
+from tests.ui_support import UiTestCase, fake_game_status, handoff_plan
 
 
 class SectionTests(UiTestCase):
@@ -287,17 +287,39 @@ class SteamLaunchTests(UiTestCase):
         window.decide_launch(launchhook.EXIT_CONTINUE)  # no Steam launch to decide
         self.assertTrue(window.isVisible())
 
-    def test_own_launches_are_left_to_steam(self):
+    def test_play_and_open_mo2_are_handed_to_steam(self):
         State(instance_path=str(self.tmp)).save()
-        with patch.object(ModSyncService, "launch_mo2") as launch:
+        for play in (True, False):
+            with self.subTest(play=play):
+                plan = handoff_plan(self.tmp, play)
+                with patch.object(ModSyncService, "launch_mo2") as launch, \
+                        patch.object(ModSyncService, "prepare_mo2", return_value=(plan, "")) as prepare:
+                    window = self._window(through="GE-Proton10-34")
+                    home = window.pages["home"]
+                    self.assertEqual(home.play.text(), "Play Skyrim")  # the same tiles as from the desktop
+                    self.assertIn("cloud saves", home.steam_note.text())
+                    self.assertIsNotNone(window.pages["mods"].open_mo2)
+                    (home.play if play else window.pages["mods"].open_mo2).click()
+                    self.settle()
+                    prepare.assert_called_once_with(play=play)
+                    launch.assert_not_called()  # ModSync starts nothing itself: the hook runs it
+                self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+                self.assertIs(window.steam_launch.plan, plan)
+                self.assertFalse(window.isVisible())
+
+    def test_a_launch_that_cannot_be_prepared_keeps_steam_waiting(self):
+        State(instance_path=str(self.tmp)).save()
+        with patch.object(ModSyncService, "prepare_mo2", side_effect=RuntimeError("Choose an MO2 instance first.")):
             window = self._window()
-            self.assertIsNone(window.pages["home"].open_mo2)
-            self.assertIsNone(window.pages["mods"].open_mo2)
-            window.launch(play=True)
             window.pages["home"].play.click()
-            launch.assert_not_called()
-        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
-        self.assertFalse(window.isVisible())
+            self.settle()
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertIsNone(window.steam_launch.plan)
+        self.assertTrue(window.isVisible())
+        self.assertFalse(window.busy)
+        self.assertIn("⚠ Choose an MO2 instance first.", window.messages)
+        window.pages["home"].cancel_launch.click()
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CANCEL)
 
     def test_setup_summary_and_decisions(self):
         inst = self.tmp / "MO2"
@@ -310,7 +332,9 @@ class SteamLaunchTests(UiTestCase):
         window = self._window()
         self.assertIn("Profile: Default  ·  2 mods enabled", window.pages["mods"].setup_label.text())
         self.assertIn("2 mods enabled", window.pages["home"].mo2_row.description)
-        window.pages["home"].play.click()
+        with patch.object(ModSyncService, "prepare_mo2", return_value=(handoff_plan(inst), "")):
+            window.pages["home"].play.click()
+            self.settle()
         self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
         window.decide_launch(launchhook.EXIT_CANCEL)  # a second decision does not overwrite the first
         self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
