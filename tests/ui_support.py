@@ -76,6 +76,7 @@ class UiTestCase(unittest.TestCase):
             patch.object(background, "status", lambda: {"installed": False, "active": "inactive", "enabled": "disabled"}),
             patch.object(launchhook, "status", lambda appid=SKYRIM_SE.appid: launchhook.LaunchHookStatus(
                 SKYRIM_SE, False, None, False, None, None, False, None, False, True)),
+            patch.object(launchhook, "upgrade", lambda appid=SKYRIM_SE.appid: None),
             patch("modsync.ui.pages.system.firewall.check", return_value=Check(None, True, "")),
             patch("modsync.ui.pages.mods.scan_instances", return_value=[]),
             # Don't read this machine's controllers: a plain keyboard unless a

@@ -52,7 +52,7 @@ class LaunchCommandTests(unittest.TestCase):
         code, out = self.run_cli("launch", "status")
         self.assertEqual(code, 0)
         self.assertIn("Launch hook:    on", out)
-        self.assertIn("Steam runs Skyrim Special Edition with: modsync_489830_hub", out)
+        self.assertIn("Steam runs Skyrim Special Edition with: modsync_489830_proton", out)
         code, out = self.run_cli("launch", "disable")
         self.assertEqual(code, 0)
         self.assertIn("back to GE-Proton10-34", out)

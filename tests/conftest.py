@@ -66,3 +66,16 @@ def _no_real_network():
         yield
     finally:
         urllib.request.urlopen = original
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_steam_hook():
+    """The dashboard and the serve loop bring the launch hook up to date on
+    start, which rewrites compatibilitytools.d and config.vdf. Point that at no
+    Steam at all; tests/test_launchhook.py patches in a fake one per test."""
+    from unittest.mock import patch
+
+    from modsync import launchhook
+
+    with patch.object(launchhook, "steam_env", lambda: None):
+        yield

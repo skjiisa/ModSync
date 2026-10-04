@@ -43,7 +43,7 @@ class LaunchHookBase(unittest.TestCase):
         ):
             p.start()
             self.addCleanup(p.stop)
-        self.tool_dir = self.root / "compatibilitytools.d" / "modsync_489830_hub"
+        self.tool_dir = self.root / "compatibilitytools.d" / "modsync_489830_proton"
 
     def mapping_name(self):
         return SteamConfig.load(self.root / "config/config.vdf").compat_tool_name(489830)
@@ -85,10 +85,10 @@ class EnableWithSteamClosed(LaunchHookBase):
         self.assertIn("modsync=(/usr/bin/flatpak run io.github.skjiisa.ModSync)", script)
         self.assertIn(f"libraries=({self.root})", script)
         self.assertTrue(os.access(self.tool_dir / "proton", os.X_OK))
-        self.assertIn('"modsync_489830_hub"', (self.tool_dir / "compatibilitytool.vdf").read_text())
+        self.assertIn('"modsync_489830_proton"', (self.tool_dir / "compatibilitytool.vdf").read_text())
         self.assertIn('"display_name" "ModSync (Skyrim Special Edition)"', (self.tool_dir / "compatibilitytool.vdf").read_text())
         self.assertNotIn("require_tool_appid", (self.tool_dir / "toolmanifest.vdf").read_text())
-        self.assertEqual(self.mapping_name(), "modsync_489830_hub")
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
         record = launchhook.Record.load()
         self.assertEqual(record.previous, GE)
         self.assertEqual(record.underlying_name, "GE-Proton10-34")
@@ -138,7 +138,7 @@ class EnableWithNoExplicitChoice(LaunchHookBase):
         record = launchhook.Record.load()
         self.assertEqual(record.underlying_name, "proton_experimental")
         self.assertIsNone(record.previous)
-        self.assertEqual(self.mapping_name(), "modsync_489830_hub")
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
         msg = launchhook.disable()
         self.assertIn("Steam's default", msg)
         self.assertIsNone(self.mapping_name())
@@ -158,7 +158,7 @@ class GameProton(LaunchHookBase):
         tool = launchhook.game_proton()
         self.assertEqual(tool.name, "GE-Proton10-34")
         launchhook.enable()
-        self.assertEqual(self.mapping_name(), "modsync_489830_hub")
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
         self.assertEqual(launchhook.game_proton().name, "GE-Proton10-34")
         launchhook.disable()
         self.assertEqual(launchhook.game_proton().name, "GE-Proton10-34")
@@ -221,7 +221,7 @@ class WithSteamRunning(LaunchHookBase):
         self.steam_running = False
         out = launchhook.apply_pending()
         self.assertIn("selected", out)
-        self.assertEqual(self.mapping_name(), "modsync_489830_hub")
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
         self.assertIsNone(launchhook.Pending.load())
         self.assertTrue(launchhook.status().enabled)
 
@@ -231,7 +231,7 @@ class WithSteamRunning(LaunchHookBase):
         msg = launchhook.disable()
         self.assertIn("queued", msg)
         self.assertTrue(self.tool_dir.exists())  # Steam still maps to it: keep it launchable
-        self.assertEqual(self.mapping_name(), "modsync_489830_hub")
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
         self.steam_running = False
         out = launchhook.apply_pending()
         self.assertIn("GE-Proton10-34", out)
@@ -245,7 +245,7 @@ class WithSteamRunning(LaunchHookBase):
         self.steam_running = True
         launchhook.enable()
         cfg = SteamConfig.load(self.root / "config/config.vdf")
-        cfg.set_compat_tool(489830, "modsync_489830_hub")
+        cfg.set_compat_tool(489830, "modsync_489830_proton")
         cfg.save(backup=False)
         st = launchhook.status()
         self.assertTrue(st.enabled)
@@ -312,6 +312,122 @@ class StatusEdgeCases(LaunchHookBase):
         launchhook.disable()
         self.assertEqual(self.mapping_name(), "GE-Proton10-34")
         self.assertFalse(self.tool_dir.exists())
+
+
+class LegacyName(LaunchHookBase):
+    """Hooks before the rename were called modsync_<appid>_hub. Steam Cloud only
+    maps Windows save paths into the prefix for a tool whose internal name
+    contains "proton", so under that name saves silently stopped syncing."""
+
+    mapping = {489830: GE}
+
+    def setUp(self):
+        super().setUp()
+        self.legacy_dir = self.root / "compatibilitytools.d" / "modsync_489830_hub"
+
+    def install_legacy(self, *, selected=True):
+        """What an older ModSync left behind: the hook under its old name."""
+        launchhook.enable()
+        self.tool_dir.rename(self.legacy_dir)
+        vdf = self.legacy_dir / "compatibilitytool.vdf"
+        vdf.write_text(vdf.read_text().replace("modsync_489830_proton", "modsync_489830_hub"))
+        record = launchhook.Record.load()
+        record.tool_id, record.tool_path = "modsync_489830_hub", str(self.legacy_dir)
+        record.save()
+        record.write_marker()
+        cfg = SteamConfig.load(self.root / "config/config.vdf")
+        cfg.set_compat_tool(489830, "modsync_489830_hub" if selected else "GE-Proton10-34")
+        cfg.save(backup=False)
+
+    def test_the_tool_name_contains_proton(self):
+        self.assertIn("proton", launchhook.tool_id(489830).lower())
+
+    def test_status_flags_the_old_name(self):
+        self.install_legacy()
+        st = launchhook.status()
+        self.assertTrue(st.enabled)
+        self.assertTrue(st.legacy)
+        self.assertIn("Steam Cloud", st.summary())
+        self.assertEqual(launchhook.game_proton().name, "GE-Proton10-34")
+
+    def test_upgrade_with_steam_closed_renames_and_switches(self):
+        self.install_legacy()
+        msg = launchhook.upgrade()
+        self.assertIn("Steam Cloud", msg)
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
+        self.assertTrue((self.tool_dir / launchhook.MARKER).exists())
+        self.assertIn('"modsync_489830_proton"', (self.tool_dir / "compatibilitytool.vdf").read_text())
+        self.assertFalse(self.legacy_dir.exists())
+        record = launchhook.Record.load()
+        self.assertEqual(record.tool_id, "modsync_489830_proton")
+        self.assertEqual(record.previous, GE)  # what the user had before ModSync, not the old hook
+        self.assertFalse(launchhook.status().legacy)
+        self.assertIsNone(launchhook.upgrade())  # nothing left to do
+        launchhook.disable()
+        self.assertEqual(self.mapping_name(), "GE-Proton10-34")
+
+    def test_upgrade_with_steam_running_keeps_the_old_hook_until_the_switch(self):
+        self.install_legacy()
+        self.steam_running = True
+        msg = launchhook.upgrade()
+        self.assertIn("queued", msg)
+        self.assertEqual(self.mapping_name(), "modsync_489830_hub")
+        self.assertTrue(self.legacy_dir.exists())  # Play still goes through it until Steam restarts
+        self.assertTrue(self.tool_dir.exists())
+        st = launchhook.status()
+        self.assertEqual(st.pending.action, "select")
+        self.assertIn("Steam Cloud", st.summary())
+        self.steam_running = False
+        out = launchhook.apply_pending()
+        self.assertIn("renamed", out)
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
+        self.assertFalse(self.legacy_dir.exists())
+        self.assertTrue(launchhook.status().enabled)
+
+    def test_upgrade_keeps_the_modsync_the_hook_starts(self):
+        """A development checkout must not repoint a Flatpak user's hook at itself."""
+        import sys
+
+        self.install_legacy()
+        record = launchhook.Record.load()
+        record.command = [sys.executable, "-m", "modsync"]
+        record.save()
+        record.write_marker()
+        launchhook.upgrade()
+        self.assertIn(f"modsync=({sys.executable} -m modsync)", (self.tool_dir / "proton").read_text())
+        self.assertEqual(launchhook.Record.load().command, [sys.executable, "-m", "modsync"])
+
+    def test_upgrade_when_not_selected_only_renames(self):
+        self.install_legacy(selected=False)
+        self.assertIsNone(launchhook.upgrade())
+        self.assertEqual(self.mapping_name(), "GE-Proton10-34")
+        self.assertFalse(self.legacy_dir.exists())
+        self.assertTrue((self.tool_dir / launchhook.MARKER).exists())
+        self.assertEqual(launchhook.Record.load().tool_id, "modsync_489830_proton")
+
+    def test_upgrade_retargets_a_select_queued_by_an_older_version(self):
+        self.install_legacy(selected=False)
+        launchhook.Pending("select", 489830, {"name": "modsync_489830_hub", "config": "", "priority": "250"}).save()
+        launchhook.upgrade()
+        self.assertEqual(launchhook.Pending.load().mapping["name"], "modsync_489830_proton")
+        launchhook.apply_pending()
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
+
+    def test_disable_before_upgrade_restores_and_removes_the_old_hook(self):
+        self.install_legacy()
+        launchhook.disable()
+        self.assertEqual(self.mapping_name(), "GE-Proton10-34")
+        self.assertFalse(self.legacy_dir.exists())
+        self.assertFalse(self.tool_dir.exists())
+
+    def test_disable_queued_before_upgrade_removes_the_old_hook(self):
+        self.install_legacy()
+        self.steam_running = True
+        launchhook.disable()
+        self.steam_running = False
+        launchhook.apply_pending()
+        self.assertEqual(self.mapping_name(), "GE-Proton10-34")
+        self.assertFalse(self.legacy_dir.exists())
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ class RenderedScript(unittest.TestCase):
         fakesteam._executable(self.root / "steamapps/common/SteamLinuxRuntime_4/_v2-entry-point", RECORDER)
         self.modsync_dir = self.tmp / "modsync-cmd"
         fakesteam._executable(self.modsync_dir / "modsync", HUB_RECORDER)
-        self.tool_dir = self.root / "compatibilitytools.d" / "modsync_489830_hub"
+        self.tool_dir = self.root / "compatibilitytools.d" / "modsync_489830_proton"
         underlying = CompatTool("proton_experimental", "Proton Experimental", self.proton_dir, "valve")
         launchhook.render(
             self.tool_dir,

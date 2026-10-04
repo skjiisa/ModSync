@@ -9,9 +9,9 @@ All notable changes to ModSync are documented here. The format follows
 ### Added
 
 - An ARM64 USVFS fix for the files shipped with MO2 2.5.2. "Apply ARM64 fix"
-  appears in the dashboard and Steam launch hub. It downloads a pinned build
-  with the injection-stub stack-alignment fix, verifies the archive and each
-  binary, and backs up the originals. The build comes from ModSync's mirror of
+  appears under Mod Organizer, also while Steam waits on ModSync. It
+  downloads a pinned build with the injection-stub stack-alignment fix,
+  verifies the archive and each binary, and backs up the originals. The build comes from ModSync's mirror of
   ndabas's release, which also carries the source, with the original release
   as a fallback. "Restore original USVFS" reverses it.
   Unknown builds are left unchanged. The same actions are available through
@@ -22,7 +22,7 @@ All notable changes to ModSync are documented here. The format follows
   reapplication from the cache.
 
 - When an instance's USVFS is 0.5.7 or newer and the game's Proton prefix
-  only has the old Visual C++ runtime (or Wine's stand-in), the dashboard
+  only has the old Visual C++ runtime (or Wine's stand-in), the app
   offers to install Microsoft's current runtime into the prefix. USVFS 0.5.7+
   uses the runtime of the programs MO2 starts, so without it nothing started
   from MO2 runs. The pinned, checked redistributable is installed silently
@@ -93,6 +93,16 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Steam Cloud stopped syncing Skyrim saves while the Play button switch was
+  on. Steam maps a game's Windows save folders into its Proton prefix only
+  for a compatibility tool whose internal name contains "proton", and the
+  hook was named `modsync_489830_hub`. Steam couldn't resolve the save folder,
+  so it skipped every save while still reporting the sync as complete. The
+  hook is now `modsync_489830_proton`. When ModSync opens or the
+  background service starts, an existing hook is moved to the new name and
+  Steam is switched over to it, after a Steam restart if Steam is running.
+  Saves made under the old name are still in the prefix, where Steam finds
+  them again once the game launches through the new name.
 - In the Flatpak, `modsync doctor` and `modsync diagnostics` pointed at a
   launch hook log inside the sandbox that is never written. Steam runs the
   hook on the host, so they now read the host's `~/.local/state/modsync/launch-hook.log`.
@@ -110,7 +120,9 @@ All notable changes to ModSync are documented here. The format follows
   Tested on a Frame.
 - `modsync service install` failed in the Steam Frame's desktop terminal,
   because the nested Plasma session's `XDG_RUNTIME_DIR` has no systemd user
-  bus. ModSync now falls back to the login session's.
+  bus. ModSync now falls back to the login session's. The Flatpak failed the
+  same way, since `flatpak-spawn --host` runs `systemctl` in that nested
+  session, and now passes the login session's directory to the host.
 - On ARM64, ModSync no longer picks one of Valve's x86_64 Protons, which can't
   run there. When Skyrim is set to a Proton with no ARM64 build, the launch
   hook and Open MO2 use Steam's ARM64 default, as Steam does.

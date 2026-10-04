@@ -92,6 +92,16 @@ class UserManagerEnv(unittest.TestCase):
             background._systemctl("daemon-reload")
         self.assertEqual(run.call_args.kwargs["env"]["XDG_RUNTIME_DIR"], str(self.login))
 
+    def test_the_flatpak_names_the_login_session_to_the_host(self):
+        # flatpak-spawn --host doesn't pass the sandbox's environment on, and the
+        # host session it uses can be the nested one.
+        with patch.object(background, "in_flatpak", return_value=True), \
+                patch.object(background.subprocess, "run") as run:
+            background._systemctl("daemon-reload")
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd[:2], ["flatpak-spawn", "--host"])
+        self.assertEqual(cmd[2:], ["env", f"XDG_RUNTIME_DIR=/run/user/{os.getuid()}", "systemctl", "--user", "daemon-reload"])
+
 
 if __name__ == "__main__":
     unittest.main()

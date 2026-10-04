@@ -86,7 +86,10 @@ class SystemPage(Page):
         self.finish_layout()
 
         self._refresh_bg()
-        self._refresh_hook()
+        # Bring an installed hook up to date first (an old name keeps Steam
+        # Cloud from syncing saves), then read its status.
+        worker.run_async(launchhook.upgrade, on_done=self._after_hook_upgrade,
+                         on_failed=lambda _: self._refresh_hook())
         self.firewall: firewall.Check | None = None
         self._refresh_firewall()
         host.busyChanged.connect(self._on_busy)
@@ -229,6 +232,11 @@ class SystemPage(Page):
     def _on_hook_failed(self, message: str) -> None:
         self.hook_tile.setEnabled(True)
         self.host.notify(f"⚠ {message}")
+        self._refresh_hook()
+
+    def _after_hook_upgrade(self, message: object) -> None:
+        if message:
+            self.host.notify(str(message), "ok")
         self._refresh_hook()
 
     def _refresh_hook(self) -> None:

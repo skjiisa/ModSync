@@ -738,3 +738,22 @@ class SetupFinishTests(UiTestCase):
         self.assertEqual(setup.finish_tile.text(), "Finish")
         self.assertEqual(setup.finish_tile.property("tileRole"), "primary")
         self.assertIs(self.app.focusWidget(), setup.finish_tile)
+
+
+class HookUpgradeTests(UiTestCase):
+    def test_system_brings_an_old_hook_up_to_date_before_reading_it(self):
+        calls = []
+
+        def upgrade(appid=SKYRIM_SE.appid):
+            calls.append("upgrade")
+            return "Renamed the launch hook so Steam Cloud syncs Skyrim's saves again."
+
+        def status(appid=SKYRIM_SE.appid):
+            calls.append("status")
+            return launchhook.LaunchHookStatus(SKYRIM_SE, False, None, False, None, None, False, None, False, True)
+
+        with patch.object(launchhook, "upgrade", upgrade), patch.object(launchhook, "status", status):
+            window = self.window()
+            self.settle(4)
+        self.assertEqual(calls[:2], ["upgrade", "status"])
+        self.assertIn("Steam Cloud", window.last_message)
