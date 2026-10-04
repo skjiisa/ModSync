@@ -49,7 +49,7 @@ keyboard, a mouse and the Deck's touch screen work too.
 | B | Escape | Back: close a sheet, go back a wizard step, or return to Home. On Home it asks to quit |
 | LB / RB | Q / E, Ctrl+Tab, or a tap of Ctrl / Alt | Previous / next section |
 | X, Y | | Shortcuts named in the hint bar, such as "Check again" |
-| LT / RT, right stick | Page Up / Page Down | Scroll |
+| LB / RB, right stick | Page Up / Page Down | Scroll |
 | Start | Home | Home |
 
 On a keyboard, Space also chooses, Backspace goes back and Ctrl+Q quits.
@@ -94,10 +94,22 @@ There are two ways a controller reaches ModSync:
   doesn't, ModSync falls back to the keys Steam sends.
 
 Text entry (a pairing code, an address, an install folder) opens an on-screen
-keyboard with a symbols layer, Paste and Clear. LB and RB move the cursor, and the PIN pad works like a combination lock: up
-and down turn a digit, left and right move between digits. Folders are picked
+keyboard with a symbols layer, Paste and Clear. LB and RB move the cursor.
+The PIN pad works like a combination lock: up and down turn a digit, and
+left and right move between digits. Folders are picked
 with a built-in browser rather than a file dialog. Typing on a real keyboard
 works in all of them.
+
+The keyboard's Shift key also produces punctuation, and "#+=" opens the full
+symbols layer. LB / RB move the text cursor; the arrow buttons do the same.
+Turn on Select before moving the cursor to select text, or choose Select all
+to replace the whole entry. Start and End move to either end of the text.
+The insertion point stays visible while a keyboard button has focus.
+
+Home recommends the next repair when a game version or SKSE mismatch needs
+attention. Play or Continue remains available and says what may fail if you
+launch now. Under System, Settings details explains the background service,
+Steam launch settings and firewall ports; Controls shows the input shortcuts.
 
 ## Command line
 

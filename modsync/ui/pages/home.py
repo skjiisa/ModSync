@@ -66,13 +66,17 @@ class HomePage(Page):
 
         actions = QVBoxLayout()
         actions.setSpacing(14)
+        self.next_step = Tile("", "", "wrench", role="primary", chevron=True)
+        self.next_step.clicked.connect(lambda: host.go("game"))
+        self.next_step.hide()
+        self._recommendation = ""
+        actions.addWidget(self.next_step)
         self.play: Tile
         self.cancel_launch: Tile | None = None
         self.open_mo2: Tile | None = None
         self.setup: Tile | None = None
         if steam is not None:
-            self.play = HeroTile(steam.continue_label, f"Close ModSync and carry on with the Steam launch, "
-                                 f"which starts {steam.hands_off_to}.", "play")
+            self.play = HeroTile(steam.continue_label, f"Carry on to {steam.hands_off_to}.", "play")
             self.play.clicked.connect(lambda: host.decide_launch(launchhook.EXIT_CONTINUE))
             self.cancel_launch = Tile("Cancel launch", "Close ModSync and return to Steam without starting "
                                       "anything.", "close")
@@ -84,8 +88,7 @@ class HomePage(Page):
                 self.setup.clicked.connect(lambda: host.start_setup())
                 actions.addWidget(self.setup)
         elif state.has_instance:
-            self.play = HeroTile("Play Skyrim", "Through Mod Organizer 2 with the profile selected there, and "
-                                 "SKSE when it is installed.", "play")
+            self.play = HeroTile("Play Skyrim", "Use your selected MO2 profile and SKSE when installed.", "play")
             self.play.clicked.connect(lambda: host.launch(play=True))
             self.open_mo2 = Tile("Open Mod Organizer 2", "Manage mods, profiles and load order.", "box")
             self.open_mo2.clicked.connect(lambda: host.launch(play=False))
@@ -105,6 +108,7 @@ class HomePage(Page):
         actions.addStretch(1)
         right.addLayout(actions)
         self.finish_layout()
+        self._play_description = self.play.description
 
         if not state.has_instance:
             self.mo2_row.set_state("Not chosen", "warn", "Pick or install an instance to play through it.")
@@ -124,6 +128,8 @@ class HomePage(Page):
     def preferred_focus(self):
         if self.setup is not None and self.host.steam_launch is None:
             return self.setup
+        if self.next_step.isVisibleTo(self):
+            return self.next_step
         return self.play
 
     # --- readiness -----------------------------------------------------------------
@@ -148,6 +154,44 @@ class HomePage(Page):
             self.skse_row.set_state("Not installed", "off", "SKSE mods won't load without it.")
         else:
             self.skse_row.set_state("After the game", "off", "Fix the game version first.")
+        self.recommend_next_step(st, vc)
+
+    def recommend_next_step(self, st: GameStatus, vc) -> None:
+        """Recommend a repair without blocking an intentional launch or moving
+        focus away from a choice the user has already made."""
+        title = detail = risk = ""
+        if self.service.state.has_instance or self.host.steam_launch is not None:
+            if st.needs_downgrade or (vc.mismatch and not st.steam_updating):
+                wanted = st.wanted or vc.expected
+                title = "Fix game version"
+                detail = f"Your mods need Skyrim {wanted}. Installed: {vc.installed}."
+                risk = f"Mods built for {wanted} may not load if you play now."
+            elif st.skse_state in ("wrong", "several"):
+                title = "Fix Script Extender (SKSE)"
+                detail = "SKSE does not match the installed game."
+                risk = "SKSE mods may not load if you play now."
+            elif st.needs_pin and not st.pending_pin:
+                title = "Keep this game version"
+                detail = "Steam has an update waiting. Keep the version your mods use."
+                risk = "Steam may update Skyrim when you launch."
+        was_recommended = bool(self._recommendation)
+        had_focus = self.host.focusWidget() is self.next_step
+        self._recommendation = title
+        if title:
+            self.next_step.setText(title)
+            self.next_step.set_description(detail)
+        self.next_step.setVisible(bool(title))
+        if isinstance(self.play, HeroTile):
+            self.play.set_role("normal" if title else "primary")
+        self.play.set_description(risk or self._play_description)
+        # Only the initial recommendation takes default focus. A later poll
+        # must not override the user's decision to focus Play or another tile.
+        if (self.host._current == "home" and self.host.scope() is self.host.chrome
+                and self.host.router.mode != "mouse"):
+            if title and not was_recommended and self.host.focusWidget() is self.play:
+                self.next_step.setFocus()
+            elif not title and had_focus and self.play.isEnabled():
+                self.play.setFocus()
 
     def on_setup_described(self, lines: list[str]) -> None:
         main = [line for line in lines if not line.startswith("⚠")]
@@ -180,6 +224,7 @@ class HomePage(Page):
     # --- buttons ------------------------------------------------------------------------
     def update_enabled(self, *_args) -> None:
         busy = self.host.busy
+        self.next_step.setEnabled(not busy)
         if self.host.steam_launch is not None:
             # Neither start the game nor walk away while game files are rewritten.
             self.play.setEnabled(not busy)

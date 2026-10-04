@@ -140,6 +140,7 @@ class SetupFlow(QWidget):
         self.game.busyChanged.connect(lambda on: host.set_busy("setup-game", on))
         self.game.checked.connect(self._on_game_checked)
         self._unresolved = ""
+        self._repair: Tile | None = None
         v3.addWidget(self.game)
         v3.addStretch(1)
 
@@ -195,6 +196,16 @@ class SetupFlow(QWidget):
 
     def _on_game_checked(self, st, vc) -> None:
         self._unresolved = self.unresolved(st, vc)
+        self._repair = None
+        if self._unresolved:
+            if st.needs_downgrade or vc.mismatch:
+                self._repair = self.game.downgrade
+            elif st.skse_state in ("wrong", "several"):
+                self._repair = self.game.skse
+            elif st.needs_pin:
+                self._repair = self.game.pin
+        for tile in (self.game.downgrade, self.game.skse, self.game.pin):
+            tile.set_role("primary" if tile is self._repair else "normal")
         if self._unresolved:
             self.finish_tile.setText("Finish anyway")
             self.finish_tile.set_role("normal")
@@ -209,10 +220,7 @@ class SetupFlow(QWidget):
 
     def repair_tile(self) -> Tile | None:
         """The action that fixes what is unresolved, when there is one."""
-        if not self._unresolved:
-            return None
-        g = self.game
-        return next((t for t in (g.downgrade, g.skse, g.pin, g.adopt) if t.isVisibleTo(self)), None)
+        return self._repair if self._repair is not None and self._repair.isVisibleTo(self) else None
 
     def focus_default(self) -> None:
         page = self.stack.currentWidget()

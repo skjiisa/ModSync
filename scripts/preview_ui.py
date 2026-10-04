@@ -7,6 +7,7 @@ The example game, devices and pairing code are synthetic. No daemon is started.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import os
 from pathlib import Path
 import sys
@@ -124,6 +125,11 @@ def main():
         w = window_for(State(**configured), mode="gamepad")
         router.pad_style = "xbox"
         capture(w, "home")
+        ready = replace(game, expected=game.installed, skse_runtime=game.installed)
+        w.pages["home"].on_game_checked(ready, gameversion.VersionCheck(ready.installed, ready.expected))
+        w.pages["home"].focus_default()
+        capture(w, "home-ready")
+        w.pages["home"].on_game_checked(game, check)
         w.go("game")
         capture(w, "game")
         w.pages["game"].panel._start_downgrade()
@@ -140,6 +146,12 @@ def main():
         w.top_overlay.cancel()
         w.go("system")
         capture(w, "system")
+        w.pages["system"].details_tile.click()
+        capture(w, "system-details")
+        w.top_overlay.cancel()
+        w.pages["system"].controls_tile.click()
+        capture(w, "controls")
+        w.top_overlay.cancel()
         w.close()
 
         router.pad_style = "playstation"
@@ -149,6 +161,24 @@ def main():
         router.pad_style = "xbox"
         w.pages["sync"].add_device()
         capture(w, "keyboard")
+        keyboard = w.top_overlay
+        keyboard.shift.click()
+        capture(w, "keyboard-shift")
+        keyboard.shift.click()
+        keyboard.symbols.click()
+        capture(w, "keyboard-symbols")
+        keyboard.symbols.click()
+        keyboard.field.setText("/home/you/Games/mod_list")
+        keyboard.field.setCursorPosition(20)
+        keyboard.select.click()
+        keyboard.move_cursor(1)
+        keyboard.move_cursor(1)
+        keyboard.select.setFocus()
+        capture(w, "keyboard-editing")
+        keyboard.select.setChecked(False)
+        keyboard._validate = lambda text: "Enter a valid MODSYNC1- pairing code."
+        keyboard.done()
+        capture(w, "keyboard-error-compact", width=1000)
         w.top_overlay.cancel()
         with patch("modsync.ui.pages.sync.worker.run_async"), \
                 patch("modsync.ui.pages.sync.pairing_lan.make_pin", return_value="042815"):

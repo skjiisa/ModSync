@@ -7,11 +7,16 @@ does not read your setup, install anything, modify the game or sync. They are
 
 ## Home
 
-The readiness checklist sits next to Play. Each check opens the section that
-can fix it. The glowing frame marks focus, and the hint bar along the bottom
-shows the buttons of the controller in use.
+Home recommends a repair when the game version or SKSE does not match, or
+Steam has an update waiting. The recommendation gets the accent fill; Play
+stays available with the consequence explained. Each readiness check opens
+the section that can fix it. A single outline marks focus.
 
 ![Home](home.png)
+
+When the game is ready, Play becomes the primary action again.
+
+![Ready to play](home-ready.png)
 
 ## Opened from Steam's Play button
 
@@ -38,17 +43,43 @@ the PIN, and left and right move between digits. Typed digits work too.
 
 ![PIN pad](pin-pad.png)
 
-Text entry opens an on-screen keyboard with a Paste key.
+Text entry opens an on-screen keyboard with a Paste key. Shift produces
+punctuation, and "#+=" opens the full symbols layer. LB / RB or the arrow
+buttons move the cursor. Select and Select all let a controller replace part
+or all of an entry. The cursor and selection stay visible while a key has
+focus.
 
 ![On-screen keyboard](keyboard.png)
 
+![Editing text](keyboard-editing.png)
+
+![Symbols](keyboard-symbols.png)
+
+Validation messages also fit in a 1000 pixel wide window.
+
+![Keyboard validation](keyboard-error-compact.png)
+
 ## System
 
+Short descriptions keep the actions visible together. Settings details and
+Controls open in sheets with the background-service explanation, Steam
+launch status, firewall ports and input shortcuts.
+
 ![System](system.png)
+
+![Settings details](system-details.png)
+
+![Controls](controls.png)
 
 ## Setup wizard
 
 ![Setup, step 1](setup-1.png)
+
+The game step emphasizes the action that fixes the unresolved problem.
+Finish anyway explains what will remain unresolved. When the version is
+ready, Finish is the primary action and optional installs are secondary.
+
+![Setup, game version](setup-3.png)
 
 ## Regenerate the previews
 
@@ -58,8 +89,9 @@ From a source checkout:
 uv run python scripts/preview_ui.py --output scratch/ui-review
 ```
 
-This writes all 19 offline previews, including the confirmation sheet, the
+This writes all 26 offline previews, including the confirmation sheet, the
 folder browser, the install sheet, the network PIN and a 1000 pixel wide
-window used with a mouse, using Qt's offscreen platform. Copy the ones you
+window used with a mouse, keyboard symbols and selection, and validation at
+1000 pixels wide, using Qt's offscreen platform. Copy the ones you
 want into this folder and compress them with `optipng`. The installed Flatpak
 is a separate build and does not pick up source edits.

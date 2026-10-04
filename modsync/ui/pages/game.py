@@ -78,29 +78,25 @@ class GamePanel(QWidget):
         actions = QVBoxLayout()
         actions.setSpacing(12)
         self.downgrade = self._tile(
-            "Downgrade…", "Rewrite the game files to the version this setup needs, using Mulderland's "
-            "community patches. Steam keeps launching the game normally.", "download", self._start_downgrade,
+            "Downgrade…", "Switch Skyrim to the version your mods need. Original files are backed up.",
+            "download", self._start_downgrade,
             role="primary")
         self.skse = self._tile(
-            "Install SKSE", "Download the SKSE build for the installed game version from skse.silverlock.org, "
-            "verify it, and put it in the game folder in place of any SKSE already there.", "layers",
+            "Install SKSE", "Download the matching build from skse.silverlock.org and replace the old SKSE.", "layers",
             self._install_skse)
         self.pin = self._tile(
-            "Keep this version", "Steam wants to update the game. Pin the installed files so Steam treats them "
-            "as current and launches without updating. Applied when Steam next closes if it's open.", "pin",
+            "Keep this version", "Keep Steam from updating this version. Applied after Steam closes.", "pin",
             self._pin_version)
         self.unpin = self._tile(
-            "Unpin", "Put Steam's manifest back to what it said before the pin, so Steam updates the game "
-            "again. Needs Steam closed.", "undo", self._unpin_version)
+            "Unpin", "Let Steam update Skyrim again. Close Steam first.", "undo", self._unpin_version)
         self.adopt = self._tile(
-            "Use this machine's version", "Record the installed runtime as the version this setup is built "
-            "for. Do this after you upgrade or downgrade the game on purpose.", "check", self._adopt_version)
+            "Use this machine's version", "After changing Skyrim on purpose, record this version for your mods.",
+            "check", self._adopt_version)
         self.restore = self._tile(
-            "Restore original files", "Undo the downgrade: move the backed-up original files back into the "
-            "game folder and remove the backup.", "undo", lambda: self._restore_files())
+            "Restore original files", "Undo the downgrade using the backed-up files.", "undo",
+            lambda: self._restore_files())
         self.discard = self._tile(
-            "Delete leftover backup", "Steam has re-installed the files ModSync backed up before your last "
-            "downgrade, so the backup is no longer needed. Deleting it only frees disk space.", "trash",
+            "Delete leftover backup", "Steam has replaced these files. Delete the old backup to free disk space.", "trash",
             self._discard_backup)
         self.refresh_tile = self._tile(
             "Check again", "Re-read the installed version, SKSE and Steam's update state.", "refresh",

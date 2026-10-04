@@ -232,8 +232,12 @@ class KeyButton(QAbstractButton):
     def keyPressEvent(self, event) -> None:  # noqa: N802
         if event.key() == Qt.Key.Key_Backspace:
             self.sheet.backspace()
+        elif event.key() == Qt.Key.Key_Delete:
+            self.sheet.field.del_()
         elif event.matches(QKeySequence.StandardKey.Paste):
             self.sheet.paste()
+        elif event.matches(QKeySequence.StandardKey.SelectAll):
+            self.sheet.select_all()
         elif event.text() and event.text().isprintable():
             self.sheet.type_text(event.text())
         else:
@@ -256,22 +260,26 @@ class KeyButton(QAbstractButton):
 
 
 class CaretField(QLineEdit):
-    """A text field that keeps showing where typing goes while focus is on
-    the on-screen keys (Qt only draws the cursor in a focused field)."""
+    """Keep the insertion point visible while controller focus is on a key."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.cursorPositionChanged.connect(lambda *_: self.update())
+        self.selectionChanged.connect(self.update)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
-        if self.hasFocus():
-            return
-        r = self.cursorRect()
-        p = QPainter(self)
-        p.setPen(QPen(theme.color("accent"), 2))
-        x = r.center().x()
-        p.drawLine(QPointF(x, r.top() + 2), QPointF(x, r.bottom() - 2))
+        if not self.hasFocus() and not self.hasSelectedText():
+            painter = QPainter(self)
+            painter.setClipRect(self.contentsRect())
+            painter.setPen(QPen(theme.color("accent_hi"), 2))
+            cursor = self.cursorRect()
+            painter.drawLine(cursor.topLeft(), cursor.bottomLeft())
 
 
 class KeyboardSheet(Overlay):
     ROWS = ("1234567890", "qwertyuiop", "asdfghjkl:", "zxcvbnm.-/")
+    SHIFTED = ("!@#$%^&*()", "QWERTYUIOP", "ASDFGHJKL:", "ZXCVBNM>_?")
     # The "#+=" layer: every printable ASCII symbol the letter rows don't have.
     SYMBOLS = ("1234567890", "!@#$%^&*()", "_=+[]{};'\"", "~`\\|,.<>?/")
 
@@ -324,6 +332,27 @@ class KeyboardSheet(Overlay):
         bottom.addStretch(1)
         self.body.addLayout(bottom)
 
+        edit = QHBoxLayout()
+        edit.setSpacing(8)
+        self.cursor_left = KeyButton("←", self, special=True)
+        self.cursor_right = KeyButton("→", self, special=True)
+        self.cursor_left.clicked.connect(lambda: self.move_cursor(-1))
+        self.cursor_right.clicked.connect(lambda: self.move_cursor(1))
+        self.select = KeyButton("Select", self, wide=1.5, special=True)
+        self.select.setCheckable(True)
+        self.select.toggled.connect(self._on_select)
+        self.select_all_key = KeyButton("Select all", self, wide=2, special=True)
+        self.select_all_key.clicked.connect(self.select_all)
+        start = KeyButton("Start", self, wide=1.5, special=True)
+        end = KeyButton("End", self, wide=1.5, special=True)
+        start.clicked.connect(lambda: self.field.home(self.select.isChecked()))
+        end.clicked.connect(lambda: self.field.end(self.select.isChecked()))
+        for key in (self.cursor_left, self.cursor_right, self.select, self.select_all_key, start, end):
+            key.setFixedHeight(40)
+            edit.addWidget(key)
+        edit.addStretch(1)
+        self.body.addLayout(edit)
+
     def focus_default(self) -> None:
         if self.host.router.mode == "gamepad":
             self.keys[0].setFocus(Qt.FocusReason.OtherFocusReason)
@@ -333,16 +362,27 @@ class KeyboardSheet(Overlay):
 
     def hints(self) -> list[tuple[list[Action], str]]:
         focus = self.host.focusWidget()
-        accept = "Done" if focus is self.field else (focus.text() if isinstance(focus, KeyButton) and
-                                                       focus.special else "Type")
+        names = {self.cursor_left: "Cursor left", self.cursor_right: "Cursor right"}
+        if focus is self.field:
+            accept = "Done"
+        elif isinstance(focus, KeyButton) and focus.special:
+            accept = names.get(focus, focus.text())
+        else:
+            accept = "Type"
         if self.host.router.mode == "gamepad":
-            return [([Action.ACCEPT], accept), ([Action.PREV_TAB, Action.NEXT_TAB], "Cursor"),
+            return [([Action.ACCEPT], accept), ([Action.PREV_TAB, Action.NEXT_TAB], "Move cursor"),
                     ([Action.AUX], "Space"), ([Action.ALT], "Delete"), ([Action.MENU], "Done"),
                     ([Action.BACK], "Cancel")]
         return [([Action.ACCEPT], accept), ([Action.BACK], "Cancel")]
 
     def handle_action(self, action: Action) -> bool:
         focus = self.host.focusWidget()
+        if action in (Action.PREV_TAB, Action.NEXT_TAB):
+            self.move_cursor(-1 if action == Action.PREV_TAB else 1)
+            return True
+        if focus is self.field and action in (Action.LEFT, Action.RIGHT):
+            self.move_cursor(-1 if action == Action.LEFT else 1)
+            return True
         if action == Action.ACCEPT and focus is self.field:
             self.done()
             return True
@@ -355,13 +395,6 @@ class KeyboardSheet(Overlay):
         if action == Action.MENU:
             self.done()
             return True
-        if action in (Action.PREV_TAB, Action.NEXT_TAB):  # LB / RB move the cursor
-            if action == Action.PREV_TAB:
-                self.field.cursorBackward(False)
-            else:
-                self.field.cursorForward(False)
-            self.field.update()
-            return True
         if action == Action.UP and focus in self.keys[:10]:
             self.field.setFocus(Qt.FocusReason.OtherFocusReason)
             return True
@@ -371,12 +404,26 @@ class KeyboardSheet(Overlay):
         symbols = self.symbols.isChecked()
         self.symbols.setText("abc" if symbols else "#+=")
         self.shift.setEnabled(not symbols)
-        rows = self.SYMBOLS if symbols else self.ROWS
+        rows = self.SYMBOLS if symbols else (self.SHIFTED if self.shift.isChecked() else self.ROWS)
         text = "".join(rows)
-        if self.shift.isChecked() and not symbols:
-            text = text.upper()
         for key, ch in zip(self.keys, text):
             key.setText(ch)
+
+    def move_cursor(self, direction: int) -> None:
+        if direction < 0:
+            self.field.cursorBackward(self.select.isChecked())
+        else:
+            self.field.cursorForward(self.select.isChecked())
+
+    def _on_select(self, on: bool) -> None:
+        self.select.setText("Selecting" if on else "Select")
+        if not on:
+            self.field.deselect()
+        self.host.refresh_hints()
+
+    def select_all(self) -> None:
+        self.select.setChecked(False)
+        self.field.selectAll()
 
     def type_text(self, text: str) -> None:
         self.field.insert(text)
@@ -846,4 +893,3 @@ class CodeSheet(Overlay):
     def _copy(self) -> None:
         QGuiApplication.clipboard().setText(self.code.text())
         self.host.notify("Pairing code copied to the clipboard.", "ok")
-

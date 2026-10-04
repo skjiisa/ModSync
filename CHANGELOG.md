@@ -39,17 +39,22 @@ All notable changes to ModSync are documented here. The format follows
   dialogs are gone. The window now has five sections (Home, Game, Mod
   Organizer, Sync and System), switched with LB and RB, Q and E, or by moving
   up onto the tabs. Every action is a large tile that shows the description a
-  tooltip used to hide. A glowing frame marks the focused tile, and a hint
+  tooltip used to hide. A single outline marks the focused tile, and a hint
   bar shows which button does what, with PlayStation symbols for a
   PlayStation controller. Questions, text entry, PIN entry and folder picking
   open in sheets inside the window instead of separate dialogs, and the hint
   bar names what A does on the focused control. Text entry has an on-screen
-  keyboard with a symbols layer and a Paste key, and the PIN pad works like a
-  combination lock. Home has a readiness checklist (game version, SKSE, Mod
+  keyboard with a symbols layer, shifted punctuation, cursor movement,
+  selection and a Paste key, and the PIN pad works like a combination lock.
+  Home recommends a repair when the game version or SKSE does not match, or
+  Steam has an update waiting. Play stays available with the consequence
+  explained. Home has a readiness checklist (game version, SKSE, Mod
   Organizer 2, sync) next to Play, or Continue when Steam's Play button
   opened ModSync. The setup wizard reuses the same parts. Its last step keeps
   Finish at the top, or "Finish anyway" with the repair focused when the game
-  version still doesn't match. B on Home, or "Quit ModSync" under System, asks to
+  version still doesn't match. System and Game use shorter tile descriptions;
+  System's settings details and controls open in their own sheets.
+  B on Home, or "Quit ModSync" under System, asks to
   quit, so ModSync can be closed without a mouse. ModSync always uses its
   dark theme now.
 - Controllers work two ways. Outside games, Steam Input's desktop

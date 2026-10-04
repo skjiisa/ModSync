@@ -200,7 +200,10 @@ class FirewallTests(UiTestCase):
         self.assertTrue(tile.isVisibleTo(system))
         self.assertEqual(tile.text(), "Allow in firewall…")
         self.assertEqual(tile.badge.text(), "Blocked")
-        self.assertIn("21029/tcp", tile.description)
+        self.assertIn("password", tile.description)
+        system.details_tile.click()
+        self.assertIn("21029/tcp", window.top_overlay.text.text())
+        window.top_overlay.cancel()
         self.assertIs(window.firewall_check, blocked)
 
         # Allow: the stamp is remembered and the rules are re-read, not assumed.

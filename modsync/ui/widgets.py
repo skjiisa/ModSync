@@ -9,7 +9,6 @@ bar along the bottom that shows which button does what.
 
 from __future__ import annotations
 
-import math
 import random
 import time
 from typing import Callable
@@ -588,11 +587,11 @@ class Backdrop(QWidget):
 
 
 class FocusHalo(QWidget):
-    """The glowing frame that slides to whatever has focus.
+    """A single outline that slides to whatever has focus.
 
     It is one overlay over the whole window that never takes the mouse; it
     follows its target through scrolling and layout changes on a frame timer
-    and breathes gently, so the eye finds it at a glance."""
+    while the tile fill identifies the recommended action."""
 
     PAD = 5
 
@@ -608,12 +607,11 @@ class FocusHalo(QWidget):
         self._anim.setDuration(150)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._anim.valueChanged.connect(self._on_anim)
-        # 30 fps is plenty for following scrolls and the slow breathing glow.
+        # 30 fps is enough to follow scrolling and layout changes.
         self._tracker = QTimer(self)
         self._tracker.setInterval(33)
         self._tracker.timeout.connect(self._track)
         self._tracker.start()
-        self._phase = 0.0
 
     def follow(self, widget: QWidget | None) -> None:
         if widget is not None and (widget.property("noHalo") or widget is self.parent()):
@@ -672,7 +670,6 @@ class FocusHalo(QWidget):
         # or another app is in front.
         if not self.isVisible() or not self.window().isActiveWindow():
             return
-        self._phase = (self._phase + 0.033 / 1.8) % 1.0
         rect = self._target_rect()
         if rect is None:
             if not self._shown.isNull():
@@ -700,14 +697,9 @@ class FocusHalo(QWidget):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        breath = 0.5 + 0.5 * math.sin(self._phase * 2 * math.pi)
         r = self._shown
         radius = 26 if r.height() > 110 else 20
-        for i, alpha in enumerate((26, 18, 10)):
-            grow = 2 + i * 3
-            p.setPen(QPen(theme.color("accent", int(alpha + breath * 22)), 3))
-            p.drawRoundedRect(r.adjusted(-grow, -grow, grow, grow), radius + grow, radius + grow)
-        p.setPen(QPen(theme.color("accent_hi"), 3))
+        p.setPen(QPen(theme.color("accent_hi"), 2.5))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRoundedRect(r, radius, radius)
 
