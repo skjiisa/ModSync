@@ -89,9 +89,12 @@ There are two ways a controller reaches ModSync:
   Steam turns a press into a key while SDL reads the same press, ModSync acts
   on it once. Presses are ignored while another window, such as MO2 or the
   game, is in front. Set `MODSYNC_GAMEPAD=0` to read only the keys.
+  Reading a controller needs read access to its `/dev/input/event*` device.
+  SteamOS and Steam's udev rules grant that for controllers. If a system
+  doesn't, ModSync falls back to the keys Steam sends.
 
 Text entry (a pairing code, an address, an install folder) opens an on-screen
-keyboard with a Paste key, and the PIN pad works like a combination lock: up
+keyboard with a symbols layer, Paste and Clear. LB and RB move the cursor, and the PIN pad works like a combination lock: up
 and down turn a digit, left and right move between digits. Folders are picked
 with a built-in browser rather than a file dialog. Typing on a real keyboard
 works in all of them.

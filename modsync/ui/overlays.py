@@ -255,6 +255,21 @@ class KeyButton(QAbstractButton):
         p.drawText(r, Qt.AlignmentFlag.AlignCenter, self.text())
 
 
+class CaretField(QLineEdit):
+    """A text field that keeps showing where typing goes while focus is on
+    the on-screen keys (Qt only draws the cursor in a focused field)."""
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if self.hasFocus():
+            return
+        r = self.cursorRect()
+        p = QPainter(self)
+        p.setPen(QPen(theme.color("accent"), 2))
+        x = r.center().x()
+        p.drawLine(QPointF(x, r.top() + 2), QPointF(x, r.bottom() - 2))
+
+
 class KeyboardSheet(Overlay):
     ROWS = ("1234567890", "qwertyuiop", "asdfghjkl:", "zxcvbnm.-/")
     # The "#+=" layer: every printable ASCII symbol the letter rows don't have.
@@ -267,7 +282,7 @@ class KeyboardSheet(Overlay):
         self._on_done = on_done
         self._validate = validate
         self.body.addWidget(label(prompt, "secondary"))
-        self.field = QLineEdit(text)
+        self.field = CaretField(text)
         self.field.setPlaceholderText(placeholder)
         self.field.setProperty("noHalo", True)
         self.field.returnPressed.connect(self.done)
@@ -298,11 +313,13 @@ class KeyboardSheet(Overlay):
         space.clicked.connect(lambda: self.type_text(" "))
         back = KeyButton("Delete", self, wide=1.5, special=True)
         back.clicked.connect(self.backspace)
+        clear = KeyButton("Clear", self, wide=1.5, special=True)
+        clear.clicked.connect(self.field.clear)
         paste = KeyButton("Paste", self, wide=1.5, special=True)
         paste.clicked.connect(self.paste)
         done = KeyButton("Done", self, wide=1.5, special=True)
         done.clicked.connect(self.done)
-        for key in (self.shift, self.symbols, space, back, paste, done):
+        for key in (self.shift, self.symbols, space, back, clear, paste, done):
             bottom.addWidget(key)
         bottom.addStretch(1)
         self.body.addLayout(bottom)
@@ -319,8 +336,9 @@ class KeyboardSheet(Overlay):
         accept = "Done" if focus is self.field else (focus.text() if isinstance(focus, KeyButton) and
                                                        focus.special else "Type")
         if self.host.router.mode == "gamepad":
-            return [([Action.ACCEPT], accept), ([Action.AUX], "Space"), ([Action.ALT], "Delete"),
-                    ([Action.MENU], "Done"), ([Action.BACK], "Cancel")]
+            return [([Action.ACCEPT], accept), ([Action.PREV_TAB, Action.NEXT_TAB], "Cursor"),
+                    ([Action.AUX], "Space"), ([Action.ALT], "Delete"), ([Action.MENU], "Done"),
+                    ([Action.BACK], "Cancel")]
         return [([Action.ACCEPT], accept), ([Action.BACK], "Cancel")]
 
     def handle_action(self, action: Action) -> bool:
@@ -336,6 +354,13 @@ class KeyboardSheet(Overlay):
             return True
         if action == Action.MENU:
             self.done()
+            return True
+        if action in (Action.PREV_TAB, Action.NEXT_TAB):  # LB / RB move the cursor
+            if action == Action.PREV_TAB:
+                self.field.cursorBackward(False)
+            else:
+                self.field.cursorForward(False)
+            self.field.update()
             return True
         if action == Action.UP and focus in self.keys[:10]:
             self.field.setFocus(Qt.FocusReason.OtherFocusReason)

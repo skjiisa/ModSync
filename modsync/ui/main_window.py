@@ -560,14 +560,22 @@ class MainWindow(QMainWindow):
         self.hintbar.set_hints(hints)
 
     def _on_focus_changed(self, old: QWidget | None, new: QWidget | None) -> None:
+        if new is None:
+            # The focused control was deleted, hidden or disabled and Qt found
+            # nowhere to put focus. (Losing focus to another window is fine.)
+            if alive(old) and old.window() is self and QApplication.activeWindow() is self:
+                QTimer.singleShot(0, self, self._repair_focus)
+            return
         if not alive(new) or new.window() is not self:
             return
         # Qt hands focus to the next widget in its chain when the focused one is
-        # hidden (a tile that just went away, a page being switched out). That
-        # can be the tab bar, or a tile underneath an open sheet: put it back.
+        # hidden or disabled (a tile that just went away, a page being switched
+        # out, a section locked while files change). That can be the tab bar, or
+        # a tile underneath an open sheet: put it back.
         scope = self.scope()
         escaped = scope is not self.chrome and not (new is scope or scope.isAncestorOf(new))
-        bounced = isinstance(new, TabButton) and alive(old) and not old.isVisible() and self.stack.isAncestorOf(old)
+        gone = alive(old) and (not old.isVisible() or not old.isEnabled())
+        bounced = isinstance(new, TabButton) and gone and self.stack.isAncestorOf(old)
         if escaped or bounced:
             QTimer.singleShot(0, self, self.focus_scope_default)
         for page in self.pages.values():
@@ -577,6 +585,12 @@ class MainWindow(QMainWindow):
             nav.reveal(new)
         self.halo.follow(new)
         self.refresh_hints()  # sheets name what A does on the focused control
+
+    def _repair_focus(self) -> None:
+        focus = self.focusWidget()
+        scope = self.scope()
+        if not alive(focus) or not (focus is scope or scope.isAncestorOf(focus)) or not focus.isEnabled():
+            self.focus_scope_default()
 
     def _on_mode_changed(self, mode: str) -> None:
         self.halo.enabled = mode != "mouse"

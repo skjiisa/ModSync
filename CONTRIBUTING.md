@@ -31,6 +31,24 @@ Qt's offscreen platform; set `QT_QPA_PLATFORM=offscreen` if you are headless.
 uv run pytest -q
 ```
 
+The UI tests drive the window with synthetic key and controller events. They
+don't replace a pass on real hardware after changing input handling:
+
+1. On a Steam Deck in desktop mode, with Steam running and its default
+   desktop configuration, reach every section and come back using the d-pad,
+   A, B, Y and the bumpers. B on Home asks to quit.
+2. Do the same with a Steam Controller and an Xbox or PlayStation pad on a
+   desktop, with Steam running. Each press should act once, and B should go
+   back rather than choose.
+3. In Gaming Mode (the ModSync shortcut, or Steam's Play button with the
+   launch hook on), use the d-pad and the left stick. Hold a direction to
+   check that it repeats and stops on release.
+4. Pick a folder, type a path with symbols, and enter a pairing PIN using
+   only the controller. Cancel a text entry and check the old value stays.
+5. Unplug and reconnect the controller, then move focus. Switch to another
+   window, press buttons there, and check that nothing happened in ModSync
+   when you come back.
+
 The Syncthing integration tests download and run a real Syncthing daemon. One
 two-node test checks that a mod propagates while each machine keeps its own
 `ModOrganizer.ini`. They only run when `MODSYNC_IT=1` is set:

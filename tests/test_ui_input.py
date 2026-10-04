@@ -628,3 +628,49 @@ class SheetDetailTests(UiTestCase):
 
         window.request_quit()
         self.assertIn("Quit ModSync", window.hintbar.texts)
+
+
+@unittest.skipIf(QApplication is None, "PySide6 not installed")
+class SecondOpinionTests(UiTestCase):
+    """Ideas checked against a second take on the same redesign."""
+
+    def test_keyboard_cursor_moves_with_the_bumpers_and_clear_empties(self):
+        from modsync.ui.input import Action, InputRouter
+        from modsync.ui.overlays import KeyboardSheet
+
+        window = self.window()
+        sheet = KeyboardSheet(window, "Type", "Prompt", lambda text: None, text="ac")
+        sheet.open()
+        sheet.keys[0].setFocus()
+        router = InputRouter.instance()
+        router.dispatch(Action.PREV_TAB)  # LB: one to the left, between a and c
+        next(k for k in sheet.keys if k.text() == "b").click()
+        self.assertEqual(sheet.field.text(), "abc")
+        self.assertEqual(window._current, "home")  # sections stay put under a sheet
+        next(k for k in sheet.findChildren(type(sheet.keys[0])) if k.text() == "Clear").click()
+        self.assertEqual(sheet.field.text(), "")
+
+    def test_focus_recovers_when_its_control_is_disabled(self):
+        from modsync.ui.widgets import TabButton
+
+        State(instance_path=str(self.tmp)).save()
+        window = self.window()
+        home = window.pages["home"]
+        self.assertIs(self.app.focusWidget(), home.play)
+        window.set_busy("game", True)  # Play is disabled while files change
+        self.settle()
+        focus = self.app.focusWidget()
+        self.assertIsNotNone(focus)
+        self.assertNotIsInstance(focus, TabButton)
+        self.assertTrue(home.isAncestorOf(focus) and focus.isEnabled())
+
+    def test_one_press_on_a_pad_and_steams_virtual_copy_acts_once(self):
+        from modsync.ui.gamepad import Gamepads
+
+        pads = Gamepads()
+        events = []
+        pads.button.connect(lambda name, down: events.append((name, down)))
+        # The same press, read from the physical pad and from Steam's virtual one.
+        for down in (True, True, False, False):
+            pads._set("a", down)
+        self.assertEqual(events, [("a", True), ("a", False)])
