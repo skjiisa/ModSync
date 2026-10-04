@@ -66,6 +66,7 @@ class _SmokeBase(unittest.TestCase):
             patch.object(background, "status", lambda: {"installed": False, "active": "inactive", "enabled": "disabled"}),
             patch.object(launchhook, "status", lambda appid=SKYRIM_SE.appid: launchhook.LaunchHookStatus(
                 SKYRIM_SE, False, None, False, None, None, False, None, False, True)),
+            patch.object(launchhook, "upgrade", lambda appid=SKYRIM_SE.appid: None),
         ]
         for p in patches:
             p.start()
@@ -82,8 +83,9 @@ class DashboardSmokeTests(_SmokeBase):
 
         dash = Dashboard(ModSyncService(manager=object()))
         dash.resize(1120, 780)
-        QThreadPool.globalInstance().waitForDone(5000)
-        self.app.processEvents()
+        for _ in range(2):  # the hook status is read once its upgrade check is done
+            QThreadPool.globalInstance().waitForDone(5000)
+            self.app.processEvents()
         dash.shutdown()
         return dash
 
