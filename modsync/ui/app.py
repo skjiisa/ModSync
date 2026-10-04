@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import BinaryIO
 
 log = logging.getLogger(__name__)
 
@@ -71,10 +72,11 @@ def run(argv: list[str] | None = None) -> int:
     return app.exec()
 
 
-def run_hub(*, appid: int | None = None, through: str | None = None) -> int:
+def run_hub(*, appid: int | None = None, through: str | None = None, handoff: BinaryIO | None = None) -> int:
     """The window the Steam launch hook opens: the regular one, with Steam's
     launch waiting on it. Returns the exit code the hook reads: 0 = continue the
-    launch, 10 = cancel it."""
+    launch, 10 = cancel it. When Play or Open MO2 continued it, their launch is
+    written to ``handoff`` for the hook to run (see ``launchhook.HANDOFF_TAG``)."""
     from modsync import launchhook
     from modsync.games import GAMES, SKYRIM_SE
     from modsync.logging_setup import configure
@@ -90,5 +92,9 @@ def run_hub(*, appid: int | None = None, through: str | None = None) -> int:
     result = launch.decision if launch.decision is not None else (
         code if code in (launchhook.EXIT_CONTINUE, launchhook.EXIT_CANCEL) else launchhook.EXIT_CANCEL
     )
+    if result == launchhook.EXIT_CONTINUE and launch.plan is not None and handoff is not None:
+        log.info("Steam launch: %s through MO2: %s", launch.plan.target, launch.plan.command)
+        handoff.write(launchhook.encode_handoff(launch.plan))
+        handoff.flush()
     log.info("Steam launch: %s (exit %d)", "cancel" if result == launchhook.EXIT_CANCEL else "continue", result)
     return result

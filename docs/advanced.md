@@ -275,13 +275,27 @@ is one more such tool: `compatibilitytools.d/modsync_489830_proton`. MO2-LINT
 introduced the approach in
 [PR #1096](https://github.com/Furglitch/modorganizer2-linux-installer/pull/1096)
 for its own `mo2_489830_redirector`. The hook's `proton` script opens ModSync
-and then hands the launch on to the tool Steam used before, inside the Steam
-Linux Runtime container that tool asks for. When MO2-LINT's redirector is
-installed the chain is Play, ModSync, Mod Organizer 2. Otherwise it is Play,
-ModSync, the game with the previously selected Proton, and the button says
-"Continue to Skyrim Special Edition". The hook declares no runtime
-requirement of its own, so Steam runs it on the host, where a window can be
-shown. Steam Tinker Launch works the same way.
+and then carries on with the same launch, inside the Steam Linux Runtime
+container its Proton asks for.
+
+Play Skyrim and Open Mod Organizer 2 prepare the same launch as when ModSync
+was opened directly: the same Proton, MO2 profile and SKSE, and the same
+checks. ModSync doesn't start it, though. It writes the Proton, the instance
+folder and the `ModOrganizer.exe` command line to the hook on stdout and
+closes. The hook runs that command in place of the game's own program, with
+Steam's verb (`waitforexitandrun`) and environment. MO2 and the game are
+therefore Steam's launch: Steam shows the game as running until the whole
+Wine session exits, counts playtime, and uploads saves to Steam Cloud only
+after that. A Play started from ModSync when Steam didn't open it bypasses
+Steam, so it doesn't sync cloud saves.
+
+Before an MO2 instance is chosen, the button is Continue instead, which runs
+what Steam was about to start: MO2-LINT's redirector when it is installed
+("Continue to Mod Organizer"), otherwise the game with the previously
+selected Proton ("Continue to Skyrim Special Edition"). If ModSync fails or
+hands back nothing usable, the hook launches that too. The hook declares no
+runtime requirement of its own, so Steam runs it on the host, where a window
+can be shown. Steam Tinker Launch works the same way.
 
 The hook survives updates on both sides. Nothing of MO2-LINT's is copied. The
 chain refers to its tool directory and re-reads its `toolmanifest.vdf` on
@@ -310,19 +324,20 @@ or the background service the moment Steam closes. You can also pick "ModSync
 (Skyrim Special Edition)" yourself under Properties, then Compatibility.
 
 Steam's Play button opens the regular ModSync window, with the launch waiting
-on it. Play turns into Continue, which closes ModSync and lets the hook start
-Mod Organizer 2 or the game. It has focus, so A or Enter continues. When the
-game version or SKSE needs a repair, a repair tile such as "Fix game version"
-sits above Continue and takes focus instead, and Continue says what may fail.
-That only happens before anything is pressed, so a press made while the check
-runs still lands on Continue. "Cancel launch", below Continue, or closing the
-window ends the launch, and Steam goes back to the library. ModSync hides Open
-Mod Organizer 2 while Steam waits. A second Proton started in the same prefix
-would clash with the one Steam is about to run, or outlive the launch Steam is
-tracking. Continue and Cancel stay disabled while game or USVFS files are
-being rewritten. Setting `MODSYNC_HUB_AUTO_DECISION=cancel %command%` in the
-game's launch options makes ModSync decide by itself after a few seconds,
-which is useful for testing the chain without a controller in hand.
+on it. Home offers the same Play Skyrim and Open Mod Organizer 2 tiles as
+always, with "Cancel launch" below them. Play has focus, so A or Enter plays.
+When the game version or SKSE needs a repair, a repair tile such as "Fix game
+version" sits above Play and takes focus instead, and Play says what may
+fail. That only happens before anything is pressed, so a press made while the
+check runs still lands on Play. If a launch can't be prepared, for example
+because MO2 hasn't been told which game it manages yet, ModSync says why and
+Steam keeps waiting. "Cancel launch" or closing the window ends the launch,
+and Steam goes back to the library. Play, Open MO2 and Cancel stay disabled
+while game or USVFS files are being rewritten. Setting
+`MODSYNC_HUB_AUTO_DECISION=continue %command%` (Play, or Continue before an
+instance is chosen) or `=cancel` in the game's launch options makes ModSync
+decide by itself after a few seconds. That is useful for testing the chain
+without a controller in hand.
 
 `modsync launch enable --through <tool>` chains to a named compatibility tool
 instead of the detected one.

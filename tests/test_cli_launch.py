@@ -2,6 +2,8 @@
 
 import io
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -66,6 +68,28 @@ class LaunchCommandTests(unittest.TestCase):
     def test_help_mentions_launch(self):
         code, out = self.run_cli("--help")
         self.assertIn("modsync launch status", out)
+
+
+class HubOutputTests(unittest.TestCase):
+    """The hub's stdout carries only the handoff; anything else said goes to stderr."""
+
+    def test_stdout_is_reserved_for_the_handoff(self):
+        script = (
+            "import sys\n"
+            "import modsync.ui.app as app\n"
+            "from modsync import cli\n"
+            "def fake(*, appid, through, handoff):\n"
+            "    print('a stray print')\n"
+            "    handoff.write(b'the-handoff\\0')\n"
+            "    return 0\n"
+            "app.run_hub = fake\n"
+            "sys.exit(cli._launch_hub(['--appid', '489830', '--through', 'proton_experimental']))\n"
+        )
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, timeout=60,
+                                cwd=Path(__file__).resolve().parents[1])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, b"the-handoff\0")
+        self.assertIn(b"a stray print", result.stderr)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,17 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Changed
 
+- Steam's Play button now leads to the same Play Skyrim and Open Mod
+  Organizer 2 as opening ModSync directly: the selected MO2 profile, SKSE
+  when it is installed, and the same checks. Before, Continue only carried on
+  to whatever Steam was about to start, which without MO2-LINT's redirector
+  was the unmodded game. ModSync hands the MO2 command line back to the
+  launch hook, which runs it as Steam's own launch, so Steam still tracks the
+  game and syncs its cloud saves when it exits. Verified on the desktop: a
+  save written while MO2 ran under Steam was uploaded right after it closed,
+  with a matching SHA-1. Continue remains for a machine with no MO2 instance
+  chosen. Existing hooks are updated when ModSync opens.
+
 - A new interface, designed for a controller first. The dashboard and its
   dialogs are gone. The window now has five sections (Home, Game, Mod
   Organizer, Sync and System), switched with LB and RB, Q and E, or by moving
@@ -92,6 +103,10 @@ All notable changes to ModSync are documented here. The format follows
   service applies them before Steam starts. Tested on a Frame.
 
 ### Fixed
+
+- Play refuses an MO2 instance that hasn't been told which game it manages,
+  and says to finish setting it up in MO2. MO2 would otherwise stop at
+  "Select the game managed by this instance".
 
 - Steam Cloud stopped syncing Skyrim saves while the Play button switch was
   on. Steam maps a game's Windows save folders into its Proton prefix only

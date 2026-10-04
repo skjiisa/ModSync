@@ -7,9 +7,10 @@ does. Everything that used to be a dialog is a sheet over the window, and a
 glowing halo marks focus. The setup wizard takes over the middle when it runs.
 
 The same window serves Steam's launch hook. Given a ``SteamLaunch``, Steam is
-waiting on it: Continue / Cancel launch on Home record the decision and close
-the window, closing it any other way cancels, and the decision outlives
-rebuilds and trips through the wizard.
+waiting on it: Play and Open MO2 prepare the same launch as ever and hand it to
+the hook to run as Steam's own; Continue (no MO2 yet) and Cancel launch record
+the decision. Each closes the window, closing it any other way cancels, and the
+decision outlives rebuilds and trips through the wizard.
 
 While game or USVFS files are being rewritten (or an install or launch is
 under way) the window is busy: it can't close, rebuild, start the wizard or
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import os
 import time
+from functools import partial
 
 import shiboken6
 from PySide6.QtCore import QThreadPool, Qt, QTimer, Signal
@@ -42,7 +44,7 @@ from modsync.ui.widgets import (
 )
 
 # Testing aid: MODSYNC_HUB_AUTO_DECISION=continue|cancel decides a Steam launch by
-# itself after a few seconds, so the whole Steam → hook → ModSync → game chain
+# itself after a few seconds (continue = Play, once an MO2 instance is chosen), so the whole Steam → hook → ModSync → game chain
 # can be exercised without a hand on the controller (e.g. from the game's
 # launch options).
 _AUTO_DECISION_ENV = "MODSYNC_HUB_AUTO_DECISION"
@@ -163,9 +165,14 @@ class MainWindow(QMainWindow):
 
         auto = os.environ.get(_AUTO_DECISION_ENV, "").strip().lower()
         if steam_launch is not None and auto in ("continue", "cancel"):
-            code = launchhook.EXIT_CONTINUE if auto == "continue" else launchhook.EXIT_CANCEL
             self.notify(f"Test mode: choosing \"{auto}\" automatically in a moment.")
-            QTimer.singleShot(_AUTO_DECISION_MS, self, lambda: self.decide_launch(code))
+            if auto == "cancel":
+                decide = partial(self.decide_launch, launchhook.EXIT_CANCEL)
+            elif self.service.state.has_instance:
+                decide = partial(self.launch, play=True)  # what the Play tile does
+            else:
+                decide = partial(self.decide_launch, launchhook.EXIT_CONTINUE)
+            QTimer.singleShot(_AUTO_DECISION_MS, self, decide)
 
     # --- pages ---------------------------------------------------------------------
     def _build_pages(self) -> None:
@@ -424,12 +431,24 @@ class MainWindow(QMainWindow):
 
     # --- launching ---
     def launch(self, *, play: bool) -> None:
-        if self.busy or self.steam_launch is not None:
+        """Play / Open MO2. Steam waiting: the same launch, prepared here and
+        handed to the hook, which runs it as Steam's own launch."""
+        if self.busy or (self.steam_launch is not None and self.steam_launch.decision is not None):
             return
         self.set_busy("launch", True)
         self.notify("Starting Skyrim through MO2…" if play else "Opening MO2…")
+        if self.steam_launch is not None:
+            worker.run_async(self.service.prepare_mo2, play=play, on_done=self._on_prepared,
+                             on_failed=self._on_launch_failed)
+            return
         worker.run_async(self.service.launch_mo2, play=play, on_done=self._on_launched,
                          on_failed=self._on_launch_failed)
+
+    def _on_prepared(self, result) -> None:
+        plan, _note = result  # the window closes now; prepare_mo2 has logged the note
+        self.set_busy("launch", False)
+        self.steam_launch.plan = plan
+        self.decide_launch(launchhook.EXIT_CONTINUE)
 
     def _on_launched(self, message: str) -> None:
         self.set_busy("launch", False)

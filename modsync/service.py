@@ -21,8 +21,8 @@ from modsync import config, gameversion, pairing_lan, platforms, skse, steamos
 from modsync.downgrade import engine, recipe
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import usvfs, vcruntime
-from modsync.mo2.launch import (Launcher, build_plan, nested_desktop_display, plan_system32,
-                                prefix_system32, run_in_prefix)
+from modsync.mo2.launch import (LaunchPlan, Launcher, build_plan, mark_portable, nested_desktop_display,
+                                plan_system32, prefix_system32, run_in_prefix)
 from modsync.pairing_code import PairingCode
 from modsync.state import State
 from modsync.steam import appinfo, libraries as libs, prefixes, shortcuts
@@ -209,7 +209,10 @@ class ModSyncService:
         if gameversion.VaultMeta.load(instance_path) is None:
             self.record_initial_vault_version()
 
-    def launch_mo2(self, *, play: bool = False) -> str:
+    def prepare_mo2(self, *, play: bool = False) -> tuple[LaunchPlan, str]:
+        """Everything Play / Open MO2 needs before MO2 starts, whoever starts it:
+        ModSync itself (:meth:`launch_mo2`) or Steam's launch hook. Returns the
+        plan and a note for the user ("" when there is none)."""
         plan = build_plan(self.state.instance_path, play=play)
         note = ""
         try:
@@ -221,6 +224,11 @@ class ModSyncService:
             log.warning("could not add the VC++ runtime to %s: %s", plan.cwd, exc)
             note = (" The Visual C++ runtime MO2 needs could not be downloaded; "
                     "if MO2 closes right away, check the connection and try again.")
+        mark_portable(plan)
+        return plan, note
+
+    def launch_mo2(self, *, play: bool = False) -> str:
+        plan, note = self.prepare_mo2(play=play)
         message = self.launcher.start(plan) + note
         if nested_desktop_display():
             # The VR pointer arrives there as touch, and Qt's touch handling calls
