@@ -1,265 +1,234 @@
-"""Network discovery placeholders must never select stale pairing targets."""
+"""Pairing in the UI: scan results, the PIN wheels, the host's big PIN, and
+noticing when synced mods have arrived."""
 
-import os
-import unittest
+import tempfile
 from unittest.mock import patch
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-try:
-    from PySide6.QtWidgets import QApplication
-except ImportError:
-    QApplication = None
-
+from modsync import gameversion, pairing_lan
 from modsync.pairing_lan import Announcement
+from modsync.service import ModSyncService, SyncStatus
 from modsync.state import State
+from tests.ui_support import UiTestCase
 
 
-@unittest.skipIf(QApplication is None, "PySide6 not installed")
-class PairingRescanTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
+class JoinPanelTests(UiTestCase):
+    def _panel(self):
+        State(instance_path=str(self.tmp)).save()
+        window = self.window()
+        sync = window.pages["sync"]
+        window.go("sync")
+        return window, sync.join
 
-    def test_dashboard_never_joins_a_stale_peer_during_or_after_failed_scan(self):
-        from unittest.mock import Mock
-        from modsync.ui.sync_card import SyncCard
-
-        service = Mock(state=State(instance_path="/unused/MO2"))
-        with patch("modsync.ui.sync_card.run_async"):
-            card = SyncCard(service)
+    def test_placeholders_are_never_choosable_and_scans_never_overlap(self):
+        window, panel = self._panel()
         old = Announcement("Old peer", "192.0.2.1", 1234, "old-session")
         new = Announcement("New peer", "192.0.2.2", 1234, "new-session")
-        card._on_scanned([old])
-        with patch("modsync.ui.sync_card.run_async") as run, patch.object(card, "_ask_pin") as ask:
-            card._scan()
+        panel.on_scanned([old])
+        self.assertEqual([t.text() for t in panel.machine_tiles], ["Old peer"])
+        with patch("modsync.ui.pages.sync.worker.run_async") as run:
+            panel.scan()
             run.assert_called_once()  # discovery only
             run.reset_mock()
-            card._scan()  # repeated requests cannot overlap
-            card._on_machine_picked(card._net_list.item(0))  # the "Scanning…" row
-            ask.assert_not_called()
-            card._on_scan_failed("test timeout")
-            card._on_machine_picked(card._net_list.item(0))  # the error row
-            ask.assert_not_called()
-            card._scan()
+            panel.scan()  # repeated requests cannot overlap
+            run.assert_not_called()
+            self.assertEqual(panel.machine_tiles, [])  # "Listening…" is text, not a choice
+            panel.on_scan_failed("test timeout")
+            self.assertEqual(panel.machine_tiles, [])
+            self.assertIn("Scan failed: test timeout", panel.placeholder_texts)
+            panel.scan()
             run.reset_mock()
-            card._on_scanned([new])
-            card._on_machine_picked(card._net_list.item(0))
-            ask.assert_called_once_with(new)
+            panel.on_scanned([new])
+            panel.machine_tiles[0].click()
+            self.assertEqual(window.top_overlay.title.text(), "Pair with New peer")
             run.assert_not_called()  # picking only asks; nothing joins by itself
-        service.join_via_network.assert_not_called()
 
-    def test_dashboard_pin_dialog_result_starts_the_join(self):
-        from unittest.mock import Mock
-        from modsync.ui.sync_card import SyncCard
-
-        service = Mock(state=State(instance_path="/unused/MO2"))
-        with patch("modsync.ui.sync_card.run_async"):
-            card = SyncCard(service)
+    def test_pin_sheet_result_starts_the_join(self):
+        window, panel = self._panel()
         peer = Announcement("Deck", "192.0.2.2", 21029, "s")
-        dlg = Mock()
-        dlg.exec.return_value = 1  # Accepted
-        dlg.announcement.return_value = peer
-        dlg.pin.return_value = "123456"
-        with patch("modsync.ui.sync_card.PinDialog", return_value=dlg), \
-                patch("modsync.ui.sync_card.run_async") as run:
-            card._ask_pin(peer)
-        self.assertEqual(run.call_args.args[:4], (service.join_via_network, peer, "123456", "/unused/MO2"))
-        dlg.exec.return_value = 0  # Cancelled
-        with patch("modsync.ui.sync_card.PinDialog", return_value=dlg), \
-                patch("modsync.ui.sync_card.run_async") as run:
-            card._ask_pin(peer)
+        with patch("modsync.ui.pages.sync.worker.run_async") as run:
+            sheet = panel.ask_pin(peer)
+            sheet.set_pin("123456")
+            sheet.submit()
+        self.assertEqual(run.call_args.args[:4], (window.service.join_via_network, peer, "123456", str(self.tmp)))
+        self.assertIsNone(window.top_overlay)
+        with patch("modsync.ui.pages.sync.worker.run_async") as run:
+            sheet = panel.ask_pin(peer)
+            sheet.set_pin("123456")
+            sheet.cancel()
         run.assert_not_called()
 
-    def test_wizard_disables_finish_until_a_fresh_peer_is_selected(self):
-        from unittest.mock import Mock
-        from modsync.ui.wizard import WizardWidget
-
-        with patch("modsync.ui.game_card.run_async"):
-            wizard = WizardWidget(Mock(state=State()))
-        wizard._go_to(2)  # sync comes before the game-version step
-        page = wizard._vault
-        old = Announcement("Old peer", "192.0.2.1", 1234, "old-session")
-        new = Announcement("New peer", "192.0.2.2", 1234, "new-session")
-        with patch("modsync.ui.wizard.run_async") as run:
-            page.network_radio.setChecked(True)
-            page._on_scanned([old])
-            page._net_list.setCurrentRow(0)
-            page._pin_edit.setText("123456")
-            self.assertTrue(wizard._next.isEnabled())
-            page._scan()
-            self.assertFalse(wizard._next.isEnabled())
-            run.reset_mock()
-            page._scan()
-            run.assert_not_called()
-            page._net_list.setCurrentRow(0)
-            self.assertIsNone(page.announcement)
-            self.assertFalse(wizard._next.isEnabled())
-            page._on_scan_failed("test timeout")
-            page._net_list.setCurrentRow(0)
-            self.assertIsNone(page.announcement)
-            self.assertFalse(wizard._next.isEnabled())
-            page._scan()
-            page._on_scanned([new])
-            self.assertFalse(wizard._next.isEnabled())
-            page._net_list.setCurrentRow(0)
-            self.assertIs(page.announcement, new)
-            self.assertTrue(wizard._next.isEnabled())
-
-
-@unittest.skipIf(QApplication is None, "PySide6 not installed")
-class FirewallHintTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
-    def _card(self, state: State):
-        from unittest.mock import Mock
-        from modsync.ui.sync_card import SyncCard
-
-        with patch("modsync.ui.sync_card.run_async"):
-            return SyncCard(Mock(state=state))
-
-    def _rows(self, card):
-        return [card._net_list.item(i).text() for i in range(card._net_list.count())]
-
-    def test_empty_scan_points_at_the_firewall_row_when_blocked(self):
+    def test_empty_scan_points_at_the_firewall_tile_when_blocked(self):
         from modsync.firewall import Check, Firewall
 
-        card = self._card(State(instance_path="/unused/MO2"))
-        card.firewall_checked(Check(Firewall("ufw"), False, "ufw:1"))
-        card._on_scanned([])
-        self.assertTrue(any("ufw is on here" in r and "On this machine" in r for r in self._rows(card)))
+        window, panel = self._panel()
+        window.firewall_check = Check(Firewall("ufw"), False, "ufw:1")
+        panel.on_scanned([])
+        self.assertTrue(any("ufw is on here" in r and "System" in r for r in panel.placeholder_texts))
 
     def test_empty_scan_is_generic_when_nothing_blocks(self):
-        from modsync import pairing_lan
         from modsync.firewall import Check, Firewall
 
+        window, panel = self._panel()
         for chk in (Check(None, True, ""), Check(Firewall("ufw"), True, "ufw:1")):
-            card = self._card(State(instance_path="/unused/MO2"))
-            card.firewall_checked(chk)
-            card._on_scanned([])
-            self.assertIn(pairing_lan.FIREWALL_HINT, self._rows(card))
+            window.firewall_check = chk
+            panel.on_scanned([])
+            self.assertIn(pairing_lan.FIREWALL_HINT, panel.placeholder_texts)
+
+    def test_pasted_codes_are_checked_before_joining(self):
+        from modsync.pairing_code import PairingCode
+
+        window, panel = self._panel()
+        panel.code_tile.click()
+        sheet = window.top_overlay
+        sheet.type_text("not a code")
+        with patch.object(ModSyncService, "join_vault") as join:
+            sheet.done()
+            self.assertTrue(sheet.error.isVisibleTo(sheet))
+            self.assertIs(window.top_overlay, sheet)  # stays open with the problem shown
+            sheet.field.setText(PairingCode("A" * 56, "modsync-abc", "Deck").encode())
+            sheet.done()
+            self.settle()
+        join.assert_called_once()
 
 
-@unittest.skipIf(QApplication is None, "PySide6 not installed")
-class PinDialogTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
+DECK = Announcement("Deck", "192.0.2.2", 21029, "s")
+
+
+class PinSheetTests(UiTestCase):
+    def _sheet(self, announcement=DECK):
+        from modsync.ui.overlays import PinSheet
+
+        window = self.window()
+        done = []
+        sheet = PinSheet(window, announcement, lambda ann, pin: done.append((ann, pin)))
+        sheet.open()
+        return window, sheet, done
 
     def test_pair_is_enabled_only_with_six_digits_and_regroups_them(self):
-        from modsync.ui.pin_dialog import PinDialog
+        window, sheet, done = self._sheet()
+        self.assertIn("Deck", sheet.title.text())
+        self.assertFalse(sheet.pair_button.isEnabled())
+        sheet.set_pin("04281")
+        self.assertFalse(sheet.pair_button.isEnabled())
+        self.assertEqual(sheet.hint.text(), "5 of 6 digits")
+        sheet.set_pin("042815")
+        self.assertEqual(sheet.shown_pin, "042 815")
+        self.assertEqual(sheet.pin(), "042815")
+        self.assertTrue(sheet.pair_button.isEnabled())
+        sheet.set_pin("04 28 15 9")  # junk spacing and an extra digit
+        self.assertEqual(sheet.pin(), "042815")
 
-        dlg = PinDialog(None, Announcement("Deck", "192.0.2.2", 21029, "s"))
-        self.assertIn("Deck", dlg.windowTitle())
-        self.assertFalse(dlg._pair_btn.isEnabled())
-        dlg._pin_edit.setText("04281")
-        self.assertFalse(dlg._pair_btn.isEnabled())
-        dlg._pin_edit.setText("042815")
-        self.assertEqual(dlg._pin_edit.text(), "042 815")
-        self.assertEqual(dlg.pin(), "042815")
-        self.assertTrue(dlg._pair_btn.isEnabled())
-        dlg._pin_edit.setText("04 28 15 9")  # junk spacing and an extra digit
-        self.assertEqual(dlg.pin(), "042815")
+    def test_wheels_turn_with_the_dpad_and_take_typed_digits(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
 
-    def test_dialog_is_wide_enough_for_six_digits_at_the_big_font(self):
-        from PySide6.QtGui import QFontMetrics
-        from modsync.ui.pin_dialog import PinDialog
-
-        dlg = PinDialog(None, Announcement("steamdeck", "192.0.2.2", 21029, "s"))
-        dlg.show()
-        self.app.processEvents()
-        needed = QFontMetrics(dlg._pin_edit.font()).horizontalAdvance("888 888")
-        self.assertGreater(dlg._pin_edit.width(), needed + 40)  # digits plus padding, never clipped
-        self.assertGreaterEqual(dlg.width(), 420)
+        window, sheet, done = self._sheet()
+        first = sheet.cells[0]
+        self.assertIs(self.app.focusWidget(), first)
+        QTest.keyClick(first, Qt.Key.Key_Up)
+        QTest.keyClick(first, Qt.Key.Key_Up)
+        self.assertEqual(first.value, "1")  # empty → 0 → 1
+        QTest.keyClick(first, Qt.Key.Key_Down)
+        QTest.keyClick(first, Qt.Key.Key_Down)
+        self.assertEqual(first.value, "9")
+        QTest.keyClick(first, Qt.Key.Key_Right)
+        self.assertIs(self.app.focusWidget(), sheet.cells[1])
+        for digit in "42815":  # each digit moves on to the next wheel
+            QTest.keyClicks(self.app.focusWidget(), digit)
+        self.assertEqual(sheet.pin(), "942815")
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Backspace)
+        self.assertEqual(sheet.pin(), "94281")
+        QTest.keyClicks(self.app.focusWidget(), "5")
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Return)  # A on a full PIN pairs
+        self.assertEqual(done, [(sheet._announcement, "942815")])
 
     def test_address_mode_needs_an_address_and_builds_a_manual_announcement(self):
-        from modsync.pairing_lan import PairError
-        from modsync.ui.pin_dialog import PinDialog
-
-        dlg = PinDialog(None)
-        dlg._pin_edit.setText("123456")
-        self.assertFalse(dlg._pair_btn.isEnabled())
-        dlg._addr_edit.setText("192.168.1.20:5000")
-        self.assertTrue(dlg._pair_btn.isEnabled())
-        ann = dlg.announcement()
+        window, sheet, done = self._sheet(None)
+        sheet.set_pin("123456")
+        self.assertFalse(sheet.pair_button.isEnabled())
+        sheet.address_tile.click()
+        keyboard = window.top_overlay
+        keyboard.field.setText("host:notaport")
+        keyboard.done()
+        self.assertIn("Enter an address", keyboard.error.text())
+        keyboard.field.setText("192.168.1.20:5000")
+        keyboard.done()
+        self.assertIs(window.top_overlay, sheet)
+        self.assertTrue(sheet.pair_button.isEnabled())
+        ann = sheet.announcement()
         self.assertEqual((ann.host, ann.port), ("192.168.1.20", 5000))
-        dlg._addr_edit.setText("host:notaport")
-        with self.assertRaises(PairError):
-            dlg.announcement()
+        sheet.submit()
+        self.assertEqual(done[0][1], "123456")
 
-    def test_host_card_shows_a_big_pin_while_pairing_and_restores_after(self):
-        from unittest.mock import Mock
-        from modsync.ui.sync_card import SyncCard
 
-        state = State(instance_path="/unused/MO2", folder_id="modsync-x")
-        with patch("modsync.ui.sync_card.run_async"):
-            card = SyncCard(Mock(state=state))
-        self.assertFalse(card._pin_panel.isVisibleTo(card))
-        with patch("modsync.ui.sync_card.run_async") as run, \
-                patch("modsync.ui.sync_card.pairing_lan.make_pin", return_value="042815"):
-            card._pair_network()
-        self.assertTrue(card._pin_panel.isVisibleTo(card))
-        self.assertFalse(card._share_normal.isVisibleTo(card))
-        self.assertEqual(card._pin_label.text(), "042 815")
-        self.assertIn("Copy from another machine", card._pin_steps.text())
+class BeaconTests(UiTestCase):
+    def test_host_shows_a_big_pin_while_pairing_and_cancels_cleanly(self):
+        State(instance_path=str(self.tmp), folder_id="modsync-x").save()
+        window = self.window()
+        sync = window.pages["sync"]
+        with patch("modsync.ui.pages.sync.worker.run_async") as run, \
+                patch("modsync.ui.pages.sync.pairing_lan.make_pin", return_value="042815"):
+            sync.pair_tile.click()
+        beacon = window.top_overlay
+        self.assertIs(beacon, sync.beacon)
+        self.assertEqual(beacon.pin_label.text(), "042 815")
+        self.assertIn("Copy from another machine", beacon.steps.text())
         run.call_args.kwargs["on_ready"](Announcement("me", "192.0.2.9", 21029, "s"))
-        self.app.processEvents()
-        self.assertIn("192.0.2.9", card._pin_addr.text())
-        card._pair_network()  # cancel
-        self.assertFalse(card._pin_panel.isVisibleTo(card))
-        self.assertTrue(card._share_normal.isVisibleTo(card))
+        self.settle()
+        self.assertIn("192.0.2.9", beacon.address.text())
+        stop = run.call_args.kwargs["stop"]
+        beacon.cancel()  # B
+        self.assertTrue(stop.is_set())
+        self.assertIsNone(window.top_overlay)
+        self.assertIn("Network pairing cancelled.", window.messages)
+        sync._on_pair_failed("late failure after cancel")  # ignored
+        self.assertNotIn("⚠ Pairing: late failure after cancel", window.messages)
+
+    def test_a_successful_pairing_closes_the_pin(self):
+        State(instance_path=str(self.tmp), folder_id="modsync-x").save()
+        window = self.window()
+        sync = window.pages["sync"]
+        with patch("modsync.ui.pages.sync.worker.run_async"):
+            sync.pair_network()
+            sync._on_paired(object())
+        self.assertIsNone(window.top_overlay)
+        self.assertIn("Paired with a new machine over the network!", window.messages)
 
 
-@unittest.skipIf(QApplication is None, "PySide6 not installed")
-class SyncThenVersionTests(unittest.TestCase):
-    """After joining, the vault record and SKSE arrive by sync; the dashboard
+class SyncThenVersionTests(UiTestCase):
+    """After joining, the vault record and SKSE arrive by sync; the window
     must notice on its own instead of waiting for a manual refresh."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
-    def test_game_card_refreshes_when_the_vault_record_changes(self):
-        import tempfile
-        from pathlib import Path
-        from unittest.mock import Mock
-        from modsync import gameversion
-        from modsync.ui.game_card import GameCard
-
+    def test_game_panel_refreshes_when_the_vault_record_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
-            state = State(instance_path=tmp)
-            with patch("modsync.ui.game_card.run_async"):
-                card = GameCard(Mock(state=state))
-            with patch.object(card, "refresh") as refresh:
-                card.poll()  # nothing changed
+            State(instance_path=tmp).save()
+            window = self.window()
+            panel = window.pages["game"].panel
+            with patch.object(panel, "refresh") as refresh:
+                panel.poll()  # nothing changed
                 refresh.assert_not_called()
                 gameversion.record_vault_version(tmp, gameversion.GameVersion.parse("1.5.97"))
-                card.poll()
+                panel.poll()
                 refresh.assert_called_once()
 
-    def test_sync_card_announces_the_first_full_sync_only_once(self):
-        from unittest.mock import Mock
-        from modsync.service import SyncStatus
-        from modsync.ui.sync_card import SyncCard
-
-        state = State(instance_path="/unused/MO2", folder_id="modsync-x")
-        with patch("modsync.ui.sync_card.run_async"):
-            card = SyncCard(Mock(state=state))
+    def test_sync_announces_the_first_full_sync_only_once(self):
+        State(instance_path=str(self.tmp), folder_id="modsync-x").save()
+        window = self.window()
+        sync = window.pages["sync"]
+        sync._was_complete = None
         synced = []
-        card.synced.connect(lambda: synced.append(True))
+        sync.synced.connect(lambda: synced.append(True))
 
         def status(state_, pct):
             return SyncStatus("ME", "modsync-x", True, state_, pct, [])
 
-        card._on_status(status("syncing", 40.0))
-        card._on_status(status("syncing", 99.6))
+        sync.on_status(status("syncing", 40.0))
+        sync.on_status(status("syncing", 99.6))
         self.assertEqual(synced, [])
-        card._on_status(status("idle", 100.0))
+        sync.on_status(status("idle", 100.0))
         self.assertEqual(synced, [True])
-        card._on_status(status("idle", 100.0))  # steady state: no repeat
+        sync.on_status(status("idle", 100.0))  # steady state: no repeat
         self.assertEqual(synced, [True])
-        card._on_status(status("syncing", 80.0))  # more mods arriving...
-        card._on_status(status("idle", 100.0))  # ...and done again
+        sync.on_status(status("syncing", 80.0))  # more mods arriving...
+        sync.on_status(status("idle", 100.0))  # ...and done again
         self.assertEqual(synced, [True, True])

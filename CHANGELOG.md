@@ -9,9 +9,9 @@ All notable changes to ModSync are documented here. The format follows
 ### Added
 
 - An ARM64 USVFS fix for the files shipped with MO2 2.5.2. "Apply ARM64 fix"
-  appears in the dashboard and Steam launch hub. It downloads a pinned build
-  with the injection-stub stack-alignment fix, verifies the archive and each
-  binary, and backs up the originals. The build comes from ModSync's mirror of
+  appears under Mod Organizer, also while Steam waits on ModSync. It
+  downloads a pinned build with the injection-stub stack-alignment fix,
+  verifies the archive and each binary, and backs up the originals. The build comes from ModSync's mirror of
   ndabas's release, which also carries the source, with the original release
   as a fallback. "Restore original USVFS" reverses it.
   Unknown builds are left unchanged. The same actions are available through
@@ -22,7 +22,7 @@ All notable changes to ModSync are documented here. The format follows
   reapplication from the cache.
 
 - When an instance's USVFS is 0.5.7 or newer and the game's Proton prefix
-  only has the old Visual C++ runtime (or Wine's stand-in), the dashboard
+  only has the old Visual C++ runtime (or Wine's stand-in), the app
   offers to install Microsoft's current runtime into the prefix. USVFS 0.5.7+
   uses the runtime of the programs MO2 starts, so without it nothing started
   from MO2 runs. The pinned, checked redistributable is installed silently
@@ -35,6 +35,40 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Changed
 
+- A new interface, designed for a controller first. The dashboard and its
+  dialogs are gone. The window now has five sections (Home, Game, Mod
+  Organizer, Sync and System), switched with LB and RB, Q and E, or by moving
+  up onto the tabs. Every action is a large tile that shows the description a
+  tooltip used to hide. A single outline marks the focused tile, and a hint
+  bar shows which button does what, with PlayStation symbols for a
+  PlayStation controller. Questions, text entry, PIN entry and folder picking
+  open in sheets inside the window instead of separate dialogs, and the hint
+  bar names what A does on the focused control. Text entry has an on-screen
+  keyboard with a symbols layer, shifted punctuation, cursor movement,
+  selection and a Paste key, and the PIN pad works like a combination lock.
+  Home recommends a repair when the game version or SKSE does not match, or
+  Steam has an update waiting. Play stays available with the consequence
+  explained. Home has a readiness checklist (game version, SKSE, Mod
+  Organizer 2, sync) next to Play, or Continue when Steam's Play button
+  opened ModSync. The setup wizard reuses the same parts. Its last step keeps
+  Finish at the top, or "Finish anyway" with the repair focused when the game
+  version still doesn't match. System and Game use shorter tile
+  descriptions, and System's settings details and controls open in their own
+  sheets. B on Home, or "Quit ModSync" under System, asks to quit, so ModSync
+  can be closed without a mouse. A mouse or touch screen works on its own
+  too: sections scroll with a finger, the hint bar becomes buttons for Back,
+  Cancel and Quit, and the PIN sheet has digits to tap. ModSync always uses its dark theme now.
+- Controllers work two ways. Outside games, Steam Input's desktop
+  configuration turns buttons into keys, and ModSync reads them back as the
+  buttons that sent them: Space is Y on a Steam Deck and B on a Steam
+  Controller, Xbox or PlayStation pad, Page Up/Down are X/Y on the latter, and
+  a tap of Ctrl or Alt is LB or RB. It tells which applies from the hardware
+  in `/sys`. ModSync also reads controllers directly through SDL2, from the
+  Flatpak runtime or SteamOS, which covers the virtual pad Steam provides in
+  Gaming Mode. A press that arrives both ways counts once, and presses are
+  ignored while another window is in front. The Flatpak gains
+  `--device=input` for this. `MODSYNC_GAMEPAD=0` turns direct reading off.
+  The controls are listed in docs/advanced.md.
 - Steam's Play button opens the regular ModSync window instead of a separate
   launch hub. While Steam waits, Play turns into Continue, which hands the
   launch on to MO2-LINT or the game, and "Cancel launch" returns to Steam.
@@ -64,7 +98,7 @@ All notable changes to ModSync are documented here. The format follows
   for a compatibility tool whose internal name contains "proton", and the
   hook was named `modsync_489830_hub`. Steam couldn't resolve the save folder,
   so it skipped every save while still reporting the sync as complete. The
-  hook is now `modsync_489830_proton`. When the dashboard opens or the
+  hook is now `modsync_489830_proton`. When ModSync opens or the
   background service starts, an existing hook is moved to the new name and
   Steam is switched over to it, after a Steam restart if Steam is running.
   Saves made under the old name are still in the prefix, where Steam finds

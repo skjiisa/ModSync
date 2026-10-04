@@ -1,46 +1,76 @@
 # UI previews
 
 The screenshots in this folder come from `scripts/preview_ui.py`, which
-renders the dashboard (also as Steam's launch hook opens it) and the setup
-wizard with synthetic game and setup data. Generating them does not read your setup, install anything, modify
-the game or sync.
+renders the window with synthetic game, setup and sync data. Generating them
+does not read your setup, install anything, modify the game or sync. They are
+1280 × 800, the Steam Deck's screen.
 
-## Launching MO2 and Skyrim
+## Home
 
-"Open MO2" opens the chosen portable instance. The "Play Skyrim" button uses
-that instance's selected profile and prefers SKSE. Steam must be running first.
-Both actions use the Proton that Steam has chosen for Skyrim (as seen through
-ModSync's launch hook), or the one that last set up its prefix, plus the
-runtime that Proton needs. Launch errors point to a log file.
+Home recommends a repair when the game version or SKSE does not match, or
+Steam has an update waiting. The recommendation gets the accent fill; Play
+stays available with the consequence explained. Each readiness check opens
+the section that can fix it. A single outline marks focus.
 
-![Configured dashboard with launch buttons](configured-dark.png)
+![Home](home.png)
 
-## Dashboard
+When the game is ready, Play becomes the primary action again.
 
-![Light dashboard](dashboard-light.png)
-
-![Dark dashboard](dashboard-dark.png)
-
-## Installation
-
-![Install step in dark mode](install-dark.png)
-
-## Sync
-
-Status and progress appear above the pairing code, QR and device list. The
-remaining pairing controls are reachable by scrolling.
-
-![Live sync in light mode](sync-light.png)
+![Ready to play](home-ready.png)
 
 ## Opened from Steam's Play button
 
-With the launch hook on, Steam's Play button opens this same dashboard. Play
-becomes Continue, which hands Steam's launch on to MO2-LINT or the game, and
-Cancel launch returns to Steam. Open MO2 is not shown, because Steam is
-already about to start the game. A warning appears when the vault is still
-syncing.
+With the launch hook on, Steam's Play button opens this same window. Play
+becomes Continue, which hands Steam's launch on to MO2-LINT or the game.
+Cancel launch, one move down, returns to Steam. A warning appears while the
+vault is still syncing. Here a keyboard is in use, so the hints show keys.
 
-![Dashboard opened from Steam, in dark mode](launch-dark.png)
+![Opened from Steam](launch.png)
+
+## Game
+
+![Game version](game.png)
+
+## Sync
+
+The live view with a PlayStation controller connected. The hint bar shows
+PlayStation symbols. Y (triangle) rescans.
+
+![Live sync](sync-live.png)
+
+Pairing with a machine found on the network, here with a mouse. With a
+controller, up and down turn each digit and left and right move between
+digits; with a mouse or touch screen, the digit row fills them in. Typed
+digits work too. With a mouse or touch screen the hint bar turns into
+buttons for what can't be tapped elsewhere, such as Cancel.
+
+![PIN pad](pin-pad.png)
+
+Text entry opens an on-screen keyboard with a Paste key. Shift produces
+punctuation, and "#+=" opens the full symbols layer. LB / RB or the arrow
+buttons move the cursor. Select and Select all let a controller replace part
+or all of an entry. The cursor and selection stay visible while a key has
+focus.
+
+![Editing text](keyboard-editing.png)
+
+## System
+
+Short descriptions keep the actions visible together. Settings details and
+Controls open in sheets with the background-service explanation, Steam
+launch status, firewall ports and input shortcuts.
+
+![System](system.png)
+
+## Setup wizard
+
+![Setup, step 1](setup-1.png)
+
+The game step emphasizes the action that fixes the unresolved problem.
+Finish anyway explains what will remain unresolved. When the version is
+ready, Finish is the primary action and optional installs are secondary.
+
+![Setup, game version](setup-3.png)
 
 ## Regenerate the previews
 
@@ -50,7 +80,10 @@ From a source checkout:
 uv run python scripts/preview_ui.py --output scratch/ui-review
 ```
 
-This writes all 16 offline previews, including the welcome screen, the optional
-sync step and a 900 pixel wide dashboard, using Qt's offscreen platform. Copy
-the ones you want into this folder. The installed Flatpak is a separate build
-and does not pick up source edits.
+This writes all 26 offline previews, including the confirmation sheet, the
+folder browser, the install sheet, the network PIN and a 1000 pixel wide
+window used with a mouse, keyboard symbols and selection, and validation at
+1000 pixels wide, using Qt's offscreen platform. This folder keeps
+one screenshot per screen to stay small. Copy the ones you want here and
+compress them with `optipng`. The installed Flatpak
+is a separate build and does not pick up source edits.

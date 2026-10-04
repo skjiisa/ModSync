@@ -646,7 +646,7 @@ def disable(appid: int = SKYRIM_SE.appid) -> str:
 
 def apply_pending() -> str | None:
     """Apply a queued config.vdf change once Steam has exited (called from the
-    serve loop and the dashboard). Steam rewrites its files on shutdown, so
+    serve loop and the app). Steam rewrites its files on shutdown, so
     wait a moment after it disappears before touching them."""
     pending = Pending.load()
     if pending is None or shortcuts.steam_is_running():
@@ -730,7 +730,7 @@ def _rerender(env: SteamEnv, appid: int, record: Record) -> bool:
 
 
 def upgrade(appid: int = SKYRIM_SE.appid) -> str | None:
-    """Bring an installed hook up to date (called when the dashboard opens and
+    """Bring an installed hook up to date (called when the app opens and
     when the background service starts). A hook still under its old name is
     moved to the new one, because the old name keeps Steam Cloud from syncing
     the game's saves; Steam is switched over the same way as by enable().

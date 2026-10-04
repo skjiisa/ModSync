@@ -1,7 +1,8 @@
 # ModSync in depth
 
-Details that the README leaves out: running from source, every command, and
-how the downgrade, Steam pin, launch hook, sync and background service work.
+Details that the README leaves out: running from source, controls, every
+command, and how the downgrade, Steam pin, launch hook, sync and background
+service work.
 
 ## Running from source
 
@@ -36,9 +37,91 @@ To build the Flatpak yourself, see
 development environment and run the tests, see
 [CONTRIBUTING.md](../CONTRIBUTING.md).
 
+## Controls
+
+Every screen works with a controller alone, in desktop mode or Gaming Mode. A
+keyboard, a mouse and the Deck's touch screen work too.
+
+| Controller | Keyboard | Does |
+| --- | --- | --- |
+| D-pad or left stick | Arrow keys | Move between tiles |
+| A | Enter | Choose |
+| B | Escape | Back: close a sheet, go back a wizard step, or return to Home. On Home it asks to quit |
+| LB / RB | Q / E, Ctrl+Tab, or a tap of Ctrl / Alt | Previous / next section |
+| X, Y | | Shortcuts named in the hint bar, such as "Check again" |
+| LT / RT, right stick | Page Up / Page Down | Scroll |
+| Start | Home | Home |
+
+On a keyboard, Space also chooses, Backspace goes back and Ctrl+Q quits.
+"Quit ModSync" under System quits too. When Steam's Play button opened
+ModSync, quitting returns to Steam without starting the game.
+
+The hint bar along the bottom shows the buttons for the device in use, with
+PlayStation symbols for a PlayStation controller. Moving up from the top of a
+section reaches the section tabs. Moving left and right along them switches
+sections, and moving down goes back into the section.
+
+There are two ways a controller reaches ModSync:
+
+- **As keys.** Outside games, Steam Input applies a desktop configuration
+  that turns buttons into keys, and the defaults differ by controller:
+
+  | Button | Steam Deck | Steam Controller, Xbox, PlayStation |
+  | --- | --- | --- |
+  | A | Return | Enter |
+  | B | Escape | Space |
+  | X | on-screen keyboard | Page Up |
+  | Y | Space | Page Down |
+  | LB / RB | Ctrl / Alt | Ctrl / Alt |
+  | View / Start | Tab / Escape | Tab / Escape |
+
+  ModSync reads these keys back as the buttons that sent them, so A, B, X,
+  Y and the bumpers do the same as on a controller it reads directly. It
+  checks `/sys` for the hardware: a Steam Deck uses the Deck column, and any
+  other Valve controller or a connected game controller uses the other one.
+  On such a machine Space is that controller's button, so a keyboard's Space
+  goes back (B) or runs the Y shortcut rather than choosing. Enter still
+  chooses. Ctrl and Alt only switch sections when tapped on their own.
+- **Directly.** ModSync reads controllers through SDL2, which ships in the
+  Flatpak's runtime and on SteamOS. In Gaming Mode this is the virtual pad
+  Steam gives the app it launched. SDL's HIDAPI drivers stay off, so ModSync
+  never opens the Deck's own controls or turns off the trackpad mouse. When
+  Steam turns a press into a key while SDL reads the same press, ModSync acts
+  on it once. Presses are ignored while another window, such as MO2 or the
+  game, is in front. Set `MODSYNC_GAMEPAD=0` to read only the keys.
+  Reading a controller needs read access to its `/dev/input/event*` device.
+  SteamOS and Steam's udev rules grant that for controllers. If a system
+  doesn't, ModSync falls back to the keys Steam sends.
+
+A mouse or a touch screen works on its own too, which is how first setup on a
+Steam Frame (its pointer arrives as touch) or a Deck held like a tablet tends
+to go. Every action is a tile to tap, and sections scroll with a finger. The
+hint bar becomes buttons for what has no tile, such as Back, Cancel, Quit and
+Leave setup. The PIN sheet adds a row of digits to tap. Focus styling stays
+hidden until a controller or keyboard is used again, so nothing looks
+selected that wasn't tapped. A press that moves is a scroll, not a choice.
+
+Text entry (a pairing code, an address, an install folder) opens an on-screen
+keyboard with a symbols layer, Paste and Clear. LB and RB move the cursor.
+The PIN pad works like a combination lock: up and down turn a digit, and
+left and right move between digits. Folders are picked
+with a built-in browser rather than a file dialog. Typing on a real keyboard
+works in all of them.
+
+The keyboard's Shift key also produces punctuation, and "#+=" opens the full
+symbols layer. LB / RB move the text cursor; the arrow buttons do the same.
+Turn on Select before moving the cursor to select text, or choose Select all
+to replace the whole entry. Start and End move to either end of the text.
+The insertion point stays visible while a keyboard button has focus.
+
+Home recommends the next repair when a game version or SKSE mismatch needs
+attention. Play or Continue remains available and says what may fail if you
+launch now. Under System, Settings details explains the background service,
+Steam launch settings and firewall ports; Controls shows the input shortcuts.
+
 ## Command line
 
-Everything the dashboard does is also a command. `modsync --help` and
+Everything the app does is also a command. `modsync --help` and
 `modsync <group> --help` list the arguments.
 
 ```sh
@@ -63,9 +146,9 @@ When an instance is chosen, or a vault is created from it, ModSync records the
 runtime it is built for in `modsync-vault.json` inside the instance. That is
 the one ModSync-owned file that syncs, so every machine sharing the setup
 compares against the same record. Each machine reads its own `SkyrimSE.exe`
-version, and the dashboard, `modsync doctor` and `modsync serve` warn when it
+version, and the app, `modsync doctor` and `modsync serve` warn when it
 differs. After an intentional upgrade or downgrade, "Use this machine's
-version" on the dashboard re-records it.
+version" under Game re-records it.
 
 The installed SKSE is a second clue. Its runtime DLL is named after the exact
 game version it was built for, such as `skse64_1_6_1170.dll`. ModSync looks
@@ -75,7 +158,7 @@ level or under `Root/`.
 - When an existing MO2 setup is chosen, ModSync records the SKSE runtime
   rather than whatever Steam has patched the game to since. An old mod list
   is offered the right downgrade immediately.
-- When there is no record, the dashboard and `modsync game status` suggest
+- When there is no record, the app and `modsync game status` suggest
   the SKSE runtime as the downgrade target.
 - Otherwise the record wins, and SKSE built for a different version is
   called out as needing a reinstall.
@@ -84,7 +167,7 @@ DLLs for several versions make SKSE ambiguous, and ModSync ignores it.
 
 ### Installing SKSE
 
-Once the game is on the right version, the Game card offers "Install SKSE
+Once the game is on the right version, the Game section offers "Install SKSE
 x.y.z" whenever the SKSE in the game folder is missing, built for another
 version, or present in several versions. ModSync downloads the build for the
 installed game version from skse.silverlock.org, checks it against a known
@@ -92,7 +175,7 @@ SHA-256, removes the old `skse64_*` files from the game folder and copies in
 the loader, the runtime DLL and `Data/Scripts`. These are the same files a
 hand install puts there. The archive is kept for next time. Builds that SKSE
 publishes only on Nexus (currently 2.3.1 for 1.7.104) need a login, so for
-those the button opens the download page instead. `modsync game skse` does
+those the tile opens the download page instead. `modsync game skse` does
 the same from a terminal.
 
 ## How the downgrade works
@@ -114,7 +197,7 @@ only completed downloads enter the cache (about 1.1 GB for 1.7.104 to
 1.6.1170), so a repeat is offline.
 
 The originals stay in `.modsync-downgrade/backup`. `modsync game restore`,
-or "Restore original files" on the dashboard, puts them back.
+or "Restore original files" under Game, puts them back.
 `modsync game restore --discard` drops a stale backup once Steam has
 re-installed the current version.
 
@@ -205,7 +288,8 @@ chain refers to its tool directory and re-reads its `toolmanifest.vdf` on
 every launch, so a reinstalled or upgraded redirector is picked up as-is.
 ModSync starts through a stable command, `flatpak run io.github.skjiisa.ModSync`
 or the installed `modsync`, never a versioned path. Steam's own choice is
-recorded before it is changed and written back by "Turn off". If ModSync
+recorded before it is changed and written back when the hook is turned off.
+If ModSync
 cannot start at all, the launch goes ahead anyway.
 
 The "proton" in the name matters. Steam Cloud maps a game's Windows save
@@ -215,7 +299,7 @@ save folder: `logs/cloud_log.txt` shows `Unable to resolve path with root
 WinMyDocuments`, saves are neither downloaded nor uploaded, and Steam still
 reports the sync as complete. The hook used to be called `modsync_489830_hub`,
 which broke cloud saves in exactly this way. ModSync renames an existing hook
-when the dashboard opens or the background service starts. Steam Tinker Launch
+when ModSync opens or the background service starts. Steam Tinker Launch
 found the same rule
 ([#185](https://github.com/sonic2kk/steamtinkerlaunch/issues/185)).
 
@@ -227,11 +311,15 @@ or the background service the moment Steam closes. You can also pick "ModSync
 
 Steam's Play button opens the regular ModSync window, with the launch waiting
 on it. Play turns into Continue, which closes ModSync and lets the hook start
-Mod Organizer 2 or the game. It has keyboard focus, so Enter continues. "Cancel launch" or
-closing the window ends the launch, and Steam goes back to the library.
-ModSync hides Open MO2 while Steam waits. A second Proton started in the same
-prefix would clash with the one Steam is about to run, or outlive the launch
-Steam is tracking. Continue and Cancel stay disabled while game or USVFS files are
+Mod Organizer 2 or the game. It has focus, so A or Enter continues. When the
+game version or SKSE needs a repair, a repair tile such as "Fix game version"
+sits above Continue and takes focus instead, and Continue says what may fail.
+That only happens before anything is pressed, so a press made while the check
+runs still lands on Continue. "Cancel launch", below Continue, or closing the
+window ends the launch, and Steam goes back to the library. ModSync hides Open
+Mod Organizer 2 while Steam waits. A second Proton started in the same prefix
+would clash with the one Steam is about to run, or outlive the launch Steam is
+tracking. Continue and Cancel stay disabled while game or USVFS files are
 being rewritten. Setting `MODSYNC_HUB_AUTO_DECISION=cancel %command%` in the
 game's launch options makes ModSync decide by itself after a few seconds,
 which is useful for testing the chain without a controller in hand.
@@ -249,10 +337,10 @@ syncing if one exists. If the service initially shares the app's process, it
 starts a replacement on its next poll after the app closes, and transfers
 resume. Both machines still need to be awake and connected.
 
-The dashboard shows "Background service: running, inactive, failed or off".
-Open the ModSync Steam shortcut to check it in Gaming Mode. "Turn off
-background service" stops and removes it without deleting mods. An open app
-can keep syncing.
+Under System, "Run in background" shows whether the service is running,
+inactive, failed or off. Open the ModSync Steam shortcut to check it in
+Gaming Mode. Choosing it again while it is on stops and removes the service
+without deleting mods. An open app can keep syncing.
 
 ## Logs and bug reports
 
@@ -260,6 +348,6 @@ Every way ModSync runs (GUI, CLI, `serve`, a Steam launch) logs to
 `~/.local/state/modsync/modsync.log`. Set `MODSYNC_LOG_LEVEL=DEBUG` for more.
 The launch hook logs to `~/.local/state/modsync/launch-hook.log`.
 
-For a bug report, `modsync diagnostics` or the dashboard's "Copy diagnostics"
-button bundles the doctor report with the last 200 lines of both logs, with
+For a bug report, `modsync diagnostics` or "Copy diagnostics" under System
+bundles the doctor report with the last 200 lines of both logs, with
 pairing codes, API keys and device ids redacted.

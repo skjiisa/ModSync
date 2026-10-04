@@ -33,9 +33,6 @@ def _application(argv: list[str] | None):
     args = [sys.argv[0], *(argv or [])]
     app = QApplication.instance() or QApplication(args)
     apply_theme(app)
-    if not app.property("modsyncThemeConnected"):
-        app.styleHints().colorSchemeChanged.connect(lambda _: apply_theme(app))
-        app.setProperty("modsyncThemeConnected", True)
     app.setApplicationName("ModSync")
     app.setApplicationDisplayName("ModSync")
     # Lets Wayland compositors / taskbars match our windows to the installed
@@ -48,12 +45,25 @@ def _application(argv: list[str] | None):
     return app
 
 
+def _start_gamepads(app) -> None:
+    """Read controllers directly (through SDL) as well as the keys Steam Input
+    sends. Optional: without SDL the keyboard path still covers the Deck."""
+    from modsync.ui.gamepad import Gamepads
+    from modsync.ui.input import InputRouter
+
+    pads = Gamepads(app)
+    if pads.start():
+        InputRouter.instance().attach(pads)
+        app.aboutToQuit.connect(pads.stop)
+
+
 def run(argv: list[str] | None = None) -> int:
     from modsync.logging_setup import configure
     from modsync.ui.main_window import MainWindow
 
     configure("gui", argv)
     app = _application(argv)
+    _start_gamepads(app)
     window = MainWindow()
     # Gaming Mode (gamescope) renders non-maximized windows tiny/low-res, so we
     # always maximize ourselves.
@@ -72,6 +82,7 @@ def run_hub(*, appid: int | None = None, through: str | None = None) -> int:
 
     configure("hub", ["launch", "hub", f"--appid={appid}", f"--through={through}"])
     app = _application(None)
+    _start_gamepads(app)
     launch = launchhook.SteamLaunch(GAMES.get(appid or SKYRIM_SE.appid, SKYRIM_SE), through)
     window = MainWindow(steam_launch=launch)
     window.showMaximized()
