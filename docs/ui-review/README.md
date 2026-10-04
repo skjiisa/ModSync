@@ -49,15 +49,7 @@ buttons move the cursor. Select and Select all let a controller replace part
 or all of an entry. The cursor and selection stay visible while a key has
 focus.
 
-![On-screen keyboard](keyboard.png)
-
 ![Editing text](keyboard-editing.png)
-
-![Symbols](keyboard-symbols.png)
-
-Validation messages also fit in a 1000 pixel wide window.
-
-![Keyboard validation](keyboard-error-compact.png)
 
 ## System
 
@@ -66,10 +58,6 @@ Controls open in sheets with the background-service explanation, Steam
 launch status, firewall ports and input shortcuts.
 
 ![System](system.png)
-
-![Settings details](system-details.png)
-
-![Controls](controls.png)
 
 ## Setup wizard
 
@@ -92,6 +80,7 @@ uv run python scripts/preview_ui.py --output scratch/ui-review
 This writes all 26 offline previews, including the confirmation sheet, the
 folder browser, the install sheet, the network PIN and a 1000 pixel wide
 window used with a mouse, keyboard symbols and selection, and validation at
-1000 pixels wide, using Qt's offscreen platform. Copy the ones you
-want into this folder and compress them with `optipng`. The installed Flatpak
+1000 pixels wide, using Qt's offscreen platform. This folder keeps
+one screenshot per screen to stay small. Copy the ones you want here and
+compress them with `optipng`. The installed Flatpak
 is a separate build and does not pick up source edits.

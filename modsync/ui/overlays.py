@@ -362,7 +362,8 @@ class KeyboardSheet(Overlay):
 
     def hints(self) -> list[tuple[list[Action], str]]:
         focus = self.host.focusWidget()
-        names = {self.cursor_left: "Cursor left", self.cursor_right: "Cursor right"}
+        names = {self.cursor_left: "Cursor left", self.cursor_right: "Cursor right",
+                 self.select: "Stop selecting" if self.select.isChecked() else "Start selecting"}
         if focus is self.field:
             accept = "Done"
         elif isinstance(focus, KeyButton) and focus.special:

@@ -49,7 +49,7 @@ keyboard, a mouse and the Deck's touch screen work too.
 | B | Escape | Back: close a sheet, go back a wizard step, or return to Home. On Home it asks to quit |
 | LB / RB | Q / E, Ctrl+Tab, or a tap of Ctrl / Alt | Previous / next section |
 | X, Y | | Shortcuts named in the hint bar, such as "Check again" |
-| LB / RB, right stick | Page Up / Page Down | Scroll |
+| LT / RT, right stick | Page Up / Page Down | Scroll |
 | Start | Home | Home |
 
 On a keyboard, Space also chooses, Backspace goes back and Ctrl+Q quits.
@@ -292,11 +292,15 @@ or the background service the moment Steam closes. You can also pick "ModSync
 
 Steam's Play button opens the regular ModSync window, with the launch waiting
 on it. Play turns into Continue, which closes ModSync and lets the hook start
-Mod Organizer 2 or the game. It has focus, so A or Enter continues. "Cancel
-launch", one move down, or closing the window ends the launch, and Steam goes
-back to the library. ModSync hides Open Mod Organizer 2 while Steam waits. A second Proton started in the same
-prefix would clash with the one Steam is about to run, or outlive the launch
-Steam is tracking. Continue and Cancel stay disabled while game or USVFS files are
+Mod Organizer 2 or the game. It has focus, so A or Enter continues. When the
+game version or SKSE needs a repair, a repair tile such as "Fix game version"
+sits above Continue and takes focus instead, and Continue says what may fail.
+That only happens before anything is pressed, so a press made while the check
+runs still lands on Continue. "Cancel launch", below Continue, or closing the
+window ends the launch, and Steam goes back to the library. ModSync hides Open
+Mod Organizer 2 while Steam waits. A second Proton started in the same prefix
+would clash with the one Steam is about to run, or outlive the launch Steam is
+tracking. Continue and Cancel stay disabled while game or USVFS files are
 being rewritten. Setting `MODSYNC_HUB_AUTO_DECISION=cancel %command%` in the
 game's launch options makes ModSync decide by itself after a few seconds,
 which is useful for testing the chain without a controller in hand.

@@ -246,13 +246,15 @@ class SystemPage(Page):
             head, tone = "Partly set up", "warn"
         else:
             head, tone = "Off", "off"
-        if st.pending:
+        if not st.steam_found or (st.enabled and not st.underlying_exists) or (
+                not st.pending and not st.enabled and (st.installed or st.selected)):
+            # Something is off: the hook's own explanation says what and how to fix it.
+            summary = st.summary()
+        elif st.pending:
             summary = ("Reboot to apply this change." if steamos.is_steam_frame() else
                        "Close Steam to apply this change.")
         elif st.enabled:
             summary = "Steam opens ModSync before starting Skyrim."
-        elif st.installed or st.selected:
-            summary = "The Steam launch setup is incomplete."
         else:
             summary = "Check your setup before Skyrim starts through Steam."
         self.hook_tile.set_badge(head, tone)

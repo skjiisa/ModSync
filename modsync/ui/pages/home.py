@@ -184,11 +184,12 @@ class HomePage(Page):
         if isinstance(self.play, HeroTile):
             self.play.set_role("normal" if title else "primary")
         self.play.set_description(risk or self._play_description)
-        # Only the initial recommendation takes default focus. A later poll
-        # must not override the user's decision to focus Play or another tile.
+        # Only the initial recommendation takes default focus, and only before
+        # anything has been pressed: the check finishes a moment after the
+        # window opens, and an A meant for Continue must not land on the repair.
         if (self.host._current == "home" and self.host.scope() is self.host.chrome
                 and self.host.router.mode != "mouse"):
-            if title and not was_recommended and self.host.focusWidget() is self.play:
+            if title and not was_recommended and self.host.focusWidget() is self.play and self.host.untouched:
                 self.next_step.setFocus()
             elif not title and had_focus and self.play.isEnabled():
                 self.play.setFocus()

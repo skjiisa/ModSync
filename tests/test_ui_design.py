@@ -214,3 +214,47 @@ class SystemDetailsTests(UiTestCase):
         window.top_overlay.cancel()
         system.controls_tile.click()
         self.assertEqual(window.top_overlay.title.text(), "Controls")
+
+
+class FollowupReviewTests(UiTestCase):
+    """Fixes made while taking over the design follow-up."""
+
+    mismatch = HomeGuidanceTests.mismatch
+
+    def test_a_press_made_while_the_check_runs_still_lands_on_continue(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        State(instance_path=str(self.tmp)).save()
+        window = self.window(steam=launchhook.SteamLaunch(SKYRIM_SE))
+        home = window.pages["home"]
+        self.assertIs(window.focusWidget(), home.play)
+        status, check = self.mismatch()
+        QTest.keyClick(window.focusWidget(), Qt.Key.Key_Down)  # the user is already moving
+        QTest.keyClick(window.focusWidget(), Qt.Key.Key_Up)
+        home.on_game_checked(status, check)  # the slow check lands afterwards
+        self.assertIs(window.focusWidget(), home.play)
+        self.assertTrue(home.next_step.isVisibleTo(home))  # still recommended, just not forced
+
+    def test_an_untouched_window_focuses_the_recommendation(self):
+        State(instance_path=str(self.tmp)).save()
+        window = self.window(steam=launchhook.SteamLaunch(SKYRIM_SE))
+        home = window.pages["home"]
+        status, check = self.mismatch()
+        home.on_game_checked(status, check)
+        self.assertIs(window.focusWidget(), home.next_step)
+
+    def test_hook_tile_explains_states_that_need_attention(self):
+        window = self.window()
+        system = window.pages["system"]
+        missing = launchhook.LaunchHookStatus(SKYRIM_SE, False, None, False, None, None, False, None, False, False)
+        system.on_hook_status(missing)
+        self.assertIn("Steam was not found", system.hook_tile.description)
+        self.assertFalse(system.hook_tile.isEnabled())
+        broken = launchhook.LaunchHookStatus(SKYRIM_SE, True, "modsync_489830_hub", True, "proton_9", "Proton 9",
+                                             False, None, False, True)
+        system.on_hook_status(broken)
+        self.assertIn("is missing", system.hook_tile.description)
+        off = launchhook.LaunchHookStatus(SKYRIM_SE, False, None, False, None, None, False, None, False, True)
+        system.on_hook_status(off)
+        self.assertIn("Check your setup before Skyrim starts", system.hook_tile.description)

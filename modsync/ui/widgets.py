@@ -352,7 +352,9 @@ class HeroTile(Tile):
         self._sheen.timeout.connect(self._shine)
 
     def _shine(self) -> None:
-        if self.window().isActiveWindow():
+        # The sheen is only painted on the primary fill; Home demotes Play to
+        # a plain tile while it recommends a repair.
+        if self.property("tileRole") == "primary" and self.window().isActiveWindow():
             self.update()
 
     def showEvent(self, event) -> None:  # noqa: N802

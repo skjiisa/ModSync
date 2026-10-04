@@ -52,11 +52,10 @@ All notable changes to ModSync are documented here. The format follows
   Organizer 2, sync) next to Play, or Continue when Steam's Play button
   opened ModSync. The setup wizard reuses the same parts. Its last step keeps
   Finish at the top, or "Finish anyway" with the repair focused when the game
-  version still doesn't match. System and Game use shorter tile descriptions;
-  System's settings details and controls open in their own sheets.
-  B on Home, or "Quit ModSync" under System, asks to
-  quit, so ModSync can be closed without a mouse. ModSync always uses its
-  dark theme now.
+  version still doesn't match. System and Game use shorter tile
+  descriptions, and System's settings details and controls open in their own
+  sheets. B on Home, or "Quit ModSync" under System, asks to quit, so ModSync
+  can be closed without a mouse. ModSync always uses its dark theme now.
 - Controllers work two ways. Outside games, Steam Input's desktop
   configuration turns buttons into keys, and ModSync reads them back as the
   buttons that sent them: Space is Y on a Steam Deck and B on a Steam

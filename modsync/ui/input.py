@@ -162,6 +162,7 @@ class InputRouter(QObject):
         self._mouse_anchor: QPoint | None = None
         self._tap: tuple[int, float] | None = None  # modifier pressed alone, and when
         self._family: tuple[str, float] | None = None
+        self.last_input = 0.0  # monotonic time of the last press of any kind
         app.installEventFilter(self)
 
     @classmethod
@@ -302,6 +303,7 @@ class InputRouter(QObject):
     def dispatch(self, action: Action) -> bool:
         """Offer ``action`` to the focused widget and its ancestors; the main
         window at the top of the chain handles whatever is left."""
+        self.last_input = time.monotonic()
         window = QApplication.activeWindow()
         focus = QApplication.focusWidget()
         target = focus if focus is not None and (window is None or focus.window() is window) else window
@@ -375,5 +377,7 @@ class InputRouter(QObject):
             return False
         if kind in (QEvent.Type.MouseButtonPress, QEvent.Type.Wheel) and isinstance(obj, QWindow):
             self._tap = None  # Ctrl+click is not a bumper
+            if kind == QEvent.Type.MouseButtonPress:
+                self.last_input = time.monotonic()
             self._set_mode("mouse")
         return False

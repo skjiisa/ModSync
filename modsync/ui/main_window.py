@@ -112,6 +112,7 @@ class MainWindow(QMainWindow):
         self.steam_launch = steam_launch
         self.service = service or ModSyncService()
         self.router = InputRouter.instance()
+        self.opened_at = time.monotonic()
         self.firewall_check = None
         self.messages: list[str] = []
         self.overlays: list[Overlay] = []
@@ -277,6 +278,12 @@ class MainWindow(QMainWindow):
         if tone is None:
             tone = "warn" if text.startswith("⚠") else "info"
         self.toasts.show_message(text.removeprefix("⚠").strip(), tone)
+
+    @property
+    def untouched(self) -> bool:
+        """Nothing has been pressed since this window opened. Only then may a
+        late check move focus: a press in flight must land where it aimed."""
+        return self.router.last_input < self.opened_at
 
     @property
     def last_message(self) -> str:
