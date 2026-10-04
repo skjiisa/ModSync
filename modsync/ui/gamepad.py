@@ -10,6 +10,11 @@ next to Steam and could switch off the trackpad mouse ("lizard mode"). ModSync
 only reads evdev devices, which includes the virtual pad Steam presents to the
 app it launched. Steam's ``SDL_GAMECONTROLLER_IGNORE_DEVICES`` keeps the
 physical device it is already translating out of the list.
+
+SDL hides that virtual pad unless ``SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD``
+is set, which Steam only does for apps it launches. On a Steam Frame, ModSync
+runs in the nested desktop, which Steam doesn't launch, and the virtual pad is
+the only way its controllers can reach an app, so ModSync allows it itself.
 """
 
 from __future__ import annotations
@@ -89,6 +94,7 @@ class Gamepads(QObject):
             sdl.SDL_SetHint.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
             for hint, value in (
                 (b"SDL_JOYSTICK_HIDAPI", b"0"),
+                (b"SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", b"1"),
                 (b"SDL_NO_SIGNAL_HANDLERS", b"1"),
                 (b"SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", b"1"),
             ):

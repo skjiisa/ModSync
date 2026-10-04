@@ -6,7 +6,7 @@ doesn't move anything twice."""
 import os
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from modsync.state import State
 from tests.ui_support import QApplication, UiTestCase
@@ -337,6 +337,20 @@ class GamepadBackendTests(UiTestCase):
         pads._axis(5, 0.9)  # right trigger
         self.assertEqual(events[-1], ("rt", True))
 
+    def test_steams_virtual_pad_is_allowed_outside_a_steam_launch(self):
+        from modsync.ui.gamepad import Gamepads
+
+        sdl = MagicMock()
+        sdl.SDL_Init.return_value = 0
+        sdl.SDL_NumJoysticks.return_value = 0
+        with patch("modsync.ui.gamepad._load_sdl", return_value=sdl):
+            pads = Gamepads()
+            self.assertTrue(pads.start())
+            pads.stop()
+        hints = {call.args[0]: call.args[1] for call in sdl.SDL_SetHint.call_args_list}
+        self.assertEqual(hints[b"SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD"], b"1")
+        self.assertEqual(hints[b"SDL_JOYSTICK_HIDAPI"], b"0")
+
     def test_no_sdl_means_keyboard_only_without_errors(self):
         from modsync.ui.gamepad import Gamepads
 
@@ -556,6 +570,7 @@ class SteamInputFamilyTests(unittest.TestCase):
             ({"devices": [("28de", "1304")]}, False, "steam"),  # Steam Controller puck
             ({"devices": [("28de", "1142")]}, False, "steam"),  # original Steam Controller dongle
             ({"devices": [("28de", "11ff")]}, False, "keyboard"),  # only Steam's own virtual pad
+            ({"devices": [("28de", "0000")]}, False, "keyboard"),  # steamos-manager on a Frame
             ({"devices": [("045e", "028e")]}, True, "steam"),  # an Xbox pad SDL can see
             ({"devices": [("28de", "1205")]}, False, "deck"),  # the Deck's built-in controls
             ({"devices": [("28de", "1304")], "dmi": ("Valve", "Galileo")}, False, "deck"),

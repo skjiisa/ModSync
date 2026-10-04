@@ -31,6 +31,7 @@ from modsync import steamos
 VALVE = "28de"
 DECK_CONTROLLER = "1205"
 STEAM_VIRTUAL_PAD = "11ff"  # the X-Box 360 pad Steam itself presents to games
+STEAMOS_MANAGER = "0000"  # steamos-manager's virtual keyboard, not a controller
 DECK_PRODUCTS = {"Jupiter", "Galileo"}  # LCD and OLED
 
 
@@ -69,7 +70,8 @@ def family(sysfs: Path = Path("/sys"), *, gamepads_connected: bool = False) -> s
     devices = input_devices(sysfs)
     if is_steam_deck(sysfs, devices):
         return "deck"
-    valve = any(v == VALVE and p not in (STEAM_VIRTUAL_PAD, DECK_CONTROLLER) for v, p in devices)
+    not_controllers = (STEAM_VIRTUAL_PAD, DECK_CONTROLLER, STEAMOS_MANAGER)
+    valve = any(v == VALVE and p not in not_controllers for v, p in devices)
     if valve or gamepads_connected:
         return "steam"
     return "keyboard"
