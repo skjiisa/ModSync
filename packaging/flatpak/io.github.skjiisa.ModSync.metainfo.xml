@@ -34,6 +34,12 @@
   <url type="homepage">https://github.com/skjiisa/ModSync</url>
   <url type="bugtracker">https://github.com/skjiisa/ModSync/issues</url>
   <releases>
+    <release version="1.1.0~beta1" date="2026-10-04" type="development">
+      <url>https://github.com/skjiisa/ModSync/releases/tag/v1.1.0-beta1</url>
+      <description>
+        <p>Beta of a new interface designed for a controller first: five sections switched with the shoulder buttons, large tiles, a button hint bar, and sheets with an on-screen keyboard instead of dialogs. Steam's Play button now plays through MO2 as Steam's own launch, so cloud saves still sync. Also an optional ARM64 USVFS fix, a Visual C++ runtime install for USVFS 0.5.7 and newer, and an aarch64 bundle.</p>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-09-21" type="stable">
       <url>https://github.com/skjiisa/ModSync/releases/tag/v1.0.0</url>
       <description>
