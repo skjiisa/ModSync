@@ -435,7 +435,7 @@ class ReviewRegressionTests(UiTestCase):
         setup = window.start_setup()
         setup.go_to(1)
         release = Event()
-        with patch.object(ModSyncService, "join_vault", side_effect=lambda *a: release.wait(5)):
+        with patch.object(ModSyncService, "join_vault", side_effect=lambda *a, **k: release.wait(5)):
             setup.join.join_code(PairingCode("A" * 56, "modsync-abc", "Deck").encode())
             self.assertTrue(window.busy)  # no second join or share meanwhile
             self.assertFalse(setup.share.isEnabled())

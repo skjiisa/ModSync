@@ -14,6 +14,7 @@ import logging
 import os
 import secrets
 import shutil
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -70,6 +71,7 @@ class SyncStatus:
     paused: bool = False
     need_items: int = 0  # files and folders this machine knows it hasn't received yet
     copy: CopyProgress | None = None
+    conflicts: int = 0  # conflict copies waiting for a choice (see conflicts.find)
 
 
 @dataclass
@@ -186,6 +188,7 @@ class ModSyncService:
     def __init__(self, manager: SyncthingManager | None = None) -> None:
         self.state = State.load()
         self.launcher = Launcher()
+        self._copy_lock = threading.Lock()  # the page's poll and the launch check can overlap
         self.manager = manager or SyncthingManager(
             home=config.syncthing_home(),
             log_file=config.data_dir() / "syncthing.log",
@@ -435,7 +438,8 @@ class ModSyncService:
         count = 0
         for name in ("mods", "downloads"):
             try:
-                count += sum(1 for p in (Path(instance_path) / name).iterdir() if not p.name.startswith("."))
+                count += sum(1 for p in (Path(instance_path) / name).iterdir()
+                             if not p.name.startswith(".") and p.suffix != ".meta")  # MO2's note per download
             except OSError:
                 pass
         return count
@@ -457,6 +461,10 @@ class ModSyncService:
         3. **setting-aside**: once no local change is left and nothing is
            needed, make the folder send-and-receive without versioning, as a
            vault created here would be."""
+        with self._copy_lock:
+            return self._advance_copy(client, connections, names)
+
+    def _advance_copy(self, client, connections, names) -> CopyProgress | None:
         st = self.state
         if not st.syncing:
             return None
@@ -471,7 +479,7 @@ class ModSyncService:
             with self.manager.client() as own:
                 conns = own.connections().get("connections", {})
                 found = {d["deviceID"]: d.get("name", "") for d in own.devices()}
-                return self.advance_copy(own, conns, found)
+                return self._advance_copy(own, conns, found)
         fid, source = st.folder_id, st.copy_source
         name = (names or {}).get(source) or "the other machine"
         try:
@@ -608,11 +616,22 @@ class ModSyncService:
         return check
 
     # --- conflicts ---
+    _CONFLICT_RESCAN_S = 30.0  # status polls every few seconds; the walk needn't
+    _conflict_cache: tuple[float, int] | None = None
+
     def conflicts(self) -> list[conflicts.Conflict]:
         path = self.state.instance_path
         if not self.state.syncing or not path:
             return []
-        return conflicts.find(path)
+        found = conflicts.find(path)
+        self._conflict_cache = (time.monotonic(), len(found))
+        return found
+
+    def _conflict_count(self) -> int:
+        cached = self._conflict_cache
+        if cached is not None and time.monotonic() - cached[0] < self._CONFLICT_RESCAN_S:
+            return cached[1]
+        return len(self.conflicts())
 
     def resolve_conflict(self, conflict: conflicts.Conflict, keep: str) -> Path:
         """Keep one version of a conflicted file; the other goes to
@@ -623,6 +642,7 @@ class ModSyncService:
         if self.launcher.running():
             raise RuntimeError("Close Mod Organizer 2 and the game first.")
         moved = conflicts.resolve(instance, conflict, keep)
+        self._conflict_cache = None
         log.info("conflict on %s: kept the %s version, the other is in %s",
                  conflict.relative(instance), keep, moved)
         return moved
@@ -715,8 +735,10 @@ class ModSyncService:
         instance_path: Path | str,
         *,
         timeout: float = 15.0,
+        merge: bool = False,
     ) -> pairing_lan.PairPayload:
-        """Pair with a discovered host via PIN and join its vault. Blocks."""
+        """Pair with a discovered host via PIN and join its vault (see
+        ``join_vault`` for ``merge``). Blocks."""
         self.ensure_running()
         payload = pairing_lan.PairPayload(self.device_id())
         peer = pairing_lan.join_pairing(announcement, payload, pin, timeout=timeout)
@@ -726,6 +748,7 @@ class ModSyncService:
             PairingCode(peer.device_id, peer.folder_id, peer.label),
             instance_path,
             peer_host=peer.host,
+            merge=merge,
         )
         return peer
 
@@ -1124,6 +1147,7 @@ class ModSyncService:
                 paused=paused,
                 need_items=need,
                 copy=copy,
+                conflicts=self._conflict_count() if self.state.folder_id else 0,
             )
 
     # --- internal ---

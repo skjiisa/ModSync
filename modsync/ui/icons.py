@@ -180,6 +180,10 @@ def _draw(p: QPainter, name: str) -> None:  # noqa: C901 - a lookup table of dra
         p.drawLine(QPointF(9.5, 14.5), QPointF(9.5, 18.5))
         p.setBrush(theme.color("surface"))
         p.drawRoundedRect(QRectF(14.5, 9, 7, 11.5), 1.5, 1.5)
+    elif name == "pause":
+        p.drawEllipse(QPointF(12, 12), 9, 9)
+        p.drawLine(QPointF(9.5, 8.5), QPointF(9.5, 15.5))
+        p.drawLine(QPointF(14.5, 8.5), QPointF(14.5, 15.5))
     elif name == "stop":
         p.drawEllipse(QPointF(12, 12), 9, 9)
         p.setBrush(fill)

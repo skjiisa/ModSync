@@ -377,11 +377,10 @@ class SyncthingIntegration(unittest.TestCase):
             inst_b = tmp / "B" / "MO2"
             (inst_b / "mods" / "Mine").mkdir(parents=True)
             (inst_b / "mods" / "Mine" / "m.esp").write_text("mine")
-            (a, _port_a), (b, port_b) = self._two_nodes(tmp)
+            (a, _port_a), (b, _port_b) = self._two_nodes(tmp)
             a.stop()  # the machine being copied is off
             try:
-                with b.client() as cb:
-                    id_a = _generate_device_id(self.binary, tmp / "offline")
+                id_a = _generate_device_id(self.binary, tmp / "offline")
                 service = ModSyncService(manager=b)
                 service.join_vault(PairingCode(id_a, "modsync-off", "Desktop"), inst_b)
                 for _ in range(6):

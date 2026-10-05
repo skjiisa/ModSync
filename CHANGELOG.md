@@ -6,6 +6,29 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- "Copy from another machine" copies. Before, joining merged both machines:
+  mods only on the joining machine spread to the one being copied, and where
+  a file differed the newer one won on both. Now this machine only receives
+  until it matches the vault; files that already match aren't downloaded
+  again, and what is only here, or different here, moves to
+  `.modsync-before-join` in the instance instead of being sent or deleted.
+  The copy carries on across restarts and waits for the other machine to
+  connect, and Play is blocked until it finishes. When this machine already
+  has mods, joining asks whether to copy or merge (`modsync sync join --merge`).
+- "Stop syncing" can pause instead of leaving the vault. Resuming carries over
+  what changed meanwhile, removed mods included, which leaving and joining
+  again can't.
+
+### Added
+
+- Sync lists files changed on two machines before they synced, describes what
+  differs in a mod or plugin list, and keeps the version you choose. The other
+  moves to `.modsync-conflicts` in the instance.
+- With a vault, Play and Open MO2 first check whether changes from another
+  machine haven't arrived yet or conflicts are waiting, and ask before playing.
+
 ## [1.1.0-beta1] - 2026-10-04
 
 A beta of the controller-first interface, for testing an end-to-end install of
