@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import secrets
+import shutil
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -27,10 +29,15 @@ from modsync.pairing_code import PairingCode
 from modsync.state import State
 from modsync.steam import appinfo, libraries as libs, prefixes, shortcuts
 from modsync.steam.appmanifest import AppManifest, PinChange
-from modsync.sync import pairing, stignore
+from modsync.sync import conflicts, pairing, stignore
 from modsync.sync.manager import SyncthingManager
 
 log = logging.getLogger(__name__)
+
+# Where "Copy from another machine" keeps the files it replaced or set aside,
+# one folder per copy. .stignore's "/*" keeps it out of sync.
+COPY_ARCHIVE_DIR = ".modsync-before-join"
+_FOLDER_BUSY = ("syncing", "sync-preparing", "sync-waiting", "scanning", "scan-waiting", "cleaning")
 
 
 @dataclass
@@ -41,6 +48,18 @@ class DeviceStatus:
 
 
 @dataclass
+class CopyProgress:
+    """Where a "Copy from another machine" is (see ``advance_copy``)."""
+
+    phase: str  # "waiting" (for the source) | "receiving" | "setting-aside" | "done"
+    source: str  # the name of the machine being copied
+    need_items: int = 0
+    need_bytes: int = 0
+    errors: int = 0
+    set_aside: int = 0  # once done: files kept in the archive
+
+
+@dataclass
 class SyncStatus:
     device_id: str
     folder_id: str | None
@@ -48,6 +67,18 @@ class SyncStatus:
     folder_state: str | None
     completion: float | None
     devices: list[DeviceStatus]
+    paused: bool = False
+    need_items: int = 0  # files and folders this machine knows it hasn't received yet
+    copy: CopyProgress | None = None
+
+
+@dataclass
+class LaunchCheck:
+    """What syncing says about starting MO2 now. ``blocked`` means don't;
+    each warning is worth a "Play anyway"."""
+
+    blocked: str = ""
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -330,23 +361,41 @@ class ModSyncService:
         return PairingCode(device_id, folder_id, label)
 
     def join_vault(
-        self, code: PairingCode, instance_path: Path | str, *, peer_host: str | None = None
+        self,
+        code: PairingCode,
+        instance_path: Path | str,
+        *,
+        peer_host: str | None = None,
+        merge: bool = False,
     ) -> PairingCode:
         """Join a vault advertised by another machine's pairing code.
+
+        By default this machine becomes a copy of the vault: the folder starts
+        receive-only, so nothing here reaches the other machines, and
+        ``advance_copy`` sets aside whatever the vault doesn't have before
+        syncing both ways. Files here that match are kept as they are, so a
+        machine that synced before downloads only what changed. ``merge`` joins
+        both ways at once instead: files from both sides end up everywhere and
+        where a file differs, the newer one wins.
 
         ``peer_host`` is the address the peer was reached on during LAN pairing,
         so Syncthing can connect without its own discovery."""
         self.ensure_running()
         instance_path = Path(instance_path)
         label = code.label or self.state.instance_label
+        archive = None if merge else self._new_copy_archive(instance_path)
         # The vault's game-version record comes from the machine we're copying;
         # anything written here before joining (choose_instance records the
         # local runtime) would be newer and win Syncthing's conflict resolution,
         # overwriting the real one on every machine.
         local_meta = gameversion.VaultMeta.path(instance_path)
         if local_meta.exists():
-            log.info("dropping local %s before joining; the vault's copy wins", local_meta.name)
-            local_meta.unlink()
+            log.info("setting aside local %s before joining; the vault's copy wins", local_meta.name)
+            if archive is not None:
+                archive.mkdir(parents=True, exist_ok=True)
+                shutil.move(local_meta, archive / local_meta.name)
+            else:
+                local_meta.unlink()
         with self.manager.client() as client:
             pairing.add_peer_device(
                 client,
@@ -355,12 +404,228 @@ class ModSyncService:
                 addresses=pairing.static_addresses(peer_host),
             )
             pairing.share_instance_folder(
-                client, code.folder_id, instance_path, [code.device_id], label=label
+                client, code.folder_id, instance_path, [code.device_id], label=label,
+                receive_only=not merge, versions_dir=archive,
             )
             device_id = client.my_id()
+        self.state.sync_paused = False
+        self.state.copy_phase = "" if merge else "receiving"
+        self.state.copy_source = "" if merge else code.device_id
+        self.state.copy_archive = str(archive) if archive else ""
+        self.state.set_aside = ""
         self._remember(instance_path, code.folder_id, label)
-        log.info("joined vault %s from device %s… into %s", code.folder_id, code.device_id[:7], instance_path)
+        log.info("joined vault %s from device %s… into %s (%s)", code.folder_id, code.device_id[:7],
+                 instance_path, "merge" if merge else "copy")
         return PairingCode(device_id, code.folder_id, label)
+
+    @staticmethod
+    def _new_copy_archive(instance_path: Path) -> Path:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        archive = instance_path / COPY_ARCHIVE_DIR / stamp
+        n = 1
+        while archive.exists():  # never mix two copies' files
+            n += 1
+            archive = instance_path / COPY_ARCHIVE_DIR / f"{stamp}-{n}"
+        return archive
+
+    @staticmethod
+    def local_mod_count(instance_path: Path | str) -> int:
+        """How many mods and downloads are here already. Above zero, joining
+        asks whether to copy (setting these aside) or merge."""
+        count = 0
+        for name in ("mods", "downloads"):
+            try:
+                count += sum(1 for p in (Path(instance_path) / name).iterdir() if not p.name.startswith("."))
+            except OSError:
+                pass
+        return count
+
+    # --- copying from another machine ---
+    def advance_copy(self, client=None, connections: dict | None = None,
+                     names: dict[str, str] | None = None) -> CopyProgress | None:
+        """Move a copy from another machine on, one step per call. Called by
+        every status poll, the app's and the background service's, so a copy
+        carries on wherever ModSync runs next. Returns None when no copy is under way.
+
+        1. **receiving**: wait until the source machine is connected and has
+           sent its index (``remoteState`` "valid"; until then "100%" only means
+           nothing is known yet), and everything it has is here, with no
+           errors, for two polls in a row.
+        2. Revert the folder's local changes: files the vault doesn't have and
+           the conflict copies Syncthing made of files here that differed. The
+           folder's trash-can versioning moves them into the copy's archive.
+        3. **setting-aside**: once no local change is left and nothing is
+           needed, make the folder send-and-receive without versioning, as a
+           vault created here would be."""
+        st = self.state
+        if not st.syncing:
+            return None
+        disk = State.load()  # the app and the background service both drive this
+        if disk.folder_id == st.folder_id:
+            st.copy_phase, st.copy_source = disk.copy_phase, disk.copy_source
+            st.copy_archive, st.set_aside = disk.copy_archive, disk.set_aside
+        if not st.copy_phase:
+            return None
+        if client is None:
+            self.ensure_running()
+            with self.manager.client() as own:
+                conns = own.connections().get("connections", {})
+                found = {d["deviceID"]: d.get("name", "") for d in own.devices()}
+                return self.advance_copy(own, conns, found)
+        fid, source = st.folder_id, st.copy_source
+        name = (names or {}).get(source) or "the other machine"
+        try:
+            status = client.folder_status(fid)
+        except Exception as exc:
+            log.info("copy: folder status unavailable: %s", exc)
+            return CopyProgress("waiting", name)
+        errors = int(status.get("pullErrors") or 0) + int(status.get("errors") or 0)
+        need = int(status.get("needTotalItems") or 0)
+        progress = CopyProgress(st.copy_phase, name, need, int(status.get("needBytes") or 0), errors)
+        ready = status.get("state") == "idle" and not need and not errors and not st.sync_paused
+        settled = self._copy_settled(status, ready)
+        if st.copy_phase == "receiving":
+            try:
+                remote = client.completion(fid, source).get("remoteState")
+            except Exception:
+                remote = None
+            if not (connections or {}).get(source, {}).get("connected") or remote != "valid":
+                self._copy_seen = None
+                progress.phase = "waiting"
+                return progress
+            if not settled:
+                return progress
+            if status.get("receiveOnlyTotalItems"):
+                log.info("copy: setting aside %s local change(s)", status.get("receiveOnlyTotalItems"))
+                client.revert(fid)
+            st.copy_phase = progress.phase = "setting-aside"
+            self._copy_seen = None
+            st.save()
+            return progress
+        if not settled:
+            return progress
+        if status.get("receiveOnlyTotalItems"):
+            # Written here since the revert (MO2 left open): set that aside too.
+            client.revert(fid)
+            self._copy_seen = None
+            return progress
+        folder = client.get_folder(fid)
+        folder["type"] = "sendreceive"
+        folder["versioning"] = dict(pairing.NO_VERSIONING)
+        client.put_folder(folder)
+        archive = Path(st.copy_archive) if st.copy_archive else None
+        kept = self._file_count(archive)
+        if archive is not None and not kept:
+            shutil.rmtree(archive, ignore_errors=True)
+            try:
+                archive.parent.rmdir()  # only when no other copy's archive is in it
+            except OSError:
+                pass
+        st.set_aside = str(archive) if archive is not None and kept else ""
+        st.copy_phase = st.copy_source = st.copy_archive = ""
+        st.save()
+        log.info("copy finished; %d file(s) set aside in %s", kept, archive)
+        return CopyProgress("done", name, set_aside=kept)
+
+    _copy_seen: tuple | None = None
+
+    def _copy_settled(self, status: dict, ready: bool) -> bool:
+        """Ready now, and nothing changed since the last poll: a large index
+        arrives in batches, and a pause between two of them looks idle."""
+        key = tuple(status.get(k) for k in ("sequence", "globalFiles", "globalDirectories", "globalBytes",
+                                             "receiveOnlyTotalItems")) if ready else None
+        settled = key is not None and key == self._copy_seen
+        self._copy_seen = key
+        return settled
+
+    @staticmethod
+    def _file_count(root: Path | None) -> int:
+        if root is None or not root.is_dir():
+            return 0
+        return sum(len(files) for _root, _dirs, files in os.walk(root))
+
+    def dismiss_set_aside(self, *, delete: bool = False) -> None:
+        """Forget the files a finished copy set aside, deleting them if asked."""
+        path = self.state.set_aside
+        if delete and path:
+            archive = Path(path)
+            instance = Path(self.state.instance_path or "")
+            # Only ever an archive this copy made, inside the instance.
+            if archive.parent == instance / COPY_ARCHIVE_DIR:
+                shutil.rmtree(archive, ignore_errors=True)
+                try:
+                    archive.parent.rmdir()
+                except OSError:
+                    pass
+        self.state.set_aside = ""
+        self.state.save()
+
+    # --- pausing ---
+    def pause_sync(self, paused: bool = True) -> None:
+        """Pause or resume the vault. Unlike leaving it, pausing keeps Syncthing's
+        record of what was in sync, so on resuming the changes made in between
+        carry over both ways: a mod removed here while paused is removed there
+        too, instead of coming back."""
+        if not self.state.folder_id:
+            raise RuntimeError("no vault configured on this machine yet")
+        self.ensure_running()
+        with self.manager.client() as client:
+            folder = client.get_folder(self.state.folder_id)
+            folder["paused"] = paused
+            client.put_folder(folder)
+        self.state.sync_paused = paused
+        self.state.save()
+        log.info("%s vault %s", "paused" if paused else "resumed", self.state.folder_id)
+
+    # --- before playing ---
+    def launch_check(self) -> LaunchCheck:
+        """Whether syncing says to wait before starting MO2 here. Only what
+        Syncthing knows: changes another machine made since it was last
+        connected can't be known until it connects again."""
+        st = self.state
+        if not st.syncing:
+            return LaunchCheck()
+        status = None
+        try:
+            status = self.status()
+        except Exception as exc:
+            log.info("launch check: sync status unavailable: %s", exc)
+        if st.copy_phase:
+            source = status.copy.source if status and status.copy else "the other machine"
+            return LaunchCheck(blocked=f"Mods are still being copied from {source}. Play once the copy has "
+                                       "finished, so nothing you change here is set aside with it.")
+        check = LaunchCheck()
+        if status is not None and not st.sync_paused and (status.need_items or status.folder_state in _FOLDER_BUSY):
+            n = status.need_items
+            what = f"{n} change{'' if n == 1 else 's'}" if n else "Some changes"
+            check.warnings.append(f"{what} from another machine haven't arrived yet. Changes you make in MO2 "
+                                  "now could clash with them.")
+        found = self.conflicts()
+        if found:
+            n = len(found)
+            check.warnings.append(f"{n} file{' was' if n == 1 else 's were'} changed on two machines at once. "
+                                  "Until you choose a version under Sync, MO2 uses the newer one.")
+        return check
+
+    # --- conflicts ---
+    def conflicts(self) -> list[conflicts.Conflict]:
+        path = self.state.instance_path
+        if not self.state.syncing or not path:
+            return []
+        return conflicts.find(path)
+
+    def resolve_conflict(self, conflict: conflicts.Conflict, keep: str) -> Path:
+        """Keep one version of a conflicted file; the other goes to
+        ``.modsync-conflicts`` in the instance."""
+        instance = Path(self.state.instance_path or "")
+        if not conflict.path.is_relative_to(instance):
+            raise RuntimeError("That file isn't in this instance.")
+        if self.launcher.running():
+            raise RuntimeError("Close Mod Organizer 2 and the game first.")
+        moved = conflicts.resolve(instance, conflict, keep)
+        log.info("conflict on %s: kept the %s version, the other is in %s",
+                 conflict.relative(instance), keep, moved)
+        return moved
 
     def add_peer(self, code: PairingCode, *, peer_host: str | None = None) -> None:
         """Add another machine to the vault this machine already has."""
@@ -494,6 +759,10 @@ class ModSyncService:
         except Exception:
             pass  # daemon may be down; clearing our own state is what matters
         self.state.folder_id = None
+        self.state.sync_paused = False
+        # A copy left half-way leaves what it set aside so far in its archive.
+        self.state.copy_phase = self.state.copy_source = self.state.copy_archive = ""
+        self.state.set_aside = ""
         self.state.save()
 
     def reset(self, *, forget_devices: bool = True) -> None:
@@ -816,7 +1085,8 @@ class ModSyncService:
             me = client.my_id()
             conns = client.connections().get("connections", {})
             devices: list[DeviceStatus] = []
-            for d in client.devices():
+            all_devices = client.devices()
+            for d in all_devices:
                 did = d["deviceID"]
                 if did == me:
                     continue
@@ -829,12 +1099,21 @@ class ModSyncService:
                 )
             folder_state = None
             completion = None
+            need = 0
+            copy = None
+            paused = self.state.sync_paused
             if self.state.folder_id:
                 try:
-                    folder_state = client.folder_status(self.state.folder_id).get("state")
-                    completion = client.completion(self.state.folder_id).get("completion")
+                    folder = client.folder_status(self.state.folder_id)
+                    folder_state = "paused" if paused else folder.get("state")
+                    need = int(folder.get("needTotalItems") or 0)
+                    if not paused:  # Syncthing has no completion for a paused folder
+                        completion = client.completion(self.state.folder_id).get("completion")
                 except Exception:
                     pass
+                if self.state.copy_phase:
+                    names = {d["deviceID"]: d.get("name", "") for d in all_devices}
+                    copy = self.advance_copy(client, conns, names)
             return SyncStatus(
                 device_id=me,
                 folder_id=self.state.folder_id,
@@ -842,6 +1121,9 @@ class ModSyncService:
                 folder_state=folder_state,
                 completion=completion,
                 devices=devices,
+                paused=paused,
+                need_items=need,
+                copy=copy,
             )
 
     # --- internal ---

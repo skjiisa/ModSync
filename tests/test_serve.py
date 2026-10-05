@@ -66,6 +66,19 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(any("accepted new device" in l for l in lines))
         self.assertTrue(any("100% in sync" in l for l in lines))
 
+    def test_a_finished_copy_is_announced_once(self):
+        from modsync.service import CopyProgress
+
+        svc, server, lines, notes = self.make(State(instance_path="/mo2", folder_id="modsync-1",
+                                                    set_aside="/mo2/.modsync-before-join/x"))
+        progress = [CopyProgress("receiving", "Desktop", need_items=4), CopyProgress("done", "Desktop", set_aside=2)]
+        svc.status = lambda: SyncStatus("ME", "modsync-1", True, "idle", 100.0, [], copy=progress.pop(0))
+        server.tick()
+        self.assertIn("copying from Desktop: receiving", lines[-1])
+        server.tick()
+        self.assertEqual(notes, [("Copy finished", "This machine now has the same mods as Desktop. 2 file(s) "
+                                  "that were only here are kept in /mo2/.modsync-before-join/x.")])
+
     def test_queued_pin_is_applied_without_a_vault(self):
         svc, server, lines, notes = self.make(State())
         svc.pin = PinOutcome(True, False, [], "Pinned.")

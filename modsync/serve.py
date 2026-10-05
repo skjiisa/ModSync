@@ -94,7 +94,8 @@ class Server:
                 self.notify("ModSync launch hook", hook)
         except Exception as exc:
             self.log(f"  (launch hook check failed: {exc})")
-        if self._ticks % _VERSION_CHECK_EVERY == 1:
+        # Mid-copy the vault's game-version record may not have arrived yet.
+        if self._ticks % _VERSION_CHECK_EVERY == 1 and not self.service.state.copy_phase:
             self._check_game_version()
         if not self.syncing:
             return
@@ -106,7 +107,17 @@ class Server:
             line = f"  devices {connected}/{len(status.devices)} connected"
             if status.folder_state is not None:
                 line += f" · folder {status.folder_state} · {int(status.completion or 0)}% in sync"
+            copy = status.copy
+            if copy is not None and copy.phase != "done":
+                line += f" · copying from {copy.source}: {copy.phase}"
             self.log(line)
+            if copy is not None and copy.phase == "done":
+                body = f"This machine now has the same mods as {copy.source}."
+                if copy.set_aside:
+                    body += (f" {copy.set_aside} file(s) that were only here are kept in "
+                             f"{self.service.state.set_aside}.")
+                self.log(f"  ✓ {body}")
+                self.notify("Copy finished", body)
         except Exception as exc:
             self.log(f"  (status unavailable: {exc})")
 

@@ -178,7 +178,7 @@ def vault(args: list[str]) -> int:
     print(
         "usage:\n"
         "  modsync sync create <instance-dir> [--label NAME]\n"
-        "  modsync sync join <pairing-code> <instance-dir>\n"
+        "  modsync sync join <pairing-code> <instance-dir> [--merge]\n"
         "  modsync serve                       keep syncing / watching in the foreground"
     )
     return 2
@@ -217,8 +217,10 @@ def _vault_create(args: list[str]) -> int:
 
 
 def _vault_join(args: list[str]) -> int:
+    merge = "--merge" in args
+    args = [a for a in args if a != "--merge"]
     if len(args) != 2:
-        print("usage: modsync sync join <pairing-code> <instance-dir>")
+        print("usage: modsync sync join <pairing-code> <instance-dir> [--merge]")
         return 2
     code_text, instance = args
 
@@ -233,7 +235,12 @@ def _vault_join(args: list[str]) -> int:
 
     service = ModSyncService()
     print(f"Starting Syncthing and joining vault {code.folder_id} into {instance} …")
-    mine = service.join_vault(code, instance)
+    mine = service.join_vault(code, instance, merge=merge)
+    if merge:
+        print("Merging: mods from both machines end up on both; where a file differs, the newer one wins.")
+    else:
+        print("Copying: this machine only receives until it matches the other one. Files here that the")
+        print(f"vault doesn't have are set aside in {instance}/.modsync-before-join, not deleted.")
     print("\nThis machine's pairing code (add it on the other machine to sync back):\n")
     print(f"  {mine.encode()}\n")
     return _run_until_interrupt(service)

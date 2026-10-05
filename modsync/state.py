@@ -15,7 +15,8 @@ from pathlib import Path
 
 from modsync import config
 
-_FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp")
+_FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "sync_paused",
+           "copy_phase", "copy_source", "copy_archive", "set_aside")
 
 
 @dataclass
@@ -26,6 +27,17 @@ class State:
     # Fingerprint of the firewall rules right after ModSync added its own (see
     # modsync.firewall). Only consulted when the rules can't be read at launch.
     firewall_rules_stamp: str = ""
+    # The user paused the vault. Syncthing keeps the folder and its history, so
+    # resuming carries over what changed in between, deletions included.
+    sync_paused: bool = False
+    # A "Copy from another machine" still under way (see ModSyncService.advance_copy):
+    # "receiving" while the folder is receive-only and filling up, "setting-aside"
+    # once local-only files are being moved out, "" when there is none.
+    copy_phase: str = ""
+    copy_source: str = ""  # device id of the machine being copied
+    copy_archive: str = ""  # where this copy keeps what it replaced or set aside
+    # A finished copy's archive, while it holds anything the user may want back.
+    set_aside: str = ""
 
     @staticmethod
     def path() -> Path:
@@ -56,6 +68,11 @@ class State:
     def syncing(self) -> bool:
         """The instance is shared through a Syncthing vault."""
         return bool(self.instance_path and self.folder_id)
+
+    @property
+    def copying(self) -> bool:
+        """A copy from another machine hasn't finished: this machine only receives."""
+        return bool(self.syncing and self.copy_phase)
 
     @property
     def configured(self) -> bool:
