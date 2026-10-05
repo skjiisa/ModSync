@@ -76,7 +76,23 @@ def find(instance: Path | str) -> list[Conflict]:
         for root, _dirs, files in os.walk(instance / name):
             candidates += [Path(root) / f for f in files if ".sync-conflict-" in f]
     found = [c for c in map(parse, candidates) if c is not None]
-    return sorted(found, key=lambda c: (c.relative(instance), c.when or datetime.min))
+    # Profile lists first: they decide which mods load.
+    return sorted(found, key=lambda c: (c.kind == "file", c.relative(instance), c.when or datetime.min))
+
+
+def related(found: list[Conflict], first: Conflict) -> list[Conflict]:
+    """``first`` and the conflicts to decide with it. A profile's mod list,
+    plugins and load order go together: keeping one machine's mod list with
+    the other's plugins makes a profile neither machine had. Grouped only when
+    the same machine's change was set aside in each, one per file."""
+    if first.kind == "file":
+        return [first]
+    group: list[Conflict] = []
+    for c in found:
+        if (c.kind != "file" and c.original.parent == first.original.parent and c.device == first.device
+                and all(g.original != c.original for g in group)):
+            group.append(c)
+    return group
 
 
 # --- describing the difference ---------------------------------------------------
@@ -162,22 +178,41 @@ def differences(conflict: Conflict, other: str = "the other machine") -> list[st
     return [f"The contents differ ({here.st_size:,} bytes in use, {there.st_size:,} from {other})."]
 
 
-# --- settling one ------------------------------------------------------------------
-def resolve(instance: Path | str, conflict: Conflict, keep: str, *, stamp: str | None = None) -> Path:
+# --- settling them ------------------------------------------------------------------
+def new_archive(instance: Path | str) -> Path:
+    """A folder of its own under ``.modsync-conflicts`` for one decision, so
+    nothing moved there can replace something moved there before."""
+    root = Path(instance) / ARCHIVE_DIR
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    n = 1
+    while True:
+        archive = root / (stamp if n == 1 else f"{stamp}-{n}")
+        try:
+            archive.mkdir(parents=True)
+            return archive
+        except FileExistsError:
+            n += 1
+
+
+def resolve(instance: Path | str, conflict: Conflict, keep: str, *, archive: Path | None = None) -> Path:
     """Keep ``"current"`` (the file in use) or ``"other"`` (the copy set aside).
-    The version not kept moves under ``.modsync-conflicts/<stamp>/`` with its
-    path in the instance. Returns where it went."""
+    The version not kept moves into ``archive`` (a ``new_archive`` by default)
+    with its path in the instance. Returns where it went."""
     if keep not in ("current", "other"):
         raise ValueError(f"keep must be 'current' or 'other', not {keep!r}")
     instance = Path(instance)
-    archive = instance / ARCHIVE_DIR / (stamp or datetime.now().strftime("%Y%m%d-%H%M%S"))
+    archive = archive or new_archive(instance)
     if keep == "current":
         dest = archive / conflict.path.relative_to(instance)
+        if dest.exists():
+            raise FileExistsError(f"{dest} is already archived")
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(conflict.path, dest)
         return dest
     dest = archive / conflict.original.relative_to(instance)
     if conflict.original.exists():
+        if dest.exists():
+            raise FileExistsError(f"{dest} is already archived")
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(conflict.original, dest)
     os.replace(conflict.path, conflict.original)

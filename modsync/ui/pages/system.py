@@ -201,8 +201,7 @@ class SystemPage(Page):
                              on_failed=self._on_firewall_failed)
 
     def _after_firewall(self, stamp: str, message: str) -> None:
-        self.service.state.firewall_rules_stamp = stamp
-        self.service.state.save()
+        self.service.update_state(firewall_rules_stamp=stamp)
         self.host.notify(message, "ok")
         self._refresh_firewall()  # re-read the rules rather than assume
 

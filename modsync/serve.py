@@ -80,6 +80,11 @@ class Server:
         """One pass. Errors are logged, never raised, so the loop keeps going."""
         self._ticks += 1
         try:
+            # The app may have joined, left or paused a vault since the last tick.
+            self.service.reload_state()
+        except Exception as exc:
+            self.log(f"  (state unreadable: {exc})")
+        try:
             pin = self.service.apply_pending_pin()
             if pin is not None:
                 self.log(f"  {'✓' if pin.applied else '!'} {pin.message}")
@@ -102,12 +107,13 @@ class Server:
         try:
             for device_id in self.service.accept_pending():
                 self.log(f"  ✓ accepted new device {device_id[:13]}…")
+            progress = self.service.advance_copy() if self.service.state.copy_phase else None
             status = self.service.status()
             connected = sum(1 for d in status.devices if d.connected)
             line = f"  devices {connected}/{len(status.devices)} connected"
             if status.folder_state is not None:
                 line += f" · folder {status.folder_state} · {int(status.completion or 0)}% in sync"
-            copy = status.copy
+            copy = progress if progress is not None and progress.phase == "done" else status.copy
             if copy is not None and copy.phase != "done":
                 line += f" · copying from {copy.source}: {copy.phase}"
             self.log(line)

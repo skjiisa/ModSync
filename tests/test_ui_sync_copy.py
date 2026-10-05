@@ -153,37 +153,46 @@ class LiveSyncTests(UiTestCase):
         sync.stop_sync()
         self.assertEqual(list(window.top_overlay.tiles), ["stop", "cancel"])
 
-    def test_conflicts_are_reviewed_one_at_a_time(self):
+    def test_conflicts_are_reviewed_a_profile_at_a_time(self):
         profile = self.tmp / "profiles" / "Default"
         profile.mkdir(parents=True)
         (profile / "modlist.txt").write_text("+Mine\n")
         (profile / f"modlist.{STAMP}.txt").write_text("+Theirs\n")
         (profile / "plugins.txt").write_text("*A.esp\n")
         (profile / f"plugins.{STAMP}.txt").write_text("A.esp\n")
+        ini = self.tmp / "overwrite" / "SKSE" / "x.ini"
+        ini.parent.mkdir(parents=True)
+        ini.write_text("a=1")
+        (ini.parent / f"x.{STAMP}.ini").write_text("a=2")
         window, sync = self._window()
-        sync.on_status(self.status(conflicts=2))
+        sync.on_status(self.status(conflicts=3))
         self.assertTrue(sync.conflicts_tile.isVisibleTo(sync))
-        self.assertEqual(sync.conflicts_tile.text(), "2 files were changed on two machines")
-        self.assertEqual(window.pages["home"].sync_row.badge.text(), "2 conflicts")
+        self.assertEqual(sync.conflicts_tile.text(), "3 files were changed on two machines")
+        self.assertEqual(window.pages["home"].sync_row.badge.text(), "3 conflicts")
         sync._names["AAAAAAA"] = "Desktop"
         sync.conflicts_tile.click()
         self.settle()
         sheet = window.top_overlay
-        self.assertEqual(sheet.title.text(), "Mod list of profile Default")
+        self.assertEqual(sheet.title.text(), "Profile Default")
+        self.assertIn("mod list and plugins of profile Default", sheet.text.text())
         self.assertIn("Only in the version from Desktop: Theirs.", sheet.text.text())
-        self.assertIn("1 more after this one", sheet.text.text())
-        sheet.choose("other")
+        self.assertIn("Enabled only in the version in use: A.esp.", sheet.text.text())
+        self.assertIn("1 more after this", sheet.text.text())
+        self.assertEqual(sheet.tiles["other"].text(), "Use the versions from Desktop")
+        sheet.choose("other")  # both lists together
         self.settle(4)
         self.assertEqual((profile / "modlist.txt").read_text(), "+Theirs\n")
+        self.assertEqual((profile / "plugins.txt").read_text(), "A.esp\n")
         sheet = window.top_overlay
-        self.assertEqual(sheet.title.text(), "Plugins of profile Default")
+        self.assertEqual(sheet.title.text(), "overwrite/SKSE/x.ini")
         sheet.choose("current")
         self.settle(4)
-        self.assertEqual((profile / "plugins.txt").read_text(), "*A.esp\n")
+        self.assertEqual(ini.read_text(), "a=1")
         self.assertEqual(window.service.conflicts(), [])
-        self.assertEqual(window.last_message, "No conflicts left.")
-        archived = sorted(p.name for p in (self.tmp / ".modsync-conflicts").rglob("*.txt"))
-        self.assertEqual(archived, ["modlist.txt", f"plugins.{STAMP}.txt"])
+        self.assertIn("No conflicts left", window.last_message)
+        archived = sorted(p.name for p in (self.tmp / ".modsync-conflicts").rglob("*") if p.is_file())
+        self.assertEqual(archived, ["modlist.txt", "plugins.txt", f"x.{STAMP}.ini"])
+        self.assertEqual(len(list((self.tmp / ".modsync-conflicts").iterdir())), 2)  # one folder per decision
 
     def test_set_aside_files_can_be_deleted(self):
         archive = self.tmp / ".modsync-before-join" / "20261004-101500"

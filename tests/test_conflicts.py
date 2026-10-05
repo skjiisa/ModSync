@@ -33,13 +33,13 @@ class ConflictTests(unittest.TestCase):
         self.write("profiles/Default/modlist.sync-conflict-notreally.txt", "")
         found = conflicts.find(self.inst)
         self.assertEqual([c.relative(self.inst) for c in found],
-                         ["Makefile", "categories.dat", "overwrite/SKSE/Plugins/settings.ini",
-                          "profiles/Default/modlist.txt"])
-        modlist = found[-1]
+                         ["profiles/Default/modlist.txt", "Makefile", "categories.dat",
+                          "overwrite/SKSE/Plugins/settings.ini"])
+        modlist = found[0]
         self.assertEqual(modlist.kind, "modlist")
         self.assertEqual(modlist.device, "ABCDEFG")
         self.assertEqual(modlist.when.isoformat(), "2026-10-04T10:15:00")
-        self.assertEqual(found[2].kind, "file")
+        self.assertEqual(found[3].kind, "file")
 
     def test_describes_a_modlist_difference_in_both_directions(self):
         self.write("profiles/Default/modlist.txt", "# MO2\n+Shared\n+OnlyHere\n-Toggled\n+Both\n*DLC: Dawnguard\n")
@@ -68,9 +68,10 @@ class ConflictTests(unittest.TestCase):
         self.write("profiles/Default/modlist.txt", "+Mine\n")
         other = self.write(f"profiles/Default/modlist.{STAMP}.txt", "+Theirs\n")
         (c,) = conflicts.find(self.inst)
-        moved = conflicts.resolve(self.inst, c, "current", stamp="t")
+        moved = conflicts.resolve(self.inst, c, "current")
         self.assertFalse(other.exists())
-        self.assertEqual(moved, self.inst / ".modsync-conflicts" / "t" / "profiles" / "Default" / other.name)
+        self.assertEqual(moved.relative_to(self.inst).parts[0], ".modsync-conflicts")
+        self.assertEqual(moved.relative_to(self.inst).parts[2:], ("profiles", "Default", other.name))
         self.assertEqual(moved.read_text(), "+Theirs\n")
         self.assertEqual((self.profile / "modlist.txt").read_text(), "+Mine\n")
         self.assertEqual(conflicts.find(self.inst), [])
@@ -79,12 +80,41 @@ class ConflictTests(unittest.TestCase):
         self.write("profiles/Default/modlist.txt", "+Mine\n")
         self.write(f"profiles/Default/modlist.{STAMP}.txt", "+Theirs\n")
         (c,) = conflicts.find(self.inst)
-        moved = conflicts.resolve(self.inst, c, "other", stamp="t")
+        moved = conflicts.resolve(self.inst, c, "other")
         self.assertEqual((self.profile / "modlist.txt").read_text(), "+Theirs\n")
         self.assertEqual(moved.read_text(), "+Mine\n")
         self.assertEqual(conflicts.find(self.inst), [])
         with self.assertRaises(ValueError):
             conflicts.resolve(self.inst, c, "both")
+
+    def test_two_resolutions_in_the_same_second_keep_both_displaced_versions(self):
+        for n in (1, 2):
+            self.write("profiles/Default/modlist.txt", f"+Version{n}\n")
+            self.write(f"profiles/Default/modlist.{STAMP}.txt", f"+Other{n}\n")
+            (c,) = conflicts.find(self.inst)
+            conflicts.resolve(self.inst, c, "other")
+        kept = sorted(p.read_text() for p in (self.inst / ".modsync-conflicts").rglob("modlist.txt"))
+        self.assertEqual(kept, ["+Version1\n", "+Version2\n"])
+        archive = conflicts.new_archive(self.inst)
+        (archive / "x").write_text("")
+        self.assertNotEqual(conflicts.new_archive(self.inst), archive)
+
+    def test_a_profiles_lists_are_decided_together(self):
+        other_device = STAMP.replace("AAAAAAA", "BBBBBBB").replace("ABCDEFG", "BBBBBBB")
+        for name in ("modlist.txt", "plugins.txt", "loadorder.txt", "settings.ini"):
+            self.write(f"profiles/Default/{name}", "")
+            stem, ext = name.rsplit(".", 1)
+            self.write(f"profiles/Default/{stem}.{STAMP}.{ext}", "")
+        self.write(f"profiles/Default/modlist.{other_device}.txt", "")  # a second copy, another machine
+        self.write("profiles/Other/modlist.txt", "")
+        self.write(f"profiles/Other/modlist.{STAMP}.txt", "")
+        found = conflicts.find(self.inst)
+        first = next(c for c in found if c.kind == "loadorder")
+        group = conflicts.related(found, first)
+        self.assertEqual(sorted(c.original.name for c in group), ["loadorder.txt", "modlist.txt", "plugins.txt"])
+        self.assertTrue(all(c.device == "ABCDEFG" for c in group))
+        ini = next(c for c in found if c.original.name == "settings.ini")
+        self.assertEqual(conflicts.related(found, ini), [ini])
 
     def test_archives_stay_out_of_sync(self):
         # Both archives sit at the instance root, which .stignore's "/*" excludes.

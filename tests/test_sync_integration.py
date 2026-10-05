@@ -312,19 +312,25 @@ class SyncthingIntegration(unittest.TestCase):
                     pairing.add_peer_device(ca, id_b, "B", addresses=[f"tcp://127.0.0.1:{port_b}"])
                     pairing.share_instance_folder(ca, "modsync-copy", inst_a, [id_b])
                     pairing.add_peer_device(cb, id_a, "A", addresses=[f"tcp://127.0.0.1:{port_a}"])
+                with a.client() as ca:  # what A's pairing code says its list runs to
+                    deadline = time.monotonic() + 60
+                    while time.monotonic() < deadline and ca.folder_status("modsync-copy")["state"] != "idle":
+                        time.sleep(0.5)
+                    sequence = ca.folder_status("modsync-copy")["sequence"]
                 service = ModSyncService(manager=b)
+                service.INDEX_QUIET_S = 3.0
                 with patch("modsync.service.gameversion.find_game_dir", return_value=None):
                     service.choose_instance(inst_b)
-                service.join_vault(PairingCode(id_a, "modsync-copy", "Desktop"), inst_b,
+                service.join_vault(PairingCode(id_a, "modsync-copy", "Desktop", sequence), inst_b,
                                    peer_host="127.0.0.1")
                 self.assertTrue(service.launch_check().blocked)
 
                 phases = []
                 deadline = time.monotonic() + 120
                 while time.monotonic() < deadline and service.state.copy_phase:
-                    status = service.status()
-                    if status.copy and (not phases or phases[-1] != status.copy.phase):
-                        phases.append(status.copy.phase)
+                    progress = service.advance_copy()
+                    if progress and (not phases or phases[-1] != progress.phase):
+                        phases.append(progress.phase)
                     time.sleep(1)
                 self.assertEqual(service.state.copy_phase, "", f"copy did not finish: {phases} (see B.log)")
                 self.assertEqual(phases[-1], "done")
@@ -384,9 +390,9 @@ class SyncthingIntegration(unittest.TestCase):
                 service = ModSyncService(manager=b)
                 service.join_vault(PairingCode(id_a, "modsync-off", "Desktop"), inst_b)
                 for _ in range(6):
-                    status = service.status()
+                    progress = service.advance_copy()
                     time.sleep(1)
-                self.assertEqual(status.copy.phase, "waiting")
+                self.assertEqual(progress.phase, "waiting")
                 self.assertEqual(service.state.copy_phase, "receiving")
                 self.assertEqual((inst_b / "mods" / "Mine" / "m.esp").read_text(), "mine")
             finally:

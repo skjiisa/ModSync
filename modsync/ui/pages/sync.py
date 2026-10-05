@@ -157,8 +157,8 @@ class JoinPanel(QWidget):
             f"one: whatever is here that the other machine doesn't have, or has differently, moves to "
             f"{COPY_ARCHIVE_DIR} in the instance. Nothing is deleted, and files that already match aren't "
             "downloaded again.",
-            [("copy", "Copy the other machine", "This machine ends up the same as the other one. The other "
-              "machine isn't changed.", "primary", "download"),
+            [("copy", "Copy the other machine", "This machine ends up with the same files as the vault you're "
+              "joining. The machines already in it aren't changed.", "primary", "download"),
              ("merge", "Merge both machines", "Mods from both end up on both. Where a file differs, the newer "
               "one wins everywhere, so one machine's mod list changes may be lost.", "normal", "sync"),
              ("cancel", "Cancel", "", "normal", "close")],
@@ -384,8 +384,17 @@ class SyncPage(Page):
 
     def refresh(self) -> None:
         if self.live:
-            worker.run_async(self.service.status, on_done=self.on_status,
+            worker.run_async(self._poll_status, on_done=self.on_status,
                              on_failed=lambda m: self.host.notify(f"⚠ {m}"))
+
+    def _poll_status(self) -> SyncStatus:
+        """Move a copy on (the background service may be doing it instead),
+        then report. A copy finished by this step is reported as done."""
+        progress = self.service.advance_copy()
+        status = self.service.status()
+        if progress is not None and progress.phase == "done":
+            status.copy = progress
+        return status
 
     def on_status(self, status: SyncStatus) -> None:
         self._names = {d.id[:7]: d.name or d.id[:7] for d in status.devices}
@@ -394,7 +403,8 @@ class SyncPage(Page):
         if status.conflicts:
             n = status.conflicts
             self.conflicts_tile.setText(f"{n} file{' was' if n == 1 else 's were'} changed on two machines")
-            self.conflicts_tile.set_description("MO2 uses the newer version of each. Choose which to keep.")
+            self.conflicts_tile.set_description("MO2 uses the newer version of each. Choose which to keep. "
+                                                "(Looks in profiles, overwrite and the instance folder.)")
         clear_layout(self.devices)
         if not status.devices:
             self.devices.addWidget(label("No other devices yet. Pair one to start syncing.", "muted"))
@@ -412,6 +422,8 @@ class SyncPage(Page):
             return
         if self._built_copying and not self.service.state.copying:
             # The background service finished the copy, or it was left elsewhere.
+            if self.service.state.syncing:
+                self.host.notify("Copy finished: this machine has the same mods as the vault.", "ok")
             self.host.rebuild()
             return
         state = status.folder_state or "starting"
@@ -453,6 +465,10 @@ class SyncPage(Page):
             self.folder_state.setText(f"Waiting for {source}")
             self.folder_detail.setText(f"Turn on {source} with ModSync open, or its background service on. "
                                        "The copy carries on by itself, even after ModSync restarts.")
+        elif copy.phase == "indexing":
+            self.ring.set_value(0, "listing", busy=True)
+            self.folder_state.setText(f"Getting the list of files from {source}")
+            self.folder_detail.setText("Nothing is copied or set aside until the whole list has arrived.")
         elif copy.phase == "receiving":
             pct = int(round(status.completion or 0))
             self.ring.set_value(pct, "copying", busy=True)
@@ -614,34 +630,48 @@ class SyncPage(Page):
         if not shiboken6.isValid(self):
             return
         if not found:
-            self.host.notify("No conflicts left.", "ok")
+            self.host.notify("No conflicts left in profiles, overwrite or the instance folder.", "ok")
             self.refresh()
             return
-        c = found[0]
+        group = conflicts.related(found, found[0])
+        c = group[0]
         instance = self.service.state.instance_path or ""
         other = self._names.get(c.device, "another machine")
-        rel = c.relative(instance)
-        profile = c.original.parent.name
-        title = {"modlist": f"Mod list of profile {profile}", "plugins": f"Plugins of profile {profile}",
-                 "loadorder": f"Load order of profile {profile}"}.get(c.kind, rel)
         when = f", saved {c.when.day} {c.when:%b %H:%M}," if c.when else ""
-        lines = "\n".join(f"•  {line}" for line in conflicts.differences(c, other))
-        more = f"\n\n{len(found) - 1} more after this one." if len(found) > 1 else ""
-        text = (f"{rel} changed on two machines before they synced. MO2 uses the version in use; the "
-                f"version from {other}{when} is kept next to it.\n\n{lines}{more}")
+        if c.kind == "file":
+            title = c.relative(instance)
+            intro = f"{title} changed on two machines before they synced."
+        else:
+            profile = c.original.parent.name
+            title = f"Profile {profile}"
+            names = {"modlist": "mod list", "plugins": "plugins", "loadorder": "load order"}
+            parts = [names.get(g.kind, g.original.name) for g in group]
+            changed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+            intro = (f"The {changed} of profile {profile} changed on two machines before they synced. "
+                     "They're decided together, so the profile stays as one machine had it.")
+        details = []
+        for g in group:
+            lines = "\n".join(f"•  {line}" for line in conflicts.differences(g, other))
+            details.append(lines if len(group) == 1 else f"{g.original.name}:\n{lines}")
+        rest = len(found) - len(group)
+        more = f"\n\n{rest} more after this." if rest else ""
+        text = (f"{intro} MO2 uses the version in use; the version from {other}{when} is kept next to it."
+                f"\n\n" + "\n\n".join(details) + more)
+        files = "versions" if len(group) > 1 else "version"
 
         def chosen(key: str | None) -> None:
             if key not in ("current", "other"):
                 self.refresh()
                 return
-            worker.run_async(self.service.resolve_conflict, c, key, on_done=lambda _: self.review_conflicts(),
+            worker.run_async(self.service.resolve_conflicts, group, key,
+                             on_done=lambda _: self.review_conflicts(),
                              on_failed=lambda m: self.host.notify(f"⚠ {m}"))
 
         self.host.confirm(
             title, text,
-            [("current", "Keep the version in use", "The other goes to .modsync-conflicts in the instance.",
+            [("current", f"Keep the {files} in use", "The other goes to .modsync-conflicts in the instance.",
               "primary", "check"),
-             ("other", f"Use the version from {other}", "The one in use goes to .modsync-conflicts in the "
+             ("other", f"Use the {files} from {other}", "The one in use goes to .modsync-conflicts in the "
               "instance. Close MO2 first.", "normal", "undo"),
              ("later", "Decide later", "", "normal", "close")],
             chosen, default="current", eyebrow="Conflict")

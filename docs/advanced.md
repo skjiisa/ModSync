@@ -236,17 +236,27 @@ too. Steam Cloud already handles saves.
 ### Copying from another machine
 
 "Copy from another machine" makes this machine match the vault without
-changing the machine it copies from. The folder starts out receive-only, so
-nothing here is sent anywhere. Files that already match are kept as they are,
-so a machine that synced before downloads only what changed. Once the other
-machine is connected, has sent its list of files, and everything on it has
-arrived, ModSync sets aside what is left over here: files the vault doesn't
-have, and this machine's copy of any file that differs. They move to
-`.modsync-before-join/<date>/` in the instance, which never syncs. Then the
-folder syncs both ways.
+changing the machines already in the vault. The folder starts out
+receive-only, so nothing here is sent anywhere. Files that already match are
+kept as they are, so a machine that synced before downloads only what changed.
+
+ModSync then waits for the other machine's whole list of files. Syncthing
+reports a machine as ready as soon as it shares the folder, before any of its
+list has arrived, and until then the folder looks complete. So the pairing
+code and the network pairing carry how far the other machine's list went at
+the time, and the copy waits until the list here has reached that and stopped
+growing for a few seconds. (A code from an older ModSync doesn't say; then the
+list only has to stop growing.) Once everything on it has arrived, ModSync sets
+aside what is left over here: files the vault doesn't have, and this machine's
+copy of any file that differs. They move to `.modsync-before-join/<date>/` in
+the instance, which never syncs. Then the folder syncs both ways. With more
+than two machines in the vault, this machine copies all of them together, not
+only the one whose code it used.
 
 The copy is saved as it goes, so it carries on after ModSync or the machine
-restarts, wherever ModSync runs next (the app or the background service).
+restarts, wherever ModSync runs next (the app or the background service, which
+picks up a copy started in the app even if it was running before). One of them
+moves it on at a time.
 Until it finishes, Play and Open MO2 are blocked, since anything MO2 changes
 meanwhile would be set aside too. Afterwards, Sync lists the set-aside files
 until you delete them or dismiss the list.
@@ -268,8 +278,11 @@ ModSync looks for them in `profiles/`, `overwrite/` and the instance root. Sync
 and Home show how many there are, and the check before playing mentions them.
 For each one, Sync describes what differs (mods only in one version, mods
 enabled in only one, a different order) and lets you keep the version in use
-or the other one. The version you don't keep moves to `.modsync-conflicts/` in
-the instance. ModSync doesn't merge the two lists: without the version both
+or the other one. A profile's mod list, plugins and load order are decided
+together, so the profile stays as one machine had it. The version you don't
+keep moves to a new folder under `.modsync-conflicts/` in the instance.
+Conflicts inside `mods/` aren't looked for: it can hold hundreds of thousands
+of files and is rarely edited on two machines. ModSync doesn't merge the two lists: without the version both
 machines started from, it can't tell a lost change from an intentional one.
 
 ### Before playing

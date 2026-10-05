@@ -27,6 +27,9 @@ class FakeService:
     def ensure_running(self):
         self.started += 1
 
+    def reload_state(self):
+        return self.state
+
     def shutdown(self):
         self.stopped += 1
 

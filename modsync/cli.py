@@ -313,12 +313,12 @@ def firewall_cmd(args: list[str]) -> int:
         return 0
     if sub == "allow":
         try:
-            state.firewall_rules_stamp = firewall.allow(chk.firewall)
+            stamp = firewall.allow(chk.firewall)
         except firewall.FirewallError as exc:
             print(f"error: {exc}")
             print("by hand:\n" + firewall.manual_instructions(chk.firewall))
             return 1
-        state.save()
+        State.update(firewall_rules_stamp=stamp)
         print(f"Allowed {ports} in {chk.firewall.kind}.")
         return 0
     if sub == "remove":
@@ -328,8 +328,7 @@ def firewall_cmd(args: list[str]) -> int:
             print(f"error: {exc}")
             print("by hand:\n" + firewall.manual_instructions(chk.firewall, remove=True))
             return 1
-        state.firewall_rules_stamp = ""
-        state.save()
+        State.update(firewall_rules_stamp="")
         after = firewall.check("")
         print(f"Removed ModSync's rules from {chk.firewall.kind}.")
         if after.allowed:

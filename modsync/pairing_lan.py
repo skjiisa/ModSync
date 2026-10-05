@@ -89,17 +89,20 @@ class PairPayload:
     # never sent. Lets Syncthing dial it straight away instead of waiting on
     # its own LAN discovery (which firewalls drop just like ours).
     host: str = ""
+    # How far the host's list of the vault's files goes (see PairingCode).
+    sequence: int = 0
 
     def to_bytes(self) -> bytes:
-        return json.dumps(
-            {"device_id": self.device_id, "folder_id": self.folder_id, "label": self.label},
-            separators=(",", ":"),
-        ).encode()
+        data = {"device_id": self.device_id, "folder_id": self.folder_id, "label": self.label}
+        if self.sequence:
+            data["sequence"] = self.sequence
+        return json.dumps(data, separators=(",", ":")).encode()
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "PairPayload":
         d = json.loads(data.decode())
-        return cls(d["device_id"], d.get("folder_id", ""), d.get("label", ""))
+        return cls(d["device_id"], d.get("folder_id", ""), d.get("label", ""),
+                   sequence=int(d.get("sequence") or 0))
 
 
 def make_pin() -> str:

@@ -21,6 +21,7 @@ class CopyClient:
         self.folder = {"state": "idle", "needTotalItems": 0, "sequence": 1, "globalFiles": 0,
                        "receiveOnlyTotalItems": 0}
         self.remote = "unknown"
+        self.received = 0  # how far the source's list here goes
         self.connected = False
         self.reverts = 0
         self.config = {}
@@ -53,7 +54,12 @@ class CopyClient:
         return dict(self.folder)
 
     def completion(self, folder_id, device_id=None):
-        return {"completion": 100, "remoteState": self.remote if device_id else "unknown"}
+        if device_id:
+            return {"completion": 100, "remoteState": self.remote, "sequence": self.received}
+        return {"completion": 100, "remoteState": "unknown", "sequence": 0}
+
+    def pending_devices(self):
+        return {}
 
     def revert(self, folder_id):
         self.reverts += 1
@@ -90,10 +96,16 @@ class CopyTests(unittest.TestCase):
         self.manager = CopyManager()
         self.fake = self.manager.fake
         self.svc = ModSyncService(manager=self.manager)
-        self.svc.join_vault(PairingCode("SRC", "modsync-v", "Desktop"), self.instance)
+        self.svc.INDEX_QUIET_S = 0.0  # tests of the list's own gate set it back
+        self.svc.join_vault(PairingCode("SRC", "modsync-v", "Desktop", 40), self.instance)
 
     def poll(self):
-        return self.svc.status().copy
+        """One step, as the Sync page or the background service takes it."""
+        progress = self.svc.advance_copy()
+        return progress if progress is None or progress.phase == "done" else self.svc.status().copy
+
+    def source_ready(self):
+        self.fake.connected, self.fake.remote, self.fake.received = True, "valid", 40
 
     def test_the_folder_is_receive_only_from_its_first_write(self):
         self.assertEqual(self.fake.config["type"], "receiveonly")
@@ -101,6 +113,65 @@ class CopyTests(unittest.TestCase):
         archive = Path(self.fake.config["versioning"]["fsPath"])
         self.assertEqual(archive.parent, self.instance / ".modsync-before-join")
         self.assertEqual(State.load().copy_phase, "receiving")
+        self.assertEqual(State.load().copy_expected, 40)
+
+    def test_valid_but_no_list_yet_is_not_done(self):
+        """Syncthing says "valid" as soon as the source shares the folder, and
+        the folder reads idle and 100% before any of its list has arrived."""
+        self.fake.connected, self.fake.remote = True, "valid"
+        for _ in range(4):
+            self.assertEqual(self.poll().phase, "indexing")
+        self.fake.received = 25  # part of the list: still short of what the code said
+        for _ in range(4):
+            self.assertEqual(self.poll().phase, "indexing")
+        self.assertEqual(self.fake.reverts, 0)
+        self.fake.received = 40
+        self.assertEqual(self.poll().phase, "receiving")
+
+    def test_the_list_must_stop_growing_first(self):
+        self.svc.INDEX_QUIET_S = 60.0
+        self.source_ready()
+        for _ in range(3):
+            self.assertEqual(self.poll().phase, "indexing")
+        self.svc._index_seen = (40, self.svc._index_seen[1] - 61)  # a minute without a new batch
+        self.assertEqual(self.poll().phase, "receiving")
+
+    def test_without_a_sequence_from_the_source_any_list_must_go_quiet(self):
+        svc = ModSyncService(manager=self.manager)
+        svc.stop_sync()
+        svc.join_vault(PairingCode("SRC", "modsync-v", "Desktop"), self.instance)  # an older version's code
+        svc.INDEX_QUIET_S = 60.0
+        self.source_ready()
+        self.assertEqual(svc.advance_copy().phase, "indexing")  # nothing at all yet
+        self.fake.received = 3
+        self.assertEqual(svc.advance_copy().phase, "indexing")
+        svc._index_seen = (3, svc._index_seen[1] - 61)
+        self.assertEqual(svc.advance_copy().phase, "receiving")
+
+    def test_a_source_that_never_reaches_its_number_is_taken_as_it_is_eventually(self):
+        self.fake.connected, self.fake.remote, self.fake.received = True, "valid", 10
+        self.assertEqual(self.poll().phase, "indexing")
+        self.svc._index_seen = (10, self.svc._index_seen[1] - self.svc.INDEX_STALL_S - 1)
+        self.assertEqual(self.poll().phase, "receiving")
+
+    def test_status_only_reports(self):
+        self.source_ready()
+        for _ in range(5):
+            self.svc.status()
+        self.assertEqual(self.fake.reverts, 0)
+        self.assertEqual(State.load().copy_phase, "receiving")
+        self.assertIsNone(self.svc._copy_seen)  # nor counts as a quiet poll
+
+    def test_only_one_process_acts_at_a_time(self):
+        from modsync import service as service_module
+
+        self.source_ready()
+        with service_module._copy_owner() as held:  # another process mid-step
+            self.assertTrue(held)
+            for _ in range(4):
+                self.assertEqual(self.svc.advance_copy().phase, "receiving")
+        self.assertEqual(self.fake.reverts, 0)
+        self.assertEqual(self.svc.advance_copy().phase, "setting-aside")
 
     def test_an_unconnected_or_silent_source_is_never_taken_as_done(self):
         # Locally everything reads as complete: nothing is known yet.
@@ -112,7 +183,7 @@ class CopyTests(unittest.TestCase):
         self.assertEqual(self.fake.config["type"], "receiveonly")
 
     def test_waits_for_two_quiet_polls_then_sets_aside_then_promotes(self):
-        self.fake.connected, self.fake.remote = True, "valid"
+        self.source_ready()
         self.fake.folder.update(state="syncing", needTotalItems=5, globalFiles=9)
         self.assertEqual(self.poll().need_items, 5)
         self.fake.folder.update(state="idle", needTotalItems=0, receiveOnlyTotalItems=2)
@@ -136,14 +207,14 @@ class CopyTests(unittest.TestCase):
         self.assertIsNone(self.poll())
 
     def test_errors_and_pauses_hold_the_copy(self):
-        self.fake.connected, self.fake.remote = True, "valid"
+        self.source_ready()
         self.fake.folder.update(pullErrors=1)
         for _ in range(3):
             self.assertEqual(self.poll().errors, 1)
         self.assertEqual(self.fake.reverts, 0)
 
     def test_a_change_made_after_the_revert_is_set_aside_too(self):
-        self.fake.connected, self.fake.remote = True, "valid"
+        self.source_ready()
         self.poll()
         self.poll()
         self.assertEqual(State.load().copy_phase, "setting-aside")
@@ -154,13 +225,14 @@ class CopyTests(unittest.TestCase):
         self.assertEqual(self.fake.config["type"], "receiveonly")
 
     def test_resumes_from_disk_after_a_restart(self):
-        self.fake.connected, self.fake.remote = True, "valid"
+        self.source_ready()
         self.poll()
         self.poll()
         again = ModSyncService(manager=self.manager)  # the app restarted
+        again.INDEX_QUIET_S = 0.0
         self.assertTrue(again.state.copying)
-        again.status()
-        again.status()
+        again.advance_copy()
+        again.advance_copy()
         self.assertEqual(again.state.copy_phase, "")
         self.assertEqual(self.fake.config["type"], "sendreceive")
 
@@ -168,7 +240,7 @@ class CopyTests(unittest.TestCase):
         archive = Path(self.fake.config["versioning"]["fsPath"])
         (archive / "mods" / "Mine").mkdir(parents=True)
         (archive / "mods" / "Mine" / "m.esp").write_text("x")
-        self.fake.connected, self.fake.remote = True, "valid"
+        self.source_ready()
         for _ in range(4):
             progress = self.poll()
         self.assertEqual(progress.set_aside, 1)
@@ -179,6 +251,18 @@ class CopyTests(unittest.TestCase):
 
     def test_playing_is_blocked_until_the_copy_is_done(self):
         self.assertIn("still being copied from Desktop", self.svc.launch_check().blocked)
+
+    def test_a_stale_service_pausing_after_the_copy_finished_keeps_it_finished(self):
+        stale = ModSyncService(manager=self.manager)  # the background service, loaded mid-copy
+        self.source_ready()
+        for _ in range(4):
+            self.poll()
+        self.assertEqual(State.load().copy_phase, "")
+        stale.pause_sync()
+        loaded = State.load()
+        self.assertEqual((loaded.copy_phase, loaded.copy_source), ("", ""))
+        self.assertTrue(loaded.sync_paused)
+        self.assertEqual(self.fake.config["type"], "sendreceive")
 
     def test_merge_joins_both_ways_at_once(self):
         svc = ModSyncService(manager=self.manager)
@@ -222,7 +306,7 @@ class LaunchCheckTests(unittest.TestCase):
         self.assertIn("1 file was changed on two machines", check.warnings[1])
 
     def test_a_paused_vault_says_nothing_about_pending_changes(self):
-        self.svc.state.sync_paused = True
+        State.update(sync_paused=True)
         self.manager.fake.folder.update(needTotalItems=3)
         self.assertEqual(self.svc.launch_check().warnings, [])
 
@@ -231,6 +315,23 @@ class LaunchCheckTests(unittest.TestCase):
         svc = ModSyncService(manager=self.manager)
         svc.status = None  # would raise if called
         self.assertEqual(svc.launch_check().warnings, [])
+
+    def test_a_background_service_started_without_a_vault_picks_up_a_copy(self):
+        from modsync.serve import Server
+
+        State(instance_path=str(self.instance)).save()
+        background = ModSyncService(manager=self.manager)
+        background.INDEX_QUIET_S = 0.0
+        server = Server(background, log=lambda _l: None, notify=lambda *_a: None)
+        server.tick()
+        app = ModSyncService(manager=self.manager)  # the app joins meanwhile
+        app.join_vault(PairingCode("SRC", "modsync-v", "Desktop", 40), self.instance)
+        fake = self.manager.fake
+        fake.connected, fake.remote, fake.received = True, "valid", 40
+        for _ in range(6):
+            server.tick()
+        self.assertEqual(State.load().copy_phase, "")
+        self.assertEqual(fake.config["type"], "sendreceive")
 
     def test_pause_and_resume(self):
         self.svc.pause_sync()
