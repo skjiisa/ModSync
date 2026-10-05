@@ -169,7 +169,7 @@ class MainWindow(QMainWindow):
             if auto == "cancel":
                 decide = partial(self.decide_launch, launchhook.EXIT_CANCEL)
             elif self.service.state.has_instance:
-                decide = partial(self.launch, play=True)  # what the Play tile does
+                decide = partial(self.launch, play=True, checked=True)  # what the Play tile does
             else:
                 decide = partial(self.decide_launch, launchhook.EXIT_CONTINUE)
             QTimer.singleShot(_AUTO_DECISION_MS, self, decide)
@@ -430,10 +430,19 @@ class MainWindow(QMainWindow):
         return "launch" in self._busy or self.service.launcher.running()
 
     # --- launching ---
-    def launch(self, *, play: bool) -> None:
+    def launch(self, *, play: bool, checked: bool = False) -> None:
         """Play / Open MO2. Steam waiting: the same launch, prepared here and
-        handed to the hook, which runs it as Steam's own launch."""
+        handed to the hook, which runs it as Steam's own launch.
+
+        With a vault, syncing is asked first (``launch_check``): a copy still
+        under way blocks, and changes still arriving or files changed on two
+        machines are worth a "Play anyway"."""
         if self.busy or (self.steam_launch is not None and self.steam_launch.decision is not None):
+            return
+        if not checked and self.service.state.syncing:
+            self.set_busy("launch", True)
+            worker.run_async(self.service.launch_check, on_done=partial(self._on_launch_checked, play),
+                             on_failed=lambda _m: self._on_launch_checked(play, None))
             return
         self.set_busy("launch", True)
         self.notify("Starting Skyrim through MO2…" if play else "Opening MO2…")
@@ -443,6 +452,29 @@ class MainWindow(QMainWindow):
             return
         worker.run_async(self.service.launch_mo2, play=play, on_done=self._on_launched,
                          on_failed=self._on_launch_failed)
+
+    def _on_launch_checked(self, play: bool, check) -> None:
+        self.set_busy("launch", False)
+        if check is None or not (check.blocked or check.warnings):
+            self.launch(play=play, checked=True)
+            return
+        if check.blocked:
+            self.notify(f"⚠ {check.blocked}")
+            return
+
+        def chosen(key: str | None) -> None:
+            if key == "play":
+                self.launch(play=play, checked=True)
+            elif key == "sync":
+                self.go("sync")
+
+        self.confirm(
+            "Play anyway?" if play else "Open Mod Organizer 2 anyway?",
+            "\n\n".join(check.warnings),
+            [("play", "Play anyway" if play else "Open MO2 anyway", "", "primary", "play"),
+             ("sync", "Go to Sync", "See what's arriving and choose versions.", "normal", "sync"),
+             ("wait", "Not now", "", "normal", "close")],
+            chosen, default="play", eyebrow="Sync")
 
     def _on_prepared(self, result) -> None:
         plan, _note = result  # the window closes now; prepare_mo2 has logged the note

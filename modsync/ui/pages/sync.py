@@ -1,10 +1,13 @@
 """The **Sync** section, the optional part of ModSync.
 
 Before the user opts in it offers two big choices: share this instance from
-here, or copy another machine's. Once a vault exists it becomes the live
-view: a completion ring, the devices, and pairing (a big PIN for "Pair over
-network", or the code and its QR). "Stop syncing" leaves the vault and keeps
-the instance.
+here, or copy another machine's. Copying asks first when this machine already
+has mods: copy (set what's here aside) or merge. Once a vault exists it becomes
+the live view: a completion ring, the devices, and pairing (a big PIN for
+"Pair over network", or the code and its QR). While a copy is under way the
+ring follows it instead, and nothing else can be paired. "Stop syncing" pauses
+the vault or leaves it, keeping the instance either way. Files changed on two
+machines at once, and files a copy set aside, are offered for review here.
 
 ``JoinPanel`` (scan, pick a machine, enter its PIN, or paste a code) is also
 part of the setup flow's sync step.
@@ -14,6 +17,7 @@ from __future__ import annotations
 
 import socket
 import threading
+from functools import partial
 
 import shiboken6
 
@@ -23,7 +27,8 @@ from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from modsync import pairing_lan
 from modsync.pairing_code import PairingCode
-from modsync.service import SyncStatus
+from modsync.service import COPY_ARCHIVE_DIR, SyncStatus
+from modsync.sync import conflicts
 from modsync.ui import worker
 from modsync.ui.input import Action
 from modsync.ui.overlays import BeaconSheet, CodeSheet, KeyboardSheet, PinSheet
@@ -134,6 +139,31 @@ class JoinPanel(QWidget):
         sheet.open()
         return sheet
 
+    def choose_mode(self, path: str, proceed) -> None:
+        """Copy unless this machine has mods of its own; then ask. ``proceed``
+        gets ``merge``."""
+        n = self.service.local_mod_count(path)
+        if not n:
+            proceed(False)
+            return
+
+        def chosen(key: str | None) -> None:
+            if key in ("copy", "merge"):
+                proceed(key == "merge")
+
+        self.host.confirm(
+            "This machine already has mods",
+            f"There are {n} mods and downloads here already. Copying makes this machine match the other "
+            f"one: whatever is here that the other machine doesn't have, or has differently, moves to "
+            f"{COPY_ARCHIVE_DIR} in the instance. Nothing is deleted, and files that already match aren't "
+            "downloaded again.",
+            [("copy", "Copy the other machine", "This machine ends up with the same files as the vault you're "
+              "joining. The machines already in it aren't changed.", "primary", "download"),
+             ("merge", "Merge both machines", "Mods from both end up on both. Where a file differs, the newer "
+              "one wins everywhere, so one machine's mod list changes may be lost.", "normal", "sync"),
+             ("cancel", "Cancel", "", "normal", "close")],
+            chosen, default="copy", eyebrow="Copy from another machine")
+
     def join_network(self, target: pairing_lan.Announcement, pin: str) -> None:
         path = self.service.state.instance_path
         if not path:
@@ -142,9 +172,13 @@ class JoinPanel(QWidget):
             self.host.notify("⚠ Enter the 6-digit PIN shown on the other machine.")
             return
         host = self.host
-        host.sync_started(f"Pairing with {target.name}…")
-        worker.run_async(self.service.join_via_network, target, pin, path,
-                         on_done=lambda _: host.vault_joined(), on_failed=host.sync_failed)
+
+        def join(merge: bool) -> None:
+            host.sync_started(f"Pairing with {target.name}…")
+            worker.run_async(self.service.join_via_network, target, pin, path, merge=merge,
+                             on_done=lambda _: host.vault_joined(), on_failed=host.sync_failed)
+
+        self.choose_mode(path, join)
 
     def enter_code(self) -> None:
         KeyboardSheet(self.host, "Pairing code", "Paste the pairing code from the other machine.",
@@ -160,9 +194,13 @@ class JoinPanel(QWidget):
             self.host.notify("⚠ That doesn't look like a valid pairing code.")
             return
         host = self.host
-        host.sync_started("Joining…")
-        worker.run_async(self.service.join_vault, code, path, on_done=lambda _: host.vault_joined(),
-                         on_failed=host.sync_failed)
+
+        def join(merge: bool) -> None:
+            host.sync_started("Joining…")
+            worker.run_async(self.service.join_vault, code, path, merge=merge,
+                             on_done=lambda _: host.vault_joined(), on_failed=host.sync_failed)
+
+        self.choose_mode(path, join)
 
 
 def create_vault(host) -> None:
@@ -239,7 +277,7 @@ class SyncPage(Page):
 
     def preferred_focus(self):
         if self.live:
-            return self.pair_tile
+            return self.resume_tile or self.pair_tile
         return getattr(self, "share", None) or getattr(self, "choose_first", None)
 
     # --- live ----------------------------------------------------------------------
@@ -270,23 +308,53 @@ class SyncPage(Page):
         left.addWidget(devices)
         left.addStretch(1)
 
-        self.pair_tile = Tile("Pair over network…", "Show a PIN so another machine can find and join this one.",
-                              "radar", role="primary")
-        self.pair_tile.clicked.connect(self.pair_network)
-        code = Tile("Show pairing code", "The code and QR another machine can join with.", "qr")
-        code.clicked.connect(self.show_code)
-        add = Tile("Add a machine by code…", "Paste the pairing code of a machine to add.", "plus")
-        add.clicked.connect(self.add_device)
-        rescan = Tile("Rescan", "Look for changed files now instead of waiting.", "refresh", size="compact")
-        rescan.clicked.connect(self.rescan)
+        state = self.service.state
+        self._built_copying = state.copying
+        self.conflicts_tile = Tile("Files changed on two machines", "", "warning", role="primary", chevron=True)
+        self.conflicts_tile.clicked.connect(self.review_conflicts)
+        self.conflicts_tile.setVisible(False)
+        right.addWidget(self.conflicts_tile)
+        self.set_aside_tile = None
+        if state.set_aside:
+            self.set_aside_tile = Tile("Files set aside when joining", "What was here before the copy and "
+                                       "isn't on the other machine.", "folder", chevron=True)
+            self.set_aside_tile.clicked.connect(self.review_set_aside)
+            right.addWidget(self.set_aside_tile)
+        self.resume_tile = None
+        if state.copying:
+            # Nothing else can be paired until this machine is a full copy.
+            self.pair_tile = Tile("Stop copying…", "Leave the vault. What has arrived stays here.", "stop",
+                                  role="danger")
+            self.pair_tile.clicked.connect(self.stop_copy)
+            tiles = [self.pair_tile]
+        else:
+            self.pair_tile = Tile("Pair over network…", "Show a PIN so another machine can find and join this "
+                                  "one.", "radar", role="normal" if state.sync_paused else "primary")
+            self.pair_tile.clicked.connect(self.pair_network)
+            code = Tile("Show pairing code", "The code and QR another machine can join with.", "qr")
+            code.clicked.connect(self.show_code)
+            add = Tile("Add a machine by code…", "Paste the pairing code of a machine to add.", "plus")
+            add.clicked.connect(self.add_device)
+            rescan = Tile("Rescan", "Look for changed files now instead of waiting.", "refresh", size="compact")
+            rescan.clicked.connect(self.rescan)
+            tiles = [self.pair_tile, code, add, rescan]
+            if state.sync_paused:
+                self.resume_tile = Tile("Resume syncing", "Carry over what changed on each machine meanwhile.",
+                                        "play", role="primary")
+                self.resume_tile.clicked.connect(lambda: self.set_paused(False))
+                tiles.insert(0, self.resume_tile)
         open_ui = Tile("Open Syncthing UI", "The engine underneath, in your browser.", "globe", size="compact")
         open_ui.clicked.connect(self.open_ui)
-        stop = Tile("Stop syncing…", "Leave the vault but keep using this instance here. Mods are not deleted.",
-                    "stop", role="danger", size="compact")
-        stop.clicked.connect(self.stop_sync)
-        for tile in (self.pair_tile, code, add, rescan, open_ui, stop):
+        tiles.append(open_ui)
+        if not state.copying:
+            stop = Tile("Stop syncing…", "Pause, or leave the vault. Mods are not deleted either way.",
+                        "stop", role="danger", size="compact")
+            stop.clicked.connect(self.stop_sync)
+            tiles.append(stop)
+        for tile in tiles:
             right.addWidget(tile)
         right.addStretch(1)
+        self._names: dict[str, str] = {}
         self._load_code()
         self.refresh()
         self._accept_pending()
@@ -316,10 +384,27 @@ class SyncPage(Page):
 
     def refresh(self) -> None:
         if self.live:
-            worker.run_async(self.service.status, on_done=self.on_status,
+            worker.run_async(self._poll_status, on_done=self.on_status,
                              on_failed=lambda m: self.host.notify(f"⚠ {m}"))
 
+    def _poll_status(self) -> SyncStatus:
+        """Move a copy on (the background service may be doing it instead),
+        then report. A copy finished by this step is reported as done."""
+        progress = self.service.advance_copy()
+        status = self.service.status()
+        if progress is not None and progress.phase == "done":
+            status.copy = progress
+        return status
+
     def on_status(self, status: SyncStatus) -> None:
+        self._names = {d.id[:7]: d.name or d.id[:7] for d in status.devices}
+        self._names[status.device_id[:7]] = "this machine"
+        self.conflicts_tile.setVisible(bool(status.conflicts))
+        if status.conflicts:
+            n = status.conflicts
+            self.conflicts_tile.setText(f"{n} file{' was' if n == 1 else 's were'} changed on two machines")
+            self.conflicts_tile.set_description("MO2 uses the newer version of each. Choose which to keep. "
+                                                "(Looks in profiles, overwrite and the instance folder.)")
         clear_layout(self.devices)
         if not status.devices:
             self.devices.addWidget(label("No other devices yet. Pair one to start syncing.", "muted"))
@@ -332,8 +417,25 @@ class SyncPage(Page):
                                 wrap=False))
             self.devices.addLayout(row)
 
+        if status.copy is not None:
+            self._show_copy(status)
+            return
+        if self._built_copying and not self.service.state.copying:
+            # The background service finished the copy, or it was left elsewhere.
+            if self.service.state.syncing:
+                self.host.notify("Copy finished: this machine has the same mods as the vault.", "ok")
+            self.host.rebuild()
+            return
         state = status.folder_state or "starting"
         pct = int(round(status.completion or 0))
+        if status.paused:
+            self.ring.set_value(0, "paused")
+            self.folder_state.setText("Paused")
+            self.folder_detail.setText("Nothing syncs until you resume. What changes meanwhile carries over then, "
+                                       "removed mods included.")
+            self.progress.emit("paused", 0)
+            self.host.syncStatus.emit(status)
+            return
         self.ring.set_value(pct, state, busy=state in ("syncing", "scanning", "starting"))
         self.folder_state.setText({"idle": "Up to date", "syncing": "Syncing", "scanning": "Scanning files",
                                    "starting": "Starting Syncthing"}.get(state, state.capitalize()))
@@ -346,6 +448,42 @@ class SyncPage(Page):
         if complete and self._was_complete is False:
             self.synced.emit()
         self._was_complete = complete
+
+    def _show_copy(self, status: SyncStatus) -> None:
+        copy = status.copy
+        source = copy.source
+        if copy.phase == "done":
+            kept = (f" {copy.set_aside} file{'' if copy.set_aside == 1 else 's'} from before "
+                    f"{'is' if copy.set_aside == 1 else 'are'} kept in {COPY_ARCHIVE_DIR}." if copy.set_aside else "")
+            self.host.notify(f"Copy finished: this machine has the same mods as {source}.{kept}", "ok")
+            self.host.syncStatus.emit(status)
+            self.synced.emit()
+            self.host.rebuild()  # syncing both ways now: pairing and the rest come back
+            return
+        if copy.phase == "waiting":
+            self.ring.set_value(0, "waiting", busy=True)
+            self.folder_state.setText(f"Waiting for {source}")
+            self.folder_detail.setText(f"Turn on {source} with ModSync open, or its background service on. "
+                                       "The copy carries on by itself, even after ModSync restarts.")
+        elif copy.phase == "indexing":
+            self.ring.set_value(0, "listing", busy=True)
+            self.folder_state.setText(f"Getting the list of files from {source}")
+            self.folder_detail.setText("Nothing is copied or set aside until the whole list has arrived.")
+        elif copy.phase == "receiving":
+            pct = int(round(status.completion or 0))
+            self.ring.set_value(pct, "copying", busy=True)
+            self.folder_state.setText(f"Copying from {source}")
+            left = f"{copy.need_items:,} item{'' if copy.need_items == 1 else 's'} to go" if copy.need_items else \
+                "Checking that everything has arrived"
+            errors = (f"   ·   {copy.errors} couldn't be copied yet; Open Syncthing UI shows why"
+                      if copy.errors else "")
+            self.folder_detail.setText(f"{left}{errors}. Nothing here is sent to {source} until the copy is done.")
+        else:
+            self.ring.set_value(100, "finishing", busy=True)
+            self.folder_state.setText("Setting aside what's only here")
+            self.folder_detail.setText(f"Files {source} doesn't have go to {COPY_ARCHIVE_DIR} in the instance.")
+        self.progress.emit("copying", int(round(status.completion or 0)))
+        self.host.syncStatus.emit(status)
 
     def _accept_pending(self) -> None:
         # Auto-accept a machine that joined with our code, so pairing needs only
@@ -444,19 +582,121 @@ class SyncPage(Page):
 
     def stop_sync(self) -> None:
         def chosen(key: str | None) -> None:
-            if key != "stop":
-                return
-            self.host.change_setup(self.service.stop_sync, message="Stopping sync…")
+            if key == "pause":
+                self.set_paused(True)
+            elif key == "stop":
+                self.host.change_setup(self.service.stop_sync, message="Stopping sync…")
 
+        paused = self.service.state.sync_paused
+        choices = [] if paused else [
+            ("pause", "Pause syncing", "Keep the vault and the paired devices. When you resume, what changed on "
+             "each machine meanwhile carries over, removed mods included.", "primary", "pause")]
+        choices += [
+            ("stop", "Leave the vault", "Forget the vault and the paired devices. Joining again later compares "
+             "the machines from scratch, so mods removed meanwhile come back.", "danger", "stop"),
+            ("cancel", "Keep syncing" if not paused else "Stay paused", "", "normal", "close")]
         self.host.confirm(
             "Stop syncing",
-            "This stops syncing and forgets the paired devices, but keeps using the instance here. You can "
-            "share it again later. Your mods, downloads and profiles are not deleted; every file stays on disk.",
-            [("stop", "Stop syncing", "", "danger", "stop"), ("cancel", "Keep syncing", "", "normal", "close")],
+            "Either way this machine keeps using the instance. Your mods, downloads and profiles are not "
+            "deleted; every file stays on disk.",
+            choices,
             chosen,
             default="cancel",
             eyebrow="Sync",
         )
+
+    def set_paused(self, paused: bool) -> None:
+        self.host.change_setup(self.service.pause_sync, paused,
+                               message="Pausing sync…" if paused else "Resuming sync…")
+
+    def stop_copy(self) -> None:
+        def chosen(key: str | None) -> None:
+            if key == "stop":
+                self.host.change_setup(self.service.stop_sync, message="Stopping the copy…")
+
+        self.host.confirm(
+            "Stop copying",
+            "This leaves the vault. What has arrived stays here, and whatever was already set aside stays in "
+            f"{COPY_ARCHIVE_DIR}. To copy again later, join from the start.",
+            [("stop", "Stop copying", "", "danger", "stop"), ("cancel", "Keep copying", "", "normal", "close")],
+            chosen, default="cancel", eyebrow="Sync")
+
+    # --- review: conflicts and set-aside files ---
+    def review_conflicts(self) -> None:
+        worker.run_async(self.service.conflicts, on_done=self._next_conflict,
+                         on_failed=lambda m: self.host.notify(f"⚠ {m}"))
+
+    def _next_conflict(self, found: list) -> None:
+        if not shiboken6.isValid(self):
+            return
+        if not found:
+            self.host.notify("No conflicts left in profiles, overwrite or the instance folder.", "ok")
+            self.refresh()
+            return
+        group = conflicts.related(found, found[0])
+        c = group[0]
+        instance = self.service.state.instance_path or ""
+        other = self._names.get(c.device, "another machine")
+        when = f", saved {c.when.day} {c.when:%b %H:%M}," if c.when else ""
+        if c.kind == "file":
+            title = c.relative(instance)
+            intro = f"{title} changed on two machines before they synced."
+        else:
+            profile = c.original.parent.name
+            title = f"Profile {profile}"
+            names = {"modlist": "mod list", "plugins": "plugins", "loadorder": "load order"}
+            parts = [names.get(g.kind, g.original.name) for g in group]
+            changed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+            intro = (f"The {changed} of profile {profile} changed on two machines before they synced. "
+                     "They're decided together, so the profile stays as one machine had it.")
+        details = []
+        for g in group:
+            lines = "\n".join(f"•  {line}" for line in conflicts.differences(g, other))
+            details.append(lines if len(group) == 1 else f"{g.original.name}:\n{lines}")
+        rest = len(found) - len(group)
+        more = f"\n\n{rest} more after this." if rest else ""
+        text = (f"{intro} MO2 uses the version in use; the version from {other}{when} is kept next to it."
+                f"\n\n" + "\n\n".join(details) + more)
+        files = "versions" if len(group) > 1 else "version"
+
+        def chosen(key: str | None) -> None:
+            if key not in ("current", "other"):
+                self.refresh()
+                return
+            worker.run_async(self.service.resolve_conflicts, group, key,
+                             on_done=lambda _: self.review_conflicts(),
+                             on_failed=lambda m: self.host.notify(f"⚠ {m}"))
+
+        self.host.confirm(
+            title, text,
+            [("current", f"Keep the {files} in use", "The other goes to .modsync-conflicts in the instance.",
+              "primary", "check"),
+             ("other", f"Use the {files} from {other}", "The one in use goes to .modsync-conflicts in the "
+              "instance. Close MO2 first.", "normal", "undo"),
+             ("later", "Decide later", "", "normal", "close")],
+            chosen, default="current", eyebrow="Conflict")
+
+    def review_set_aside(self) -> None:
+        path = self.service.state.set_aside
+
+        def chosen(key: str | None) -> None:
+            if key == "open":
+                QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+            elif key in ("delete", "forget"):
+                self.host.change_setup(partial(self.service.dismiss_set_aside, delete=key == "delete"),
+                                       message="Deleting the set-aside files…" if key == "delete" else
+                                       "Done.")
+
+        self.host.confirm(
+            "Files set aside when joining",
+            f"They were on this machine before the copy, but not on the other machine, or different there. "
+            f"They are in {path}. Move back anything you want to keep, inside MO2's folders, and it syncs "
+            "to every machine.",
+            [("open", "Open the folder", "", "primary", "folder"),
+             ("forget", "Stop showing this", "Keep the files but take this off the list.", "normal", "check"),
+             ("delete", "Delete them", "The other machine's versions are the ones in use.", "danger", "trash"),
+             ("keep", "Close", "", "normal", "close")],
+            chosen, default="open", eyebrow="Sync")
 
     def shutdown(self) -> None:
         """Unblock a waiting network-pairing worker before teardown."""

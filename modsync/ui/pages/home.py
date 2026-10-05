@@ -213,14 +213,26 @@ class HomePage(Page):
         pct = int(round(status.completion or 0))
         online = sum(1 for d in status.devices if d.connected)
         detail = f"{online} of {len(status.devices)} device(s) online" if status.devices else "No other devices yet."
-        if pct >= 100 and state == "idle":
+        copy = status.copy if status.copy is not None and status.copy.phase != "done" else None
+        if copy is not None:
+            self.sync_row.set_state("Copying", "busy", f"From {copy.source}. Play once it has finished.")
+        elif status.paused:
+            self.sync_row.set_state("Paused", "off", "Resume under Sync.")
+        elif status.conflicts:
+            n = status.conflicts
+            self.sync_row.set_state("Conflict" if n == 1 else f"{n} conflicts", "warn",
+                                    "Changed on two machines. Choose a version under Sync.")
+        elif pct >= 100 and state == "idle":
             self.sync_row.set_state("Up to date", "ok", detail)
         else:
             self.sync_row.set_state(f"{pct}%", "busy", f"{state.capitalize()}. {detail}")
         if self.host.steam_launch is not None:
-            arriving = state == "syncing" or pct < 100
+            arriving = copy is not None or (not status.paused and (state == "syncing" or pct < 100))
             self.sync_warning.setVisible(arriving)
-            if arriving:
+            if copy is not None:
+                self.sync_warning.setText(
+                    f"⚠ Still copying the mods from {copy.source}. Play once the copy has finished.")
+            elif arriving:
                 self.sync_warning.setText(
                     f"⚠ Still syncing ({pct}% here). Mods may still be arriving, and continuing now uses "
                     "whatever has arrived so far.")

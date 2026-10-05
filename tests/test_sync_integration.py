@@ -7,6 +7,7 @@ Skipped unless MODSYNC_IT=1 so the normal suite stays fast and offline. Run with
 
 import os
 import re
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -260,6 +261,183 @@ class SyncthingIntegration(unittest.TestCase):
             finally:
                 os.environ.pop("XDG_CONFIG_HOME", None)
                 os.environ.pop("XDG_DATA_HOME", None)
+
+
+    def _two_nodes(self, tmp: Path):
+        """Two isolated daemons that can only reach each other. Returns the
+        managers and their sync ports."""
+        nodes = []
+        for name in ("A", "B"):
+            port = _free_port()
+            mgr = SyncthingManager(tmp / f"home{name}", binary=self.binary,
+                                   gui_address=f"127.0.0.1:{_free_port()}", log_file=tmp / f"{name}.log")
+            mgr.ensure_config()
+            _isolate_config(mgr.home / "config.xml", port)
+            mgr.start(40)
+            nodes.append((mgr, port))
+        return nodes
+
+    def test_copy_from_another_machine(self) -> None:
+        """Joining copies the vault exactly without touching the source: a file
+        that matches stays put, one that differs is replaced (even though the
+        joiner's is newer), and one only the joiner has is set aside, never sent.
+        Afterwards the folder syncs both ways."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            os.environ["XDG_CONFIG_HOME"] = str(tmp / "cfg")
+            os.environ["XDG_DATA_HOME"] = str(tmp / "data")
+            inst_a, inst_b = tmp / "A" / "MO2", tmp / "B" / "MO2"
+            old, new = time.time() - 86400, time.time() - 60
+
+            def write(path: Path, text: str, mtime: float | None = None) -> None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text)
+                if mtime:
+                    os.utime(path, (mtime, mtime))
+
+            write(inst_a / "mods" / "Same" / "a.esp", "same", old)
+            write(inst_b / "mods" / "Same" / "a.esp", "same", old)
+            write(inst_a / "mods" / "Diff" / "d.esp", "from A", old)
+            write(inst_b / "mods" / "Diff" / "d.esp", "from B", new)
+            write(inst_a / "mods" / "OnlyA" / "x.esp", "only A")
+            write(inst_b / "mods" / "OnlyB" / "y.esp", "only B")
+            write(inst_a / "profiles" / "Default" / "modlist.txt", "+OnlyA\n+Diff\n+Same\n", old)
+            write(inst_b / "profiles" / "Default" / "modlist.txt", "+OnlyB\n+Diff\n+Same\n", new)
+            same_inode = (inst_b / "mods" / "Same" / "a.esp").stat().st_ino
+            (a, port_a), (b, port_b) = self._two_nodes(tmp)
+            service = None
+            try:
+                with a.client() as ca, b.client() as cb:
+                    id_a, id_b = ca.my_id(), cb.my_id()
+                    pairing.add_peer_device(ca, id_b, "B", addresses=[f"tcp://127.0.0.1:{port_b}"])
+                    pairing.share_instance_folder(ca, "modsync-copy", inst_a, [id_b])
+                    pairing.add_peer_device(cb, id_a, "A", addresses=[f"tcp://127.0.0.1:{port_a}"])
+                with a.client() as ca:  # what A's pairing code says its list runs to
+                    deadline = time.monotonic() + 60
+                    while time.monotonic() < deadline and ca.folder_status("modsync-copy")["state"] != "idle":
+                        time.sleep(0.5)
+                    sequence = ca.folder_status("modsync-copy")["sequence"]
+                service = ModSyncService(manager=b)
+                service.INDEX_QUIET_S = 3.0
+                with patch("modsync.service.gameversion.find_game_dir", return_value=None):
+                    service.choose_instance(inst_b)
+                service.join_vault(PairingCode(id_a, "modsync-copy", "Desktop", sequence), inst_b,
+                                   peer_host="127.0.0.1")
+                self.assertTrue(service.launch_check().blocked)
+
+                phases = []
+                deadline = time.monotonic() + 120
+                while time.monotonic() < deadline and service.state.copy_phase:
+                    progress = service.advance_copy()
+                    if progress and (not phases or phases[-1] != progress.phase):
+                        phases.append(progress.phase)
+                    time.sleep(1)
+                self.assertEqual(service.state.copy_phase, "", f"copy did not finish: {phases} (see B.log)")
+                self.assertEqual(phases[-1], "done")
+
+                content = lambda root: sorted(  # noqa: E731
+                    str(p.relative_to(root)) for p in root.rglob("*")
+                    if p.is_file() and p.parts[len(root.parts)] in ("mods", "profiles"))
+                self.assertEqual(content(inst_b), content(inst_a))
+                self.assertEqual((inst_b / "mods" / "Diff" / "d.esp").read_text(), "from A")
+                self.assertEqual((inst_b / "profiles" / "Default" / "modlist.txt").read_text(),
+                                 "+OnlyA\n+Diff\n+Same\n")
+                self.assertEqual((inst_b / "mods" / "Same" / "a.esp").stat().st_ino, same_inode,
+                                 "a matching file was downloaded again")
+                # The source never saw the joiner's files.
+                self.assertFalse((inst_a / "mods" / "OnlyB").exists())
+                self.assertEqual((inst_a / "mods" / "Diff" / "d.esp").read_text(), "from A")
+                self.assertEqual(list(inst_a.rglob("*.sync-conflict-*")), [])
+                # ...which are all kept in the archive.
+                archive = Path(service.state.set_aside)
+                self.assertTrue(archive.is_relative_to(inst_b / ".modsync-before-join"))
+                kept = {p.name: p.read_text() for p in archive.rglob("*") if p.is_file()}
+                self.assertEqual(kept["y.esp"], "only B")
+                self.assertIn("from B", kept.values())
+                self.assertIn("+OnlyB\n+Diff\n+Same\n", kept.values())
+
+                with b.client() as cb:
+                    folder = cb.get_folder("modsync-copy")
+                    self.assertEqual(folder["type"], "sendreceive")
+                    self.assertEqual(folder["versioning"]["type"], "")
+                    write(inst_b / "mods" / "NewOnB" / "n.esp", "new")
+                    cb.rescan("modsync-copy")
+                received = inst_a / "mods" / "NewOnB" / "n.esp"
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline and not received.exists():
+                    time.sleep(0.5)
+                self.assertTrue(received.exists(), "the folder doesn't sync B->A after the copy")
+                self.assertFalse(service.launch_check().blocked)
+            finally:
+                a.stop()
+                b.stop()
+                os.environ.pop("XDG_CONFIG_HOME", None)
+                os.environ.pop("XDG_DATA_HOME", None)
+
+    def test_copy_waits_for_the_source(self) -> None:
+        """Before the source has sent its index, the empty vault reads as 100%
+        complete. That must not be taken as done: nothing here may be set aside."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            os.environ["XDG_CONFIG_HOME"] = str(tmp / "cfg")
+            inst_b = tmp / "B" / "MO2"
+            (inst_b / "mods" / "Mine").mkdir(parents=True)
+            (inst_b / "mods" / "Mine" / "m.esp").write_text("mine")
+            (a, _port_a), (b, _port_b) = self._two_nodes(tmp)
+            a.stop()  # the machine being copied is off
+            try:
+                id_a = _generate_device_id(self.binary, tmp / "offline")
+                service = ModSyncService(manager=b)
+                service.join_vault(PairingCode(id_a, "modsync-off", "Desktop"), inst_b)
+                for _ in range(6):
+                    progress = service.advance_copy()
+                    time.sleep(1)
+                self.assertEqual(progress.phase, "waiting")
+                self.assertEqual(service.state.copy_phase, "receiving")
+                self.assertEqual((inst_b / "mods" / "Mine" / "m.esp").read_text(), "mine")
+            finally:
+                b.stop()
+                os.environ.pop("XDG_CONFIG_HOME", None)
+
+    def test_pause_keeps_history(self) -> None:
+        """Pausing and resuming carries a deletion made in between, where
+        leaving and joining again would bring the deleted mod back."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            os.environ["XDG_CONFIG_HOME"] = str(tmp / "cfg")
+            inst_a, inst_b = tmp / "A" / "MO2", tmp / "B" / "MO2"
+            for inst in (inst_a, inst_b):
+                (inst / "mods" / "Gone").mkdir(parents=True)
+                (inst / "mods" / "Gone" / "g.esp").write_text("g")
+            (a, port_a), (b, port_b) = self._two_nodes(tmp)
+            try:
+                with a.client() as ca, b.client() as cb:
+                    id_a, id_b = ca.my_id(), cb.my_id()
+                    pairing.add_peer_device(ca, id_b, "B", addresses=[f"tcp://127.0.0.1:{port_b}"])
+                    pairing.add_peer_device(cb, id_a, "A", addresses=[f"tcp://127.0.0.1:{port_a}"])
+                    pairing.share_instance_folder(ca, "modsync-p", inst_a, [id_b])
+                service = ModSyncService(manager=b)
+                service.join_vault(PairingCode(id_a, "modsync-p", "A"), inst_b, merge=True)
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline:
+                    with b.client() as cb:
+                        s = cb.folder_status("modsync-p")
+                    if s.get("state") == "idle" and s.get("globalFiles") and not s.get("needTotalItems"):
+                        break
+                    time.sleep(0.5)
+                service.pause_sync()
+                self.assertEqual(service.status().folder_state, "paused")
+                shutil.rmtree(inst_b / "mods" / "Gone")
+                service.pause_sync(False)
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline and (inst_a / "mods" / "Gone" / "g.esp").exists():
+                    time.sleep(0.5)
+                self.assertFalse((inst_a / "mods" / "Gone" / "g.esp").exists())
+                self.assertFalse((inst_b / "mods" / "Gone").exists())
+            finally:
+                a.stop()
+                b.stop()
+                os.environ.pop("XDG_CONFIG_HOME", None)
 
 
 if __name__ == "__main__":
