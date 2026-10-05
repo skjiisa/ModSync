@@ -6,6 +6,13 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0-beta1] - 2026-10-04
+
+A beta of the controller-first interface, for testing an end-to-end install of
+the Flatpak on a Steam Deck before 1.1.0. Also brings Play through MO2 from
+Steam's Play button as Steam's own launch, the optional ARM64 USVFS fix and
+Visual C++ runtime install, and an aarch64 bundle.
+
 ### Added
 
 - An ARM64 USVFS fix for the files shipped with MO2 2.5.2. "Apply ARM64 fix"
