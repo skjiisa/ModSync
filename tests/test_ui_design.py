@@ -27,13 +27,15 @@ class HomeGuidanceTests(UiTestCase):
             window = self.window()
         home = window.pages["home"]
         self.assertIs(window.focusWidget(), home.next_step)
-        self.assertEqual(home.next_step.text(), "Fix game version")
+        self.assertEqual(home.next_step.text(), "Downgrade to 1.5.97…")
         self.assertIn("need Skyrim 1.5.97", home.next_step.description)
         self.assertTrue(home.play.isEnabled())
         self.assertEqual(home.play.property("tileRole"), "normal")
         self.assertIn("may not load", home.play.description)
         home.next_step.click()
-        self.assertEqual(window._current, "game")
+        self.assertEqual(window._current, "home")
+        self.assertEqual(window.top_overlay.title.text(), "Downgrade Skyrim Special Edition to 1.5.97")
+        window.top_overlay.cancel()
 
     def test_polling_preserves_a_deliberate_choice_to_play_and_recovers_after_repair(self):
         State(instance_path=str(self.tmp)).save()
@@ -45,7 +47,7 @@ class HomeGuidanceTests(UiTestCase):
         home.on_game_checked(status, check)
         self.assertIs(window.focusWidget(), home.play)
         home.next_step.setFocus()
-        status.installed = status.expected
+        status.installed = status.skse_runtime = status.expected
         home.on_game_checked(status, gameversion.VersionCheck(status.installed, status.expected))
         self.assertTrue(home.next_step.isHidden())
         self.assertEqual(home.play.property("tileRole"), "primary")
@@ -113,10 +115,10 @@ class SetupPriorityTests(UiTestCase):
         with patch.object(ModSyncService, "game_status", return_value=status):
             window = self.window()
             setup = window.start_setup()
-            setup.go_to(2)
+            setup.go_to(1)
             self.settle()
         self.assertIs(window.focusWidget(), setup.game.pin)
-        self.assertEqual(setup.finish_tile.text(), "Finish anyway")
+        self.assertEqual(setup.finish_tile.text(), "Continue anyway")
         self.assertEqual(setup.game.pin.property("tileRole"), "primary")
         self.assertEqual(setup.game.skse.property("tileRole"), "normal")
         self.assertEqual(setup.finish_tile.property("tileRole"), "normal")
@@ -124,7 +126,7 @@ class SetupPriorityTests(UiTestCase):
     def test_finish_is_the_only_primary_action_when_the_game_version_is_ready(self):
         window = self.window()
         setup = window.start_setup()
-        setup.go_to(2)
+        setup.go_to(1)
         self.settle()
         primary = [t for t in [setup.finish_tile, *setup.game.action_tiles]
                    if t.isVisible() and t.property("tileRole") == "primary"]

@@ -7,27 +7,48 @@ does not read your setup, install anything, modify the game or sync. They are
 
 ## Home
 
-Home recommends a repair when the game version or SKSE does not match, or
-Steam has an update waiting. The recommendation gets the accent fill; Play
-stays available with the consequence explained. Each readiness check opens
-the section that can fix it. A single outline marks focus.
+Home, Sync and Settings are the three tabs. Home offers installation,
+selection, repairs and launching without requiring a tab change. The MO2,
+game version and SKSE rows open maintenance sheets for the remaining controls.
+All standard Home actions fit at 1280 × 800 without scrolling or smaller fonts.
 
-![Home](home.png)
+On first run, install MO2 directly, use an existing installation, or follow
+guided setup. Copying an existing setup from another machine has an early
+entry point too.
 
-When the game is ready, Play becomes the primary action again.
+![First-run Home](home-welcome.png)
+
+A repair runs from Home and shows its progress there. Play remains available
+with any launch consequence explained. A single outline marks focus.
+
+![Home with a repair](home.png)
+
+When the setup is ready, Play becomes the primary action.
 
 ![Ready to play](home-ready.png)
+
+Missing SKSE is recommended as a setup step; users can still play without it.
+
+![Matching SKSE installation](home-skse.png)
+
+Steam setup opens a sheet with the launch hook and Steam shortcut controls.
+The same settings remain available in Settings.
+
+![Steam setup](steam-setup.png)
 
 ## Opened from Steam's Play button
 
 With the launch hook on, Steam's Play button opens this same window. Play
-becomes Continue, which hands Steam's launch on to MO2-LINT or the game.
-Cancel launch, one move down, returns to Steam. A warning appears while the
-vault is still syncing. Here a keyboard is in use, so the hints show keys.
+uses the selected MO2 setup. Before MO2 is chosen, Continue hands the launch
+on to MO2-LINT or the game. Cancel launch returns to Steam. A warning appears
+while the vault is still syncing. Here a keyboard is in use, so the hints show keys.
 
 ![Opened from Steam](launch.png)
 
-## Game
+## Game maintenance
+
+The Game version row opens this sheet. Restore, unpin and technical details
+remain available here. Its content scrolls; Close stays visible.
 
 ![Game version](game.png)
 
@@ -54,23 +75,26 @@ focus.
 
 ![Editing text](keyboard-editing.png)
 
-## System
+## Settings
 
 Short descriptions keep the actions visible together. Settings details and
 Controls open in sheets with the background-service explanation, Steam
 launch status, firewall ports and input shortcuts.
 
-![System](system.png)
+![Settings](system.png)
 
 ## Setup wizard
 
 ![Setup, step 1](setup-1.png)
 
-The game step emphasizes the action that fixes the unresolved problem.
-Finish anyway explains what will remain unresolved. When the version is
-ready, Finish is the primary action and optional installs are secondary.
+The second step prepares the game version and matching SKSE. Continue anyway
+explains an unresolved problem; Continue without SKSE explains which mods
+need it. The final step makes sync optional, with Finish without sync first.
+The early copy route skips game preparation until the incoming mods arrive.
 
-![Setup, game version](setup-3.png)
+![Setup, game and SKSE](setup-2.png)
+
+![Setup, optional sync](setup-3.png)
 
 ## Regenerate the previews
 
@@ -80,10 +104,10 @@ From a source checkout:
 uv run python scripts/preview_ui.py --output scratch/ui-review
 ```
 
-This writes all 26 offline previews, including the confirmation sheet, the
+This writes offline previews, including the confirmation sheet, the
 folder browser, the install sheet, the network PIN and a 1000 pixel wide
 window used with a mouse, keyboard symbols and selection, and validation at
 1000 pixels wide, using Qt's offscreen platform. This folder keeps
-one screenshot per screen to stay small. Copy the ones you want here and
-compress them with `optipng`. The installed Flatpak
+selected setup, ready, repair and maintenance screenshots. Copy the ones you
+want here and compress them with `optipng`. The installed Flatpak
 is a separate build and does not pick up source edits.

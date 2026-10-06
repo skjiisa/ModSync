@@ -35,6 +35,13 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Changed
 
+- Consolidated navigation into Home, Sync and Settings. Home now offers MO2
+  installation and selection, matching SKSE, relevant repairs and launch
+  actions. Game and MO2 maintenance open in sheets with a fixed Close button.
+  Home shows sync status only when sync is enabled, and includes Steam setup.
+  The guided setup prepares MO2, then the game and SKSE, then optional sync.
+  An early copy route pairs before checking the incoming setup's game version.
+  Home layouts are checked at the Steam Deck's 1280 × 800 resolution.
 - Steam's Play button now leads to the same Play Skyrim and Open Mod
   Organizer 2 as opening ModSync directly: the selected MO2 profile, SKSE
   when it is installed, and the same checks. Before, Continue only carried on

@@ -1,4 +1,4 @@
-"""The **Mod Organizer 2** section: the instance this machine uses (choose,
+"""The Mod Organizer 2 maintenance sheet: the instance this machine uses (choose,
 install, open), its profile and mod count, and two repairs: a current Visual
 C++ runtime in the game prefix and the USVFS fix for ARM64.
 
@@ -83,7 +83,7 @@ class InstallSheet(Overlay):
         self.body.addWidget(self.type_tile)
         self.body.addWidget(label(
             "Close Steam before installing. This downloads Mod Organizer 2 and sets up the game's Proton "
-            "prefix, which can take several minutes. SKSE can be installed afterwards from Game.", "note"))
+            "prefix, which can take several minutes. Home offers the matching SKSE afterwards.", "note"))
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(2000)
@@ -245,6 +245,8 @@ class ModsPage(Page):
     label = "Mod Organizer"
     icon = "box"
 
+    repairsChecked = Signal()
+
     def __init__(self, host) -> None:
         super().__init__(host)
         state = self.service.state
@@ -326,9 +328,21 @@ class ModsPage(Page):
             tile.setVisible(False)
             right.addWidget(tile)
         right.addStretch(1)
-        self._refresh_runtime()
-        self.usvfs_refresh()
+        self.recheck()
         self.host.busyChanged.connect(self._update_enabled)
+
+    def recheck(self) -> None:
+        if self.open_mo2 is not None:
+            self._refresh_runtime()
+            self.usvfs_refresh()
+
+    @property
+    def repairs(self) -> list[tuple[Tile, str]]:
+        if self.open_mo2 is None:
+            return []
+        actions = [(self.runtime_tile, "MO2 needs a newer Visual C++ runtime."),
+                   (self.usvfs_apply, "MO2 needs the ARM64 fix to start games.")]
+        return [(tile, reason) for tile, reason in actions if not tile.isHidden()]
 
     def preferred_focus(self):
         if self.open_mo2 is not None:
@@ -378,6 +392,7 @@ class ModsPage(Page):
             self.runtime_note.setText(
                 "This MO2's virtual file system needs a newer Visual C++ runtime in the game's Proton prefix, "
                 "or nothing started from MO2 will run (" + "; ".join(problems) + ").")
+        self.repairsChecked.emit()
 
     def _install_runtime(self) -> None:
         def chosen(key: str | None) -> None:
@@ -417,12 +432,14 @@ class ModsPage(Page):
         self.usvfs_apply.setVisible(relevant and result.can_apply)
         self.usvfs_restore.setVisible(relevant and result.can_restore)
         self._update_enabled()
+        self.repairsChecked.emit()
 
     def _usvfs_check_failed(self, message: str) -> None:
         self.usvfs_note.setVisible(usvfs.is_arm64())
         self.usvfs_note.setText(f"Could not check USVFS: {message}")
         self.usvfs_apply.setVisible(False)
         self.usvfs_restore.setVisible(False)
+        self.repairsChecked.emit()
 
     def _usvfs_change(self, restore: bool) -> None:
         if self.usvfs_busy or self.host.busy:
@@ -431,6 +448,7 @@ class ModsPage(Page):
         self.host.set_busy("usvfs", True)
         self.usvfs_note.setText("Restoring original USVFS…" if restore else
                                 "Downloading and applying the USVFS ARM64 fix…")
+        self.host.notify(self.usvfs_note.text())
         operation = self.service.restore_usvfs if restore else self.service.apply_usvfs_fix
         worker.run_async(operation, on_done=self._usvfs_finished, on_failed=self._usvfs_failed)
 

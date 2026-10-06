@@ -21,7 +21,7 @@ class SectionTests(UiTestCase):
         home = window.pages["home"]
         self.assertIsNotNone(home.setup)  # the main action is the setup wizard
         self.assertFalse(home.play.isEnabled())
-        self.assertIs(window.focusWidget(), home.setup)
+        self.assertIs(window.focusWidget(), home.install_mo2)
         self.assertEqual(window.pages["game"].panel.version.text(), "1.7.104")
         self.assertIsNotNone(window.pages["mods"].chooser)
         self.assertTrue(hasattr(window.pages["sync"], "choose_first"))
@@ -56,10 +56,10 @@ class SectionTests(UiTestCase):
         window = self.window()
         router = InputRouter.instance()
         seen = []
-        for _ in range(len(window.pages)):
+        for _ in range(len(window.tabs)):
             router.dispatch(Action.NEXT_TAB)
             seen.append(window._current)
-        self.assertEqual(seen, ["game", "mods", "sync", "system", "home"])
+        self.assertEqual(seen, ["sync", "system", "home"])
         router.dispatch(Action.PREV_TAB)
         self.assertEqual(window._current, "system")
         self.assertTrue(window.tabs["system"].isChecked())
@@ -73,10 +73,12 @@ class SectionTests(UiTestCase):
         self.assertEqual(home.game_row.badge.text(), "1.7.104")
         self.assertEqual(home.mo2_row.badge.text(), "Not chosen")
         home.mo2_row.click()
-        self.assertEqual(window._current, "mods")
-        window.go("home")
+        self.assertEqual(window._current, "home")
+        self.assertIs(window.top_overlay.page, window.pages["mods"])
+        window.top_overlay.cancel()
         home.game_row.click()
-        self.assertEqual(window._current, "game")
+        self.assertEqual(window._current, "home")
+        self.assertIs(window.top_overlay.page, window.pages["game"])
 
     def test_opening_a_sheet_never_creates_a_second_window(self):
         window = self.window()
@@ -587,10 +589,10 @@ class SetupFlowTests(UiTestCase):
         self.assertEqual(setup.index, 1)
         self.assertEqual(State.load().instance_path, str(self.tmp))
         self.assertFalse(State.load().syncing)
-        setup.local.click()
-        self.assertEqual(setup.index, 2)
         self.assertIs(window.focusWidget(), setup.finish_tile)
         setup.finish_tile.click()
+        self.assertEqual(setup.index, 2)
+        setup.local.click()
         self.settle()
         self.assertIsNone(window.setup)
         self.assertEqual(window._current, "home")
@@ -602,10 +604,10 @@ class SetupFlowTests(UiTestCase):
         from modsync.pairing_code import PairingCode
 
         window = self.window()
-        setup = window.start_setup()
+        setup = window.start_setup(copy_from_machine=True)
         setup.chooser.use(str(self.tmp))
         self.settle()
-        setup.copy.click()
+        self.assertEqual(setup.index, 2)
         self.assertTrue(setup.join_panel.isVisibleTo(setup))
         code = PairingCode("A" * 56, "modsync-abc", "Deck").encode()
         with patch.object(ModSyncService, "join_vault") as join:
@@ -625,6 +627,8 @@ class SetupFlowTests(UiTestCase):
         self.assertIn("stop syncing", window.last_message)
         setup.keep.click()
         self.assertEqual(setup.index, 1)
+        setup.finish_tile.click()
+        self.assertEqual(setup.index, 2)
         self.assertTrue(setup.keep_sync.isVisibleTo(setup))
 
     def test_b_steps_back_and_leaves_from_the_first_step(self):
@@ -747,9 +751,9 @@ class SetupFinishTests(UiTestCase):
                 patch.object(ModSyncService, "game_version_check", lambda self: check):
             window = self.window()
             setup = window.start_setup()
-            setup.go_to(2)
+            setup.go_to(1)
             self.settle()
-        self.assertEqual(setup.finish_tile.text(), "Finish anyway")
+        self.assertEqual(setup.finish_tile.text(), "Continue anyway")
         self.assertEqual(setup.finish_tile.property("tileRole"), "normal")
         self.assertIn("need 1.5.97", setup.finish_tile.description)
         self.assertIs(self.app.focusWidget(), setup.game.downgrade)  # the repair, not Finish
@@ -757,9 +761,9 @@ class SetupFinishTests(UiTestCase):
     def test_finish_stays_the_main_action_when_nothing_needs_fixing(self):
         window = self.window()
         setup = window.start_setup()
-        setup.go_to(2)
+        setup.go_to(1)
         self.settle()
-        self.assertEqual(setup.finish_tile.text(), "Finish")
+        self.assertEqual(setup.finish_tile.text(), "Continue")
         self.assertEqual(setup.finish_tile.property("tileRole"), "primary")
         self.assertIs(self.app.focusWidget(), setup.finish_tile)
 

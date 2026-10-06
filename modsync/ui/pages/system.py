@@ -1,4 +1,4 @@
-"""The **System** section: how ModSync fits into this machine.
+"""The Settings tab: how ModSync fits into this machine.
 
 The background service, the Steam launch hook ("Open ModSync before
 Skyrim"), the firewall rules for pairing and syncing, the Steam shortcut,
@@ -15,19 +15,19 @@ from modsync import __version__, background, diagnostics, firewall, launchhook, 
 from modsync.steam import shortcuts
 from modsync.ui import worker
 from modsync.ui.input import Action
-from modsync.ui.overlays import DetailsSheet, Overlay
+from modsync.ui.overlays import ControlsSheet, DetailsSheet, Overlay
 from modsync.ui.pages import Page
 from modsync.ui.widgets import GlyphLabel, Panel, Tile, label
 
 
 class SystemPage(Page):
     key = "system"
-    label = "System"
+    label = "Settings"
     icon = "gear"
 
     def __init__(self, host) -> None:
         super().__init__(host)
-        self.header("System", "On this machine",
+        self.header("Settings", "On this machine",
                     "How ModSync fits in here: Steam, the background service and the firewall.")
         left, right = self.columns(1, 1)
         state = self.service.state
@@ -94,6 +94,10 @@ class SystemPage(Page):
         self._refresh_firewall()
         host.busyChanged.connect(self._on_busy)
 
+    def open_steam_settings(self) -> None:
+        if not self.host.busy:
+            ControlsSheet(self.host, "Set up Steam launch", [self.hook_tile, self.steam_tile]).open()
+
     def _show_settings_details(self) -> None:
         hook = self.hook.summary() if self.hook is not None else "Still checking Steam's launch settings."
         ports = ", ".join(f"{p}/{proto}" for p, proto, _ in firewall.PORTS)
@@ -102,10 +106,10 @@ class SystemPage(Page):
                      f"Open ModSync before Skyrim\n{hook}\n\n"
                      f"Firewall\nPairing and syncing use {ports}. Allowing access adds ModSync's rules; "
                      "removing access deletes only the rules ModSync added. Both ask for your password. "
-                     "Existing firewall rules are kept.", eyebrow="System").open()
+                     "Existing firewall rules are kept.", eyebrow="Settings").open()
 
     def _show_controls(self) -> None:
-        sheet = Overlay(self.host, "Controls", eyebrow="System")
+        sheet = Overlay(self.host, "Controls", eyebrow="Settings")
         sheet.body.addWidget(self._controls_panel())
         sheet.body.addWidget(label("Keyboard: arrow keys move, Enter chooses, Escape goes back, "
                                    "Q / E switch sections, and Ctrl+Q quits.", "secondary"))
@@ -158,7 +162,7 @@ class SystemPage(Page):
             [("reset", "Reset setup", "", "danger", "power"), ("cancel", "Cancel", "", "normal", "close")],
             chosen,
             default="cancel",
-            eyebrow="System",
+            eyebrow="Settings",
         )
 
     # --- firewall ---

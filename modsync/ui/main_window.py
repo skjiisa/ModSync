@@ -1,10 +1,8 @@
 """The one ModSync window, built like a console app.
 
-A row of sections across the top (Home, Game, Mod Organizer, Sync, System),
-switched with the bumpers or Q/E, or by moving up onto them. The section's
-tiles fill the middle and the hint bar along the bottom says what each button
-does. Everything that used to be a dialog is a sheet over the window, and a
-glowing halo marks focus. The setup wizard takes over the middle when it runs.
+Home, Sync and Settings are switched with the bumpers or Q/E. Home holds
+setup, repairs and launch actions. Game and MO2 maintenance open as sheets
+without leaving Home. The setup wizard takes over the middle when it runs.
 
 The same window serves Steam's launch hook. Given a ``SteamLaunch``, Steam is
 waiting on it: Play and Open MO2 prepare the same launch as ever and hand it to
@@ -31,7 +29,7 @@ from modsync import __version__, launchhook
 from modsync.service import ModSyncService
 from modsync.ui import nav, worker
 from modsync.ui.input import Action, DIRECTIONS, InputRouter
-from modsync.ui.overlays import ConfirmSheet, Overlay
+from modsync.ui.overlays import ConfirmSheet, Overlay, PageSheet
 from modsync.ui.pages import Page
 from modsync.ui.pages.game import GamePage
 from modsync.ui.pages.home import HomePage
@@ -52,6 +50,7 @@ _AUTO_DECISION_MS = 3000
 _POLL_MS = 4000
 
 PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage)
+TAB_KEYS = ("home", "sync", "system")
 
 
 def alive(w: QWidget | None) -> bool:
@@ -113,6 +112,7 @@ class MainWindow(QMainWindow):
     gameChecked = Signal(object, object)  # GameStatus, VersionCheck
     syncStatus = Signal(object)  # SyncStatus
     setupDescribed = Signal(list)  # the instance's profile line and problems
+    mo2Checked = Signal()  # runtime and USVFS checks finished
     _call = Signal(object)  # run a callable on the UI thread
 
     def __init__(self, *, steam_launch: launchhook.SteamLaunch | None = None,
@@ -180,13 +180,18 @@ class MainWindow(QMainWindow):
             page = page_cls(self)
             self.pages[page.key] = page
             self.stack.addWidget(page)
+            if page.key not in TAB_KEYS:
+                continue
             tab = TabButton(page.key, page.label, page.icon)
             tab.clicked.connect(lambda _=False, k=page.key: self.go(k, focus=self.router.mode != "mouse"))
             self.tabs[page.key] = tab
             self.topbar.tabs_row.addWidget(tab)
             tab.setVisible(self.setup is None)  # rebuilt while the wizard is open
-        sync = self.pages["sync"]
-        sync.synced.connect(self.pages["game"].panel.refresh)  # mods just arrived: re-check SKSE/version
+        panel, home = self.pages["game"].panel, self.pages["home"]
+        self.pages["sync"].synced.connect(panel.refresh)
+        panel.busyChanged.connect(home.on_game_busy)
+        panel.progressed.connect(home.on_game_progress)
+        self.pages["mods"].repairsChecked.connect(self.mo2Checked)
 
     def _clear_pages(self) -> None:
         for page in self.pages.values():
@@ -206,6 +211,16 @@ class MainWindow(QMainWindow):
     def go(self, key: str, *, focus: bool = True) -> None:
         if key not in self.pages or self.setup is not None:
             return
+        if key not in self.tabs:
+            if self.busy:
+                return
+            page = self.pages[key]
+            if any(isinstance(sheet, PageSheet) and sheet.page is page for sheet in self.overlays):
+                return
+            PageSheet(self, page).open()
+            return
+        if self.overlays:
+            return
         old = self._current
         self._current = key
         for k, tab in self.tabs.items():
@@ -213,7 +228,7 @@ class MainWindow(QMainWindow):
         page = self.pages[key]
         if self.stack.currentWidget() is not page:
             self.stack.setCurrentWidget(page)
-            keys = list(self.pages)
+            keys = list(self.tabs)
             if old in keys:
                 self._slide(page, keys.index(key) - keys.index(old))
         if focus:
@@ -235,7 +250,7 @@ class MainWindow(QMainWindow):
         anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
     def cycle(self, step: int) -> None:
-        keys = list(self.pages)
+        keys = list(self.tabs)
         self.go(keys[(keys.index(self._current) + step) % len(keys)])
 
     def prepare_rebuild(self) -> None:
@@ -253,7 +268,7 @@ class MainWindow(QMainWindow):
             return
         self._rebuild_pending = False
         current = self._current
-        for overlay in list(self.overlays):
+        for overlay in reversed(self.overlays[:]):
             overlay.dismiss()
         self._clear_pages()
         self._build_pages()
@@ -263,10 +278,12 @@ class MainWindow(QMainWindow):
         self.go(self._current)
 
     # --- setup wizard ---
-    def start_setup(self) -> SetupFlow | None:
+    def start_setup(self, *, copy_from_machine: bool = False) -> SetupFlow | None:
         if self.busy or self.setup is not None:
             return None
-        self.setup = SetupFlow(self)
+        for overlay in reversed(self.overlays[:]):
+            overlay.dismiss()
+        self.setup = SetupFlow(self, copy_from_machine=copy_from_machine)
         self.root.addWidget(self.setup)
         self.root.setCurrentWidget(self.setup)
         self.topbar.set_tabs_visible(False)
@@ -324,7 +341,7 @@ class MainWindow(QMainWindow):
     def vault_created(self) -> None:
         self.set_busy("sync-setup", False)
         if self.setup is not None:
-            self.setup.go_to(2)  # sharing from here: the game step comes next
+            self.finish_setup()  # sharing is the optional final step
         else:
             self.rebuild()
 
@@ -339,7 +356,9 @@ class MainWindow(QMainWindow):
 
     def instance_chosen(self, path: str) -> None:
         if self.setup is not None:
-            self.setup.go_to(1)
+            self.setup.go_to(2 if self.setup.copy_from_machine else 1)
+            if self.setup.copy_from_machine:
+                self.setup._show_join()
         else:
             self.rebuild()
 
@@ -467,7 +486,7 @@ class MainWindow(QMainWindow):
 
     # --- quitting ---
     def request_quit(self) -> None:
-        """Ask before closing: B on Home, Quit under System, or Ctrl+Q. Closing
+        """Ask before closing: B on Home, Quit under Settings, or Ctrl+Q. Closing
         while Steam waits cancels its launch, which the question says."""
         if self.overlays and isinstance(self.top_overlay, ConfirmSheet) and self.top_overlay.property("quit"):
             return
@@ -478,7 +497,7 @@ class MainWindow(QMainWindow):
         text = (
             f"Steam is waiting to start {steam.game.name}. Quitting returns to Steam without starting "
             "anything." if steam is not None else
-            "Syncing and a queued Steam pin carry on only if the background service is on (under System)."
+            "Syncing and a queued Steam pin carry on only if the background service is on (under Settings)."
         )
 
         def chosen(key: str | None) -> None:

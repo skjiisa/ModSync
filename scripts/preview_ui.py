@@ -99,6 +99,11 @@ def main():
             raise RuntimeError(f"Could not save {path}")
         overflow = [s.horizontalScrollBar().maximum() for s in window.findChildren(QScrollArea) if s.isVisible()]
         print(f"{path}: {window.width()}×{window.height()}, horizontal overflow={overflow}")
+        if name.startswith("home") or name == "launch":
+            vertical = window.pages["home"].area.verticalScrollBar().maximum()
+            print(f"  Home vertical overflow={vertical}")
+            if width == 1280 and vertical:
+                raise RuntimeError(f"Home needs scrolling on the Steam Deck: {name}")
         if any(overflow):
             raise RuntimeError(f"Content exceeds the requested width: {name}")
 
@@ -129,14 +134,29 @@ def main():
         w.pages["home"].on_game_checked(ready, gameversion.VersionCheck(ready.installed, ready.expected))
         w.pages["home"].focus_default()
         capture(w, "home-ready")
+        missing = replace(ready, skse_runtime=None)
+        with patch.object(ModSyncService, "game_status", return_value=missing):
+            w.pages["game"].panel.refresh()
+            settle()
+        capture(w, "home-skse")
+        panel = w.pages["game"].panel
+        panel._begin_file_operation("Installing SKSE…")
+        capture(w, "home-working")
+        panel._end_file_operation()
+        settle()
         w.pages["home"].on_game_checked(game, check)
         w.go("game")
         capture(w, "game")
         w.pages["game"].panel._start_downgrade()
         capture(w, "game-confirm")
         w.top_overlay.cancel()
+        w.top_overlay.cancel()  # game maintenance sheet
         w.go("mods")
         capture(w, "mods")
+        w.top_overlay.cancel()
+        w.pages["home"].steam_options.click()
+        capture(w, "steam-setup")
+        w.top_overlay.cancel()
         w.go("sync")
         capture(w, "sync-offer")
         w.pages["sync"].toggle_join()
