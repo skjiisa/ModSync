@@ -1,8 +1,14 @@
-"""**Home**: is everything ready, and the big button to play.
+"""**Home**: is everything ready, the fix when it isn't, and the big button
+to play. Most people only ever need this section.
 
 A readiness checklist (game version, SKSE, Mod Organizer 2, sync) sits next
-to the main action. Each check opens the section that can fix it. Before
-anything is set up, the main action starts the setup wizard instead.
+to the main actions, and each check opens the section with its details. When
+something needs repairing (a runtime or USVFS fix MO2 needs, the game version,
+SKSE, or an update Steam is waiting to install), the first tile runs the
+repair right here, the same action the Game or Mod Organizer section offers,
+and the game's progress shows under it. Before anything is set up, the main
+action starts the setup wizard instead. "Open ModSync before Skyrim", which
+puts ModSync behind Steam's Play button, sits underneath.
 
 When Steam's launch hook opened ModSync, Steam is waiting on this window.
 Play and Open Mod Organizer 2 do the same as ever, except that the hook runs
@@ -14,15 +20,112 @@ about to start (MO2-LINT's redirector or the game itself).
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QVBoxLayout
+from PySide6.QtWidgets import QProgressBar, QVBoxLayout
 
-from modsync import launchhook
+from modsync import launchhook, steamos
 from modsync.games import SKYRIM_SE
 from modsync.service import GameStatus, SyncStatus
+from modsync.ui import worker
+from modsync.ui.input import Action
 from modsync.ui.pages import Page
 from modsync.ui.widgets import HeroTile, Panel, StatusRow, Tile, label
 
 TAGLINE = f"Set up {SKYRIM_SE.name} for modding on this machine."
+
+
+class LaunchHookTile(Tile):
+    """"Open ModSync before Skyrim": Steam's Play button for the game opens
+    ModSync first. An installed hook is brought up to date before its state is
+    read (an old name keeps Steam Cloud from syncing saves), and a change
+    Steam was holding is applied by ``poll`` once Steam closes."""
+
+    def __init__(self, host) -> None:
+        super().__init__("Open ModSync before Skyrim", "Steam launch: checking…", "rocket", size="compact")
+        self.host = host
+        self.status: launchhook.LaunchHookStatus | None = None
+        self._toggling = False
+        self._held = False  # game files are being rewritten: an A meant for the repair must not land here
+        self.set_badge("checking", "off")
+        self.clicked.connect(self._toggle)
+        worker.run_async(launchhook.upgrade, on_done=self._after_upgrade, on_failed=lambda _: self.refresh())
+
+    def hold(self, on: bool) -> None:
+        self._held = on
+        self._update_enabled()
+
+    def _update_enabled(self) -> None:
+        found = self.status is None or self.status.steam_found
+        self.setEnabled(found and not self._toggling and not self._held)
+
+    def _toggle(self) -> None:
+        self._toggling = True
+        self._update_enabled()
+        st = self.status
+        turning_off = bool(st and (st.installed or st.selected) and not (st.pending and st.pending.action == "select"))
+        fn = launchhook.disable if turning_off else launchhook.enable
+        worker.run_async(fn, on_done=self._after_toggle, on_failed=self._on_toggle_failed)
+
+    def _after_toggle(self, message: str) -> None:
+        self._toggling = False
+        self._update_enabled()
+        self.host.notify(message, "ok")
+        self.refresh()
+
+    def _on_toggle_failed(self, message: str) -> None:
+        self._toggling = False
+        self._update_enabled()
+        self.host.notify(f"⚠ {message}")
+        self.refresh()
+
+    def _after_upgrade(self, message: object) -> None:
+        if message:
+            self.host.notify(str(message), "ok")
+        self.refresh()
+
+    def refresh(self) -> None:
+        worker.run_async(launchhook.status, on_done=self.on_status,
+                         on_failed=lambda _: self.set_badge("unknown", "off"))
+
+    def on_status(self, st: launchhook.LaunchHookStatus) -> None:
+        self.status = st
+        if st.enabled and not st.pending:
+            head, tone = "On", "ok"
+        elif st.pending:
+            head = "At reboot" if steamos.is_steam_frame() else "When Steam closes"
+            tone = "info"
+        elif st.installed or st.selected:
+            head, tone = "Partly set up", "warn"
+        else:
+            head, tone = "Off", "off"
+        if not st.steam_found or (st.enabled and not st.underlying_exists) or (
+                not st.pending and not st.enabled and (st.installed or st.selected)):
+            # Something is off: the hook's own explanation says what and how to fix it.
+            summary = st.summary()
+        elif st.pending:
+            summary = ("Reboot to apply this change." if steamos.is_steam_frame() else
+                       "Close Steam to apply this change.")
+        elif st.enabled:
+            summary = "Steam's Play button opens ModSync, then plays through MO2."
+        else:
+            summary = "Play with your mods from Steam's Play button."
+        self.set_badge(head, tone)
+        if (st.pending and st.pending.action == "select") or st.enabled:
+            action = "Choose to turn it off."
+        elif st.installed or st.selected:
+            action = "Choose to turn it off and reset."
+        else:
+            action = "Choose to turn it on."
+        self.set_description(f"{summary} {action}".strip())
+        self._update_enabled()
+
+    def poll(self) -> None:
+        if self.status is not None and self.status.pending is not None:
+            worker.run_async(launchhook.apply_pending, on_done=self._on_applied, on_failed=lambda _: None)
+
+    def _on_applied(self, message: object) -> None:
+        if message:
+            self.host.notify(str(message), "ok")
+            self.refresh()
 
 
 class HomePage(Page):
@@ -69,10 +172,19 @@ class HomePage(Page):
         actions = QVBoxLayout()
         actions.setSpacing(14)
         self.next_step = Tile("", "", "wrench", role="primary", chevron=True)
-        self.next_step.clicked.connect(lambda: host.go("game"))
+        self.next_step.clicked.connect(self._run_next_step)
         self.next_step.hide()
         self._recommendation = ""
+        self._repair: Tile | None = None  # the tile in Game or Mod Organizer that does it
+        self._repair_section = "game"
+        self._checked: tuple[GameStatus, object] | None = None
+        self._described: list[str] = []
         actions.addWidget(self.next_step)
+        self.work = label("", "secondary")
+        self.work_bar = QProgressBar()
+        for w in (self.work, self.work_bar):
+            w.setVisible(False)
+            actions.addWidget(w)
         self.play: Tile
         self.cancel_launch: Tile | None = None
         self.open_mo2: Tile | None = None
@@ -108,6 +220,10 @@ class HomePage(Page):
         self.profile = label("", "muted")
         self.profile.setVisible(False)
         actions.addWidget(self.profile)
+        # Steam already brought you here when it is waiting.
+        self.hook_tile = LaunchHookTile(host)
+        self.hook_tile.setVisible(steam is None)
+        actions.addWidget(self.hook_tile)
         actions.addStretch(1)
         right.addLayout(actions)
         self.finish_layout()
@@ -123,6 +239,7 @@ class HomePage(Page):
             self.sync_row.set_state("Off", "off", "Optional: keep this setup on another machine.")
 
         host.gameChecked.connect(self.on_game_checked)
+        host.mo2Checked.connect(self.on_mo2_checked)
         host.syncStatus.connect(self.on_sync_status)
         host.setupDescribed.connect(self.on_setup_described)
         host.busyChanged.connect(self.update_enabled)
@@ -159,30 +276,63 @@ class HomePage(Page):
             self.skse_row.set_state("After the game", "off", "Fix the game version first.")
         self.recommend_next_step(st, vc)
 
+    def on_mo2_checked(self) -> None:
+        self._update_mo2_row()
+        if self._checked is not None:
+            self.recommend_next_step(*self._checked)
+
+    def _mo2_repairs(self) -> list[tuple[Tile, str]]:
+        mods = self.host.pages.get("mods")
+        return mods.repairs if mods is not None else []
+
+    def _game_panel(self):
+        game = self.host.pages.get("game")
+        return game.panel if game is not None else None
+
     def recommend_next_step(self, st: GameStatus, vc) -> None:
         """Recommend a repair without blocking an intentional launch or moving
-        focus away from a choice the user has already made."""
+        focus away from a choice the user has already made. When the section
+        that owns the repair offers it, the recommendation runs it."""
+        self._checked = (st, vc)
         title = detail = risk = ""
+        icon = "wrench"
+        repair: Tile | None = None
+        section = "game"
+        panel = self._game_panel()
+        repairs = self._mo2_repairs()
         if self.service.state.has_instance or self.host.steam_launch is not None:
-            if st.needs_downgrade or (vc.mismatch and not st.steam_updating):
+            if repairs:
+                repair, _why = repairs[0]
+                section, icon = "mods", "wrench"
+                title, detail = repair.text(), repair.description
+                risk = "Skyrim won't start through MO2 until this is fixed."
+            elif st.needs_downgrade or (vc.mismatch and not st.steam_updating):
                 wanted = st.wanted or vc.expected
-                title = "Fix game version"
+                repair = panel.offered(panel.downgrade) if panel else None
+                title, icon = "Fix game version", "download"
                 detail = f"Your mods need Skyrim {wanted}. Installed: {vc.installed}."
                 risk = f"Mods built for {wanted} may not load if you play now."
             elif st.skse_state in ("wrong", "several"):
-                title = "Fix Script Extender (SKSE)"
+                repair = panel.offered(panel.skse) if panel else None
+                title, icon = "Fix Script Extender (SKSE)", "layers"
                 detail = "SKSE does not match the installed game."
                 risk = "SKSE mods may not load if you play now."
             elif st.needs_pin and not st.pending_pin:
-                title = "Keep this game version"
+                repair = panel.offered(panel.pin) if panel else None
+                title, icon = "Keep this game version", "pin"
                 detail = "Steam has an update waiting. Keep the version your mods use."
                 risk = "Steam may update Skyrim when you launch."
+        if repair is not None and section == "game":
+            title = repair.text()  # what pressing it does, e.g. "Downgrade to 1.5.97…"
         was_recommended = bool(self._recommendation)
         had_focus = self.host.focusWidget() is self.next_step
         self._recommendation = title
+        self._repair, self._repair_section = repair, section
         if title:
             self.next_step.setText(title)
             self.next_step.set_description(detail)
+            self.next_step.set_icon(icon)
+            self.next_step.chevron.setVisible(repair is None)  # no fix here: it opens the section
         self.next_step.setVisible(bool(title))
         if isinstance(self.play, HeroTile):
             self.play.set_role("normal" if title else "primary")
@@ -197,13 +347,42 @@ class HomePage(Page):
             elif not title and had_focus and self.play.isEnabled():
                 self.play.setFocus()
 
+    def _run_next_step(self) -> None:
+        repair = self._repair
+        if repair is not None and not repair.isHidden() and repair.isEnabled():
+            repair.click()
+        else:
+            self.host.go(self._repair_section)
+
+    def on_game_busy(self, on: bool) -> None:
+        """A downgrade, restore or SKSE install started here or under Game."""
+        self.work.setVisible(on)
+        self.work_bar.setVisible(on)
+        if on:
+            self.on_game_progress("Starting…", 0, 0)
+
+    def on_game_progress(self, text: str, value: int, maximum: int) -> None:
+        self.work.setText(text)
+        self.work_bar.setRange(0, maximum)
+        self.work_bar.setValue(value)
+
     def on_setup_described(self, lines: list[str]) -> None:
+        self._described = lines
         main = [line for line in lines if not line.startswith("⚠")]
-        issues = [line for line in lines if line.startswith("⚠")]
         if main:
             self.profile.setText(main[0])
             self.profile.setVisible(True)
-        if issues:
+        self._update_mo2_row()
+
+    def _update_mo2_row(self) -> None:
+        if not self.service.state.has_instance:
+            return
+        main = [line for line in self._described if not line.startswith("⚠")]
+        issues = [line for line in self._described if line.startswith("⚠")]
+        repairs = self._mo2_repairs()
+        if repairs:
+            self.mo2_row.set_state("Needs a fix", "warn", repairs[0][1])
+        elif issues:
             self.mo2_row.set_state("Check", "warn", issues[0].lstrip("⚠ "))
         elif main:
             self.mo2_row.set_state("Ready", "ok", main[0])
@@ -226,9 +405,31 @@ class HomePage(Page):
                     "whatever has arrived so far.")
 
     # --- buttons ------------------------------------------------------------------------
+    def hints(self):
+        return [([Action.ALT], "Check again")]
+
+    def handle_action(self, action: Action) -> bool:
+        if action == Action.ALT:
+            self.recheck()
+            return True
+        return False
+
+    def recheck(self) -> None:
+        """After Steam has changed something: read the game and MO2 again."""
+        panel = self._game_panel()
+        if panel is not None:
+            panel.refresh()
+        mods = self.host.pages.get("mods")
+        if mods is not None:
+            mods.recheck()
+
+    def poll(self) -> None:
+        self.hook_tile.poll()
+
     def update_enabled(self, *_args) -> None:
         busy = self.host.busy
         self.next_step.setEnabled(not busy)
+        self.hook_tile.hold(busy)
         if self.host.steam_launch is not None:
             # Neither start the game nor walk away while game files are rewritten.
             for tile in (self.play, self.open_mo2, self.cancel_launch, self.setup):

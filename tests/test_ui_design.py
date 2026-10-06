@@ -27,13 +27,56 @@ class HomeGuidanceTests(UiTestCase):
             window = self.window()
         home = window.pages["home"]
         self.assertIs(window.focusWidget(), home.next_step)
-        self.assertEqual(home.next_step.text(), "Fix game version")
+        self.assertEqual(home.next_step.text(), "Downgrade to 1.5.97…")
         self.assertIn("need Skyrim 1.5.97", home.next_step.description)
+        self.assertTrue(home.next_step.chevron.isHidden())  # it does the repair, it doesn't go anywhere
         self.assertTrue(home.play.isEnabled())
         self.assertEqual(home.play.property("tileRole"), "normal")
         self.assertIn("may not load", home.play.description)
         home.next_step.click()
+        self.assertEqual(window._current, "home")
+        self.assertEqual(window.top_overlay.title.text(), "Downgrade Skyrim Special Edition to 1.5.97")
+        window.top_overlay.cancel()
+
+    def test_a_repair_the_game_section_cannot_offer_opens_it_instead(self):
+        State(instance_path=str(self.tmp)).save()
+        status, check = self.mismatch()
+        status.recipe_targets = []  # no patches to 1.5.97 from here
+        with patch.object(ModSyncService, "game_status", return_value=status), \
+                patch.object(ModSyncService, "game_version_check", return_value=check):
+            window = self.window()
+        home = window.pages["home"]
+        self.assertEqual(home.next_step.text(), "Fix game version")
+        self.assertFalse(home.next_step.chevron.isHidden())
+        home.next_step.click()
         self.assertEqual(window._current, "game")
+
+    def test_game_file_changes_show_their_progress_on_home(self):
+        State(instance_path=str(self.tmp)).save()
+        window = self.window()
+        home, panel = window.pages["home"], window.pages["game"].panel
+        panel._begin_file_operation("Restoring original files…")
+        self.assertFalse(home.work.isHidden())
+        self.assertEqual(home.work.text(), "Restoring original files…")
+        self.assertEqual(home.work_bar.maximum(), 0)  # no estimate yet
+        panel._end_file_operation()
+        self.settle()
+        self.assertTrue(home.work.isHidden())
+        self.assertTrue(home.work_bar.isHidden())
+
+    def test_a_runtime_mo2_needs_comes_first_and_installs_from_home(self):
+        State(instance_path=str(self.tmp)).save()
+        with patch.object(ModSyncService, "prefix_runtime_problems", lambda self: ["msvcp140.dll is 14.0"]):
+            window = self.window()
+            self.settle()
+        home = window.pages["home"]
+        self.assertEqual(home.next_step.text(), "Install Visual C++ runtime…")
+        self.assertEqual(home.mo2_row.badge.text(), "Needs a fix")
+        self.assertIn("won't start through MO2", home.play.description)
+        home.next_step.click()
+        self.assertEqual(window._current, "home")
+        self.assertEqual(window.top_overlay.title.text(), "Install Visual C++ runtime")
+        window.top_overlay.cancel()
 
     def test_polling_preserves_a_deliberate_choice_to_play_and_recovers_after_repair(self):
         State(instance_path=str(self.tmp)).save()
@@ -92,11 +135,12 @@ class HomeGuidanceTests(UiTestCase):
         status.skse_runtime = gameversion.GameVersion.parse("1.5.97")
         check = gameversion.VersionCheck(status.installed, status.expected)
         home.on_game_checked(status, check)
-        self.assertEqual(home.next_step.text(), "Fix Script Extender (SKSE)")
+        self.assertEqual(home.next_step.text(), "Get SKSE…")  # what Game offers for 1.7.104
+        self.assertIn("does not match", home.next_step.description)
         status.skse_runtime = status.installed
         status.steam_is_current = False
         home.on_game_checked(status, check)
-        self.assertEqual(home.next_step.text(), "Keep this game version")
+        self.assertEqual(home.next_step.text(), "Keep this game version")  # Game's last check offered no pin
         status.pending_pin = True
         home.on_game_checked(status, check)
         self.assertTrue(home.next_step.isHidden())
@@ -248,15 +292,15 @@ class FollowupReviewTests(UiTestCase):
 
     def test_hook_tile_explains_states_that_need_attention(self):
         window = self.window()
-        system = window.pages["system"]
+        tile = window.pages["home"].hook_tile
         missing = launchhook.LaunchHookStatus(SKYRIM_SE, False, None, False, None, None, False, None, False, False)
-        system.on_hook_status(missing)
-        self.assertIn("Steam was not found", system.hook_tile.description)
-        self.assertFalse(system.hook_tile.isEnabled())
+        tile.on_status(missing)
+        self.assertIn("Steam was not found", tile.description)
+        self.assertFalse(tile.isEnabled())
         broken = launchhook.LaunchHookStatus(SKYRIM_SE, True, "modsync_489830_hub", True, "proton_9", "Proton 9",
                                              False, None, False, True)
-        system.on_hook_status(broken)
-        self.assertIn("is missing", system.hook_tile.description)
+        tile.on_status(broken)
+        self.assertIn("is missing", tile.description)
         off = launchhook.LaunchHookStatus(SKYRIM_SE, False, None, False, None, None, False, None, False, True)
-        system.on_hook_status(off)
-        self.assertIn("Check your setup before Skyrim starts", system.hook_tile.description)
+        tile.on_status(off)
+        self.assertIn("from Steam's Play button", tile.description)

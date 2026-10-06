@@ -7,12 +7,19 @@ does not read your setup, install anything, modify the game or sync. They are
 
 ## Home
 
-Home recommends a repair when the game version or SKSE does not match, or
-Steam has an update waiting. The recommendation gets the accent fill; Play
-stays available with the consequence explained. Each readiness check opens
-the section that can fix it. A single outline marks focus.
+Home holds what most people need: Play, Open Mod Organizer 2, the repair
+that is due and "Open ModSync before Skyrim". When the game version or SKSE
+does not match, Steam has an update waiting, or MO2 needs its runtime or the
+ARM64 fix, the tile above Play runs that repair. It gets the accent fill;
+Play stays available with the consequence explained. Each readiness check
+opens the section with its details. A single outline marks focus.
 
 ![Home](home.png)
+
+A downgrade or SKSE install shows its progress under the repair tile.
+Everything else on Home waits until it finishes.
+
+![Downgrading from Home](home-working.png)
 
 When the game is ready, Play becomes the primary action again.
 
@@ -56,9 +63,9 @@ focus.
 
 ## System
 
-Short descriptions keep the actions visible together. Settings details and
-Controls open in sheets with the background-service explanation, Steam
-launch status, firewall ports and input shortcuts.
+Settings most people set once, and the rare actions. Settings details and
+Controls open in sheets with the background-service explanation, firewall
+ports and input shortcuts.
 
 ![System](system.png)
 
@@ -80,7 +87,7 @@ From a source checkout:
 uv run python scripts/preview_ui.py --output scratch/ui-review
 ```
 
-This writes all 26 offline previews, including the confirmation sheet, the
+This writes all 30 offline previews, including the confirmation sheet, the
 folder browser, the install sheet, the network PIN and a 1000 pixel wide
 window used with a mouse, keyboard symbols and selection, and validation at
 1000 pixels wide, using Qt's offscreen platform. This folder keeps

@@ -4,7 +4,8 @@ patches, pin the Steam manifest, install the matching SKSE, re-record the
 version) and undo them (restore the original files, unpin).
 
 It needs nothing but Steam, so it works before an MO2 instance is chosen. The
-setup flow's last step shows the same ``GamePanel``.
+setup flow's last step shows the same ``GamePanel``, and Home runs its repair
+tiles directly and mirrors their progress.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ class GamePanel(QWidget):
     changed = Signal()  # the game files or the setup record were modified
     busyChanged = Signal(bool)  # a downgrade, restore or SKSE install is rewriting game files
     checked = Signal(object, object)  # GameStatus, VersionCheck after every check
+    progressed = Signal(str, int, int)  # a file operation's text, value and maximum (0: no estimate)
 
     def __init__(self, host, *, refresh_index: bool = True, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -123,6 +125,10 @@ class GamePanel(QWidget):
     @property
     def action_tiles(self) -> list[Tile]:
         return [self.downgrade, self.skse, self.pin, self.unpin, self.adopt, self.restore, self.discard]
+
+    def offered(self, tile: Tile) -> Tile | None:
+        """``tile`` when the last check offered it, for running it from elsewhere."""
+        return tile if not tile.isHidden() and not self._busy else None
 
     # --- data flow ----------------------------------------------------------
     @property
@@ -396,8 +402,13 @@ class GamePanel(QWidget):
             tile.setVisible(False)
         self.refresh_tile.setEnabled(False)
         self._show_progress(True)
-        self.progress.setRange(0, 0)
-        self.progress_label.setText(message)
+        self._set_progress(message, 0, 0)
+
+    def _set_progress(self, text: str, value: int, maximum: int) -> None:
+        self.progress.setRange(0, maximum)
+        self.progress.setValue(value)
+        self.progress_label.setText(text)
+        self.progressed.emit(text, value, maximum)
 
     @property
     def busy(self) -> bool:
@@ -406,18 +417,12 @@ class GamePanel(QWidget):
 
     def _on_progress(self, p: Progress) -> None:
         if p.stage == "download" and p.total:
-            self.progress.setRange(0, 100)
-            self.progress.setValue(int(100 * (p.done or 0) / p.total))
-            self.progress_label.setText(
-                f"Downloading {p.message}: {(p.done or 0) / 1e6:,.0f} / {p.total / 1e6:,.0f} MB"
-            )
+            self._set_progress(f"Downloading {p.message}: {(p.done or 0) / 1e6:,.0f} / {p.total / 1e6:,.0f} MB",
+                               int(100 * (p.done or 0) / p.total), 100)
         elif p.total:
-            self.progress.setRange(0, p.total)
-            self.progress.setValue(p.done or 0)
-            self.progress_label.setText(f"{p.stage.capitalize()}: {p.message}")
+            self._set_progress(f"{p.stage.capitalize()}: {p.message}", p.done or 0, p.total)
         else:
-            self.progress.setRange(0, 0)
-            self.progress_label.setText(f"{p.stage.capitalize()}: {p.message}")
+            self._set_progress(f"{p.stage.capitalize()}: {p.message}", 0, 0)
 
     def _end_file_operation(self) -> None:
         self._busy = False

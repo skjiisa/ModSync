@@ -6,6 +6,18 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Home now does what most people open ModSync for, without visiting another
+  section. The repair tile above Play runs the fix itself: "Downgrade to
+  1.5.97…", "Install SKSE x.y.z", "Keep this version", or the Visual C++
+  runtime or ARM64 USVFS fix MO2 needs, which now come first because MO2
+  can't start Skyrim without them. A downgrade or SKSE install shows its
+  progress on Home. When the Game section has no fix to offer, the tile
+  opens it as before. "Open ModSync before Skyrim" moved from System to Home,
+  and Y on Home checks the game and MO2 again. Game, Mod Organizer and
+  System keep the details and the rarer actions.
+
 ### Added
 
 - An ARM64 USVFS fix for the files shipped with MO2 2.5.2. "Apply ARM64 fix"

@@ -25,10 +25,9 @@ class SectionTests(UiTestCase):
         self.assertEqual(window.pages["game"].panel.version.text(), "1.7.104")
         self.assertIsNotNone(window.pages["mods"].chooser)
         self.assertTrue(hasattr(window.pages["sync"], "choose_first"))
-        system = window.pages["system"]
-        self.assertEqual(system.hook_tile.badge.text(), "Off")
-        self.assertIn("Choose to turn it on", system.hook_tile.description)
-        self.assertIsNone(system.reset_tile)
+        self.assertEqual(home.hook_tile.badge.text(), "Off")
+        self.assertIn("Choose to turn it on", home.hook_tile.description)
+        self.assertIsNone(window.pages["system"].reset_tile)
 
     def test_instance_only(self):
         State(instance_path=str(self.tmp), instance_label="MO2").save()
@@ -249,6 +248,7 @@ class SteamLaunchTests(UiTestCase):
         self.assertTrue(home.play.isEnabled())  # no instance needed to go on
         self.assertTrue(home.cancel_launch.isEnabled())
         self.assertIn("Mod Organizer 2 (MO2-LINT)", home.steam_note.text())
+        self.assertTrue(home.hook_tile.isHidden())  # Steam's Play button already led here
         other = self._window(through="GE-Proton10-34")
         self.assertEqual(other.pages["home"].play.text(), "Continue to Skyrim Special Edition")
 
@@ -765,7 +765,7 @@ class SetupFinishTests(UiTestCase):
 
 
 class HookUpgradeTests(UiTestCase):
-    def test_system_brings_an_old_hook_up_to_date_before_reading_it(self):
+    def test_home_brings_an_old_hook_up_to_date_before_reading_it(self):
         calls = []
 
         def upgrade(appid=SKYRIM_SE.appid):

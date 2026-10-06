@@ -115,7 +115,7 @@ class PointerTests(UiTestCase):
 
         window = self.window()
         shown = [b.text() for b in window.hintbar.findChildren(HintButton) if b.isVisibleTo(window)]
-        self.assertEqual(shown, ["Quit"])  # no "Select" or "Sections": those are on the screen
+        self.assertEqual(shown, ["Check again", "Quit"])  # no "Select" or "Sections": those are on the screen
         self.assertFalse(window.topbar.lb.isVisibleTo(window))  # no Q/E keycaps by the tabs
         next(b for b in window.hintbar.findChildren(HintButton) if b.text() == "Quit").click()
         self.assertEqual(window.top_overlay.title.text(), "Quit ModSync?")

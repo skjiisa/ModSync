@@ -3,7 +3,8 @@ install, open), its profile and mod count, and two repairs: a current Visual
 C++ runtime in the game prefix and the USVFS fix for ARM64.
 
 ``Mo2Chooser`` (instances found here, browse, install) is also the setup
-flow's first step.
+flow's first step. Home offers whichever repair is needed and runs it from
+here.
 """
 
 from __future__ import annotations
@@ -245,6 +246,8 @@ class ModsPage(Page):
     label = "Mod Organizer"
     icon = "box"
 
+    repairsChecked = Signal()  # the runtime or USVFS check finished: see ``repairs``
+
     def __init__(self, host) -> None:
         super().__init__(host)
         state = self.service.state
@@ -326,9 +329,23 @@ class ModsPage(Page):
             tile.setVisible(False)
             right.addWidget(tile)
         right.addStretch(1)
-        self._refresh_runtime()
-        self.usvfs_refresh()
+        self.recheck()
         self.host.busyChanged.connect(self._update_enabled)
+
+    def recheck(self) -> None:
+        if self.open_mo2 is not None:
+            self._refresh_runtime()
+            self.usvfs_refresh()
+
+    @property
+    def repairs(self) -> list[tuple[Tile, str]]:
+        """Repairs that keep MO2 from starting anything, most pressing first,
+        each with a short reason."""
+        if self.open_mo2 is None:
+            return []
+        found = [(self.runtime_tile, "Needs a newer Visual C++ runtime."),
+                 (self.usvfs_apply, "Needs the USVFS fix to start games on ARM64.")]
+        return [(tile, why) for tile, why in found if not tile.isHidden()]
 
     def preferred_focus(self):
         if self.open_mo2 is not None:
@@ -378,6 +395,7 @@ class ModsPage(Page):
             self.runtime_note.setText(
                 "This MO2's virtual file system needs a newer Visual C++ runtime in the game's Proton prefix, "
                 "or nothing started from MO2 will run (" + "; ".join(problems) + ").")
+        self.repairsChecked.emit()
 
     def _install_runtime(self) -> None:
         def chosen(key: str | None) -> None:
@@ -417,12 +435,14 @@ class ModsPage(Page):
         self.usvfs_apply.setVisible(relevant and result.can_apply)
         self.usvfs_restore.setVisible(relevant and result.can_restore)
         self._update_enabled()
+        self.repairsChecked.emit()
 
     def _usvfs_check_failed(self, message: str) -> None:
         self.usvfs_note.setVisible(usvfs.is_arm64())
         self.usvfs_note.setText(f"Could not check USVFS: {message}")
         self.usvfs_apply.setVisible(False)
         self.usvfs_restore.setVisible(False)
+        self.repairsChecked.emit()
 
     def _usvfs_change(self, restore: bool) -> None:
         if self.usvfs_busy or self.host.busy:
@@ -431,6 +451,7 @@ class ModsPage(Page):
         self.host.set_busy("usvfs", True)
         self.usvfs_note.setText("Restoring original USVFS…" if restore else
                                 "Downloading and applying the USVFS ARM64 fix…")
+        self.host.notify(self.usvfs_note.text())
         operation = self.service.restore_usvfs if restore else self.service.apply_usvfs_fix
         worker.run_async(operation, on_done=self._usvfs_finished, on_failed=self._usvfs_failed)
 

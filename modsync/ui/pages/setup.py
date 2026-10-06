@@ -209,7 +209,7 @@ class SetupFlow(QWidget):
         if self._unresolved:
             self.finish_tile.setText("Finish anyway")
             self.finish_tile.set_role("normal")
-            self.finish_tile.set_description(f"{self._unresolved} You can fix it later under Game.")
+            self.finish_tile.set_description(f"{self._unresolved} Home offers the fix later.")
         else:
             self.finish_tile.setText("Finish")
             self.finish_tile.set_role("primary")

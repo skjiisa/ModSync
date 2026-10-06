@@ -114,10 +114,18 @@ Turn on Select before moving the cursor to select text, or choose Select all
 to replace the whole entry. Start and End move to either end of the text.
 The insertion point stays visible while a keyboard button has focus.
 
-Home recommends the next repair when a game version or SKSE mismatch needs
-attention. Play or Continue remains available and says what may fail if you
-launch now. Under System, Settings details explains the background service,
-Steam launch settings and firewall ports; Controls shows the input shortcuts.
+Home is where most of ModSync is used. When something needs a repair, the
+tile above Play runs it: the Visual C++ runtime or USVFS fix MO2 needs, the
+downgrade, the matching SKSE, or "Keep this version" when Steam has an update
+waiting. It is the same action the Game or Mod Organizer section offers, and
+a downgrade or SKSE install shows its progress on Home. When that section has
+no fix to offer, for example because no patches lead to the version your
+mods need, the tile opens the section instead. Play or Continue remains
+available and says what may fail if you launch now. Y re-reads the game and
+MO2, and "Open ModSync before Skyrim" turns the launch hook on or off. The
+other sections hold the details and the rarer actions. Under System, Settings
+details explains the background service and firewall ports; Controls shows
+the input shortcuts.
 
 ## Command line
 
@@ -167,8 +175,8 @@ DLLs for several versions make SKSE ambiguous, and ModSync ignores it.
 
 ### Installing SKSE
 
-Once the game is on the right version, the Game section offers "Install SKSE
-x.y.z" whenever the SKSE in the game folder is missing, built for another
+Once the game is on the right version, Home and the Game section offer
+"Install SKSE x.y.z" whenever the SKSE in the game folder is missing, built for another
 version, or present in several versions. ModSync downloads the build for the
 installed game version from skse.silverlock.org, checks it against a known
 SHA-256, removes the old `skse64_*` files from the game folder and copies in
@@ -317,8 +325,9 @@ when ModSync opens or the background service starts. Steam Tinker Launch
 found the same rule
 ([#185](https://github.com/sonic2kk/steamtinkerlaunch/issues/185)).
 
-Steam reads `config.vdf` and `compatibilitytools.d` only on startup and
-rewrites the former on exit, so turning the hook on or off ends with a Steam
+"Open ModSync before Skyrim" on Home turns the hook on or off. Steam reads
+`config.vdf` and `compatibilitytools.d` only on startup and rewrites the
+former on exit, so turning the hook on or off ends with a Steam
 restart. With Steam running, the switch is queued and applied by the open app
 or the background service the moment Steam closes. You can also pick "ModSync
 (Skyrim Special Edition)" yourself under Properties, then Compatibility.
@@ -326,8 +335,8 @@ or the background service the moment Steam closes. You can also pick "ModSync
 Steam's Play button opens the regular ModSync window, with the launch waiting
 on it. Home offers the same Play Skyrim and Open Mod Organizer 2 tiles as
 always, with "Cancel launch" below them. Play has focus, so A or Enter plays.
-When the game version or SKSE needs a repair, a repair tile such as "Fix game
-version" sits above Play and takes focus instead, and Play says what may
+When the game version or SKSE needs a repair, a repair tile such as
+"Downgrade to 1.5.97…" sits above Play and takes focus instead, and Play says what may
 fail. That only happens before anything is pressed, so a press made while the
 check runs still lands on Play. If a launch can't be prepared, for example
 because MO2 hasn't been told which game it manages yet, ModSync says why and

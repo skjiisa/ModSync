@@ -22,6 +22,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea
 
 from modsync import gameversion, launchhook
+from modsync.downgrade.engine import Progress
 from modsync.firewall import Check, Firewall
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import usvfs
@@ -72,7 +73,8 @@ def main():
         patch.object(ModSyncService, "prefix_runtime_problems", return_value=[]),
         patch.object(ModSyncService, "usvfs_status", return_value=usvfs.Status("missing", "")),
         patch("modsync.ui.pages.system.background.status", return_value={"installed": True, "active": "active"}),
-        patch("modsync.ui.pages.system.launchhook.status", return_value=hook),
+        patch("modsync.launchhook.status", return_value=hook),
+        patch("modsync.launchhook.upgrade", return_value=None),
         patch("modsync.ui.pages.system.firewall.check", return_value=Check(Firewall("ufw"), False, "ufw:1")),
         patch("modsync.ui.pages.mods.scan_instances", return_value=[INSTANCE]),
         patch("modsync.ui.pages.mods.describe_setup", return_value=["Profile: Default  ·  42 mods enabled"]),
@@ -130,6 +132,11 @@ def main():
         w.pages["home"].focus_default()
         capture(w, "home-ready")
         w.pages["home"].on_game_checked(game, check)
+        panel = w.pages["game"].panel
+        panel._begin_file_operation("Starting…")
+        panel._on_progress(Progress("download", "the 1.5.97 patches", 412_000_000, 1_020_000_000))
+        capture(w, "home-working")
+        panel._end_file_operation()
         w.go("game")
         capture(w, "game")
         w.pages["game"].panel._start_downgrade()

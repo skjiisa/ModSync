@@ -1,9 +1,11 @@
 """The one ModSync window, built like a console app.
 
 A row of sections across the top (Home, Game, Mod Organizer, Sync, System),
-switched with the bumpers or Q/E, or by moving up onto them. The section's
-tiles fill the middle and the hint bar along the bottom says what each button
-does. Everything that used to be a dialog is a sheet over the window, and a
+switched with the bumpers or Q/E, or by moving up onto them. Home carries what
+most people need: playing, opening MO2, the repair that is due and Steam's
+Play button; the other sections hold the details and the rarer actions. The
+section's tiles fill the middle and the hint bar along the bottom says what
+each button does. Everything that used to be a dialog is a sheet over the window, and a
 glowing halo marks focus. The setup wizard takes over the middle when it runs.
 
 The same window serves Steam's launch hook. Given a ``SteamLaunch``, Steam is
@@ -113,6 +115,7 @@ class MainWindow(QMainWindow):
     gameChecked = Signal(object, object)  # GameStatus, VersionCheck
     syncStatus = Signal(object)  # SyncStatus
     setupDescribed = Signal(list)  # the instance's profile line and problems
+    mo2Checked = Signal()  # Mod Organizer's runtime and USVFS checks: see ModsPage.repairs
     _call = Signal(object)  # run a callable on the UI thread
 
     def __init__(self, *, steam_launch: launchhook.SteamLaunch | None = None,
@@ -185,8 +188,11 @@ class MainWindow(QMainWindow):
             self.tabs[page.key] = tab
             self.topbar.tabs_row.addWidget(tab)
             tab.setVisible(self.setup is None)  # rebuilt while the wizard is open
-        sync = self.pages["sync"]
-        sync.synced.connect(self.pages["game"].panel.refresh)  # mods just arrived: re-check SKSE/version
+        sync, panel, home = self.pages["sync"], self.pages["game"].panel, self.pages["home"]
+        sync.synced.connect(panel.refresh)  # mods just arrived: re-check SKSE/version
+        panel.busyChanged.connect(home.on_game_busy)  # Home starts these repairs and shows how they go
+        panel.progressed.connect(home.on_game_progress)
+        self.pages["mods"].repairsChecked.connect(self.mo2Checked)
 
     def _clear_pages(self) -> None:
         for page in self.pages.values():

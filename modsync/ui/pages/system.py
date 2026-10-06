@@ -1,9 +1,10 @@
 """The **System** section: how ModSync fits into this machine.
 
-The background service, the Steam launch hook ("Open ModSync before
-Skyrim"), the firewall rules for pairing and syncing, the Steam shortcut,
-diagnostics for bug reports, the setup wizard and a reset. Each toggle shows
-its current state as a pill, so the answer to "is it on?" is on the tile.
+The background service, the firewall rules for pairing and syncing, the
+Steam shortcut, diagnostics for bug reports, the setup wizard and a reset.
+Each toggle shows its current state as a pill, so the answer to "is it on?"
+is on the tile. The Steam launch hook ("Open ModSync before Skyrim") is on
+Home.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QGridLayout
 
-from modsync import __version__, background, diagnostics, firewall, launchhook, steamos
+from modsync import __version__, background, diagnostics, firewall
 from modsync.steam import shortcuts
 from modsync.ui import worker
 from modsync.ui.input import Action
@@ -43,17 +44,13 @@ class SystemPage(Page):
         self.bg_tile.set_badge("checking", "off")
         self.bg_tile.clicked.connect(self._toggle_bg)
         self.bg_installed = False
-        self.hook_tile = Tile("Open ModSync before Skyrim", "Steam launch: checking…", "rocket")
-        self.hook_tile.set_badge("checking", "off")
-        self.hook_tile.clicked.connect(self._toggle_hook)
-        self.hook: launchhook.LaunchHookStatus | None = None
         self.fw_tile = Tile("Allow in firewall…", "", "shield")
         self.fw_tile.clicked.connect(self._toggle_firewall)
         self.fw_tile.setVisible(False)
         self.steam_tile = Tile("Add ModSync shortcut to Steam", "Open ModSync from your Steam library. "
                                "Close Steam first.", "plus-box")
         self.steam_tile.clicked.connect(self._add_to_steam)
-        for tile in (self.bg_tile, self.hook_tile, self.fw_tile, self.steam_tile):
+        for tile in (self.bg_tile, self.fw_tile, self.steam_tile):
             left.addWidget(tile)
         left.addStretch(1)
 
@@ -74,7 +71,7 @@ class SystemPage(Page):
         self.quit_tile = Tile("Quit ModSync", "Close the app. B on Home does the same.", "power", size="compact")
         self.quit_tile.clicked.connect(host.request_quit)
         right.addWidget(self.quit_tile)
-        self.details_tile = Tile("Settings details", "How background syncing, Steam and the firewall work.",
+        self.details_tile = Tile("Settings details", "How background syncing and the firewall work.",
                                  "info", size="compact")
         self.details_tile.clicked.connect(self._show_settings_details)
         right.addWidget(self.details_tile)
@@ -86,20 +83,14 @@ class SystemPage(Page):
         self.finish_layout()
 
         self._refresh_bg()
-        # Bring an installed hook up to date first (an old name keeps Steam
-        # Cloud from syncing saves), then read its status.
-        worker.run_async(launchhook.upgrade, on_done=self._after_hook_upgrade,
-                         on_failed=lambda _: self._refresh_hook())
         self.firewall: firewall.Check | None = None
         self._refresh_firewall()
         host.busyChanged.connect(self._on_busy)
 
     def _show_settings_details(self) -> None:
-        hook = self.hook.summary() if self.hook is not None else "Still checking Steam's launch settings."
         ports = ", ".join(f"{p}/{proto}" for p, proto, _ in firewall.PORTS)
         DetailsSheet(self.host, "Settings details",
                      f"Run in background\n{self._bg_what}\n\n"
-                     f"Open ModSync before Skyrim\n{hook}\n\n"
                      f"Firewall\nPairing and syncing use {ports}. Allowing access adds ModSync's rules; "
                      "removing access deletes only the rules ModSync added. Both ask for your password. "
                      "Existing firewall rules are kept.", eyebrow="System").open()
@@ -216,74 +207,8 @@ class SystemPage(Page):
                      f"{message}\n\nIn a terminal, run:\n\n" + firewall.manual_instructions(fw, remove=remove),
                      eyebrow="Firewall").open()
 
-    # --- launch hook ---
-    def _toggle_hook(self) -> None:
-        self.hook_tile.setEnabled(False)
-        st = self.hook
-        turning_off = bool(st and (st.installed or st.selected) and not (st.pending and st.pending.action == "select"))
-        fn = launchhook.disable if turning_off else launchhook.enable
-        worker.run_async(fn, on_done=self._after_hook, on_failed=self._on_hook_failed)
-
-    def _after_hook(self, message: str) -> None:
-        self.hook_tile.setEnabled(True)
-        self.host.notify(message, "ok")
-        self._refresh_hook()
-
-    def _on_hook_failed(self, message: str) -> None:
-        self.hook_tile.setEnabled(True)
-        self.host.notify(f"⚠ {message}")
-        self._refresh_hook()
-
-    def _after_hook_upgrade(self, message: object) -> None:
-        if message:
-            self.host.notify(str(message), "ok")
-        self._refresh_hook()
-
-    def _refresh_hook(self) -> None:
-        worker.run_async(launchhook.status, on_done=self.on_hook_status,
-                         on_failed=lambda _: self.hook_tile.set_badge("unknown", "off"))
-
-    def on_hook_status(self, st: launchhook.LaunchHookStatus) -> None:
-        self.hook = st
-        if st.enabled and not st.pending:
-            head, tone = "On", "ok"
-        elif st.pending:
-            head = "At reboot" if steamos.is_steam_frame() else "When Steam closes"
-            tone = "info"
-        elif st.installed or st.selected:
-            head, tone = "Partly set up", "warn"
-        else:
-            head, tone = "Off", "off"
-        if not st.steam_found or (st.enabled and not st.underlying_exists) or (
-                not st.pending and not st.enabled and (st.installed or st.selected)):
-            # Something is off: the hook's own explanation says what and how to fix it.
-            summary = st.summary()
-        elif st.pending:
-            summary = ("Reboot to apply this change." if steamos.is_steam_frame() else
-                       "Close Steam to apply this change.")
-        elif st.enabled:
-            summary = "Steam opens ModSync before starting Skyrim."
-        else:
-            summary = "Check your setup before Skyrim starts through Steam."
-        self.hook_tile.set_badge(head, tone)
-        if (st.pending and st.pending.action == "select") or st.enabled:
-            action = "Choose to turn it off."
-        elif st.installed or st.selected:
-            action = "Choose to turn it off and reset."
-        else:
-            action = "Choose to turn it on."
-        self.hook_tile.set_description(f"{summary} {action}".strip())
-        self.hook_tile.setEnabled(st.steam_found)
-
     def poll(self) -> None:
         self._refresh_bg()
-        if self.hook is not None and self.hook.pending is not None:
-            worker.run_async(launchhook.apply_pending, on_done=self._on_hook_applied, on_failed=lambda _: None)
-
-    def _on_hook_applied(self, message: object) -> None:
-        if message:
-            self.host.notify(str(message), "ok")
-            self._refresh_hook()
 
     # --- background service ---
     def _toggle_bg(self) -> None:
