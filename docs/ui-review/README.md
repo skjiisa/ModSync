@@ -27,11 +27,13 @@ When the setup is ready, Play becomes the primary action.
 
 ![Ready to play](home-ready.png)
 
-Missing SKSE is recommended as a setup step; users can still play without it.
+Missing SKSE is an optional setup suggestion. Play remains primary and keeps
+default controller focus, including when Steam opens ModSync.
 
 ![Matching SKSE installation](home-skse.png)
 
-Steam setup opens a sheet with the launch hook and Steam shortcut controls.
+The Steam launch entry shows On, Off, Pending or Needs attention. It opens a
+sheet with the launch hook and Steam shortcut controls.
 The same settings remain available in Settings.
 
 ![Steam setup](steam-setup.png)
@@ -44,6 +46,15 @@ on to MO2-LINT or the game. Cancel launch returns to Steam. A warning appears
 while the vault is still syncing. Here a keyboard is in use, so the hints show keys.
 
 ![Opened from Steam](launch.png)
+
+Missing SKSE keeps Play as the default Steam launch choice.
+
+![Steam launch with optional SKSE](launch-skse-optional.png)
+
+Copying a setup waits for the source's game-version record before offering
+version-dependent repairs. The waiting state survives reopening the app.
+
+![Waiting for the source's version](home-waiting.png)
 
 ## Game maintenance
 
@@ -85,6 +96,8 @@ launch status, firewall ports and input shortcuts.
 
 ## Setup wizard
 
+Choose the copy route before selecting MO2 to pair ahead of game preparation.
+
 ![Setup, step 1](setup-1.png)
 
 The second step prepares the game version and matching SKSE. Continue anyway
@@ -95,6 +108,22 @@ The early copy route skips game preparation until the incoming mods arrive.
 ![Setup, game and SKSE](setup-2.png)
 
 ![Setup, optional sync](setup-3.png)
+
+## Hardware smoke test before merging
+
+The automated checks render Qt offscreen and exercise copying with two local
+Syncthing daemons. Steam and Proton on Deck hardware still need this check:
+
+1. On the Deck, launch through Steam with SKSE missing. A must play, with the
+   optional installation action remaining secondary.
+2. Share a source setup whose game version differs from the Deck's. Select
+   the early copy route and pair using the intended network/PIN or code flow.
+3. Take the source offline before its version record arrives. Reopen ModSync
+   on the Deck; Home must still say Waiting and offer no version-dependent repair.
+4. Bring the source online. After its record arrives, verify that Home offers
+   the source's required version and that the source record remains unchanged.
+5. Finish game/SKSE setup, then verify Steam launches the selected MO2 profile.
+   Check the Steam launch status and that all Home actions fit at 1280 × 800.
 
 ## Regenerate the previews
 

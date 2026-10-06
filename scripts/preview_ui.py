@@ -73,6 +73,7 @@ def main():
         patch.object(ModSyncService, "usvfs_status", return_value=usvfs.Status("missing", "")),
         patch("modsync.ui.pages.system.background.status", return_value={"installed": True, "active": "active"}),
         patch("modsync.ui.pages.system.launchhook.status", return_value=hook),
+        patch("modsync.launchhook.upgrade", return_value=None),
         patch("modsync.ui.pages.system.firewall.check", return_value=Check(Firewall("ufw"), False, "ufw:1")),
         patch("modsync.ui.pages.mods.scan_instances", return_value=[INSTANCE]),
         patch("modsync.ui.pages.mods.describe_setup", return_value=["Profile: Default  ·  42 mods enabled"]),
@@ -99,7 +100,7 @@ def main():
             raise RuntimeError(f"Could not save {path}")
         overflow = [s.horizontalScrollBar().maximum() for s in window.findChildren(QScrollArea) if s.isVisible()]
         print(f"{path}: {window.width()}×{window.height()}, horizontal overflow={overflow}")
-        if name.startswith("home") or name == "launch":
+        if name.startswith(("home", "launch")):
             vertical = window.pages["home"].area.verticalScrollBar().maximum()
             print(f"  Home vertical overflow={vertical}")
             if width == 1280 and vertical:
@@ -123,9 +124,12 @@ def main():
 
     configured = dict(instance_path=INSTANCE, instance_label="Skyrim setup")
     try:
-        w = window_for(State())
-        capture(w, "home-welcome")
-        w.close()
+        fresh = replace(game, skse_runtime=None)
+        with patch.object(ModSyncService, "game_status", return_value=fresh), \
+                patch.object(ModSyncService, "game_version_check", return_value=gameversion.VersionCheck(fresh.installed, None)):
+            w = window_for(State())
+            capture(w, "home-welcome")
+            w.close()
 
         w = window_for(State(**configured), mode="gamepad")
         router.pad_style = "xbox"
@@ -144,6 +148,12 @@ def main():
         capture(w, "home-working")
         panel._end_file_operation()
         settle()
+        waiting = replace(game, expected=None, awaiting_vault_version=True)
+        with patch.object(ModSyncService, "game_status", return_value=waiting):
+            waiting_window = window_for(State(**configured, folder_id="example", awaiting_vault_version=True))
+            capture(waiting_window, "home-waiting")
+            waiting_window.close()
+        w.activateWindow()
         w.pages["home"].on_game_checked(game, check)
         w.go("game")
         capture(w, "game")
@@ -211,6 +221,11 @@ def main():
         steam = launchhook.SteamLaunch(SKYRIM_SE, "mo2_489830_redirector")
         w = window_for(State(**configured, folder_id="example"), steam=steam)
         capture(w, "launch")
+        with patch.object(ModSyncService, "game_status", return_value=missing):
+            w.pages["game"].panel.refresh()
+            settle()
+            w.pages["home"].play.setFocus()
+            capture(w, "launch-skse-optional")
         steam.decision = 0
         w.close()
 

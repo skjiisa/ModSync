@@ -118,7 +118,11 @@ Home offers MO2 installation and selection, matching SKSE, and the next
 repair when the game version, SKSE or MO2 needs attention. The MO2 and Game
 version rows open maintenance sheets; restore, unpin and installation details
 remain available there. Home, Sync and Settings are the three tabs. Play or
-Continue remains available and says what may fail if you launch now. Under Settings, Settings details explains the background service,
+Continue remains available and says what may fail if you launch now. Missing
+SKSE is an optional suggestion: it leaves Play primary and never takes default
+controller focus, including when Steam's Play button opened ModSync. The Steam
+launch entry shows On, Off, Pending or Needs attention and opens the shared
+Steam controls. Under Settings, Settings details explains the background service,
 Steam launch settings and firewall ports; Controls shows the input shortcuts.
 
 ## Command line
@@ -157,10 +161,19 @@ game version it was built for, such as `skse64_1_6_1170.dll`. ModSync looks
 for it in the game folder and in the instance's `mods/` folder, at the top
 level or under `Root/`.
 
+When copying another machine's setup, choose "Copy setup from another machine…"
+on Home or before selecting MO2 in guided setup. This pairs before game
+preparation. Joining removes the locally recorded version, then waits for the
+source's `modsync-vault.json`. While waiting, Home shows Waiting and the game
+sheet holds version-dependent repairs, SKSE installation and adoption of the
+local version. This waiting state survives reopening ModSync. The source's
+valid record enables the appropriate actions when it arrives; local SKSE does
+not define the target during this wait. Keep the source machine online.
+
 - When an existing MO2 setup is chosen, ModSync records the SKSE runtime
   rather than whatever Steam has patched the game to since. An old mod list
   is offered the right downgrade immediately.
-- When there is no record, the app and `modsync game status` suggest
+- When there is no record for a local setup, the app and `modsync game status` suggest
   the SKSE runtime as the downgrade target.
 - Otherwise the record wins, and SKSE built for a different version is
   called out as needing a reinstall.

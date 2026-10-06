@@ -79,6 +79,10 @@ class SetupFlow(QWidget):
         v1 = QVBoxLayout(step1)
         v1.setContentsMargins(0, 0, 0, 0)
         v1.setSpacing(12)
+        self.copy_route = Tile("Copy setup from another machine…", "Choose this before selecting MO2 to pair first.",
+                               "devices", size="compact")
+        self.copy_route.clicked.connect(self._choose_copy_route)
+        v1.addWidget(self.copy_route)
         self.keep: Tile | None = None
         if self.service.state.has_instance:
             self.keep = Tile(f"Keep using {self.service.state.instance_label}", self.service.state.instance_path,
@@ -87,10 +91,6 @@ class SetupFlow(QWidget):
             v1.addWidget(self.keep)
         self.chooser = Mo2Chooser(host, installer=installer)  # host.instance_chosen moves on
         v1.addWidget(self.chooser)
-        self.copy_route = Tile("Copy setup from another machine…", "Choose or install MO2 here first, then pair.",
-                               "devices", size="compact")
-        self.copy_route.clicked.connect(self._choose_copy_route)
-        v1.addWidget(self.copy_route)
         v1.addStretch(1)
 
         # 3 · Optional sync
@@ -180,6 +180,7 @@ class SetupFlow(QWidget):
         self.stack.setCurrentIndex(self.index)
         if self.index == 0 and self.copy_from_machine:
             self.head.set_subtitle("Choose or install MO2 here first. Then pair with the machine that has your mods.")
+            self.copy_route.set_badge("Selected", "info")
         if self.index == 1:
             self.game.refresh()  # the instance was chosen in step 1
         self.host.refresh_hints()

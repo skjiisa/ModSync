@@ -2,16 +2,151 @@
 
 from dataclasses import replace
 from threading import Event
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from modsync import gameversion, launchhook
 from modsync.games import SKYRIM_SE
 from modsync.service import ModSyncService, SyncStatus
 from modsync.state import State
-from tests.ui_support import UiTestCase, fake_game_status
+from modsync.ui.input import Action
+from tests.ui_support import UiTestCase, fake_game_status, handoff_plan
+
+_GAME_STATUS = ModSyncService.game_status
+_VERSION_CHECK = ModSyncService.game_version_check
 
 
 class HomeSetupTests(UiTestCase):
+    def test_missing_skse_keeps_play_primary_and_a_launches_instead_of_installing(self):
+        for runtime in ("1.6.1170", "1.7.104"):
+            for through_steam in (False, True):
+                for delayed in (False, True):
+                    with self.subTest(runtime=runtime, steam=through_steam, delayed=delayed):
+                        State(instance_path=str(self.tmp)).save()
+                        version = gameversion.GameVersion.parse(runtime)
+                        missing = replace(fake_game_status(), installed=version, expected=version)
+                        initial = replace(missing, skse_runtime=version) if delayed else missing
+                        check = gameversion.VersionCheck(version, version)
+                        steam = launchhook.SteamLaunch(SKYRIM_SE) if through_steam else None
+                        with patch.object(ModSyncService, "game_status", return_value=initial), \
+                                patch.object(ModSyncService, "game_version_check", return_value=check):
+                            window = self.window(steam=steam)
+                        window.router._set_mode("gamepad")
+                        home = window.pages["home"]
+                        if delayed:
+                            window.pages["game"].panel._on_game_status(missing)
+                            self.settle()
+                        self.assertIs(window.focusWidget(), home.play)
+                        self.assertEqual(home.play.property("tileRole"), "primary")
+                        self.assertEqual(home.next_step.property("tileRole"), "normal")
+                        self.assertTrue(home.next_step.isVisibleTo(home))
+                        # Repeated polls and controller focus recovery keep Play the default.
+                        home.on_game_checked(missing, check)
+                        window.focus_scope_default()
+                        self.assertIs(window.focusWidget(), home.play)
+                        with patch.object(window.service, "install_skse") as install, \
+                                patch.object(window.service, "launch_mo2", return_value="Started") as launch, \
+                                patch.object(window.service, "prepare_mo2", return_value=(handoff_plan(self.tmp), "")) as prepare:
+                            window.handle_action(Action.ACCEPT)
+                            self.settle(4)
+                        install.assert_not_called()
+                        if through_steam:
+                            prepare.assert_called_once_with(play=True)
+                            self.assertEqual(steam.decision, launchhook.EXIT_CONTINUE)
+                        else:
+                            launch.assert_called_once_with(play=True)
+                        window.close()
+
+    def test_resolving_a_repair_does_not_leave_focus_on_optional_skse(self):
+        State(instance_path=str(self.tmp)).save()
+        window = self.window()
+        home = window.pages["home"]
+        st = replace(fake_game_status(), expected=gameversion.GameVersion.parse("1.6.1170"))
+        home.on_game_checked(st, gameversion.VersionCheck(st.installed, st.expected))
+        home.next_step.setFocus()
+        st = replace(st, installed=st.expected)
+        home.on_game_checked(st, gameversion.VersionCheck(st.installed, st.expected))
+        self.assertIs(window.focusWidget(), home.play)
+        self.assertEqual(home.play.property("tileRole"), "primary")
+
+    def test_home_and_settings_share_steam_status_and_callbacks_preserve_busy_locks(self):
+        window = self.window()
+        settings, home = window.pages["system"], window.pages["home"]
+        off = settings.hook
+        on = replace(off, installed=True, selected=True, underlying_exists=True)
+        pending = replace(off, pending=launchhook.Pending("select", SKYRIM_SE.appid, None))
+        for st, badge in ((off, "Off"), (on, "On"), (pending, "Pending"),
+                          (replace(on, underlying_exists=False), "Needs attention")):
+            settings.on_hook_status(st)
+            self.assertEqual(home.steam_options.badge.text(), badge)
+        settings.on_hook_status(off)
+        home.steam_options.click()
+        window.set_busy("game", True)
+        settings.on_hook_status(on)
+        self.assertFalse(settings.hook_tile.isEnabled())
+        with patch.object(launchhook, "enable") as enable, patch.object(launchhook, "disable") as disable:
+            settings._toggle_hook()
+        enable.assert_not_called()
+        disable.assert_not_called()
+        for callback in (settings._after_hook, settings._on_hook_failed):
+            settings._hook_toggling = True
+            callback("Test callback")
+            self.assertFalse(settings.hook_tile.isEnabled())
+        window.set_busy("game", False)
+        self.assertTrue(settings.hook_tile.isEnabled())
+        settings._hook_toggling = True
+        settings.on_hook_status(off)
+        self.assertFalse(settings.hook_tile.isEnabled())
+        settings._hook_toggling = False
+        window.top_overlay.cancel()
+
+    def test_copy_waits_for_source_metadata_and_then_uses_its_version_after_reopening(self):
+        from tests.test_service_instance import FakeManager
+        from modsync.pairing_code import PairingCode
+
+        installed = gameversion.GameVersion.parse("1.7.104")
+        source = gameversion.GameVersion.parse("1.6.1170")
+        game_dir = self.tmp / "game"
+        game_dir.mkdir()
+        (game_dir / "skse64_1_6_640.dll").write_bytes(b"")  # stale local SKSE must not set the target
+        service = ModSyncService(manager=FakeManager())
+        service.state = State(instance_path=str(self.tmp))
+        gameversion.VaultMeta(SKYRIM_SE.appid, str(installed)).save(self.tmp)
+        service.join_vault(PairingCode("PEER", "vault", "Source"), self.tmp)
+        self.assertTrue(State.load().awaiting_vault_version)
+        # Use actual service checks and a real metadata file; Steam and the game are synthetic.
+        index = SimpleNamespace(from_version=str(installed), targets=[str(source), "1.6.640"], origin="test")
+        with patch.object(ModSyncService, "game_status", _GAME_STATUS), \
+                patch.object(ModSyncService, "game_version_check", _VERSION_CHECK), \
+                patch.object(ModSyncService, "_steam_app", return_value=(None, None, None)), \
+                patch("modsync.service.recipe.load_index", return_value=index), \
+                patch.object(gameversion, "find_game_dir", return_value=game_dir), \
+                patch.object(gameversion, "installed_version", return_value=installed):
+            for _ in range(2):  # waiting survives closing and reopening
+                service = ModSyncService(manager=FakeManager())
+                window = self.window(service=service)
+                home, panel = window.pages["home"], window.pages["game"].panel
+                self.assertEqual(home.game_row.badge.text(), "Waiting")
+                self.assertEqual(home.skse_row.badge.text(), "After sync")
+                self.assertTrue(home.next_step.isHidden())
+                for tile in (panel.downgrade, panel.skse, panel.pin, panel.adopt):
+                    self.assertTrue(tile.isHidden())
+                self.assertTrue(State.load().awaiting_vault_version)
+                window.close()
+            window = self.window(service=ModSyncService(manager=FakeManager()))
+            gameversion.VaultMeta(SKYRIM_SE.appid, str(source)).save(self.tmp)
+            window.pages["game"].panel.poll()  # detects metadata arriving before the rest of the mods
+            self.settle(4)
+            home = window.pages["home"]
+            self.assertEqual(home.game_row.badge.text(), f"Needs {source}")
+            self.assertEqual(home.next_step.text(), f"Downgrade to {source}…")
+            self.assertFalse(State.load().awaiting_vault_version)
+            with patch.object(window.pages["game"].panel, "_run_downgrade") as downgrade:
+                home.next_step.click()
+                self.assertEqual(window.top_overlay.title.text(), f"Downgrade Skyrim Special Edition to {source}")
+                window.top_overlay.tiles["go"].click()
+                downgrade.assert_called_once_with(str(source))
+
     def test_install_and_existing_setup_are_available_without_the_wizard(self):
         window = self.window()
         home = window.pages["home"]
@@ -132,7 +267,6 @@ class HomeSetupTests(UiTestCase):
         self.assertEqual(setup.index, 2)
         self.assertTrue(setup.join_panel.isVisibleTo(setup))
         self.assertFalse(setup.game.isVisibleTo(setup))
-        from modsync.ui.input import Action
         setup.handle_action(Action.BACK)
         self.assertEqual(setup.index, 0)
         self.assertFalse(setup.game.isVisibleTo(setup))
@@ -171,13 +305,19 @@ class DeckHomeLayoutTests(UiTestCase):
         from modsync.ui.widgets import Tile
 
         ready = fake_game_status()
+        ready.skse_runtime = ready.installed
         mismatch = replace(ready, expected=gameversion.GameVersion.parse("1.6.1170"))
         scenarios = [
             ("welcome", State(), ready, None),
+            ("welcome without SKSE", State(), replace(ready, skse_runtime=None), None),
             ("ready", State(instance_path=str(self.tmp)), ready, None),
             ("missing SKSE", State(instance_path=str(self.tmp)), replace(ready, skse_runtime=None), None),
+            ("waiting for source", State(instance_path=str(self.tmp), folder_id="vault", awaiting_vault_version=True),
+             replace(ready, expected=None, awaiting_vault_version=True), None),
             ("repair", State(instance_path=str(self.tmp)), mismatch, None),
             ("Steam and sync", State(instance_path=str(self.tmp), folder_id="vault"), mismatch,
+             launchhook.SteamLaunch(SKYRIM_SE)),
+            ("Steam without SKSE", State(instance_path=str(self.tmp)), replace(ready, skse_runtime=None),
              launchhook.SteamLaunch(SKYRIM_SE)),
         ]
         for name, state, status, steam in scenarios:
@@ -195,6 +335,10 @@ class DeckHomeLayoutTests(UiTestCase):
                 self.assertEqual(home.area.verticalScrollBar().maximum(), 0)
                 self.assertEqual(home.area.horizontalScrollBar().maximum(), 0)
                 self.assertEqual(home.sync_row.isVisibleTo(home), state.syncing)
+                settings = window.pages["system"]
+                settings.on_hook_status(replace(settings.hook, installed=True, selected=True, underlying_exists=False))
+                QTest.qWait(50)
+                self.assertEqual(home.area.verticalScrollBar().maximum(), 0)
                 viewport = home.area.viewport()
                 for tile in home.findChildren(Tile):
                     if not tile.isVisibleTo(home):

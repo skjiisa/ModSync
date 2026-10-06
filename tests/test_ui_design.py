@@ -94,7 +94,7 @@ class HomeGuidanceTests(UiTestCase):
         status.skse_runtime = gameversion.GameVersion.parse("1.5.97")
         check = gameversion.VersionCheck(status.installed, status.expected)
         home.on_game_checked(status, check)
-        self.assertEqual(home.next_step.text(), "Fix Script Extender (SKSE)")
+        self.assertEqual(home.next_step.text(), "Get SKSE…")
         status.skse_runtime = status.installed
         status.steam_is_current = False
         home.on_game_checked(status, check)
@@ -124,10 +124,13 @@ class SetupPriorityTests(UiTestCase):
         self.assertEqual(setup.finish_tile.property("tileRole"), "normal")
 
     def test_finish_is_the_only_primary_action_when_the_game_version_is_ready(self):
-        window = self.window()
-        setup = window.start_setup()
-        setup.go_to(1)
-        self.settle()
+        ready = fake_game_status()
+        ready.skse_runtime = ready.installed
+        with patch.object(ModSyncService, "game_status", return_value=ready):
+            window = self.window()
+            setup = window.start_setup()
+            setup.go_to(1)
+            self.settle()
         primary = [t for t in [setup.finish_tile, *setup.game.action_tiles]
                    if t.isVisible() and t.property("tileRole") == "primary"]
         self.assertEqual(primary, [setup.finish_tile])

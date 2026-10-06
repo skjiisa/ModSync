@@ -47,6 +47,7 @@ class SystemPage(Page):
         self.hook_tile.set_badge("checking", "off")
         self.hook_tile.clicked.connect(self._toggle_hook)
         self.hook: launchhook.LaunchHookStatus | None = None
+        self._hook_toggling = False
         self.fw_tile = Tile("Allow in firewall…", "", "shield")
         self.fw_tile.clicked.connect(self._toggle_firewall)
         self.fw_tile.setVisible(False)
@@ -140,6 +141,7 @@ class SystemPage(Page):
         return panel
 
     def _on_busy(self, busy: bool) -> None:
+        self._update_hook_enabled()
         self.wizard_tile.setEnabled(not busy)
         if self.reset_tile is not None:
             self.reset_tile.setEnabled(not busy)
@@ -222,19 +224,24 @@ class SystemPage(Page):
 
     # --- launch hook ---
     def _toggle_hook(self) -> None:
-        self.hook_tile.setEnabled(False)
+        if self.host.busy or self._hook_toggling or (self.hook is not None and not self.hook.steam_found):
+            return
+        self._hook_toggling = True
+        self._update_hook_enabled()
         st = self.hook
         turning_off = bool(st and (st.installed or st.selected) and not (st.pending and st.pending.action == "select"))
         fn = launchhook.disable if turning_off else launchhook.enable
         worker.run_async(fn, on_done=self._after_hook, on_failed=self._on_hook_failed)
 
     def _after_hook(self, message: str) -> None:
-        self.hook_tile.setEnabled(True)
+        self._hook_toggling = False
+        self._update_hook_enabled()
         self.host.notify(message, "ok")
         self._refresh_hook()
 
     def _on_hook_failed(self, message: str) -> None:
-        self.hook_tile.setEnabled(True)
+        self._hook_toggling = False
+        self._update_hook_enabled()
         self.host.notify(f"⚠ {message}")
         self._refresh_hook()
 
@@ -277,7 +284,12 @@ class SystemPage(Page):
         else:
             action = "Choose to turn it on."
         self.hook_tile.set_description(f"{summary} {action}".strip())
-        self.hook_tile.setEnabled(st.steam_found)
+        self._update_hook_enabled()
+        self.host.steamHookChecked.emit(st)
+
+    def _update_hook_enabled(self) -> None:
+        found = self.hook is None or self.hook.steam_found
+        self.hook_tile.setEnabled(found and not self.host.busy and not self._hook_toggling)
 
     def poll(self) -> None:
         self._refresh_bg()

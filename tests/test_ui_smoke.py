@@ -578,6 +578,11 @@ class BusyTests(UiTestCase):
 
 class SetupFlowTests(UiTestCase):
     def test_not_now_finishes_with_instance_remembered(self):
+        ready = fake_game_status()
+        ready.skse_runtime = ready.installed
+        ready_patch = patch.object(ModSyncService, "game_status", return_value=ready)
+        ready_patch.start()
+        self.addCleanup(ready_patch.stop)
         window = self.window()
         window.pages["home"].setup.click()
         setup = window.setup
@@ -759,10 +764,13 @@ class SetupFinishTests(UiTestCase):
         self.assertIs(self.app.focusWidget(), setup.game.downgrade)  # the repair, not Finish
 
     def test_finish_stays_the_main_action_when_nothing_needs_fixing(self):
-        window = self.window()
-        setup = window.start_setup()
-        setup.go_to(1)
-        self.settle()
+        ready = fake_game_status()
+        ready.skse_runtime = ready.installed
+        with patch.object(ModSyncService, "game_status", return_value=ready):
+            window = self.window()
+            setup = window.start_setup()
+            setup.go_to(1)
+            self.settle()
         self.assertEqual(setup.finish_tile.text(), "Continue")
         self.assertEqual(setup.finish_tile.property("tileRole"), "primary")
         self.assertIs(self.app.focusWidget(), setup.finish_tile)

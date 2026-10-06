@@ -34,6 +34,7 @@ class HomePage(Page):
         self._repair: Tile | None = None
         self._repair_section = "game"
         self._recommendation = ""
+        self._optional = False
         self.head = self.header(
             "Launched from Steam" if steam else (state.instance_label if state.has_instance else "Welcome"),
             SKYRIM_SE.name,
@@ -69,8 +70,9 @@ class HomePage(Page):
         self.sync_setup.clicked.connect(lambda: host.go("sync"))
         self.sync_setup.setVisible(not state.syncing)
         left.addWidget(self.sync_setup)
-        self.steam_options = Tile("Set up Steam launch…", "", "rocket",
+        self.steam_options = Tile("Steam launch…", "", "rocket",
                                   size="compact", chevron=True)
+        self.steam_options.set_badge("Checking", "off")
         self.steam_options.clicked.connect(lambda: host.pages["system"].open_steam_settings())
         self.steam_options.setVisible(steam is None)
         left.addWidget(self.steam_options)
@@ -147,6 +149,7 @@ class HomePage(Page):
         self.sync_row.set_state("Starting", "busy")
         host.gameChecked.connect(self.on_game_checked)
         host.mo2Checked.connect(self.on_mo2_checked)
+        host.steamHookChecked.connect(self.on_steam_hook_checked)
         host.syncStatus.connect(self.on_sync_status)
         host.setupDescribed.connect(self.on_setup_described)
         host.busyChanged.connect(self.update_enabled)
@@ -155,7 +158,7 @@ class HomePage(Page):
     def preferred_focus(self):
         if self.install_mo2 is not None:
             return self.install_mo2
-        if self.next_step.isVisibleTo(self):
+        if self.next_step.isVisibleTo(self) and not self._optional:
             return self.next_step
         return self.play
 
@@ -168,7 +171,9 @@ class HomePage(Page):
         return page.repairs if page is not None else []
 
     def on_game_checked(self, st: GameStatus, vc) -> None:
-        if vc.installed is None:
+        if st.awaiting_vault_version:
+            self.game_row.set_state("Waiting", "busy", "Waiting for the source's game version to sync.")
+        elif vc.installed is None:
             self.game_row.set_state("Not found" if st.game_dir is None else "Unknown", "warn",
                                     "Install Skyrim through Steam." if st.game_dir is None else "Check the game installation.")
         elif st.steam_updating:
@@ -180,13 +185,15 @@ class HomePage(Page):
         elif st.needs_pin:
             self.game_row.set_state(str(vc.installed), "warn", "Steam has an update waiting.")
         else:
-            self.game_row.set_state(str(vc.installed), "ok", "Matches your mods." if st.wanted else "Choose to manage this version.")
-        if st.skse_state == "ok":
+            self.game_row.set_state(str(vc.installed), "ok", "Matches your mods." if st.wanted else "Manage this version.")
+        if st.awaiting_vault_version:
+            self.skse_row.set_state("After sync", "off", "Wait for the source's version record.")
+        elif st.skse_state == "ok":
             self.skse_row.set_state("Ready", "ok", f"Built for {st.skse_runtime}.")
         elif st.skse_state in ("wrong", "several"):
             self.skse_row.set_state("Mismatch", "warn", "Install the matching SKSE build.")
         elif st.skse_state == "missing":
-            self.skse_row.set_state("Not installed", "off", "Recommended for mods that need SKSE.")
+            self.skse_row.set_state("Missing", "off", "Optional for some mods.")
         else:
             self.skse_row.set_state("After the game", "off", "Check the game version first.")
         self.recommend_next_step(st, vc)
@@ -204,10 +211,13 @@ class HomePage(Page):
         section, icon = "game", "wrench"
         panel = self._game_panel()
         repairs = self._mo2_repairs()
+        optional = False
         if repairs:
             repair, detail = repairs[0]
             title, section = repair.text(), "mods"
             risk = "Skyrim may not start through MO2 until this is fixed."
+        elif st.awaiting_vault_version:
+            pass  # The source defines the target, not this machine's SKSE.
         elif st.needs_downgrade or (vc.mismatch and not st.steam_updating):
             wanted = st.wanted or vc.expected
             title, icon = "Fix game version", "download"
@@ -224,7 +234,8 @@ class HomePage(Page):
             detail = "Steam has an update waiting. Keep the version your mods use."
             risk = "Steam may update Skyrim when you launch."
             repair = panel.offered(panel.pin) if panel else None
-        elif st.skse_state == "missing":
+        elif st.skse_state == "missing" and self.service.state.has_instance:
+            optional = True
             title, icon = "Install Script Extender (SKSE)", "layers"
             detail = "Recommended for mods that need SKSE."
             if st.skse_build is None:
@@ -233,26 +244,39 @@ class HomePage(Page):
             repair = panel.offered(panel.skse) if panel else None
         if repair is not None and section == "game":
             title = repair.text()
-        was_recommended = bool(self._recommendation)
+        was_recommended = bool(self._recommendation) and not self._optional
         had_focus = self.host.focusWidget() is self.next_step
         self._recommendation = title
+        self._optional = optional
         self._repair, self._repair_section = repair, section
         if title:
             self.next_step.setText(title)
             self.next_step.set_description(detail)
             self.next_step.set_icon(icon)
             self.next_step.chevron.setVisible(repair is None)
-        self.next_step.set_role("normal" if self.install_mo2 is not None else "primary")
+        self.next_step.set_role("normal" if optional or self.install_mo2 is not None else "primary")
         self.next_step.setVisible(bool(title) and not (panel and panel.busy))
         if isinstance(self.play, HeroTile):
-            self.play.set_role("normal" if title else "primary")
+            self.play.set_role("normal" if title and not optional else "primary")
         self.play.set_description(risk or self._play_description)
         if (self.host._current == "home" and self.host.scope() is self.host.chrome
                 and self.host.router.mode != "mouse"):
-            if title and not was_recommended and self.host.focusWidget() is self.play and self.host.untouched:
+            if title and not optional and not was_recommended and self.host.focusWidget() is self.play and self.host.untouched:
                 self.next_step.setFocus()
-            elif not title and had_focus and self.play.isEnabled():
+            elif (not title or (optional and was_recommended)) and had_focus and self.play.isEnabled():
                 self.play.setFocus()
+
+    def on_steam_hook_checked(self, st: launchhook.LaunchHookStatus) -> None:
+        if not st.steam_found or (st.enabled and not st.underlying_exists) or (
+                not st.pending and not st.enabled and (st.installed or st.selected)):
+            text, tone = "Needs attention", "warn"
+        elif st.pending:
+            text, tone = "Pending", "info"
+        elif st.enabled:
+            text, tone = "On", "ok"
+        else:
+            text, tone = "Off", "off"
+        self.steam_options.set_badge(text, tone)
 
     def _run_next_step(self) -> None:
         if self.host.busy:

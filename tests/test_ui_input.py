@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from modsync.state import State
-from tests.ui_support import QApplication, UiTestCase
+from tests.ui_support import QApplication, UiTestCase, fake_game_status
 
 try:
     from PySide6.QtCore import Qt
@@ -98,7 +98,10 @@ class SpatialNavigationTests(UiTestCase):
 
     def test_home_is_navigable_with_arrows(self):
         State(instance_path=str(self.tmp)).save()
-        window = self.window()
+        ready = fake_game_status()
+        ready.skse_runtime = ready.installed
+        with patch("modsync.service.ModSyncService.game_status", return_value=ready):
+            window = self.window()
         home = window.pages["home"]
         self.assertIs(self.app.focusWidget(), home.play)
         QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Down)

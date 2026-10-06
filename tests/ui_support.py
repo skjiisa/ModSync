@@ -51,7 +51,6 @@ def fake_game_status(self=None, *, refresh_index=True):
         recipe_from="1.7.104",
         recipe_targets=["1.6.1170"],
         recipe_origin="bundled",
-        skse_runtime=gameversion.GameVersion.parse("1.7.104"),
     )
 
 

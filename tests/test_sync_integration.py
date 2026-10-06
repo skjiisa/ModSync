@@ -16,6 +16,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 
+from modsync import gameversion
+from modsync.games import SKYRIM_SE
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService
 from modsync.state import State
@@ -74,6 +76,73 @@ class SyncthingIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.binary = ensure_syncthing()
+
+    def test_join_waits_offline_then_uses_the_source_version_when_it_syncs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            source_instance, receiver_instance = tmp / "Source", tmp / "Receiver"
+            source_instance.mkdir()
+            receiver_instance.mkdir()
+            game_dir = tmp / "game"
+            game_dir.mkdir()
+            (game_dir / "skse64_1_6_640.dll").touch()
+            gameversion.VaultMeta(SKYRIM_SE.appid, "1.6.1170").save(source_instance)
+            gameversion.VaultMeta(SKYRIM_SE.appid, "1.7.104").save(receiver_instance)
+            source_port, receiver_port = _free_port(), _free_port()
+            source_mgr = SyncthingManager(tmp / "source-home", binary=self.binary,
+                                          gui_address=f"127.0.0.1:{_free_port()}", log_file=tmp / "source.log")
+            receiver_mgr = SyncthingManager(tmp / "receiver-home", binary=self.binary,
+                                            gui_address=f"127.0.0.1:{_free_port()}", log_file=tmp / "receiver.log")
+            for manager, port in ((source_mgr, source_port), (receiver_mgr, receiver_port)):
+                manager.ensure_config()
+                _isolate_config(manager.home / "config.xml", port)
+            try:
+                with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp / "source-config")}):
+                    source = ModSyncService(manager=source_mgr)
+                    code = source.create_vault(source_instance, "Source")
+                source_mgr.stop()  # no source record can arrive while joining
+                with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp / "receiver-config")}), \
+                        patch.object(ModSyncService, "_steam_app", return_value=(None, None, None)), \
+                        patch.object(gameversion, "find_game_dir", return_value=game_dir), \
+                        patch.object(gameversion, "installed_version", return_value=gameversion.GameVersion.parse("1.7.104")):
+                    receiver = ModSyncService(manager=receiver_mgr)
+                    receiver_code = receiver.join_vault(code, receiver_instance, peer_host="127.0.0.1")
+                    self.assertIsNone(gameversion.VaultMeta.load(receiver_instance))
+                    # Reopening during this offline period must retain the wait.
+                    receiver = ModSyncService(manager=receiver_mgr)
+                    waiting = receiver.game_status(refresh_index=False)
+                    self.assertTrue(waiting.awaiting_vault_version)
+                    self.assertIsNone(waiting.wanted)
+                    self.assertEqual(waiting.skse_state, "")
+                    with receiver_mgr.client() as client:
+                        pairing.add_peer_device(client, code.device_id, "Source",
+                                                addresses=[f"tcp://127.0.0.1:{source_port}"])
+                    with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp / "source-config")}):
+                        source.ensure_running()
+                        source.add_peer(receiver_code)
+                        with source_mgr.client() as client:
+                            pairing.add_peer_device(client, receiver_code.device_id, "Receiver",
+                                                    addresses=[f"tcp://127.0.0.1:{receiver_port}"])
+                    deadline = time.monotonic() + 60
+                    while time.monotonic() < deadline and gameversion.VaultMeta.load(receiver_instance) is None:
+                        time.sleep(0.25)
+                    received = gameversion.VaultMeta.load(receiver_instance)
+                    self.assertIsNotNone(received, "source metadata did not sync")
+                    self.assertEqual(received.runtime, "1.6.1170")
+                    ready = receiver.game_status(refresh_index=False)
+                    self.assertFalse(ready.awaiting_vault_version)
+                    self.assertEqual(str(ready.wanted), "1.6.1170")
+                    self.assertEqual(ready.suggested_target, "1.6.1170")
+                    self.assertFalse(State.load().awaiting_vault_version)
+                    self.assertEqual(gameversion.VaultMeta.load(source_instance).runtime, "1.6.1170")
+            except Exception:
+                for path in (tmp / "source.log", tmp / "receiver.log"):
+                    if path.exists():
+                        print(path.name, path.read_text()[-6000:])
+                raise
+            finally:
+                source_mgr.stop()
+                receiver_mgr.stop()
 
     def test_lifecycle_folder_and_ignores(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

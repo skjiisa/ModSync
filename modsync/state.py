@@ -15,7 +15,7 @@ from pathlib import Path
 
 from modsync import config
 
-_FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp")
+_FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "awaiting_vault_version")
 
 
 @dataclass
@@ -26,6 +26,9 @@ class State:
     # Fingerprint of the firewall rules right after ModSync added its own (see
     # modsync.firewall). Only consulted when the rules can't be read at launch.
     firewall_rules_stamp: str = ""
+    # Joining discards the local version record. Wait for the source's record,
+    # including when the app is reopened before the first sync finishes.
+    awaiting_vault_version: bool = False
 
     @staticmethod
     def path() -> Path:

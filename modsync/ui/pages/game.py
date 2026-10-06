@@ -180,7 +180,10 @@ class GamePanel(QWidget):
         lines = []
         warning = False
         self.version.setText(str(vc.installed) if vc.installed is not None else "—")
-        if vc.installed is None and st.game_dir is None:
+        if st.awaiting_vault_version:
+            lines.append("Waiting for the source's game-version record to sync. Keep the source machine "
+                         "online; version and SKSE setup will be available when the record arrives.")
+        elif vc.installed is None and st.game_dir is None:
             lines.append("Skyrim wasn't found. Install it through Steam first.")
         elif vc.installed is None:
             lines.append("Could not read Skyrim's version. Try \"Check again\".")
@@ -247,7 +250,8 @@ class GamePanel(QWidget):
         self.details = "\n".join(detail for detail in details if detail)
         self._update_chips(st, vc)
 
-        self.adopt.setVisible(has_instance and vc.installed is not None and not vc.ok and not self._busy)
+        self.adopt.setVisible(has_instance and vc.installed is not None and not vc.ok and not self._busy
+                              and not st.awaiting_vault_version)
         target = st.suggested_target
         self.downgrade.setVisible(target is not None and not self._busy)
         if target:

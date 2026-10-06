@@ -113,6 +113,7 @@ class MainWindow(QMainWindow):
     syncStatus = Signal(object)  # SyncStatus
     setupDescribed = Signal(list)  # the instance's profile line and problems
     mo2Checked = Signal()  # runtime and USVFS checks finished
+    steamHookChecked = Signal(object)  # shared Home and Settings launch status
     _call = Signal(object)  # run a callable on the UI thread
 
     def __init__(self, *, steam_launch: launchhook.SteamLaunch | None = None,

@@ -34,13 +34,15 @@ To build from source, see [advanced.md](docs/advanced.md).
 It's recommended to close Steam for the first run
 
 Home has buttons to install Mod Organizer 2 or use an existing installation.
-It recommends the matching SKSE and any game-version repairs you need.
+It offers the matching SKSE and any game-version repairs you need. Missing
+SKSE is optional: Play stays the primary action and the default controller choice.
 Choose "Guided setup" to go through MO2, game and SKSE, then optional sync.
 To bring a setup from another machine, choose "Copy setup from another machine…"
 on Home. That route pairs first and checks the required game version after the
-mods arrive.
+source's game-version record arrives, including if ModSync is reopened during sync.
 
-"Set up Steam launch…" on Home lets you add ModSync to Steam or have Steam's
+"Steam launch…" on Home shows whether the launch hook is on, off, pending or
+needs attention. It lets you add ModSync to Steam or have Steam's
 Play button open ModSync before Skyrim. These settings also remain available
 in Settings.
 
