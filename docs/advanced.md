@@ -53,7 +53,7 @@ keyboard, a mouse and the Deck's touch screen work too.
 | Start | Home | Home |
 
 On a keyboard, Space also chooses, Backspace goes back and Ctrl+Q quits.
-"Quit ModSync" under System quits too. When Steam's Play button opened
+"Quit ModSync" under Settings quits too. When Steam's Play button opened
 ModSync, quitting returns to Steam without starting the game.
 
 The hint bar along the bottom shows the buttons for the device in use, with
@@ -114,9 +114,15 @@ Turn on Select before moving the cursor to select text, or choose Select all
 to replace the whole entry. Start and End move to either end of the text.
 The insertion point stays visible while a keyboard button has focus.
 
-Home recommends the next repair when a game version or SKSE mismatch needs
-attention. Play or Continue remains available and says what may fail if you
-launch now. Under System, Settings details explains the background service,
+Home offers MO2 installation and selection, matching SKSE, and the next
+repair when the game version, SKSE or MO2 needs attention. The MO2 and Game
+version rows open maintenance sheets; restore, unpin and installation details
+remain available there. Home, Sync and Settings are the three tabs. Play or
+Continue remains available and says what may fail if you launch now. Missing
+SKSE is an optional suggestion: it leaves Play primary and never takes default
+controller focus, including when Steam's Play button opened ModSync. The Steam
+launch entry shows On, Off, Pending or Needs attention and opens the shared
+Steam controls. Under Settings, Settings details explains the background service,
 Steam launch settings and firewall ports; Controls shows the input shortcuts.
 
 ## Command line
@@ -148,17 +154,26 @@ the one ModSync-owned file that syncs, so every machine sharing the setup
 compares against the same record. Each machine reads its own `SkyrimSE.exe`
 version, and the app, `modsync doctor` and `modsync serve` warn when it
 differs. After an intentional upgrade or downgrade, "Use this machine's
-version" under Game re-records it.
+version" in the Game version sheet on Home re-records it.
 
 The installed SKSE is a second clue. Its runtime DLL is named after the exact
 game version it was built for, such as `skse64_1_6_1170.dll`. ModSync looks
 for it in the game folder and in the instance's `mods/` folder, at the top
 level or under `Root/`.
 
+When copying another machine's setup, choose "Copy setup from another machine…"
+on Home or before selecting MO2 in guided setup. This pairs before game
+preparation. Joining removes the locally recorded version, then waits for the
+source's `modsync-vault.json`. While waiting, Home shows Waiting and the game
+sheet holds version-dependent repairs, SKSE installation and adoption of the
+local version. This waiting state survives reopening ModSync. The source's
+valid record enables the appropriate actions when it arrives; local SKSE does
+not define the target during this wait. Keep the source machine online.
+
 - When an existing MO2 setup is chosen, ModSync records the SKSE runtime
   rather than whatever Steam has patched the game to since. An old mod list
   is offered the right downgrade immediately.
-- When there is no record, the app and `modsync game status` suggest
+- When there is no record for a local setup, the app and `modsync game status` suggest
   the SKSE runtime as the downgrade target.
 - Otherwise the record wins, and SKSE built for a different version is
   called out as needing a reinstall.
@@ -167,7 +182,7 @@ DLLs for several versions make SKSE ambiguous, and ModSync ignores it.
 
 ### Installing SKSE
 
-Once the game is on the right version, the Game section offers "Install SKSE
+Once the game is on the right version, Home offers "Install SKSE
 x.y.z" whenever the SKSE in the game folder is missing, built for another
 version, or present in several versions. ModSync downloads the build for the
 installed game version from skse.silverlock.org, checks it against a known
@@ -197,7 +212,7 @@ only completed downloads enter the cache (about 1.1 GB for 1.7.104 to
 1.6.1170), so a repeat is offline.
 
 The originals stay in `.modsync-downgrade/backup`. `modsync game restore`,
-or "Restore original files" under Game, puts them back.
+or "Restore original files" in the Game version sheet on Home, puts them back.
 `modsync game restore --discard` drops a stale backup once Steam has
 re-installed the current version.
 
@@ -352,7 +367,7 @@ syncing if one exists. If the service initially shares the app's process, it
 starts a replacement on its next poll after the app closes, and transfers
 resume. Both machines still need to be awake and connected.
 
-Under System, "Run in background" shows whether the service is running,
+Under Settings, "Run in background" shows whether the service is running,
 inactive, failed or off. Open the ModSync Steam shortcut to check it in
 Gaming Mode. Choosing it again while it is on stops and removes the service
 without deleting mods. An open app can keep syncing.
@@ -363,6 +378,6 @@ Every way ModSync runs (GUI, CLI, `serve`, a Steam launch) logs to
 `~/.local/state/modsync/modsync.log`. Set `MODSYNC_LOG_LEVEL=DEBUG` for more.
 The launch hook logs to `~/.local/state/modsync/launch-hook.log`.
 
-For a bug report, `modsync diagnostics` or "Copy diagnostics" under System
+For a bug report, `modsync diagnostics` or "Copy diagnostics" under Settings
 bundles the doctor report with the last 200 lines of both logs, with
 pairing codes, API keys and device ids redacted.

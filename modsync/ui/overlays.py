@@ -130,6 +130,99 @@ class Overlay(QWidget):
             self.cancel()
 
 
+class PageSheet(Overlay):
+    """Borrow a maintenance page, preserving its checks and operation state.
+
+    The content scrolls while Close stays visible. Restore the page before
+    deleting the sheet, including when changing the installation rebuilds it.
+    """
+
+    def __init__(self, host, page) -> None:
+        super().__init__(host, "", width=1200)
+        self.page = page
+        self.layout().setContentsMargins(24, 24, 24, 24)
+        self.body.setContentsMargins(16, 12, 16, 12)
+        self.body.setSpacing(8)
+        host.stack.removeWidget(page)
+        self.body.addWidget(page, 1)
+        page.show()
+        self.close_tile = Tile("Close", "", "close", size="compact")
+        self.close_tile.clicked.connect(self.cancel)
+        self.body.addWidget(self.close_tile)
+        host.busyChanged.connect(self._on_busy)
+
+    def _on_busy(self, busy: bool) -> None:
+        self.close_tile.setEnabled(not busy)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        self.sheet.setFixedHeight(max(200, self.height() - 48))
+        super().resizeEvent(event)
+
+    def focus_default(self) -> None:
+        self.page.focus_default()
+
+    def handle_action(self, action: Action) -> bool:
+        if self.page.handle_action(action):
+            return True
+        return super().handle_action(action)
+
+    def hints(self):
+        return [*self.page.hints(), *super().hints()]
+
+    def cancel(self) -> None:
+        if not self.host.busy:
+            super().cancel()
+
+    def dismiss(self) -> None:
+        if not self._done:
+            self.body.removeWidget(self.page)
+            self.host.stack.addWidget(self.page)
+            self.page.hide()
+        super().dismiss()
+
+
+class ControlsSheet(Overlay):
+    """Show existing settings controls in a sheet, returning them on close."""
+
+    def __init__(self, host, title: str, widgets: list[QWidget]) -> None:
+        super().__init__(host, title, width=900)
+        self._controls = []
+        for widget in widgets:
+            parent = widget.parentWidget()
+            layout = parent.layout()
+            # Settings uses column layouts nested in the page's layout.
+            layout, index = self._find_layout(layout, widget)
+            self._controls.append((widget, parent, layout, index))
+        for widget, _parent, layout, _index in self._controls:
+            layout.removeWidget(widget)
+            self.body.addWidget(widget)
+            widget.show()
+        close = Tile("Close", "", "close", size="compact")
+        close.clicked.connect(self.cancel)
+        self.body.addWidget(close)
+
+    @classmethod
+    def _find_layout(cls, layout, widget):
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            if item.widget() is widget:
+                return layout, index
+            if item.layout() is not None:
+                found = cls._find_layout(item.layout(), widget)
+                if found is not None:
+                    return found
+        return None
+
+    def dismiss(self) -> None:
+        if not self._done:
+            for widget, parent, layout, index in self._controls:
+                self.body.removeWidget(widget)
+                widget.setParent(parent)
+                layout.insertWidget(index, widget)
+                widget.show()
+        super().dismiss()
+
+
 def _tile(title: str, description: str, role: str, icon: str | None, on_click: Callable[[], None], *,
           size: str = "normal") -> Tile:
     t = Tile(title, description, icon, role=role, size=size)

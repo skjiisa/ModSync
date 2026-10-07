@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from modsync.state import State
-from tests.ui_support import QApplication, UiTestCase
+from tests.ui_support import QApplication, UiTestCase, fake_game_status
 
 try:
     from PySide6.QtCore import Qt
@@ -98,7 +98,10 @@ class SpatialNavigationTests(UiTestCase):
 
     def test_home_is_navigable_with_arrows(self):
         State(instance_path=str(self.tmp)).save()
-        window = self.window()
+        ready = fake_game_status()
+        ready.skse_runtime = ready.installed
+        with patch("modsync.service.ModSyncService.game_status", return_value=ready):
+            window = self.window()
         home = window.pages["home"]
         self.assertIs(self.app.focusWidget(), home.play)
         QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Down)
@@ -115,14 +118,14 @@ class SpatialNavigationTests(UiTestCase):
         window = self.window()
         window.tabs["home"].setFocus()
         QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Right)
-        self.assertEqual(window._current, "game")
-        self.assertIs(self.app.focusWidget(), window.tabs["game"])
-        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Right)
-        self.assertEqual(window._current, "mods")
-        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Down)
-        self.assertTrue(window.pages["mods"].isAncestorOf(self.app.focusWidget()))
-        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_E)
         self.assertEqual(window._current, "sync")
+        self.assertIs(self.app.focusWidget(), window.tabs["sync"])
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Right)
+        self.assertEqual(window._current, "system")
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Down)
+        self.assertTrue(window.pages["system"].isAncestorOf(self.app.focusWidget()))
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_E)
+        self.assertEqual(window._current, "home")
         QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Escape)
         self.assertEqual(window._current, "home")
 
@@ -253,7 +256,7 @@ class GamepadRoutingTests(UiTestCase):
         self.assertIs(self.app.focusWidget(), home.open_mo2)
         self.assertEqual(self.router.mode, "gamepad")
         self.press("rb")
-        self.assertEqual(window._current, "game")
+        self.assertEqual(window._current, "sync")
         self.press("lb")
         self.press("lb")
         self.assertEqual(window._current, "system")
@@ -505,7 +508,7 @@ class SteamDesktopConfigTests(UiTestCase):
         window = self.window()
         focus = self.app.focusWidget()
         QTest.keyClick(focus, Qt.Key.Key_Alt, Qt.KeyboardModifier.AltModifier)  # RB
-        self.assertEqual(window._current, "game")
+        self.assertEqual(window._current, "sync")
         QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)  # LB
         self.assertEqual(window._current, "home")
         from modsync.ui.input import InputRouter

@@ -108,7 +108,7 @@ class JoinPanel(QWidget):
             if chk is not None and chk.firewall is not None and not chk.allowed:
                 self.results.addWidget(label(
                     f"{chk.firewall.kind} is on here and drops their announcements. Use \"Allow in "
-                    "firewall…\" under System, then scan again.", "warning"))
+                    "firewall…\" under Settings, then scan again.", "warning"))
             else:
                 self.results.addWidget(label(pairing_lan.FIREWALL_HINT, "muted"))
             return
@@ -166,7 +166,7 @@ class JoinPanel(QWidget):
 
 
 def create_vault(host) -> None:
-    """Share this instance. ``host.vault_created`` moves the wizard on, or
+    """Share this instance. ``host.vault_created`` finishes the wizard, or
     rebuilds the window, once Syncthing is up."""
     path = host.service.state.instance_path
     if not path or host.busy:

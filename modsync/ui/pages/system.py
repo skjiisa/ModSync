@@ -1,4 +1,4 @@
-"""The **System** section: how ModSync fits into this machine.
+"""The Settings tab: how ModSync fits into this machine.
 
 The background service, the Steam launch hook ("Open ModSync before
 Skyrim"), the firewall rules for pairing and syncing, the Steam shortcut,
@@ -15,19 +15,19 @@ from modsync import __version__, background, diagnostics, firewall, launchhook, 
 from modsync.steam import shortcuts
 from modsync.ui import worker
 from modsync.ui.input import Action
-from modsync.ui.overlays import DetailsSheet, Overlay
+from modsync.ui.overlays import ControlsSheet, DetailsSheet, Overlay
 from modsync.ui.pages import Page
 from modsync.ui.widgets import GlyphLabel, Panel, Tile, label
 
 
 class SystemPage(Page):
     key = "system"
-    label = "System"
+    label = "Settings"
     icon = "gear"
 
     def __init__(self, host) -> None:
         super().__init__(host)
-        self.header("System", "On this machine",
+        self.header("Settings", "On this machine",
                     "How ModSync fits in here: Steam, the background service and the firewall.")
         left, right = self.columns(1, 1)
         state = self.service.state
@@ -47,6 +47,7 @@ class SystemPage(Page):
         self.hook_tile.set_badge("checking", "off")
         self.hook_tile.clicked.connect(self._toggle_hook)
         self.hook: launchhook.LaunchHookStatus | None = None
+        self._hook_toggling = False
         self.fw_tile = Tile("Allow in firewall…", "", "shield")
         self.fw_tile.clicked.connect(self._toggle_firewall)
         self.fw_tile.setVisible(False)
@@ -94,6 +95,10 @@ class SystemPage(Page):
         self._refresh_firewall()
         host.busyChanged.connect(self._on_busy)
 
+    def open_steam_settings(self) -> None:
+        if not self.host.busy:
+            ControlsSheet(self.host, "Set up Steam launch", [self.hook_tile, self.steam_tile]).open()
+
     def _show_settings_details(self) -> None:
         hook = self.hook.summary() if self.hook is not None else "Still checking Steam's launch settings."
         ports = ", ".join(f"{p}/{proto}" for p, proto, _ in firewall.PORTS)
@@ -102,10 +107,10 @@ class SystemPage(Page):
                      f"Open ModSync before Skyrim\n{hook}\n\n"
                      f"Firewall\nPairing and syncing use {ports}. Allowing access adds ModSync's rules; "
                      "removing access deletes only the rules ModSync added. Both ask for your password. "
-                     "Existing firewall rules are kept.", eyebrow="System").open()
+                     "Existing firewall rules are kept.", eyebrow="Settings").open()
 
     def _show_controls(self) -> None:
-        sheet = Overlay(self.host, "Controls", eyebrow="System")
+        sheet = Overlay(self.host, "Controls", eyebrow="Settings")
         sheet.body.addWidget(self._controls_panel())
         sheet.body.addWidget(label("Keyboard: arrow keys move, Enter chooses, Escape goes back, "
                                    "Q / E switch sections, and Ctrl+Q quits.", "secondary"))
@@ -136,6 +141,7 @@ class SystemPage(Page):
         return panel
 
     def _on_busy(self, busy: bool) -> None:
+        self._update_hook_enabled()
         self.wizard_tile.setEnabled(not busy)
         if self.reset_tile is not None:
             self.reset_tile.setEnabled(not busy)
@@ -158,7 +164,7 @@ class SystemPage(Page):
             [("reset", "Reset setup", "", "danger", "power"), ("cancel", "Cancel", "", "normal", "close")],
             chosen,
             default="cancel",
-            eyebrow="System",
+            eyebrow="Settings",
         )
 
     # --- firewall ---
@@ -218,19 +224,24 @@ class SystemPage(Page):
 
     # --- launch hook ---
     def _toggle_hook(self) -> None:
-        self.hook_tile.setEnabled(False)
+        if self.host.busy or self._hook_toggling or (self.hook is not None and not self.hook.steam_found):
+            return
+        self._hook_toggling = True
+        self._update_hook_enabled()
         st = self.hook
         turning_off = bool(st and (st.installed or st.selected) and not (st.pending and st.pending.action == "select"))
         fn = launchhook.disable if turning_off else launchhook.enable
         worker.run_async(fn, on_done=self._after_hook, on_failed=self._on_hook_failed)
 
     def _after_hook(self, message: str) -> None:
-        self.hook_tile.setEnabled(True)
+        self._hook_toggling = False
+        self._update_hook_enabled()
         self.host.notify(message, "ok")
         self._refresh_hook()
 
     def _on_hook_failed(self, message: str) -> None:
-        self.hook_tile.setEnabled(True)
+        self._hook_toggling = False
+        self._update_hook_enabled()
         self.host.notify(f"⚠ {message}")
         self._refresh_hook()
 
@@ -273,7 +284,12 @@ class SystemPage(Page):
         else:
             action = "Choose to turn it on."
         self.hook_tile.set_description(f"{summary} {action}".strip())
-        self.hook_tile.setEnabled(st.steam_found)
+        self._update_hook_enabled()
+        self.host.steamHookChecked.emit(st)
+
+    def _update_hook_enabled(self) -> None:
+        found = self.hook is None or self.hook.steam_found
+        self.hook_tile.setEnabled(found and not self.host.busy and not self._hook_toggling)
 
     def poll(self) -> None:
         self._refresh_bg()

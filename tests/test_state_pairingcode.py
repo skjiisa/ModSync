@@ -28,12 +28,14 @@ class StateTests(unittest.TestCase):
                     instance_path="/games/MO2",
                     folder_id="modsync-9",
                     instance_label="Skyrim SE",
+                    awaiting_vault_version=True,
                 ).save()
                 loaded = State.load()
                 self.assertTrue(loaded.configured)
                 self.assertEqual(loaded.instance_path, "/games/MO2")
                 self.assertEqual(loaded.folder_id, "modsync-9")
                 self.assertEqual(loaded.instance_label, "Skyrim SE")
+                self.assertTrue(loaded.awaiting_vault_version)
             finally:
                 os.environ.pop("XDG_CONFIG_HOME", None)
 

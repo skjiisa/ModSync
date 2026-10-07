@@ -33,13 +33,24 @@ To build from source, see [advanced.md](docs/advanced.md).
 
 It's recommended to close Steam for the first run
 
-Run through the setup wizard. Optionally, there are buttons to:
-- Add ModSync as a Steam Shortcut
-- Make Steam launch ModSync instead of Skyrim when opening Skyrim
+Home has buttons to install Mod Organizer 2 or use an existing installation.
+It offers the matching SKSE and any game-version repairs you need. Missing
+SKSE is optional: Play stays the primary action and the default controller choice.
+Choose "Guided setup" to go through MO2, game and SKSE, then optional sync.
+To bring a setup from another machine, choose "Copy setup from another machine…"
+on Home. That route pairs first and checks the required game version after the
+source's game-version record arrives, including if ModSync is reopened during sync.
+
+"Steam launch…" on Home shows whether the launch hook is on, off, pending or
+needs attention. It lets you add ModSync to Steam or have Steam's
+Play button open ModSync before Skyrim. These settings also remain available
+in Settings.
 
 ## Game version
 
-The "Skyrim Special Edition version" section allows for pinning a game version and gives you the option to downgrade to it whenever Steam updates Skyrim. No more worrying about stopping updates before they happen!
+The Game version row on Home opens version management. Home also offers the
+available downgrade or "Keep this game version" action when Steam updates
+Skyrim. The management sheet includes restore, unpin and technical details.
 
 ## Syncing between machines (optional)
 
