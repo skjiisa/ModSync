@@ -15,6 +15,10 @@ All notable changes to ModSync are documented here. The format follows
   backport "Apply ARM64 fix" installs, so ModSync shows the fix as installed
   right away. Apply is only needed for instances installed before. Other
   machines still need an mo2-lint built for them on `PATH`.
+- On the Steam Frame, where Steam can't be closed, Install MO2 no longer asks
+  to close Steam first, and `modsync mo2 install` no longer refuses while it
+  runs. MO2-LINT leaves Steam running there, so a reboot afterwards lets
+  Steam's Play button use the new instance.
 
 ### Fixed
 
