@@ -182,6 +182,26 @@ class GameProtonWithMo2Lint(LaunchHookBase):
         self.assertIsNone(launchhook.game_proton())
 
 
+class GameProtonWithCurrentMo2Lint(LaunchHookBase):
+    """MO2-LINT 7.0.2 renamed its tool to mo2_<appid>_proton_redirector."""
+    with_mo2lint = "mo2_489830_proton_redirector"
+    mapping = {489830: {"name": "mo2_489830_proton_redirector", "config": "", "priority": "250"}}
+
+    def test_off_status_names_mo2lint(self):
+        self.assertEqual(
+            launchhook.status().summary(), "Off. Steam's Play button opens Mod Organizer 2 (MO2-LINT) directly."
+        )
+
+    def test_hook_chains_to_it_and_disabling_restores_it(self):
+        self.assertIsNone(launchhook.game_proton())
+        launchhook.enable()
+        self.assertEqual(launchhook.Record.load().underlying_name, "mo2_489830_proton_redirector")
+        self.assertEqual(launchhook.status().continue_label, "Continue to Mod Organizer")
+        self.assertIsNone(launchhook.game_proton())
+        launchhook.disable()
+        self.assertEqual(self.mapping_name(), "mo2_489830_proton_redirector")
+
+
 class GameProtonUnmapped(LaunchHookBase):
     def test_no_mapping_means_none(self):
         self.assertIsNone(launchhook.game_proton())
