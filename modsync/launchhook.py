@@ -3,7 +3,7 @@
 Pressing Play runs whatever compatibility tool Steam has selected for the game.
 The hook is one more such tool, registered under ``compatibilitytools.d`` as
 ``modsync_<appid>_proton`` (the approach MO2-LINT took in PR #1096 for its own
-``mo2_<appid>_redirector``): a ``proton`` script that Steam calls in place of
+``mo2_<appid>_proton_redirector``): a ``proton`` script that Steam calls in place of
 Proton. Ours opens the ModSync window and then carries on with the **same**
 launch, inside the Steam Linux Runtime container its Proton asks for. Play or
 Open Mod Organizer 2 in the window hand back the launch ModSync would start on

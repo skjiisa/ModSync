@@ -2,11 +2,11 @@
 
 MO2-LINT installs a portable MO2 instance for a game, reusing the game's existing
 Steam/Proton prefix and wiring it via a Steam launch option. We download a pinned
-prebuilt binary (all current releases are pre-releases, so GitHub's "latest"
-endpoint skips them).
+prebuilt binary for this CPU (x86_64 or aarch64) rather than following "latest".
 
 It needs Steam, Proton and the host's ``xdg-mime`` / ``pgrep``; protontricks is
-bundled inside the binary and winetricks is fetched on demand. Inside the Flatpak
+bundled inside the binary, and winetricks (plus cabextract and 7-Zip when the
+host lacks them, as stock SteamOS does) is fetched on demand. Inside the Flatpak
 the binary runs on the host through ``flatpak-spawn --host`` — the sandbox can't
 see Steam or Proton, and the host process gets the host's own environment, so
 MO2-LINT's ``~/.config/mo2-lint`` lands where its Steam-side redirector expects.
@@ -33,19 +33,27 @@ from modsync.games import Game
 log = logging.getLogger(__name__)
 from modsync.mo2.installers.base import InstallerBackend, InstallResult, OnOutput
 
-MO2LINT_VERSION = "7.0.1"
-MO2LINT_URL = (
+MO2LINT_VERSION = "7.0.3"
+MO2LINT_RELEASE = (
     "https://github.com/Furglitch/modorganizer2-linux-installer"
-    f"/releases/download/{MO2LINT_VERSION}/mo2-lint"
+    f"/releases/download/{MO2LINT_VERSION}"
 )
-# The release asset's SHA-256 (as GitHub lists it), so ModSync never runs a
-# binary it didn't expect.
-MO2LINT_SHA256 = "a027ee0c1fe6b8ecc125d72e3674fe4e76700cce48a1460e731db88924a0bd8e"
-# MO2-LINT publishes one build, for x86_64. An ARM64 machine such as the Steam
-# Frame can't run it on the host: SteamOS's FEX runs x86_64 Linux programs only
-# inside Steam's x86_64 runtime container, with no simple way to start other
-# tools there. So it needs an mo2-lint on PATH built for the machine.
-MO2LINT_ARCHES = ("x86_64", "amd64")
+# The release asset for each CPU and its SHA-256 (as GitHub lists it), so
+# ModSync never runs a binary it didn't expect. Keyed by platform.machine().
+# On ARM64 (the Steam Frame), MO2-LINT installs ndabas's MO2 2.5.2-woa.1, whose
+# USVFS files are exactly the backport in modsync/mo2/usvfs.py.
+MO2LINT_ASSETS = {
+    "x86_64": ("mo2-lint", "ea70e3f4bb2b00d08f5008a249b6dae2656b3675de2309744dd16196b184d869"),
+    "aarch64": ("mo2-lint-aarch64", "fbaff08f7357b3aa888756e482fe8d431410f34d347a33dcb7c1e7e4e365c89c"),
+}
+_MACHINE_ALIASES = {"amd64": "x86_64", "arm64": "aarch64"}
+
+
+def mo2lint_asset(machine: str | None = None) -> tuple[str, str] | None:
+    """The release asset's name and SHA-256 for this machine, or None if
+    MO2-LINT publishes no build for it."""
+    machine = (machine or platform.machine()).lower()
+    return MO2LINT_ASSETS.get(_MACHINE_ALIASES.get(machine, machine))
 
 
 def mo2lint_path() -> Path:
@@ -81,8 +89,12 @@ def ensure_mo2lint(force: bool = False) -> Path:
     dest = mo2lint_path()
     if dest.exists() and not force:
         return dest
+    asset = mo2lint_asset()
+    if asset is None:
+        raise RuntimeError(f"MO2-LINT {MO2LINT_VERSION} has no build for {platform.machine()}")
+    name, sha256 = asset
     dest.parent.mkdir(parents=True, exist_ok=True)
-    req = urllib.request.Request(MO2LINT_URL, headers={"User-Agent": "ModSync"})
+    req = urllib.request.Request(f"{MO2LINT_RELEASE}/{name}", headers={"User-Agent": "ModSync"})
     # Download to a temp file and rename into place so an interrupted download
     # never leaves a truncated binary that `dest.exists()` would then trust.
     fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=".mo2-lint.")
@@ -93,7 +105,7 @@ def ensure_mo2lint(force: bool = False) -> Path:
             while chunk := resp.read(1 << 20):
                 digest.update(chunk)
                 out.write(chunk)
-        if digest.hexdigest() != MO2LINT_SHA256:
+        if digest.hexdigest() != sha256:
             raise RuntimeError(
                 f"the MO2-LINT {MO2LINT_VERSION} download did not match its checksum (got {digest.hexdigest()})"
             )
@@ -126,10 +138,9 @@ class Mo2LintBackend(InstallerBackend):
     HOST_TOOLS = ("pgrep", "xdg-mime")
 
     def available(self) -> tuple[bool, str]:
-        machine = platform.machine()
-        if self._binary is None and machine.lower() not in MO2LINT_ARCHES and not shutil.which("mo2-lint"):
+        if self._binary is None and mo2lint_asset() is None and not shutil.which("mo2-lint"):
             return False, (
-                f"MO2-LINT only publishes an x86_64 build, and this machine is {machine}. "
+                f"MO2-LINT publishes builds for x86_64 and aarch64, and this machine is {platform.machine()}. "
                 "Install an mo2-lint built for this machine on PATH."
             )
         try:

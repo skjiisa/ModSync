@@ -6,6 +6,12 @@ use its virtual file system. ModSync offers a pinned backport of the
 [stack-alignment fix](https://github.com/ModOrganizer2/usvfs/pull/93), so this
 workaround does not depend on a future upstream release.
 
+An instance installed with **Install MO2** on an ARM64 machine already has the
+fix. MO2-LINT 7.0.3 and newer install ndabas's MO2 2.5.2-woa.1 there, which is
+the official MO2 2.5.2 with these same four files. ModSync recognizes them and
+reports the fix as installed, with nothing to restore. Apply is for instances
+installed before that, or from the official MO2 archive.
+
 ## Apply or restore the fix
 
 Choose the MO2 instance in ModSync. Close MO2, Skyrim, and all programs started

@@ -14,7 +14,7 @@ from PySide6.QtCore import QObject, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
 
-from modsync import platforms
+from modsync import platforms, steamos
 from modsync.games import SKYRIM_SE, Game
 from modsync.mo2 import discover as mo2_discover
 from modsync.mo2 import instance as mo2_instance
@@ -81,9 +81,14 @@ class InstallSheet(Overlay):
         self.type_tile.clicked.connect(self._type)
         self.body.addWidget(self.dest_tile)
         self.body.addWidget(self.type_tile)
+        before, after = (
+            # Steam can't be closed on the Steam Frame; MO2-LINT leaves it running.
+            ("", " Reboot the Steam Frame afterwards so Steam's Play button uses it.")
+            if steamos.is_steam_frame() else ("Close Steam before installing. ", "")
+        )
         self.body.addWidget(label(
-            "Close Steam before installing. This downloads Mod Organizer 2 and sets up the game's Proton "
-            "prefix, which can take several minutes. Home offers the matching SKSE afterwards.", "note"))
+            f"{before}This downloads Mod Organizer 2 and sets up the game's Proton prefix, which can take "
+            f"several minutes.{after} Home offers the matching SKSE afterwards.", "note"))
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(2000)

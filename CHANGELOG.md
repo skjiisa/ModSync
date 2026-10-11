@@ -6,6 +6,31 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Install MO2 uses MO2-LINT 7.0.3 (was 7.0.1) and works on ARM64 machines
+  such as the Steam Frame. ModSync downloads MO2-LINT's aarch64 build there
+  and its x86_64 build elsewhere, each checked against its own SHA-256. On
+  ARM64, MO2-LINT installs an MO2 2.5.2 build whose USVFS files are the same
+  backport "Apply ARM64 fix" installs, so ModSync shows the fix as installed
+  right away. Apply is only needed for instances installed before. Other
+  machines still need an mo2-lint built for them on `PATH`.
+- On the Steam Frame, where Steam can't be closed, Install MO2 no longer asks
+  to close Steam first, and `modsync mo2 install` no longer refuses while it
+  runs. MO2-LINT leaves Steam running there, so a reboot afterwards lets
+  Steam's Play button use the new instance.
+
+### Fixed
+
+- Install MO2 failed on stock SteamOS, which has no `cabextract`, and on the
+  Steam Frame, which also has no 7-Zip. MO2-LINT 7.0.2 and newer download
+  them when the system lacks them.
+- ModSync didn't recognize Mod Organizer 2 behind Steam's Play button when
+  MO2-LINT 7.0.2 or newer installed it. MO2-LINT renamed its compatibility
+  tool to `mo2_<appid>_proton_redirector` so Steam Cloud syncs saves, and
+  ModSync only knew the old `mo2_<appid>_redirector`. The Play button hook
+  now hands off to either one, preferring the new name.
+
 ## [1.1.0-beta1] - 2026-10-04
 
 A beta of the controller-first interface, for testing an end-to-end install of

@@ -25,7 +25,8 @@ python3 -m venv .venv && .venv/bin/pip install .
 Outside the Flatpak, ModSync downloads a Syncthing binary and the MO2-LINT
 installer into its data directory on first use. A downgrade needs `xdelta3`
 and a 7z extractor (`7z`, `7zz` or `bsdtar`, which SteamOS ships) on the
-`PATH`. MO2-LINT needs `protontricks`.
+`PATH`. MO2-LINT needs `pgrep` and `xdg-mime`. It bundles protontricks and
+downloads `cabextract` and 7-Zip itself when the system lacks them.
 
 The discovery layer uses only the Python standard library, so
 `python3 -m modsync doctor` works without any dependencies installed. It

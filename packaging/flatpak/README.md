@@ -173,6 +173,6 @@ matter for a Flathub listing, which is not planned.
   Its `proton` script runs on the host and opens ModSync with
   `/usr/bin/flatpak run io.github.skjiisa.ModSync launch hub ...`. Inside the
   sandbox, "is Steam running" is answered through `flatpak-spawn --host pgrep`.
-- **Install MO2.** The protontricks check and MO2-LINT itself run on the host
+- **Install MO2.** The host-tool check and MO2-LINT itself run on the host
   through `flatpak-spawn --host`, because Steam and Proton are not visible
   inside the sandbox.
