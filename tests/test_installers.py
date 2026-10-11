@@ -196,7 +196,7 @@ class Mo2LintBackendTests(unittest.TestCase):
         def probe(stdout="", rc=0, stderr=""):
             return subprocess.CompletedProcess([], rc, stdout=stdout, stderr=stderr)
 
-        # An x86_64 host; test_the_x86_64_download_is_not_offered_on_arm64 covers ARM64.
+        # An x86_64 host; test_machines_without_a_build_are_refused covers the rest.
         machine = patch.object(mo2lint.platform, "machine", return_value="x86_64")
         machine.start()
         self.addCleanup(machine.stop)
@@ -215,27 +215,31 @@ class Mo2LintBackendTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("host system from the Flatpak", reason)
 
-    def test_the_x86_64_download_is_not_offered_on_arm64(self):
-        """MO2-LINT only ships an x86_64 binary; an ARM64 host can't run it."""
+    def test_machines_without_a_build_are_refused(self):
+        """MO2-LINT ships x86_64 and aarch64 binaries. Another CPU can't run
+        either, so it needs an mo2-lint on PATH built for it."""
         import subprocess
         from unittest.mock import patch
 
         from modsync.mo2.installers import mo2lint
 
         ok_probe = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-        with patch.object(mo2lint.platform, "machine", return_value="aarch64"), \
+        for machine in ("aarch64", "arm64", "x86_64", "AMD64"):
+            with patch.object(mo2lint.platform, "machine", return_value=machine), \
+                    patch.object(mo2lint.shutil, "which", return_value=None), \
+                    patch.object(mo2lint.background, "run_host", return_value=ok_probe):
+                self.assertEqual(Mo2LintBackend().available(), (True, ""), machine)
+        with patch.object(mo2lint.platform, "machine", return_value="riscv64"), \
                 patch.object(mo2lint.shutil, "which", return_value=None), \
                 patch.object(mo2lint.background, "run_host", return_value=ok_probe) as run:
             ok, reason = Mo2LintBackend().available()
             self.assertFalse(ok)
-            self.assertIn("x86_64", reason)
-            self.assertIn("aarch64", reason)
+            self.assertIn("riscv64", reason)
             run.assert_not_called()
-        with patch.object(mo2lint.platform, "machine", return_value="aarch64"), \
+        with patch.object(mo2lint.platform, "machine", return_value="riscv64"), \
                 patch.object(mo2lint.shutil, "which", return_value="/usr/bin/mo2-lint"), \
                 patch.object(mo2lint.background, "run_host", return_value=ok_probe):
             self.assertEqual(Mo2LintBackend().available(), (True, ""))
-
 
 if __name__ == "__main__":
     unittest.main()
@@ -263,13 +267,24 @@ class EnsureMo2LintTests(unittest.TestCase):
         self.urlopen = patch.object(mo2lint.urllib.request, "urlopen", side_effect=lambda *a, **k: io.BytesIO(self.payload))
         self.bin = Path(tmp.name) / "modsync" / "bin"
 
+    def pinned(self, machine):
+        """Run as ``machine``, with its asset pinned to the fake payload."""
+        from contextlib import ExitStack
+        from unittest.mock import patch
+
+        name = self.mo2lint.MO2LINT_ASSETS[machine][0]
+        stack = ExitStack()
+        stack.enter_context(patch.object(self.mo2lint.platform, "machine", return_value=machine))
+        stack.enter_context(patch.dict(self.mo2lint.MO2LINT_ASSETS, {machine: (name, self.sha)}))
+        return stack
+
     def test_downloads_verifies_and_replaces_older_copies(self):
         from unittest.mock import patch
 
         self.bin.mkdir(parents=True)
         (self.bin / "mo2-lint").write_bytes(b"old unversioned")
         (self.bin / "mo2-lint-7.0.0-rc7").write_bytes(b"old pin")
-        with self.urlopen as urlopen, patch.object(self.mo2lint, "MO2LINT_SHA256", self.sha):
+        with self.urlopen as urlopen, self.pinned("x86_64"):
             path = self.mo2lint.ensure_mo2lint()
             self.assertEqual(path, self.bin / f"mo2-lint-{self.mo2lint.MO2LINT_VERSION}")
             self.assertEqual(path.read_bytes(), self.payload)
@@ -277,6 +292,31 @@ class EnsureMo2LintTests(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in self.bin.iterdir()), [path.name])
             self.assertEqual(self.mo2lint.ensure_mo2lint(), path)  # cached: no second download
         urlopen.assert_called_once()
+        self.assertTrue(urlopen.call_args.args[0].full_url.endswith(f"/{self.mo2lint.MO2LINT_VERSION}/mo2-lint"))
+
+    def test_arm64_downloads_the_aarch64_build(self):
+        with self.urlopen as urlopen, self.pinned("aarch64"):
+            path = self.mo2lint.ensure_mo2lint()
+        self.assertEqual(path.read_bytes(), self.payload)
+        self.assertTrue(urlopen.call_args.args[0].full_url.endswith(f"/{self.mo2lint.MO2LINT_VERSION}/mo2-lint-aarch64"))
+
+    def test_each_build_has_its_own_checksum(self):
+        """The x86_64 checksum must not accept the aarch64 download, or the reverse."""
+        from unittest.mock import patch
+
+        assets = {"x86_64": ("mo2-lint", self.sha), "aarch64": ("mo2-lint-aarch64", "0" * 64)}
+        with self.urlopen, patch.dict(self.mo2lint.MO2LINT_ASSETS, assets), \
+                patch.object(self.mo2lint.platform, "machine", return_value="aarch64"):
+            with self.assertRaisesRegex(RuntimeError, "checksum"):
+                self.mo2lint.ensure_mo2lint()
+
+    def test_no_download_for_a_machine_without_a_build(self):
+        from unittest.mock import patch
+
+        with self.urlopen as urlopen, patch.object(self.mo2lint.platform, "machine", return_value="riscv64"):
+            with self.assertRaisesRegex(RuntimeError, "riscv64"):
+                self.mo2lint.ensure_mo2lint()
+        urlopen.assert_not_called()
 
     def test_a_wrong_checksum_leaves_nothing_behind(self):
         with self.urlopen:

@@ -6,6 +6,22 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Install MO2 uses MO2-LINT 7.0.3 (was 7.0.1) and works on ARM64 machines
+  such as the Steam Frame. ModSync downloads MO2-LINT's aarch64 build there
+  and its x86_64 build elsewhere, each checked against its own SHA-256. On
+  ARM64, MO2-LINT installs an MO2 2.5.2 build whose USVFS files are the same
+  backport "Apply ARM64 fix" installs, so ModSync shows the fix as installed
+  right away. Apply is only needed for instances installed before. Other
+  machines still need an mo2-lint built for them on `PATH`.
+
+### Fixed
+
+- Install MO2 failed on stock SteamOS, which has no `cabextract`, and on the
+  Steam Frame, which also has no 7-Zip. MO2-LINT 7.0.2 and newer download
+  them when the system lacks them.
+
 ## [1.1.0-beta1] - 2026-10-04
 
 A beta of the controller-first interface, for testing an end-to-end install of
