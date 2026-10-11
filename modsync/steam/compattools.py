@@ -52,8 +52,9 @@ def is_arm64() -> bool:
     return platform.machine().lower() in ("aarch64", "arm64")
 
 # MO2-LINT (PR #1096 onwards) installs one of these per game; selecting it in
-# Steam makes Play start Mod Organizer 2 instead of the game.
-MO2LINT_TOOL_RE = re.compile(r"^mo2_(\d+)_redirector$")
+# Steam makes Play start Mod Organizer 2 instead of the game. 7.0.2 renamed it
+# from mo2_<appid>_redirector so Steam Cloud treats it as a Proton (its #1163).
+MO2LINT_TOOL_RE = re.compile(r"^mo2_(\d+)_(?:proton_)?redirector$")
 
 
 @dataclass(frozen=True)
@@ -267,11 +268,11 @@ def steam_default_tool(
 
 
 def mo2lint_tool(appid: int, steam_root: Path | str) -> CompatTool | None:
-    """MO2-LINT's per-game redirector tool, if that version of MO2-LINT installed one."""
-    for tool in custom_tools(steam_root):
-        if tool.name == f"mo2_{appid}_redirector":
-            return tool
-    return None
+    """MO2-LINT's per-game redirector tool, if that version of MO2-LINT installed
+    one. The current name wins over the one before 7.0.2, which an older
+    install can leave behind."""
+    tools = {tool.name: tool for tool in custom_tools(steam_root)}
+    return tools.get(f"mo2_{appid}_proton_redirector") or tools.get(f"mo2_{appid}_redirector")
 
 
 def default_valve_tool(steam_root: Path | str, libraries: Iterable[Library]) -> CompatTool | None:

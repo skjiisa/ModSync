@@ -89,7 +89,7 @@ def _executable(path: Path, text: str) -> Path:
     return path
 
 
-def make_steam(root: Path, *, mapping: dict | None = None, with_mo2lint: bool = False, arm64: bool = False) -> Path:
+def make_steam(root: Path, *, mapping: dict | None = None, with_mo2lint: bool | str = False, arm64: bool = False) -> Path:
     """Build the fake Steam root and return it. ``mapping`` is what goes into
     CompatToolMapping (appid -> entry)."""
     steamapps = root / "steamapps"
@@ -129,7 +129,9 @@ def make_steam(root: Path, *, mapping: dict | None = None, with_mo2lint: bool = 
         '      "from_oslist"  "windows"\n      "to_oslist"    "linux"\n    }\n  }\n}\n'
     )
     if with_mo2lint:
-        mo2 = tools / "mo2_489830_redirector"
+        # MO2-LINT before 7.0.2 named it mo2_<appid>_redirector; True means that name.
+        mo2lint_id = with_mo2lint if isinstance(with_mo2lint, str) else "mo2_489830_redirector"
+        mo2 = tools / mo2lint_id
         _executable(mo2 / "proton", "#!/usr/bin/env bash\nexit 0\n")
         (mo2 / ".mo2-lint-proton-wrapper").touch()
         (mo2 / "toolmanifest.vdf").write_text(
@@ -137,7 +139,7 @@ def make_steam(root: Path, *, mapping: dict | None = None, with_mo2lint: bool = 
             f'\t"require_tool_appid"\t\t"{SLR4_APPID}"\n}}\n'
         )
         (mo2 / "compatibilitytool.vdf").write_text(
-            '"compatibilitytools"\n{\n  "compat_tools"\n  {\n    "mo2_489830_redirector"\n    {\n'
+            f'"compatibilitytools"\n{{\n  "compat_tools"\n  {{\n    "{mo2lint_id}"\n    {{\n'
             '      "install_path" "."\n      "display_name" "MO2 Skyrim Special Edition"\n'
             '      "from_oslist" "windows"\n      "to_oslist" "linux"\n    }\n  }\n}\n'
         )

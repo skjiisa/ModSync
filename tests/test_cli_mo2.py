@@ -69,6 +69,34 @@ class Mo2CommandTests(unittest.TestCase):
             self.assertIn("unrecognized build", out)
         self.assertEqual(self.run_cli("mo2", "usvfs", "unknown")[0], 2)
 
+    def test_install_with_steam_running(self):
+        """Elsewhere Steam has to be closed first. On the Steam Frame it can't be,
+        and MO2-LINT leaves it running there, so the install goes ahead."""
+        from modsync import steamos
+        from modsync.mo2.installers import InstallResult, Mo2LintBackend
+        from modsync.service import ModSyncService
+        from modsync.steam import shortcuts
+
+        dest = self.tmp / "MO2"
+        done = InstallResult(True, 0, dest, "")
+        for frame in (False, True):
+            with self.subTest(frame=frame), \
+                    patch.object(steamos, "is_steam_frame", return_value=frame), \
+                    patch.object(shortcuts, "steam_is_running", return_value=True), \
+                    patch.object(Mo2LintBackend, "available", return_value=(True, "")), \
+                    patch.object(Mo2LintBackend, "install", return_value=done) as install, \
+                    patch.object(ModSyncService, "choose_instance") as choose:
+                code, out = self.run_cli("mo2", "install", str(dest))
+                if frame:
+                    self.assertEqual(code, 0)
+                    install.assert_called_once()
+                    choose.assert_called_once_with(dest)
+                    self.assertIn("Reboot the Steam Frame", out)
+                else:
+                    self.assertEqual(code, 1)
+                    self.assertIn("Close Steam first", out)
+                    install.assert_not_called()
+
     def test_sync_and_vault_are_the_same_command(self):
         for name in ("sync", "vault"):
             code, out = self.run_cli(name)

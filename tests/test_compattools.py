@@ -1,3 +1,4 @@
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -50,6 +51,21 @@ class CompatToolDiscovery(unittest.TestCase):
         self.assertEqual(compattools.default_valve_tool(self.root, self.libraries).name, "proton_experimental")
         self.assertEqual(compattools.mo2lint_tool(489830, self.root).display_name, "MO2 Skyrim Special Edition")
         self.assertIsNone(compattools.mo2lint_tool(377160, self.root))
+
+    def test_mo2lint_tool_prefers_the_name_from_7_0_2(self):
+        """An older MO2-LINT left mo2_<appid>_redirector; 7.0.2+ installs
+        mo2_<appid>_proton_redirector, which is the one in use."""
+        old = self.root / "compatibilitytools.d" / "mo2_489830_redirector"
+        new = old.with_name("mo2_489830_proton_redirector")
+        shutil.copytree(old, new)
+        vdf = new / "compatibilitytool.vdf"
+        vdf.write_text(vdf.read_text().replace("mo2_489830_redirector", "mo2_489830_proton_redirector"))
+        tool = compattools.mo2lint_tool(489830, self.root)
+        self.assertEqual(tool.name, "mo2_489830_proton_redirector")
+        self.assertEqual(tool.path, new)
+        self.assertTrue(tool.is_mo2lint)
+        shutil.rmtree(old)
+        self.assertEqual(compattools.mo2lint_tool(489830, self.root).name, "mo2_489830_proton_redirector")
 
     def test_require_tool_appid_and_runtime_path(self):
         proton = self.root / "steamapps/common/Proton - Experimental"
