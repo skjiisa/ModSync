@@ -51,7 +51,7 @@ def main():
         language="english", steam_public_build=1, steam_is_current=True,
         steam_running=False, pending_pin=False, recipe_from="1.6.1170",
         recipe_targets=["1.5.97", "1.6.1170"], skse_runtime=version("1.5.97"),
-        skse_source="skse64_1_5_97.dll in the game folder", backup_present=True,
+        skse_source="skse64_1_5_97.dll in the game folder", backup_present=True, backup_bytes=1_140_000_000,
     )
     check = gameversion.VersionCheck(
         game.installed, None, skse=gameversion.SkseCheck([
@@ -198,8 +198,8 @@ def main():
         keyboard.symbols.click()
         capture(w, "keyboard-symbols")
         keyboard.symbols.click()
-        keyboard.field.setText("/home/you/Games/mod_list")
-        keyboard.field.setCursorPosition(20)
+        keyboard.field.setText("MODSYNC1-7QK2-X9PL")
+        keyboard.field.setCursorPosition(14)
         keyboard.select.click()
         keyboard.move_cursor(1)
         keyboard.move_cursor(1)
@@ -252,6 +252,7 @@ def main():
         w = window_for(State(**configured), mode="mouse")
         capture(w, "compact-mouse", width=1000)
         router.pointer = "touch"  # what the Deck's screen and the Steam Frame's pointer report
+        router.modeChanged.emit("mouse")  # as a real touch does: relabel "Mouse" as "Touch"
         capture(w, "touch-home")
         w.go("sync")
         w.pages["sync"].toggle_join()

@@ -76,11 +76,11 @@ class ThemeTests(unittest.TestCase):
         self.assertGreater(long.height(), short.height())  # descriptions wrap rather than clip
         self.assertLessEqual(long.geometry().right(), host.width())
 
-    def test_progress_ring_animates_to_whole_percentages(self):
+    def test_sync_meter_animates_to_whole_percentages(self):
         from PySide6.QtTest import QTest
-        from modsync.ui.widgets import ProgressRing
+        from modsync.ui.widgets import SyncMeter
 
-        ring = ProgressRing()
+        ring = SyncMeter()
         ring.set_value(0, "starting", busy=True)
         ring.set_value(64, "syncing")  # an int after a float: both must interpolate
         QTest.qWait(800)

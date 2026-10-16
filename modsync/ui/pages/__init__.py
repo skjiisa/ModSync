@@ -35,8 +35,8 @@ class Page(QWidget):
         outer.addWidget(self.area)
 
     # --- layout helpers ---
-    def header(self, eyebrow: str, title: str, subtitle: str = "") -> PageHeader:
-        h = PageHeader(eyebrow, title, subtitle)
+    def header(self, title: str, subtitle: str = "") -> PageHeader:
+        h = PageHeader(title, subtitle)
         self.content_layout.addWidget(h)
         return h
 

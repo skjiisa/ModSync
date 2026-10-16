@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 
 from modsync.ui import theme
 
@@ -277,17 +277,24 @@ def glyph_width(key: str, style: str, height: float, metrics_font: QFont) -> flo
     return height
 
 
-def paint_glyph(p: QPainter, key: str, rect: QRectF, style: str, label_font: QFont) -> None:
+def paint_glyph(p: QPainter, key: str, rect: QRectF, style: str, label_font: QFont, *, on: str = "") -> None:
     """Draw the button that triggers ``key`` (accept, back, aux, alt, prev_tab,
-    next_tab, menu, dpad, scroll) in the given input style."""
+    next_tab, menu, dpad, scroll) in the given input style.
+
+    Face buttons are printed like the Deck's own legends: a light disc with a
+    dark letter (PlayStation keeps its colored symbols on a dark disc).
+    ``on`` names what the glyph sits on: "" for the dark ground, "focus" for a
+    lit white row, "accent" for the blue primary fill."""
     p.save()
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    text_color = theme.color("text")
+    dark = theme.color("on_accent" if on == "accent" else "on_focus")
+    chip = dark if on else theme.color("border")
+    chip_text = theme.color("text")
     if style == "keyboard":
-        p.setPen(QPen(theme.color("secondary"), 1.4))
-        p.setBrush(theme.color("raised"))
-        p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
-        p.setPen(text_color)
+        p.setPen(QPen(dark if on else theme.color("muted"), 1.4))
+        p.setBrush(Qt.BrushStyle.NoBrush if on else theme.color("surface"))
+        p.drawRoundedRect(rect.adjusted(0.7, 0.7, -0.7, -0.7), 4, 4)
+        p.setPen(dark if on else theme.color("text"))
         f = QFont(label_font)
         f.setPointSizeF(label_font.pointSizeF() * 0.82)
         f.setBold(True)
@@ -299,9 +306,9 @@ def paint_glyph(p: QPainter, key: str, rect: QRectF, style: str, label_font: QFo
         left, right, _ = SHOULDERS.get(style, SHOULDERS["xbox"])
         text = {"prev_tab": left, "next_tab": right, "scroll": "LT/RT" if style != "playstation" else "L2/R2"}[key]
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(theme.color("raised"))
-        p.drawRoundedRect(rect, rect.height() / 2.6, rect.height() / 2.6)
-        p.setPen(text_color)
+        p.setBrush(chip)
+        p.drawRoundedRect(rect, 4, 4)
+        p.setPen(chip_text)
         f = QFont(label_font)
         f.setPointSizeF(label_font.pointSizeF() * 0.78)
         f.setBold(True)
@@ -317,16 +324,15 @@ def paint_glyph(p: QPainter, key: str, rect: QRectF, style: str, label_font: QFo
         path.addRoundedRect(QRectF(c.x() - arm, c.y() - s, arm * 2, s * 2), 2, 2)
         path.addRoundedRect(QRectF(c.x() - s, c.y() - arm, s * 2, arm * 2), 2, 2)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(theme.color("secondary"))
+        p.setBrush(dark if on else theme.color("secondary"))
         p.drawPath(path.simplified())
         p.restore()
         return
     if key == "menu":
-        _, _, sym = SHOULDERS.get(style, SHOULDERS["xbox"])
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(theme.color("raised"))
+        p.setBrush(chip)
         p.drawEllipse(rect)
-        pen = QPen(text_color, max(1.4, rect.height() / 12), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        pen = QPen(chip_text, max(1.4, rect.height() / 12), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         p.setPen(pen)
         for dy in (-0.2, 0, 0.2):
             y = rect.center().y() + dy * rect.height()
@@ -334,16 +340,14 @@ def paint_glyph(p: QPainter, key: str, rect: QRectF, style: str, label_font: QFo
         p.restore()
         return
 
-    table = PLAYSTATION if style == "playstation" else XBOX
-    label, hue = table.get(key, ("?", "#888888"))
-    accent = QColor(hue)
-    p.setPen(QPen(accent, 1.6))
-    p.setBrush(QBrush(QColor(accent.red(), accent.green(), accent.blue(), 46)))
     inner = rect.adjusted(0.8, 0.8, -0.8, -0.8)
-    p.drawEllipse(inner)
+    p.setPen(Qt.PenStyle.NoPen)
     if style == "playstation":
+        label, hue = PLAYSTATION.get(key, ("?", "#888888"))
+        p.setBrush(dark if on else theme.color("border"))
+        p.drawEllipse(inner)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(accent, max(1.5, rect.height() / 13), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.setPen(QPen(QColor(hue), max(1.5, rect.height() / 13), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         c = inner.center()
         r = inner.height() * 0.24
         if label == "cross":
@@ -356,11 +360,15 @@ def paint_glyph(p: QPainter, key: str, rect: QRectF, style: str, label_font: QFo
         else:
             p.drawPolygon(_poly(c.x(), c.y() - r * 1.15, c.x() + r * 1.15, c.y() + r * 0.8,
                                 c.x() - r * 1.15, c.y() + r * 0.8))
-    else:
-        p.setPen(accent)
-        f = QFont(label_font)
-        f.setPointSizeF(label_font.pointSizeF() * 0.86)
-        f.setBold(True)
-        p.setFont(f)
-        p.drawText(inner, Qt.AlignmentFlag.AlignCenter, label)
+        p.restore()
+        return
+    label, _hue = XBOX.get(key, ("?", "#888888"))
+    p.setBrush(dark if on else theme.color("text"))
+    p.drawEllipse(inner)
+    p.setPen(theme.color("text") if on else theme.color("on_focus"))
+    f = QFont(label_font)
+    f.setPointSizeF(label_font.pointSizeF() * 0.86)
+    f.setBold(True)
+    p.setFont(f)
+    p.drawText(inner, Qt.AlignmentFlag.AlignCenter, label)
     p.restore()

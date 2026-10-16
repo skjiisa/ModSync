@@ -27,7 +27,7 @@ class SectionTests(UiTestCase):
         self.assertTrue(hasattr(window.pages["sync"], "choose_first"))
         system = window.pages["system"]
         self.assertEqual(system.hook_tile.badge.text(), "Off")
-        self.assertIn("Choose to turn it on", system.hook_tile.description)
+        self.assertIn("Check your setup before Skyrim starts", system.hook_tile.description)
         self.assertIsNone(system.reset_tile)
 
     def test_instance_only(self):
@@ -47,7 +47,7 @@ class SectionTests(UiTestCase):
         sync = window.pages["sync"]
         self.assertTrue(sync.live)
         self.assertIn("100% in sync", sync.folder_detail.text())
-        self.assertEqual(sync.ring.value, 100)
+        self.assertEqual(sync.meter.value, 100)
         self.assertEqual(window.pages["home"].sync_row.badge.text(), "Up to date")
 
     def test_sections_switch_with_the_bumpers_and_wrap(self):
@@ -587,7 +587,7 @@ class SetupFlowTests(UiTestCase):
         window.pages["home"].setup.click()
         setup = window.setup
         self.assertEqual(setup.index, 0)
-        self.assertEqual(setup.head.eyebrow.text(), "SETUP  ·  STEP 1 OF 3")
+        self.assertEqual(setup.step_label.text(), "Setup, step 1 of 3")
         self.assertFalse(window.topbar.lb.isVisible())  # sections are out of the way
         setup.chooser.use(str(self.tmp))
         self.settle()

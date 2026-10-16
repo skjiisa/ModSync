@@ -48,7 +48,7 @@ class Overlay(QWidget):
 
     closed = Signal()
 
-    def __init__(self, host, title: str, *, eyebrow: str = "", width: int = 760) -> None:
+    def __init__(self, host, title: str, *, width: int = 760) -> None:
         super().__init__(host.shell)
         self.host = host
         self.busy = False
@@ -69,10 +69,8 @@ class Overlay(QWidget):
         outer.addLayout(row)
         outer.addStretch(1)
         self.body = QVBoxLayout(self.sheet)
-        self.body.setContentsMargins(34, 30, 34, 30)
+        self.body.setContentsMargins(32, 28, 32, 28)
         self.body.setSpacing(14)
-        if eyebrow:
-            self.body.addWidget(label(eyebrow.upper(), "eyebrow", wrap=False))
         self.title = label(title, "title")
         self.body.addWidget(self.title)
         self.title.setVisible(bool(title))
@@ -123,7 +121,7 @@ class Overlay(QWidget):
     # --- painting and pointer ---
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(2, 5, 10, 196))
+        p.fillRect(self.rect(), QColor(0, 0, 0, 170))
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if not self.sheet.geometry().contains(event.position().toPoint()):
@@ -140,22 +138,28 @@ class PageSheet(Overlay):
     def __init__(self, host, page) -> None:
         super().__init__(host, "", width=1200)
         self.page = page
-        self.layout().setContentsMargins(24, 24, 24, 24)
+        # Start below the top bar, so the sheet never cuts through it.
+        self.layout().setContentsMargins(24, host.topbar.height() + 12, 24, 12)
         self.body.setContentsMargins(16, 12, 16, 12)
         self.body.setSpacing(8)
         host.stack.removeWidget(page)
         self.body.addWidget(page, 1)
         page.show()
         self.close_tile = Tile("Close", "", "close", size="compact")
+        self.close_tile.setMinimumWidth(240)
         self.close_tile.clicked.connect(self.cancel)
-        self.body.addWidget(self.close_tile)
+        close_row = QHBoxLayout()
+        close_row.addWidget(self.close_tile)
+        close_row.addStretch(1)
+        self.body.addLayout(close_row)
         host.busyChanged.connect(self._on_busy)
 
     def _on_busy(self, busy: bool) -> None:
         self.close_tile.setEnabled(not busy)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
-        self.sheet.setFixedHeight(max(200, self.height() - 48))
+        margins = self.layout().contentsMargins()
+        self.sheet.setFixedHeight(max(200, self.height() - margins.top() - margins.bottom()))
         super().resizeEvent(event)
 
     def focus_default(self) -> None:
@@ -234,9 +238,8 @@ def _tile(title: str, description: str, role: str, icon: str | None, on_click: C
 
 class ConfirmSheet(Overlay):
     def __init__(self, host, title: str, text: str, choices: list[Choice],
-                 on_choice: Callable[[str | None], None], *, default: str | None = None,
-                 eyebrow: str = "") -> None:
-        super().__init__(host, title, eyebrow=eyebrow)
+                 on_choice: Callable[[str | None], None], *, default: str | None = None) -> None:
+        super().__init__(host, title)
         self._on_choice = on_choice
         self._default = default
         self.text = label(text, "secondary")
@@ -270,8 +273,8 @@ class ConfirmSheet(Overlay):
 
 
 class DetailsSheet(Overlay):
-    def __init__(self, host, title: str, text: str, *, eyebrow: str = "Details") -> None:
-        super().__init__(host, title, eyebrow=eyebrow, width=860)
+    def __init__(self, host, title: str, text: str) -> None:
+        super().__init__(host, title, width=860)
         self.text = label(text, "secondary", selectable=True)
         content = QWidget()
         v = QVBoxLayout(content)
@@ -320,6 +323,7 @@ class KeyButton(QAbstractButton):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setProperty("ownFocus", True)
         self.setFixedSize(QSize(int(58 * wide + 8 * (wide - 1)), 54))
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
@@ -342,17 +346,37 @@ class KeyButton(QAbstractButton):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        lit = shows_focus(self) or self.underMouse()
-        bg = theme.color("sunken" if self.isDown() else ("raised" if lit else "surface"))
-        if self.isChecked():
-            bg = theme.color("accent", 70)
+        r = QRectF(self.rect())
+        lit = shows_focus(self)
+        if lit:
+            bg, fg = theme.color("focus_pressed" if self.isDown() else "focus"), theme.color("on_focus")
+        elif self.isChecked():
+            bg, fg = theme.color("accent_deep"), theme.color("on_accent")
+        else:
+            bg = theme.color("sunken" if self.isDown() else ("border" if self.underMouse() else "raised"))
+            fg = theme.color("secondary" if self.special else "text")
+        if not self.isEnabled():
+            p.setOpacity(0.5)
+        p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(bg)
-        p.setPen(QPen(theme.color("accent", 140) if lit else theme.color("border"), 1.2))
-        p.drawRoundedRect(r, 12, 12)
-        p.setPen(theme.color("secondary" if self.special else "text"))
-        p.setFont(theme.font(11.5 if self.special else 15, QFont.Weight.Bold))
+        p.drawRoundedRect(r, 4, 4)
+        if lit and self.isChecked():  # a lit Shift that is on: keep saying so
+            p.setBrush(theme.color("accent_deep"))
+            p.drawRoundedRect(QRectF(r.left() + 8, r.bottom() - 7, r.width() - 16, 3), 1.5, 1.5)
+        p.setPen(fg)
+        p.setFont(theme.font(11.5 if self.special else 15, QFont.Weight.DemiBold if self.special else QFont.Weight.Bold))
         p.drawText(r, Qt.AlignmentFlag.AlignCenter, self.text())
+
+    def focusInEvent(self, event) -> None:  # noqa: N802
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802
+        super().focusOutEvent(event)
+        self.update()
+
+    def sync_lit(self) -> None:
+        self.update()
 
 
 class CaretField(QLineEdit):
@@ -368,7 +392,7 @@ class CaretField(QLineEdit):
         if not self.hasFocus() and not self.hasSelectedText():
             painter = QPainter(self)
             painter.setClipRect(self.contentsRect())
-            painter.setPen(QPen(theme.color("accent_hi"), 2))
+            painter.setPen(QPen(theme.color("text"), 2))
             cursor = self.cursorRect()
             painter.drawLine(cursor.topLeft(), cursor.bottomLeft())
 
@@ -381,8 +405,8 @@ class KeyboardSheet(Overlay):
 
     def __init__(self, host, title: str, prompt: str, on_done: Callable[[str], None], *,
                  text: str = "", placeholder: str = "",
-                 validate: Callable[[str], str | None] | None = None, eyebrow: str = "Type") -> None:
-        super().__init__(host, title, eyebrow=eyebrow, width=860)
+                 validate: Callable[[str], str | None] | None = None) -> None:
+        super().__init__(host, title, width=860)
         self._on_done = on_done
         self._validate = validate
         self.body.addWidget(label(prompt, "secondary"))
@@ -634,14 +658,17 @@ class DigitCell(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         box = QRectF(4, 18, self.width() - 8, self.height() - 36)
         focused = self.hasFocus()
-        p.setBrush(theme.color("raised" if focused else "sunken"))
-        p.setPen(QPen(theme.color("accent_hi") if focused else theme.color("border"), 3 if focused else 1.5))
-        p.drawRoundedRect(box, 14, 14)
-        p.setPen(theme.color("text") if self.value else theme.color("muted"))
-        p.setFont(theme.font(30, QFont.Weight.Black))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(theme.color("focus" if focused else "sunken"))
+        p.drawRoundedRect(box, 4, 4)
+        if focused:
+            p.setPen(theme.color("on_focus") if self.value else theme.color("on_focus_dim"))
+        else:
+            p.setPen(theme.color("text") if self.value else theme.color("muted"))
+        p.setFont(theme.font(30, QFont.Weight.Bold))
         p.drawText(box, Qt.AlignmentFlag.AlignCenter, self.value or "·")
         if focused:
-            c = theme.color("accent")
+            c = theme.color("text")
             p.setPen(QPen(c, 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
             mid = self.width() / 2
             p.drawPolyline([QPointF(mid - 8, 12), QPointF(mid, 4), QPointF(mid + 8, 12)])
@@ -675,8 +702,7 @@ class PinSheet(Overlay):
     def __init__(self, host, announcement: Announcement | None,
                  on_done: Callable[[Announcement, str], None]) -> None:
         name = announcement.name if announcement else "the machine with the mods"
-        super().__init__(host, f"Pair with {announcement.name}" if announcement else "Pair by address",
-                         eyebrow="Pairing", width=760)
+        super().__init__(host, f"Pair with {announcement.name}" if announcement else "Pair by address", width=760)
         self._announcement = announcement
         self._on_done = on_done
         self._address = ""
@@ -818,7 +844,7 @@ class PinSheet(Overlay):
 
         KeyboardSheet(self.host, "Address", "The address shown on the machine with the mods, as host or host:port.",
                       self._set_address, text=self._address, placeholder="192.168.1.20",
-                      validate=validate, eyebrow="Pair by address").open()
+                      validate=validate).open()
 
     def _set_address(self, text: str) -> None:
         self._address = text
@@ -872,7 +898,7 @@ class FolderSheet(Overlay):
 
     def __init__(self, host, title: str, start: Path | str | None, on_chosen: Callable[[Path], None], *,
                  confirm: str = "Use this folder", description: str = "") -> None:
-        super().__init__(host, title, eyebrow="Choose a folder", width=900)
+        super().__init__(host, title, width=900)
         self._on_chosen = on_chosen
         if description:
             self.body.addWidget(label(description, "secondary"))
@@ -976,12 +1002,12 @@ class BeaconSheet(Overlay):
     """The host side of network pairing: one huge PIN to read across a room."""
 
     def __init__(self, host, pin: str, name: str, on_cancel: Callable[[], None]) -> None:
-        super().__init__(host, "", eyebrow="Pair over network", width=820)
+        super().__init__(host, "", width=820)
         self._cancelled = on_cancel
         self.pin_label = QLabel(f"{pin[:3]} {pin[3:]}")
         self.pin_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.pin_label.setFont(theme.font(64, QFont.Weight.Black, spacing=10))
-        self.pin_label.setStyleSheet(f"color: {theme.C['accent_hi']};")
+        self.pin_label.setFont(theme.font(64, QFont.Weight.Bold, spacing=8))
+        self.pin_label.setStyleSheet(f"color: {theme.C['text']};")
         self.pin_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.body.addWidget(self.pin_label)
         self.steps = label(
@@ -992,7 +1018,7 @@ class BeaconSheet(Overlay):
         self.address = label("Starting…", "muted", selectable=True)
         self.address.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.body.addWidget(self.address)
-        self.waiting = label("Waiting for the other machine…", "eyebrow")
+        self.waiting = label("Waiting for the other machine…", "secondary")
         self.waiting.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.body.addWidget(self.waiting)
         self.cancel_tile = _tile("Cancel pairing", "", "normal", "close", self.cancel, size="compact")
@@ -1010,7 +1036,7 @@ class BeaconSheet(Overlay):
 
 class CodeSheet(Overlay):
     def __init__(self, host, code: str) -> None:
-        super().__init__(host, "Pairing code", eyebrow="Sync", width=820)
+        super().__init__(host, "Pairing code", width=820)
         from modsync.ui.qr import pairing_pixmap
 
         row = QHBoxLayout()
@@ -1023,7 +1049,7 @@ class CodeSheet(Overlay):
             qr.setText("(install 'qrcode' to show a QR code)")
         qr.setFixedSize(236, 236)
         qr.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        qr.setStyleSheet("background: white; border-radius: 16px;")
+        qr.setStyleSheet("background: white; border-radius: 4px;")
         row.addWidget(qr, 0, Qt.AlignmentFlag.AlignTop)
         col = QVBoxLayout()
         col.addWidget(label("On another machine, choose \"Copy from another machine\", then "

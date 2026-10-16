@@ -123,7 +123,7 @@ Continue remains available and says what may fail if you launch now. Missing
 SKSE is an optional suggestion: it leaves Play primary and never takes default
 controller focus, including when Steam's Play button opened ModSync. The Steam
 launch entry shows On, Off, Pending or Needs attention and opens the shared
-Steam controls. Under Settings, Settings details explains the background service,
+Steam controls. Under Settings, "How these settings work" explains the background service,
 Steam launch settings and firewall ports; Controls shows the input shortcuts.
 
 ## Command line

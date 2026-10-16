@@ -1,0 +1,681 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-11T00:00:00Z",
+  "title": "Design System: ModSync",
+  "extensions": {
+    "platform": "Native Qt 6 (PySide6) desktop app; type in Qt points, geometry in pixels; design canvas 1280x800. Source of truth: modsync/ui/theme.py (C dict + STYLE).",
+    "colorMeta": {
+      "night": {
+        "role": "neutral",
+        "displayName": "Night",
+        "canonical": "#1b1d21",
+        "tonalRamp": [
+          "oklch(15% 0.008 264.4)",
+          "oklch(26% 0.008 264.4)",
+          "oklch(37% 0.008 264.4)",
+          "oklch(48% 0.008 264.4)",
+          "oklch(60% 0.008 264.4)",
+          "oklch(72% 0.008 264.4)",
+          "oklch(84% 0.008 264.4)",
+          "oklch(95% 0.008 264.4)"
+        ]
+      },
+      "bar": {
+        "role": "neutral",
+        "displayName": "Bar Charcoal",
+        "canonical": "#23262b",
+        "tonalRamp": [
+          "oklch(15% 0.010 260.7)",
+          "oklch(26% 0.010 260.7)",
+          "oklch(37% 0.010 260.7)",
+          "oklch(48% 0.010 260.7)",
+          "oklch(60% 0.010 260.7)",
+          "oklch(72% 0.010 260.7)",
+          "oklch(84% 0.010 260.7)",
+          "oklch(95% 0.010 260.7)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Row Slate",
+        "canonical": "#26292f",
+        "tonalRamp": [
+          "oklch(15% 0.012 264.4)",
+          "oklch(26% 0.012 264.4)",
+          "oklch(37% 0.012 264.4)",
+          "oklch(48% 0.012 264.4)",
+          "oklch(60% 0.012 264.4)",
+          "oklch(72% 0.012 264.4)",
+          "oklch(84% 0.012 264.4)",
+          "oklch(95% 0.012 264.4)"
+        ]
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Lifted Slate",
+        "canonical": "#32363d",
+        "tonalRamp": [
+          "oklch(15% 0.014 261.7)",
+          "oklch(26% 0.014 261.7)",
+          "oklch(37% 0.014 261.7)",
+          "oklch(48% 0.014 261.7)",
+          "oklch(60% 0.014 261.7)",
+          "oklch(72% 0.014 261.7)",
+          "oklch(84% 0.014 261.7)",
+          "oklch(95% 0.014 261.7)"
+        ]
+      },
+      "sunken": {
+        "role": "neutral",
+        "displayName": "Well",
+        "canonical": "#16181b",
+        "tonalRamp": [
+          "oklch(15% 0.007 258.4)",
+          "oklch(26% 0.007 258.4)",
+          "oklch(37% 0.007 258.4)",
+          "oklch(48% 0.007 258.4)",
+          "oklch(60% 0.007 258.4)",
+          "oklch(72% 0.007 258.4)",
+          "oklch(84% 0.007 258.4)",
+          "oklch(95% 0.007 258.4)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Seam",
+        "canonical": "#3a3e45",
+        "tonalRamp": [
+          "oklch(15% 0.013 261.7)",
+          "oklch(26% 0.013 261.7)",
+          "oklch(37% 0.013 261.7)",
+          "oklch(48% 0.013 261.7)",
+          "oklch(60% 0.013 261.7)",
+          "oklch(72% 0.013 261.7)",
+          "oklch(84% 0.013 261.7)",
+          "oklch(95% 0.013 261.7)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Legend White",
+        "canonical": "#f4f5f7",
+        "tonalRamp": [
+          "oklch(15% 0.003 264.5)",
+          "oklch(26% 0.003 264.5)",
+          "oklch(37% 0.003 264.5)",
+          "oklch(48% 0.003 264.5)",
+          "oklch(60% 0.003 264.5)",
+          "oklch(72% 0.003 264.5)",
+          "oklch(84% 0.003 264.5)",
+          "oklch(95% 0.003 264.5)"
+        ]
+      },
+      "secondary": {
+        "role": "neutral",
+        "displayName": "Secondary Grey",
+        "canonical": "#b8bdc4",
+        "tonalRamp": [
+          "oklch(15% 0.011 256.7)",
+          "oklch(26% 0.011 256.7)",
+          "oklch(37% 0.011 256.7)",
+          "oklch(48% 0.011 256.7)",
+          "oklch(60% 0.011 256.7)",
+          "oklch(72% 0.011 256.7)",
+          "oklch(84% 0.011 256.7)",
+          "oklch(95% 0.011 256.7)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Grey",
+        "canonical": "#9aa1aa",
+        "tonalRamp": [
+          "oklch(15% 0.015 254.6)",
+          "oklch(26% 0.015 254.6)",
+          "oklch(37% 0.015 254.6)",
+          "oklch(48% 0.015 254.6)",
+          "oklch(60% 0.015 254.6)",
+          "oklch(72% 0.015 254.6)",
+          "oklch(84% 0.015 254.6)",
+          "oklch(95% 0.015 254.6)"
+        ]
+      },
+      "disabled": {
+        "role": "neutral",
+        "displayName": "Disabled Grey",
+        "canonical": "#737a84",
+        "tonalRamp": [
+          "oklch(15% 0.018 257.2)",
+          "oklch(26% 0.018 257.2)",
+          "oklch(37% 0.018 257.2)",
+          "oklch(48% 0.018 257.2)",
+          "oklch(60% 0.018 257.2)",
+          "oklch(72% 0.018 257.2)",
+          "oklch(84% 0.018 257.2)",
+          "oklch(95% 0.018 257.2)"
+        ]
+      },
+      "accent-deep": {
+        "role": "primary",
+        "displayName": "Deck Icon Blue",
+        "canonical": "#1a9fff",
+        "tonalRamp": [
+          "oklch(15% 0.078 247.6)",
+          "oklch(26% 0.111 247.6)",
+          "oklch(37% 0.143 247.6)",
+          "oklch(48% 0.175 247.6)",
+          "oklch(60% 0.175 247.6)",
+          "oklch(72% 0.146 247.6)",
+          "oklch(84% 0.111 247.6)",
+          "oklch(95% 0.078 247.6)"
+        ]
+      },
+      "on-accent": {
+        "role": "primary",
+        "displayName": "Abyss Navy",
+        "canonical": "#00182c",
+        "tonalRamp": [
+          "oklch(15% 0.037 245.3)",
+          "oklch(26% 0.046 245.3)",
+          "oklch(37% 0.051 245.3)",
+          "oklch(48% 0.051 245.3)",
+          "oklch(60% 0.051 245.3)",
+          "oklch(72% 0.051 245.3)",
+          "oklch(84% 0.046 245.3)",
+          "oklch(95% 0.037 245.3)"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Link Blue",
+        "canonical": "#4fb4ff",
+        "tonalRamp": [
+          "oklch(15% 0.068 244.1)",
+          "oklch(26% 0.094 244.1)",
+          "oklch(37% 0.120 244.1)",
+          "oklch(48% 0.143 244.1)",
+          "oklch(60% 0.143 244.1)",
+          "oklch(72% 0.123 244.1)",
+          "oklch(84% 0.094 244.1)",
+          "oklch(95% 0.068 244.1)"
+        ]
+      },
+      "focus": {
+        "role": "neutral",
+        "displayName": "Lit White",
+        "canonical": "#f4f5f7",
+        "tonalRamp": [
+          "oklch(15% 0.003 264.5)",
+          "oklch(26% 0.003 264.5)",
+          "oklch(37% 0.003 264.5)",
+          "oklch(48% 0.003 264.5)",
+          "oklch(60% 0.003 264.5)",
+          "oklch(72% 0.003 264.5)",
+          "oklch(84% 0.003 264.5)",
+          "oklch(95% 0.003 264.5)"
+        ]
+      },
+      "focus-pressed": {
+        "role": "neutral",
+        "displayName": "Lit Pressed",
+        "canonical": "#d9dce1",
+        "tonalRamp": [
+          "oklch(15% 0.008 260.7)",
+          "oklch(26% 0.008 260.7)",
+          "oklch(37% 0.008 260.7)",
+          "oklch(48% 0.008 260.7)",
+          "oklch(60% 0.008 260.7)",
+          "oklch(72% 0.008 260.7)",
+          "oklch(84% 0.008 260.7)",
+          "oklch(95% 0.008 260.7)"
+        ]
+      },
+      "on-focus": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#16181b",
+        "tonalRamp": [
+          "oklch(15% 0.007 258.4)",
+          "oklch(26% 0.007 258.4)",
+          "oklch(37% 0.007 258.4)",
+          "oklch(48% 0.007 258.4)",
+          "oklch(60% 0.007 258.4)",
+          "oklch(72% 0.007 258.4)",
+          "oklch(84% 0.007 258.4)",
+          "oklch(95% 0.007 258.4)"
+        ]
+      },
+      "on-focus-dim": {
+        "role": "neutral",
+        "displayName": "Ink Dim",
+        "canonical": "#4a4f57",
+        "tonalRamp": [
+          "oklch(15% 0.015 259.8)",
+          "oklch(26% 0.015 259.8)",
+          "oklch(37% 0.015 259.8)",
+          "oklch(48% 0.015 259.8)",
+          "oklch(60% 0.015 259.8)",
+          "oklch(72% 0.015 259.8)",
+          "oklch(84% 0.015 259.8)",
+          "oklch(95% 0.015 259.8)"
+        ]
+      },
+      "ok": {
+        "role": "state",
+        "displayName": "Ready Green",
+        "canonical": "#7dd88b",
+        "tonalRamp": [
+          "oklch(15% 0.066 147.7)",
+          "oklch(26% 0.092 147.7)",
+          "oklch(37% 0.117 147.7)",
+          "oklch(48% 0.139 147.7)",
+          "oklch(60% 0.139 147.7)",
+          "oklch(72% 0.120 147.7)",
+          "oklch(84% 0.092 147.7)",
+          "oklch(95% 0.066 147.7)"
+        ]
+      },
+      "ok-on-focus": {
+        "role": "state",
+        "displayName": "Ready Green on Lit",
+        "canonical": "#1d7a33",
+        "tonalRamp": [
+          "oklch(15% 0.065 147.1)",
+          "oklch(26% 0.090 147.1)",
+          "oklch(37% 0.115 147.1)",
+          "oklch(48% 0.136 147.1)",
+          "oklch(60% 0.136 147.1)",
+          "oklch(72% 0.118 147.1)",
+          "oklch(84% 0.090 147.1)",
+          "oklch(95% 0.065 147.1)"
+        ]
+      },
+      "warn": {
+        "role": "state",
+        "displayName": "Attention Amber",
+        "canonical": "#ffc857",
+        "tonalRamp": [
+          "oklch(15% 0.067 82.7)",
+          "oklch(26% 0.094 82.7)",
+          "oklch(37% 0.120 82.7)",
+          "oklch(48% 0.142 82.7)",
+          "oklch(60% 0.142 82.7)",
+          "oklch(72% 0.122 82.7)",
+          "oklch(84% 0.094 82.7)",
+          "oklch(95% 0.067 82.7)"
+        ]
+      },
+      "warn-on-focus": {
+        "role": "state",
+        "displayName": "Attention Amber on Lit",
+        "canonical": "#8a5a00",
+        "tonalRamp": [
+          "oklch(15% 0.056 73.3)",
+          "oklch(26% 0.076 73.3)",
+          "oklch(37% 0.096 73.3)",
+          "oklch(48% 0.108 73.3)",
+          "oklch(60% 0.108 73.3)",
+          "oklch(72% 0.097 73.3)",
+          "oklch(84% 0.076 73.3)",
+          "oklch(95% 0.056 73.3)"
+        ]
+      },
+      "warn-bg": {
+        "role": "state",
+        "displayName": "Amber Well",
+        "canonical": "#3a3020",
+        "tonalRamp": [
+          "oklch(15% 0.030 79.0)",
+          "oklch(26% 0.030 79.0)",
+          "oklch(37% 0.030 79.0)",
+          "oklch(48% 0.030 79.0)",
+          "oklch(60% 0.030 79.0)",
+          "oklch(72% 0.030 79.0)",
+          "oklch(84% 0.030 79.0)",
+          "oklch(95% 0.030 79.0)"
+        ]
+      },
+      "danger": {
+        "role": "state",
+        "displayName": "Danger Coral",
+        "canonical": "#ff8a80",
+        "tonalRamp": [
+          "oklch(15% 0.068 26.1)",
+          "oklch(26% 0.094 26.1)",
+          "oklch(37% 0.120 26.1)",
+          "oklch(48% 0.144 26.1)",
+          "oklch(60% 0.144 26.1)",
+          "oklch(72% 0.123 26.1)",
+          "oklch(84% 0.094 26.1)",
+          "oklch(95% 0.068 26.1)"
+        ]
+      },
+      "danger-on-focus": {
+        "role": "state",
+        "displayName": "Danger Coral on Lit",
+        "canonical": "#b3261e",
+        "tonalRamp": [
+          "oklch(15% 0.079 28.7)",
+          "oklch(26% 0.112 28.7)",
+          "oklch(37% 0.145 28.7)",
+          "oklch(48% 0.178 28.7)",
+          "oklch(60% 0.178 28.7)",
+          "oklch(72% 0.148 28.7)",
+          "oklch(84% 0.112 28.7)",
+          "oklch(95% 0.079 28.7)"
+        ]
+      },
+      "danger-bg": {
+        "role": "state",
+        "displayName": "Coral Well",
+        "canonical": "#3d2424",
+        "tonalRamp": [
+          "oklch(15% 0.033 19.6)",
+          "oklch(26% 0.038 19.6)",
+          "oklch(37% 0.038 19.6)",
+          "oklch(48% 0.038 19.6)",
+          "oklch(60% 0.038 19.6)",
+          "oklch(72% 0.038 19.6)",
+          "oklch(84% 0.038 19.6)",
+          "oklch(95% 0.033 19.6)"
+        ]
+      },
+      "info": {
+        "role": "state",
+        "displayName": "Working Blue",
+        "canonical": "#8cc8ff",
+        "tonalRamp": [
+          "oklch(15% 0.053 247.0)",
+          "oklch(26% 0.072 247.0)",
+          "oklch(37% 0.090 247.0)",
+          "oklch(48% 0.100 247.0)",
+          "oklch(60% 0.100 247.0)",
+          "oklch(72% 0.091 247.0)",
+          "oklch(84% 0.072 247.0)",
+          "oklch(95% 0.053 247.0)"
+        ]
+      },
+      "info-on-focus": {
+        "role": "state",
+        "displayName": "Working Blue on Lit",
+        "canonical": "#0b63b8",
+        "tonalRamp": [
+          "oklch(15% 0.071 253.9)",
+          "oklch(26% 0.099 253.9)",
+          "oklch(37% 0.128 253.9)",
+          "oklch(48% 0.154 253.9)",
+          "oklch(60% 0.154 253.9)",
+          "oklch(72% 0.130 253.9)",
+          "oklch(84% 0.099 253.9)",
+          "oklch(95% 0.071 253.9)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Title",
+        "purpose": "Page titles, sheet titles, the installed version readout."
+      },
+      "hero-action": {
+        "displayName": "Hero action",
+        "purpose": "Title of the blue primary bar."
+      },
+      "choice-title": {
+        "displayName": "Choice title",
+        "purpose": "Tall choice cards in the setup wizard."
+      },
+      "heading": {
+        "displayName": "Heading",
+        "purpose": "The ModSync wordmark and panel headings."
+      },
+      "row-title": {
+        "displayName": "Row title",
+        "purpose": "The name on every row."
+      },
+      "tab-label": {
+        "displayName": "Tab label",
+        "purpose": "Section tabs in the top bar."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Descriptions, subtitles and sheet prose, in Secondary Grey."
+      },
+      "value": {
+        "displayName": "Value",
+        "purpose": "The state word at a row's right edge."
+      },
+      "hint-label": {
+        "displayName": "Hint label",
+        "purpose": "Hint-bar action labels."
+      },
+      "legend": {
+        "displayName": "Legend",
+        "purpose": "Controller and key legends, printed at 78-82% inside the cap or disc."
+      },
+      "field": {
+        "displayName": "Field",
+        "purpose": "Text entry."
+      },
+      "key-cap": {
+        "displayName": "Key cap",
+        "purpose": "On-screen keyboard letters (special keys 600, 11.5pt)."
+      },
+      "digit": {
+        "displayName": "Digit",
+        "purpose": "PIN pad cells."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "The log view only."
+      }
+    },
+    "shadows": [],
+    "overlays": [
+      {
+        "name": "sheet-scrim",
+        "value": "rgba(0, 0, 0, 0.667)",
+        "purpose": "Full-window dim behind sheets (QColor(0,0,0,170)); the only translucency in the build."
+      }
+    ],
+    "focus": [
+      {
+        "name": "lit-row",
+        "value": "background #f4f5f7; text #16181b; accept legend at right edge",
+        "purpose": "Rows, tabs, keys and PIN cells own their focus by lighting white."
+      },
+      {
+        "name": "primary-ring",
+        "value": "inset 3px solid #f4f5f7 on the blue fill, radius 6px",
+        "purpose": "Lit primary bar keeps its blue and gains a ring plus a dark legend."
+      },
+      {
+        "name": "focus-halo",
+        "value": "3px solid #f4f5f7 outline, radius 6px, slides between targets",
+        "purpose": "Focus for controls that do not light themselves (fields, log view)."
+      }
+    ],
+    "states": [
+      {
+        "name": "disabled",
+        "value": "opacity 0.5 plus disabled text color",
+        "purpose": "Disabled rows and keys."
+      },
+      {
+        "name": "primary-hover",
+        "value": "fill lighter(112)",
+        "purpose": "Blue bar under the mouse."
+      },
+      {
+        "name": "primary-pressed",
+        "value": "fill darker(112)",
+        "purpose": "Blue bar while held."
+      }
+    ],
+    "motion": [
+      {
+        "name": "halo-slide",
+        "value": "150ms cubic-bezier(0.33, 1, 0.68, 1)",
+        "purpose": "Focus halo moving to a new target (Qt OutCubic)."
+      },
+      {
+        "name": "meter-ease",
+        "value": "500ms cubic-bezier(0.33, 1, 0.68, 1)",
+        "purpose": "Sync meter easing to a new value (Qt OutCubic)."
+      },
+      {
+        "name": "toast-fade",
+        "value": "180ms",
+        "purpose": "Toast fade in and out."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "deck",
+        "value": "1280x800",
+        "purpose": "Design size; all standard Home actions fit without scrolling."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Row",
+      "kind": "card",
+      "refersTo": "row",
+      "description": "The unit of everything choosable: title, optional description, value word and chevron. Lights white on focus.",
+      "html": "<button class=\"ds-row\"><span class=\"ds-row-text\"><span class=\"ds-row-title\">Open Mod Organizer 2</span><span class=\"ds-row-desc\">Mods, profiles and load order.</span></span><span class=\"ds-row-legend\">A</span></button>",
+      "css": ".ds-row { font-family: system-ui, sans-serif; display: flex; align-items: center; gap: 14px; width: 420px; padding: 14px 14px 14px 18px; background: #26292f; color: #f4f5f7; border: none; border-radius: 4px; text-align: left; cursor: pointer; } .ds-row-text { display: flex; flex-direction: column; gap: 2px; flex: 1; } .ds-row-title { font-size: 13pt; font-weight: 600; } .ds-row-desc { font-size: 12pt; color: #b8bdc4; } .ds-row-legend { display: none; width: 24px; height: 24px; border-radius: 50%; background: #16181b; color: #f4f5f7; font-size: 9pt; font-weight: 700; align-items: center; justify-content: center; } .ds-row:hover { background: #32363d; } .ds-row:active { background: #16181b; } .ds-row:focus-visible { outline: none; background: #f4f5f7; color: #16181b; } .ds-row:focus-visible .ds-row-desc { color: #4a4f57; } .ds-row:focus-visible .ds-row-legend { display: inline-flex; } .ds-row:focus-visible:active { background: #d9dce1; }"
+    },
+    {
+      "name": "Status Row",
+      "kind": "custom",
+      "refersTo": "row-compact",
+      "description": "One line of the readiness list: status dot, name, value word in the tone's color, chevron.",
+      "html": "<button class=\"ds-status\"><span class=\"ds-status-dot\"></span><span class=\"ds-status-title\">Game version</span><span class=\"ds-status-value\">Needs 1.5.97</span><svg class=\"ds-status-chev\" width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9 6l6 6-6 6\"/></svg></button>",
+      "css": ".ds-status { font-family: system-ui, sans-serif; display: flex; align-items: center; gap: 14px; width: 420px; padding: 11px 14px 11px 18px; background: #26292f; color: #f4f5f7; border: none; border-radius: 4px; cursor: pointer; } .ds-status-dot { width: 10px; height: 10px; border-radius: 50%; background: #ffc857; } .ds-status-title { flex: 1; text-align: left; font-size: 13pt; font-weight: 600; } .ds-status-value { font-size: 12pt; font-weight: 600; color: #ffc857; } .ds-status-chev { color: #9aa1aa; } .ds-status:hover { background: #32363d; } .ds-status:focus-visible { outline: none; background: #f4f5f7; color: #16181b; } .ds-status:focus-visible .ds-status-dot { background: #8a5a00; } .ds-status:focus-visible .ds-status-value { color: #8a5a00; } .ds-status:focus-visible .ds-status-chev { color: #4a4f57; }"
+    },
+    {
+      "name": "Primary Action",
+      "kind": "button",
+      "refersTo": "action-primary",
+      "description": "The one blue bar per screen (Play, Continue, a recommended repair). Lit: keeps its blue, gains a white ring and a dark legend.",
+      "html": "<button class=\"ds-primary\"><svg width=\"30\" height=\"30\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\"><path d=\"M7 5l12 7-12 7z\"/></svg><span class=\"ds-primary-text\"><span class=\"ds-primary-title\">Play Skyrim</span><span class=\"ds-primary-desc\">Through Mod Organizer 2.</span></span><span class=\"ds-primary-legend\">A</span></button>",
+      "css": ".ds-primary { font-family: system-ui, sans-serif; display: flex; align-items: center; gap: 14px; width: 420px; min-height: 96px; padding: 20px 20px 20px 26px; background: #1a9fff; color: #00182c; border: none; border-radius: 6px; text-align: left; cursor: pointer; } .ds-primary-text { display: flex; flex-direction: column; gap: 2px; flex: 1; } .ds-primary-title { font-size: 20pt; font-weight: 700; } .ds-primary-desc { font-size: 12pt; } .ds-primary-legend { display: none; width: 24px; height: 24px; border-radius: 50%; background: #00182c; color: #f4f5f7; font-size: 9pt; font-weight: 700; align-items: center; justify-content: center; } .ds-primary:hover { filter: brightness(1.12); } .ds-primary:active { filter: brightness(0.89); } .ds-primary:focus-visible { outline: none; box-shadow: inset 0 0 0 3px #f4f5f7; } .ds-primary:focus-visible .ds-primary-legend { display: inline-flex; }"
+    },
+    {
+      "name": "Danger Row",
+      "kind": "button",
+      "refersTo": "row-danger",
+      "description": "A destructive choice: coral title on the ordinary row, never a red fill.",
+      "html": "<button class=\"ds-danger\"><span class=\"ds-danger-title\">Stop syncing...</span><span class=\"ds-danger-desc\">Leave the sync. Your mods stay on this machine.</span></button>",
+      "css": ".ds-danger { font-family: system-ui, sans-serif; display: flex; flex-direction: column; gap: 2px; width: 420px; padding: 14px 14px 14px 18px; background: #26292f; border: none; border-radius: 4px; text-align: left; cursor: pointer; } .ds-danger-title { font-size: 13pt; font-weight: 600; color: #ff8a80; } .ds-danger-desc { font-size: 12pt; color: #b8bdc4; } .ds-danger:hover { background: #32363d; } .ds-danger:focus-visible { outline: none; background: #f4f5f7; } .ds-danger:focus-visible .ds-danger-title { color: #b3261e; } .ds-danger:focus-visible .ds-danger-desc { color: #4a4f57; }"
+    },
+    {
+      "name": "Section Tabs",
+      "kind": "nav",
+      "refersTo": "tab",
+      "description": "Text-only tabs in the top bar, flanked by bumper legends.",
+      "html": "<nav class=\"ds-tabs\"><span class=\"ds-cap\">LB</span><button class=\"ds-tab ds-tab-on\">Home</button><button class=\"ds-tab\">Sync</button><button class=\"ds-tab\">Settings</button><span class=\"ds-cap\">RB</span></nav>",
+      "css": ".ds-tabs { font-family: system-ui, sans-serif; display: flex; align-items: center; gap: 4px; padding: 10px 24px; background: #23262b; } .ds-cap { font-size: 9pt; font-weight: 600; color: #f4f5f7; background: #3a3e45; border-radius: 4px; padding: 4px 12px; margin: 0 6px; } .ds-tab { font-family: system-ui, sans-serif; height: 36px; padding: 0 18px; border: none; border-radius: 4px; background: transparent; color: #b8bdc4; font-size: 12.5pt; font-weight: 600; cursor: pointer; } .ds-tab:hover { background: #26292f; } .ds-tab-on { background: #3a3e45; color: #f4f5f7; } .ds-tab:focus-visible { outline: none; background: #f4f5f7; color: #16181b; }"
+    },
+    {
+      "name": "Hint Bar",
+      "kind": "custom",
+      "refersTo": "hint-bar",
+      "description": "Bottom bar of live button hints, printed in the active device's glyphs.",
+      "html": "<div class=\"ds-hints\"><span class=\"ds-hint\"><span class=\"ds-disc\">Y</span>Check again</span><span class=\"ds-hint\"><span class=\"ds-disc\">A</span>Select</span><span class=\"ds-hint\"><span class=\"ds-disc\">B</span>Quit</span></div>",
+      "css": ".ds-hints { font-family: system-ui, sans-serif; display: flex; justify-content: flex-end; align-items: center; gap: 8px; height: 52px; padding: 4px 24px; background: #23262b; } .ds-hint { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 4px; color: #b8bdc4; font-size: 11.5pt; font-weight: 600; cursor: pointer; } .ds-hint:hover { background: #26292f; } .ds-disc { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: #f4f5f7; color: #16181b; font-size: 9pt; font-weight: 700; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "text-field",
+      "description": "Well-ground field with a seam stroke that turns white on focus.",
+      "html": "<input class=\"ds-field\" value=\"Steam Deck\" />",
+      "css": ".ds-field { font-family: system-ui, sans-serif; width: 360px; padding: 10px 14px; background: #16181b; color: #f4f5f7; border: 2px solid #3a3e45; border-radius: 4px; font-size: 15pt; } .ds-field::selection { background: #1a9fff; color: #00182c; } .ds-field:focus-visible { outline: none; border-color: #f4f5f7; }"
+    },
+    {
+      "name": "Warning Callout",
+      "kind": "custom",
+      "refersTo": "callout-warning",
+      "description": "Amber text on the amber well, for consequences the player should read before acting.",
+      "html": "<p class=\"ds-callout\">SKSE needs Skyrim 1.5.97. Downgrade first, then install SKSE.</p>",
+      "css": ".ds-callout { font-family: system-ui, sans-serif; max-width: 420px; margin: 0; padding: 12px 16px; border-radius: 4px; background: #3a3020; color: #ffc857; font-size: 12pt; }"
+    },
+    {
+      "name": "Sync Meter",
+      "kind": "custom",
+      "refersTo": "sync-meter",
+      "description": "8px well track with a Deck Icon Blue fill.",
+      "html": "<div class=\"ds-meter\"><div class=\"ds-meter-fill\"></div></div>",
+      "css": ".ds-meter { width: 320px; height: 8px; border-radius: 3px; background: #16181b; overflow: hidden; } .ds-meter-fill { width: 64%; height: 100%; border-radius: 3px; background: #1a9fff; transition: width 500ms cubic-bezier(0.33, 1, 0.68, 1); }"
+    },
+    {
+      "name": "Key Cap",
+      "kind": "button",
+      "refersTo": "key-cap",
+      "description": "On-screen keyboard key: lifted slate at rest, lit white on focus, blue when checked.",
+      "html": "<button class=\"ds-key\">Q</button><button class=\"ds-key ds-key-on\">Shift</button>",
+      "css": ".ds-key { font-family: system-ui, sans-serif; width: 58px; height: 54px; margin-right: 8px; border: none; border-radius: 4px; background: #32363d; color: #f4f5f7; font-size: 15pt; font-weight: 700; cursor: pointer; } .ds-key:hover { background: #3a3e45; } .ds-key:active { background: #16181b; } .ds-key-on { width: 124px; font-size: 11.5pt; font-weight: 600; background: #1a9fff; color: #00182c; } .ds-key:focus-visible { outline: none; background: #f4f5f7; color: #16181b; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Deck in Hand",
+    "overview": "**Creative North Star: \"Deck in Hand\"**\n\nModSync is part of the Steam Deck, not a poster on it. The window speaks the device's own vocabulary: a matte charcoal ground, flat rows with small corners, white legends, and the blue of the app icon as the one accent. A screen is a short list. Each line says what it is on the left and its state on the right, and the line that needs the player is the one that is lit. It is a native Qt window sized for 1280 × 800 at arm's length (type in Qt points, geometry in pixels), and everything is painted flat: no gradients, glows, sheens or shadows.\n\nFocus carries the identity. A controller never hovers, so the selected control is unmistakable without color: the focused row fills white, its text turns dark, and the button that chooses it is printed at its right edge in the glyphs of the device in hand (the Deck's A disc, an Xbox or PlayStation face button, or an Enter key cap). Nothing else lights up. With a mouse or a finger, rows never light; they only tint on hover and press.\n\nThe look deliberately replaces the earlier aurora-backdrop, glowing-teal-card dashboard. Icons in boxes on every tile, uppercase eyebrows and filled status chips are not part of this world.",
+    "keyCharacteristics": [
+      "Matte, flat, list-first; depth is tonal steps of charcoal only.",
+      "One blue (the app icon's) for the single primary action and for selection.",
+      "Focus is a lit white row with the device's own button legend.",
+      "State is a small dot plus a plain value word in the tone's color.",
+      "One system sans; hierarchy by size and weight, never tracking or case."
+    ],
+    "rules": [
+      {
+        "name": "The One Blue Rule",
+        "body": "Each screen has at most one blue action. When a repair (game version, SKSE) is recommended, the repair takes the blue bar and Play steps down to a plain row directly beneath it, still one press away.",
+        "section": "colors"
+      },
+      {
+        "name": "The Twin Tone Rule",
+        "body": "Every color that can sit on a row has a version for the lit row. Never paint a light-ground tone onto the white focus fill; switch to its on-focus twin. Text contrast against every surface is held to WCAG AA by the test suite.",
+        "section": "colors"
+      },
+      {
+        "name": "The Weight Not Tracking Rule",
+        "body": "Hierarchy comes from size and weight only. No uppercase labels, no letter-spacing, no eyebrows above titles.",
+        "section": "typography"
+      },
+      {
+        "name": "The Matte Rule",
+        "body": "No gradients, glows, sheens or shadows on any surface. A surface rises by being one charcoal step lighter, never by casting anything.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Lit Row Rule",
+        "body": "Focus is a lit row: the focused row fills white with dark text and prints the device's accept legend at its right edge; the primary bar keeps its blue and adds a white ring plus the legend. Nothing else glows.",
+        "section": "components"
+      },
+      {
+        "name": "The Dot-and-Word Rule",
+        "body": "A state is a small dot plus a plain value word in the tone's color, semibold. Never a filled chip, badge or pill background.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "**Do** keep exactly one Deck Icon Blue action per screen, and let a recommended repair take it from Play.",
+      "**Do** show focus as the lit white row with the active device's accept legend; on the blue bar, a 3px white ring plus the legend.",
+      "**Do** switch every tone to its on-focus twin when its row lights.",
+      "**Do** express state as a 10px dot and a semibold value word in the tone's color.",
+      "**Do** build depth from the charcoal steps (Well, Night, Bar Charcoal, Row Slate, Lifted Slate) and keep rows borderless at 4px corners.",
+      "**Do** print button hints in the glyphs of the device in hand.",
+      "**Do** keep every standard Home action visible at 1280 × 800 without scrolling."
+    ],
+    "donts": [
+      "**Don't** add gradients, glows, sheens, shadows or backdrop imagery; the only translucency is the scrim behind sheets.",
+      "**Don't** fill state words into chips or badges, or color a whole row by its state.",
+      "**Don't** put an icon on every row; icons belong to the hero bar, choice cards, toasts and the hint bar's device mark.",
+      "**Don't** use uppercase labels, letter-spaced eyebrows or a second typeface for display.",
+      "**Don't** light rows under a mouse or finger; hover and press tint, focus lights.",
+      "**Don't** redraw or recolor the app icon; it appears as shipped, at 32px in the top bar."
+    ]
+  }
+}

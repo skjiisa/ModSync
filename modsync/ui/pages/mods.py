@@ -66,7 +66,7 @@ class InstallSheet(Overlay):
 
     def __init__(self, host, on_installed, *, installer: InstallerBackend | None = None,
                  game: Game = SKYRIM_SE) -> None:
-        super().__init__(host, "Install Mod Organizer 2", eyebrow="Mod Organizer 2", width=900)
+        super().__init__(host, "Install Mod Organizer 2", width=900)
         self._installer = installer or Mo2LintBackend()
         self._game = game
         self._on_installed = on_installed
@@ -193,11 +193,12 @@ class Mo2Chooser(QWidget):
         self.installer = installer
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(12)
+        v.setSpacing(4)
         self.status = label("Looking for Mod Organizer 2 instances…", "secondary")
         v.addWidget(self.status)
+        v.addSpacing(6)
         self.found = QVBoxLayout()
-        self.found.setSpacing(12)
+        self.found.setSpacing(4)
         v.addLayout(self.found)
         self.found_tiles: list[Tile] = []
         self.browse = Tile("Choose a folder…", "Pick the folder of an existing portable instance.", "folder",
@@ -258,7 +259,7 @@ class ModsPage(Page):
         self.usvfs_busy = False
         self.open_mo2: Tile | None = None
         self.chooser: Mo2Chooser | None = None
-        self.header("Mod Organizer 2", state.instance_label if state.has_instance else "Mod Organizer 2",
+        self.header(state.instance_label if state.has_instance else "Mod Organizer 2",
                     "" if state.has_instance else
                     "No instance chosen yet. Pick the folder of an existing portable instance, or install a "
                     "fresh one.")
@@ -270,7 +271,7 @@ class ModsPage(Page):
             left.addWidget(self.chooser)
             left.addStretch(1)
             info = Panel()
-            info.add(label("WHY AN INSTANCE", "eyebrow", wrap=False))
+            info.add(label("Why an instance", "heading", wrap=False))
             info.add(label(
                 "ModSync works with a portable Mod Organizer 2 instance: one folder holding MO2, its "
                 "profiles, mods and downloads. That folder is what Play launches and what Sync shares.",
@@ -283,8 +284,8 @@ class ModsPage(Page):
     def _build_instance(self) -> None:
         state = self.service.state
         left, right = self.columns()
+        right.setSpacing(4)
         card = Panel()
-        card.add(label("INSTANCE", "eyebrow", wrap=False))
         card.add(label(state.instance_path, "secondary", selectable=True))
         self.setup_label = card.add(label("", "heading"))
         self.setup_label.setVisible(False)
@@ -305,16 +306,15 @@ class ModsPage(Page):
         left.addWidget(self.usvfs_note)
         left.addStretch(1)
 
-        self.open_mo2 = Tile("Open Mod Organizer 2", "Open the chosen instance. Play Skyrim on Home uses "
-                             "the profile selected in MO2, with SKSE when it is installed.", "play-circle",
+        self.open_mo2 = Tile("Open Mod Organizer 2", "Play on Home uses the profile you pick here.", "play-circle",
                              role="primary")
         self.open_mo2.clicked.connect(lambda: self.host.launch(play=False))
         right.addWidget(self.open_mo2)
-        folder = Tile("Open instance folder", "Show the instance in the file manager.", "folder")
+        folder = Tile("Open instance folder", "", "folder", size="compact")
         folder.clicked.connect(self._open_folder)
         right.addWidget(folder)
         if not state.syncing:
-            change = Tile("Change instance…", "Use a different MO2 instance folder on this machine.", "refresh")
+            change = Tile("Change instance…", "Use a different MO2 folder on this machine.", "refresh", size="compact")
             change.clicked.connect(self._change)
             right.addWidget(change)
         self.runtime_tile = Tile("Install Visual C++ runtime…", "Microsoft's 2015-2022 runtime (x64) for the "

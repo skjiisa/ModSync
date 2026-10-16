@@ -13,9 +13,9 @@ from modsync.games import SKYRIM_SE
 from modsync.service import GameStatus, SyncStatus
 from modsync.ui.input import Action
 from modsync.ui.pages import Page
-from modsync.ui.widgets import HeroTile, Panel, StatusRow, Tile, label
+from modsync.ui.widgets import HeroTile, StatusRow, Tile, label
 
-TAGLINE = "Install modding tools, then open MO2 or play."
+TAGLINE = "Install Mod Organizer 2 to start modding."
 
 
 class HomePage(Page):
@@ -35,11 +35,7 @@ class HomePage(Page):
         self._repair_section = "game"
         self._recommendation = ""
         self._optional = False
-        self.head = self.header(
-            "Launched from Steam" if steam else (state.instance_label if state.has_instance else "Welcome"),
-            SKYRIM_SE.name,
-            "Manage your modding setup on this machine." if state.has_instance else TAGLINE,
-        )
+        self.head = self.header(SKYRIM_SE.name, "" if state.has_instance else TAGLINE)
         self.steam_note = None
         if steam is not None:
             starts = ("Play and Open MO2 continue Steam's launch, including cloud saves." if state.has_instance else
@@ -52,9 +48,7 @@ class HomePage(Page):
         self.content_layout.addWidget(self.sync_warning)
 
         left, right = self.columns(1, 1)
-        left.setSpacing(12)
-        checks = Panel(margins=18, spacing=10)
-        checks.add(label("YOUR MODDING SETUP", "eyebrow", wrap=False))
+        left.setSpacing(4)
         self.mo2_row = StatusRow("Mod Organizer 2", "box")
         self.game_row = StatusRow("Game version", "mountain")
         self.skse_row = StatusRow("Script Extender (SKSE)", "layers")
@@ -63,27 +57,27 @@ class HomePage(Page):
                             (self.skse_row, "game"), (self.sync_row, "sync")):
             row.clicked.connect(lambda _=False, key=target: host.go(key))
             row.set_state("Checking", "off")
-            checks.add(row)
+            left.addWidget(row)
         self.sync_row.setVisible(state.syncing)
-        left.addWidget(checks)
-        self.sync_setup = Tile("Set up sync", "", "sync", size="compact", chevron=True)
+        self.sync_setup = StatusRow("Sync", "sync")
+        self.sync_setup.set_state("Not set up", "off")
         self.sync_setup.clicked.connect(lambda: host.go("sync"))
         self.sync_setup.setVisible(not state.syncing)
         left.addWidget(self.sync_setup)
-        self.steam_options = Tile("Steam launch…", "", "rocket",
-                                  size="compact", chevron=True)
-        self.steam_options.set_badge("Checking", "off")
+        self.steam_options = StatusRow("Steam launch", "rocket")
+        self.steam_options.set_state("Checking", "off")
         self.steam_options.clicked.connect(lambda: host.pages["system"].open_steam_settings())
         self.steam_options.setVisible(steam is None)
         left.addWidget(self.steam_options)
         self.copy_setup = Tile("Copy setup from another machine…", "", "devices", size="compact", chevron=True)
         self.copy_setup.clicked.connect(lambda: host.start_setup(copy_from_machine=True))
         self.copy_setup.setVisible(not state.has_instance and steam is None)
+        left.addSpacing(16)
         left.addWidget(self.copy_setup)
         left.addStretch(1)
 
         actions = QVBoxLayout()
-        actions.setSpacing(12)
+        actions.setSpacing(4)
         self.next_step = Tile("", "", "wrench", role="primary")
         self.next_step.clicked.connect(self._run_next_step)
         self.next_step.hide()
@@ -101,9 +95,9 @@ class HomePage(Page):
         self.install_mo2: Tile | None = None
         self.choose_mo2: Tile | None = None
         if state.has_instance:
-            self.play = HeroTile("Play Skyrim", "Use your MO2 profile and SKSE when installed.", "play")
+            self.play = HeroTile("Play Skyrim", "Through MO2 with your profile, and SKSE if it's installed.", "play")
             self.play.clicked.connect(lambda: host.launch(play=True))
-            self.open_mo2 = Tile("Open Mod Organizer 2", "Manage mods, profiles and load order.", "box")
+            self.open_mo2 = Tile("Open Mod Organizer 2", "Mods, profiles and load order.", "box", size="compact")
             self.open_mo2.clicked.connect(lambda: host.launch(play=False))
             actions.addWidget(self.play)
             actions.addWidget(self.open_mo2)
@@ -114,23 +108,24 @@ class HomePage(Page):
             self.setup = Tile("Guided setup", "Choose or install Mod Organizer 2.", "layers", size="compact")
             self.setup.clicked.connect(lambda: host.start_setup())
         else:
-            self.install_mo2 = HeroTile("Install Mod Organizer 2", "Set up a fresh MO2 installation for Skyrim.",
+            self.install_mo2 = HeroTile("Install Mod Organizer 2", "A fresh installation, set up for Skyrim.",
                                        "download")
             self.install_mo2.clicked.connect(lambda: host.pages["mods"].chooser.open_install())
-            self.choose_mo2 = Tile("Use an existing installation…", "Find MO2 here or choose its folder.",
+            self.choose_mo2 = Tile("Use an existing installation…", "Find one on this machine or pick its folder.",
                                    "folder", chevron=True)
             self.choose_mo2.clicked.connect(lambda: host.go("mods"))
             actions.addWidget(self.install_mo2)
             actions.addWidget(self.choose_mo2)
             actions.addWidget(self.next_step)
-            self.setup = Tile("Guided setup", "MO2, game and SKSE, then optional sync.", "layers", size="compact")
+            self.setup = Tile("Guided setup", "MO2, the game version and SKSE, then optional sync.", "layers",
+                              size="compact")
             self.setup.clicked.connect(lambda: host.start_setup())
             actions.addWidget(self.setup)
             self.play = Tile("Play Skyrim", "Choose a Mod Organizer 2 installation first.", "play", parent=self)
             self.play.setEnabled(False)
             self.play.hide()
         if steam is not None:
-            self.cancel_launch = Tile("Cancel launch", "Return to Steam without starting the game.", "close",
+            self.cancel_launch = Tile("Cancel launch", "Back to Steam without starting the game.", "close",
                                       size="compact")
             self.cancel_launch.clicked.connect(lambda: host.decide_launch(launchhook.EXIT_CANCEL))
             actions.addWidget(self.cancel_launch)
@@ -179,7 +174,7 @@ class HomePage(Page):
         elif st.steam_updating:
             self.game_row.set_state(str(vc.installed), "busy", "Steam is updating the game.")
         elif st.needs_downgrade:
-            self.game_row.set_state(f"Needs {st.wanted}", "warn", f"Installed: {vc.installed}.")
+            self.game_row.set_state(f"Needs {st.wanted}", "warn", f"Installed: {vc.installed}")
         elif st.pending_pin:
             self.game_row.set_state(str(vc.installed), "busy", "Close Steam to keep this version.")
         elif st.needs_pin:
@@ -189,11 +184,11 @@ class HomePage(Page):
         if st.awaiting_vault_version:
             self.skse_row.set_state("After sync", "off", "Wait for the source's version record.")
         elif st.skse_state == "ok":
-            self.skse_row.set_state("Ready", "ok", f"Built for {st.skse_runtime}.")
+            self.skse_row.set_state("Ready", "ok", f"Built for {st.skse_runtime}")
         elif st.skse_state in ("wrong", "several"):
             self.skse_row.set_state("Mismatch", "warn", "Install the matching SKSE build.")
         elif st.skse_state == "missing":
-            self.skse_row.set_state("Missing", "off", "Optional for some mods.")
+            self.skse_row.set_state("Not installed", "off", "Some mods need it.")
         else:
             self.skse_row.set_state("After the game", "off", "Check the game version first.")
         self.recommend_next_step(st, vc)
@@ -253,7 +248,7 @@ class HomePage(Page):
             self.next_step.setText(title)
             self.next_step.set_description(detail)
             self.next_step.set_icon(icon)
-            self.next_step.chevron.setVisible(repair is None)
+            self.next_step.set_chevron(repair is None)
         self.next_step.set_role("normal" if optional or self.install_mo2 is not None else "primary")
         self.next_step.setVisible(bool(title) and not (panel and panel.busy))
         if isinstance(self.play, HeroTile):
@@ -276,7 +271,7 @@ class HomePage(Page):
             text, tone = "On", "ok"
         else:
             text, tone = "Off", "off"
-        self.steam_options.set_badge(text, tone)
+        self.steam_options.set_state(text, tone)
 
     def _run_next_step(self) -> None:
         if self.host.busy:
@@ -325,7 +320,9 @@ class HomePage(Page):
         state = status.folder_state or "starting"
         pct = int(round(status.completion or 0))
         online = sum(1 for device in status.devices if device.connected)
-        detail = f"{online} of {len(status.devices)} devices online" if status.devices else "No other devices yet."
+        others = len(status.devices)
+        detail = (f"{online} of {others} other {'machine' if others == 1 else 'machines'} online" if others
+                  else "No other machines yet.")
         if pct >= 100 and state == "idle":
             self.sync_row.set_state("Up to date", "ok", detail)
         else:

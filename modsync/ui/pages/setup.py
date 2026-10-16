@@ -21,7 +21,7 @@ from modsync.ui.input import Action
 from modsync.ui.pages.game import GamePanel
 from modsync.ui.pages.mods import Mo2Chooser
 from modsync.ui.pages.sync import JoinPanel, create_vault
-from modsync.ui.widgets import Panel, PageHeader, Tile, scroller
+from modsync.ui.widgets import Panel, PageHeader, Tile, label, scroller
 
 STEPS = (
     ("Choose your Mod Organizer 2 installation",
@@ -39,7 +39,7 @@ class StepTrack(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.index = 0
-        self.setFixedHeight(8)
+        self.setFixedHeight(4)
 
     def set_index(self, index: int) -> None:
         self.index = index
@@ -52,8 +52,8 @@ class StepTrack(QWidget):
         w = (self.width() - gap * (len(STEPS) - 1)) / len(STEPS)
         for i in range(len(STEPS)):
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(theme.color("accent") if i <= self.index else theme.color("raised"))
-            p.drawRoundedRect(int(i * (w + gap)), 0, int(w), self.height(), 4, 4)
+            p.setBrush(theme.color("accent_deep") if i <= self.index else theme.color("raised"))
+            p.drawRoundedRect(int(i * (w + gap)), 0, int(w), self.height(), 2, 2)
 
 
 class SetupFlow(QWidget):
@@ -67,9 +67,14 @@ class SetupFlow(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(40, 18, 40, 20)
         outer.setSpacing(14)
+        progress = QHBoxLayout()
+        progress.setSpacing(16)
+        self.step_label = label("", "secondary", wrap=False)
+        progress.addWidget(self.step_label)
         self.track = StepTrack()
-        outer.addWidget(self.track)
-        self.head = PageHeader("", "")
+        progress.addWidget(self.track, 1, Qt.AlignmentFlag.AlignVCenter)
+        outer.addLayout(progress)
+        self.head = PageHeader("")
         outer.addWidget(self.head)
         self.stack = QStackedWidget()
         outer.addWidget(self.stack, 1)
@@ -79,8 +84,8 @@ class SetupFlow(QWidget):
         v1 = QVBoxLayout(step1)
         v1.setContentsMargins(0, 0, 0, 0)
         v1.setSpacing(12)
-        self.copy_route = Tile("Copy setup from another machine…", "Choose this before selecting MO2 to pair first.",
-                               "devices", size="compact")
+        self.copy_route = Tile("Copy setup from another machine…", "Pick this first if your mods are on another "
+                               "machine.", "devices", size="compact")
         self.copy_route.clicked.connect(self._choose_copy_route)
         v1.addWidget(self.copy_route)
         self.keep: Tile | None = None
@@ -173,7 +178,7 @@ class SetupFlow(QWidget):
     def go_to(self, index: int, *, focus: bool = True) -> None:
         self.index = max(0, min(index, len(STEPS) - 1))
         title, subtitle = STEPS[self.index]
-        self.head.eyebrow.setText(f"SETUP  ·  STEP {self.index + 1} OF {len(STEPS)}")
+        self.step_label.setText(f"Setup, step {self.index + 1} of {len(STEPS)}")
         self.head.title.setText(title)
         self.head.set_subtitle(subtitle)
         self.track.set_index(self.index)

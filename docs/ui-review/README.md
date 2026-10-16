@@ -19,7 +19,8 @@ entry point too.
 ![First-run Home](home-welcome.png)
 
 A repair runs from Home and shows its progress there. Play remains available
-with any launch consequence explained. A single outline marks focus.
+with any launch consequence explained. The focused row lights up white and
+shows the button that chooses it.
 
 ![Home with a repair](home.png)
 
@@ -88,7 +89,7 @@ focus.
 
 ## Settings
 
-Short descriptions keep the actions visible together. Settings details and
+Short descriptions keep the actions visible together. "How these settings work" and
 Controls open in sheets with the background-service explanation, Steam
 launch status, firewall ports and input shortcuts.
 

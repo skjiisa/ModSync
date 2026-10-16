@@ -54,10 +54,15 @@ class GamePanel(QWidget):
 
         # --- readout ---
         readout = Panel()
-        readout.add(label("INSTALLED", "eyebrow", wrap=False))
-        self.version = readout.add(label("…", "bignum", wrap=False))
+        installed = QHBoxLayout()
+        installed.setSpacing(12)
+        installed.addWidget(label("Installed", "secondary", wrap=False), 0, Qt.AlignmentFlag.AlignBaseline)
+        self.version = label("…", "title", wrap=False)
+        installed.addWidget(self.version, 0, Qt.AlignmentFlag.AlignBaseline)
+        installed.addStretch(1)
+        readout.layout_.addLayout(installed)
         chips = QHBoxLayout()
-        chips.setSpacing(8)
+        chips.setSpacing(20)
         self.wanted_chip = pill()
         self.skse_chip = pill()
         self.steam_chip = pill()
@@ -77,7 +82,7 @@ class GamePanel(QWidget):
 
         # --- actions ---
         actions = QVBoxLayout()
-        actions.setSpacing(12)
+        actions.setSpacing(4)
         self.downgrade = self._tile(
             "Downgrade…", "Switch Skyrim to the version your mods need. Original files are backed up.",
             "download", self._start_downgrade,
@@ -100,11 +105,9 @@ class GamePanel(QWidget):
             "Delete leftover backup", "Steam has replaced these files. Delete the old backup to free disk space.", "trash",
             self._discard_backup)
         self.refresh_tile = self._tile(
-            "Check again", "Re-read the installed version, SKSE and Steam's update state.", "refresh",
-            self.refresh, size="compact")
+            "Check again", "", "refresh", self.refresh, size="compact")
         self.details_tile = self._tile(
-            "Technical details", "Where these versions come from, and the files behind them.", "info",
-            self._show_details, size="compact")
+            "Technical details", "", "info", self._show_details, size="compact")
         for tile in (self.downgrade, self.skse, self.pin, self.unpin, self.adopt, self.restore, self.discard):
             tile.setVisible(False)
             actions.addWidget(tile)
@@ -243,7 +246,8 @@ class GamePanel(QWidget):
             lines.append(f"\"Restore original files\" puts back the files{came_from} from before your last downgrade.")
 
         theme.role(self.message, "warning" if warning else "note")
-        self.message.setText("\n".join(lines))
+        # The box's color carries the warning; the text needn't shout it too.
+        self.message.setText("\n".join(line.removeprefix("⚠ ") for line in lines))
         details = [vc.summary(), vc.skse_note()]
         if st.recipe_from:
             details.append(f"Available downgrade patches start from Skyrim {st.recipe_from}.")
@@ -331,7 +335,7 @@ class GamePanel(QWidget):
                 )
 
         self.host.confirm(
-            "Files from an earlier downgrade are still backed up",
+            "An earlier backup is still here",
             f"ModSync still has the {came_from}files it set aside before your last downgrade "
             f"({st.backup_bytes / 1e9:.1f} GB), and they differ from what is installed now. "
             "Downgrading again would replace that backup.",
@@ -379,7 +383,6 @@ class GamePanel(QWidget):
             [("go", f"Downgrade to {target}", "Takes a few minutes.", "primary", "download"),
              ("cancel", "Cancel", "", "normal", "close")],
             chosen,
-            eyebrow="Game version",
         )
 
     def _run_downgrade(self, target: str) -> None:
@@ -473,7 +476,6 @@ class GamePanel(QWidget):
                  ("cancel", "Cancel", "", "normal", "close")],
                 chosen,
                 default="cancel",
-                eyebrow="Game version",
             )
             return
         self._begin_file_operation("Restoring original files…")
@@ -584,8 +586,7 @@ class GamePage(Page):
 
     def __init__(self, host) -> None:
         super().__init__(host)
-        self.header("Game and SKSE", "Manage game version",
-                    "Match Skyrim and SKSE to the version your mods need.")
+        self.header("Game version", "Match Skyrim and SKSE to the version your mods need.")
         self.panel = GamePanel(host, refresh_index=host.steam_launch is None)
         self.panel.status.connect(host.notify)
         self.panel.busyChanged.connect(lambda on: host.set_busy("game", on))

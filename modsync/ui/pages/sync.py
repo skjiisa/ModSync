@@ -2,7 +2,7 @@
 
 Before the user opts in it offers two big choices: share this instance from
 here, or copy another machine's. Once a vault exists it becomes the live
-view: a completion ring, the devices, and pairing (a big PIN for "Pair over
+view: how much is in sync, the devices, and pairing (a big PIN for "Pair over
 network", or the code and its QR). "Stop syncing" leaves the vault and keeps
 the instance.
 
@@ -17,7 +17,7 @@ import threading
 
 import shiboken6
 
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
@@ -28,7 +28,7 @@ from modsync.ui import worker
 from modsync.ui.input import Action
 from modsync.ui.overlays import BeaconSheet, CodeSheet, KeyboardSheet, PinSheet
 from modsync.ui.pages import Page
-from modsync.ui.widgets import Dot, Panel, ProgressRing, Tile, clear_layout, label
+from modsync.ui.widgets import Dot, Panel, SyncMeter, Tile, clear_layout, label
 
 
 def _validate_code(text: str) -> str | None:
@@ -148,7 +148,7 @@ class JoinPanel(QWidget):
 
     def enter_code(self) -> None:
         KeyboardSheet(self.host, "Pairing code", "Paste the pairing code from the other machine.",
-                      self.join_code, placeholder="MODSYNC1-…", validate=_validate_code, eyebrow="Join").open()
+                      self.join_code, placeholder="MODSYNC1-…", validate=_validate_code).open()
 
     def join_code(self, text: str) -> None:
         path = self.service.state.instance_path
@@ -194,9 +194,8 @@ class SyncPage(Page):
         self._pair_stop: threading.Event | None = None
         self._code: str = ""
         self._was_complete: bool | None = None
-        self.header("Sync", "Sync with another machine",
-                    "Optional. Mods, load order and downloads stay identical, and each machine keeps its own "
-                    "game paths. A desktop and a Steam Deck, for example.")
+        self.header("Sync", "Keep the same mods, load order and downloads on more than one machine, such as a "
+                            "desktop and a Steam Deck. Each keeps its own game paths.")
         if self.live:
             self._build_live()
         elif state.has_instance:
@@ -224,7 +223,6 @@ class SyncPage(Page):
         self.join = JoinPanel(self.host)
         self.join.setVisible(False)
         self.join_panel = Panel()
-        self.join_panel.add(label("COPY FROM ANOTHER MACHINE", "eyebrow", wrap=False))
         self.join_panel.add(self.join)
         self.join_panel.setVisible(False)
         self.content_layout.addWidget(self.join_panel)
@@ -245,44 +243,34 @@ class SyncPage(Page):
     # --- live ----------------------------------------------------------------------
     def _build_live(self) -> None:
         left, right = self.columns(1, 1)
-        gauge = Panel()
-        top = QHBoxLayout()
-        top.setSpacing(24)
-        self.ring = ProgressRing(190)
-        self.ring.set_value(0, "starting", busy=True)
-        top.addWidget(self.ring)
-        info = QVBoxLayout()
-        info.setSpacing(6)
-        info.addWidget(label("THIS MACHINE", "eyebrow", wrap=False))
-        self.folder_state = label("Starting Syncthing…", "heading")
-        info.addWidget(self.folder_state)
-        self.folder_detail = label("", "secondary")
-        info.addWidget(self.folder_detail)
-        info.addStretch(1)
-        top.addLayout(info, 1)
-        gauge.layout_.addLayout(top)
+        right.setSpacing(4)
+        gauge = Panel(spacing=12)
+        self.folder_state = gauge.add(label("Starting Syncthing…", "heading"))
+        self.meter = gauge.add(SyncMeter())
+        self.meter.set_value(0, "starting", busy=True)
+        self.folder_detail = gauge.add(label("", "secondary"))
         left.addWidget(gauge)
         devices = Panel()
-        devices.add(label("DEVICES", "eyebrow", wrap=False))
+        devices.add(label("Devices", "heading", wrap=False))
         self.devices = QVBoxLayout()
         self.devices.setSpacing(10)
         devices.layout_.addLayout(self.devices)
         left.addWidget(devices)
         left.addStretch(1)
 
-        self.pair_tile = Tile("Pair over network…", "Show a PIN so another machine can find and join this one.",
-                              "radar", role="primary")
+        self.pair_tile = Tile("Pair over network…", "Show a PIN that another machine can enter.", "radar",
+                              role="primary")
         self.pair_tile.clicked.connect(self.pair_network)
-        code = Tile("Show pairing code", "The code and QR another machine can join with.", "qr")
+        code = Tile("Show pairing code", "A code and QR code for another machine.", "qr", size="compact")
         code.clicked.connect(self.show_code)
-        add = Tile("Add a machine by code…", "Paste the pairing code of a machine to add.", "plus")
+        add = Tile("Add a machine by code…", "Paste the other machine's pairing code.", "plus", size="compact")
         add.clicked.connect(self.add_device)
-        rescan = Tile("Rescan", "Look for changed files now instead of waiting.", "refresh", size="compact")
+        rescan = Tile("Rescan", "Look for changed files now.", "refresh", size="compact")
         rescan.clicked.connect(self.rescan)
-        open_ui = Tile("Open Syncthing UI", "The engine underneath, in your browser.", "globe", size="compact")
+        open_ui = Tile("Open Syncthing UI", "The sync engine's own page, in your browser.", "globe", size="compact")
         open_ui.clicked.connect(self.open_ui)
-        stop = Tile("Stop syncing…", "Leave the vault but keep using this instance here. Mods are not deleted.",
-                    "stop", role="danger", size="compact")
+        stop = Tile("Stop syncing…", "Leave the sync. Your mods stay on this machine.", "stop", role="danger",
+                    size="compact")
         stop.clicked.connect(self.stop_sync)
         for tile in (self.pair_tile, code, add, rescan, open_ui, stop):
             right.addWidget(tile)
@@ -326,20 +314,21 @@ class SyncPage(Page):
         for dev in status.devices:
             row = QHBoxLayout()
             row.setSpacing(12)
-            row.addWidget(Dot("ok" if dev.connected else "off"))
-            row.addWidget(label(dev.name or dev.id[:13], "heading", wrap=False), 1)
-            row.addWidget(label("connected" if dev.connected else "offline", "ok" if dev.connected else "muted",
+            row.addWidget(Dot("ok" if dev.connected else "off"), 0, Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(label(dev.name or dev.id[:13], wrap=False), 1)
+            row.addWidget(label("Connected" if dev.connected else "Offline", "ok" if dev.connected else "muted",
                                 wrap=False))
             self.devices.addLayout(row)
 
         state = status.folder_state or "starting"
         pct = int(round(status.completion or 0))
-        self.ring.set_value(pct, state, busy=state in ("syncing", "scanning", "starting"))
+        self.meter.set_value(pct, state, busy=state in ("syncing", "scanning", "starting"))
         self.folder_state.setText({"idle": "Up to date", "syncing": "Syncing", "scanning": "Scanning files",
                                    "starting": "Starting Syncthing"}.get(state, state.capitalize()))
         connected = sum(1 for d in status.devices if d.connected)
-        self.folder_detail.setText(f"Folder: {state}   ·   {pct}% in sync   ·   "
-                                   f"{connected} of {len(status.devices)} device(s) online")
+        others = len(status.devices)
+        self.folder_detail.setText(f"{pct}% in sync here. {connected} of {others} other "
+                                   f"{'machine' if others == 1 else 'machines'} online.")
         self.progress.emit(state, pct)
         self.host.syncStatus.emit(status)
         complete = pct >= 100 and state == "idle"
@@ -373,7 +362,7 @@ class SyncPage(Page):
                              on_failed=lambda m: self.host.notify(f"⚠ {m}"))
 
         KeyboardSheet(self.host, "Add a machine", "Paste the pairing code from the other machine.", add,
-                      placeholder="MODSYNC1-…", validate=_validate_code, eyebrow="Sync").open()
+                      placeholder="MODSYNC1-…", validate=_validate_code).open()
 
     def pair_network(self) -> None:
         if self._pairing:
@@ -455,7 +444,6 @@ class SyncPage(Page):
             [("stop", "Stop syncing", "", "danger", "stop"), ("cancel", "Keep syncing", "", "normal", "close")],
             chosen,
             default="cancel",
-            eyebrow="Sync",
         )
 
     def shutdown(self) -> None:
