@@ -8,7 +8,7 @@ import threading
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService
@@ -308,6 +308,45 @@ class CopyTests(unittest.TestCase):
         svc._index_seen = (0, svc._index_seen[1] - svc.INDEX_STALL_S - 1)
         self.assertEqual(svc.advance_copy().phase, "receiving")
 
+    def test_a_source_emptied_since_its_code_is_taken_as_empty_eventually(self):
+        self.fake.connected, self.fake.remote = True, "valid"  # nothing of the 40 ever comes
+        self.assertEqual(self.poll().phase, "indexing")
+        self.svc._index_seen = (0, self.svc._index_seen[1] - self.svc.INDEX_STALL_S - 1)
+        self.assertEqual(self.poll().phase, "receiving")
+
+    def test_a_one_off_status_shows_files_arriving_as_copying(self):
+        self.source_ready()
+        self.fake.folder.update(state="syncing", needTotalItems=123)
+        fresh = ModSyncService(manager=self.manager)  # as `modsync sync status` makes one
+        self.assertEqual(fresh.status().copy.phase, "receiving")
+        self.fake.folder.update(state="idle", needTotalItems=0)
+        self.assertEqual(fresh.status().copy.phase, "indexing")  # nothing to tell by yet
+
+    def test_conflicts_wait_for_the_copy(self):
+        from modsync.sync import conflicts
+
+        profile = self.instance / "profiles" / "Default"
+        profile.mkdir(parents=True)
+        (profile / "modlist.txt").write_text("+Mine\n")
+        (profile / "modlist.sync-conflict-20261004-101500-SRCDEVI.txt").write_text("+Theirs\n")
+        self.assertEqual(self.svc.conflicts(), [])
+        self.assertEqual(self.svc.status().conflicts, 0)
+        with self.assertRaisesRegex(RuntimeError, "still being copied"):
+            self.svc.resolve_conflicts(conflicts.find(self.instance), "other")
+        self.assertEqual((profile / "modlist.txt").read_text(), "+Mine\n")
+
+    def test_versioning_cleared_elsewhere_is_not_taken_for_the_working_directory(self):
+        cwd = self.tmp / "cwd"
+        cwd.mkdir()
+        (cwd / "junk").write_text("x")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(cwd)
+        archive = Path(self.fake.config["versioning"]["fsPath"])
+        self.fake.config["versioning"] = {"type": "trashcan", "fsPath": ""}  # in Syncthing's own UI
+        self.svc._revert_again(self.fake, "modsync-v", archive)
+        self.assertEqual(self.fake.reverts, 1)
+        self.assertFalse((archive / "during-copy-1").exists())
+
     def test_a_relative_instance_path_is_made_absolute(self):
         svc = ModSyncService(manager=self.manager)
         svc.stop_sync()
@@ -416,6 +455,12 @@ class LaunchCheckTests(unittest.TestCase):
         State.update(sync_paused=True)
         self.manager.fake.folder.update(needTotalItems=3)
         self.assertEqual(self.svc.launch_check().warnings, [])
+
+    def test_does_not_start_syncthing_to_ask(self):
+        self.manager.running = False
+        self.manager.start = Mock()
+        self.assertEqual(self.svc.launch_check().blocked, "")
+        self.manager.start.assert_not_called()
 
     def test_not_syncing_skips_syncthing_entirely(self):
         State(instance_path=str(self.instance)).save()

@@ -43,6 +43,9 @@ class _Vault(unittest.TestCase):
                          side_effect=lambda *a, **k: ModSyncService(manager=self.manager))
         services.start()
         self.addCleanup(services.stop)
+        in_use = patch("modsync.mo2.usvfs.in_use", return_value=False)  # MO2 isn't running anywhere
+        self.in_use = in_use.start()
+        self.addCleanup(in_use.stop)
 
     def write(self, rel, text):
         path = self.instance / rel
@@ -134,6 +137,35 @@ class SyncConflictsCli(_Vault):
         self.assertIn("Close Mod Organizer 2", out)
         self.assertEqual((self.profile / "modlist.txt").read_text(), "+Mine\n")
 
+
+    def test_refuses_while_mo2_runs_outside_modsync(self):
+        self.profile_conflict()
+        self.in_use.return_value = True  # started by Steam, say
+        code, out = run_cli("sync", "conflicts", "keep", "other", "profiles/Default/modlist.txt")
+        self.assertEqual(code, 1)
+        self.assertIn("Close Mod Organizer 2", out)
+        self.assertEqual((self.profile / "modlist.txt").read_text(), "+Mine\n")
+        self.in_use.assert_called_with(self.instance)
+
+    def test_a_file_with_several_other_versions_needs_one_named(self):
+        self.write("profiles/Default/modlist.txt", "+Mine\n")
+        self.write("profiles/Default/modlist.sync-conflict-20261003-090000-SRCDEVI.txt", "+OLD\n")
+        newer = self.write(f"profiles/Default/modlist.{STAMP}.txt", "+NEW\n")
+        code, out = run_cli("sync", "conflicts", "keep", "other", "profiles/Default/modlist.txt")
+        self.assertEqual(code, 1)
+        self.assertIn("has 2 other versions", out)
+        self.assertIn(f"profiles/Default/modlist.{STAMP}.txt", out)
+        self.assertEqual((self.profile / "modlist.txt").read_text(), "+Mine\n")
+        code, out = run_cli("sync", "conflicts", "keep", "other", str(newer))
+        self.assertEqual(code, 0, out)
+        self.assertEqual((self.profile / "modlist.txt").read_text(), "+NEW\n")
+
+    def test_waits_for_a_copy(self):
+        self.profile_conflict()
+        State.update(copy_phase="receiving", copy_source="SRCDEVICE-1")
+        code, out = run_cli("sync", "conflicts")
+        self.assertEqual(code, 0)
+        self.assertIn("still being copied", out)
 
 class ResolveAsOne(_Vault):
     def test_a_profile_is_settled_whole_or_not_at_all(self):

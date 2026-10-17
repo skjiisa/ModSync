@@ -568,7 +568,10 @@ class ModSyncService:
                 progress.phase = "waiting"
                 return progress
             if not self._index_complete(int(remote.get("sequence") or 0), st.copy_expected, observe):
-                progress.phase = "indexing"
+                # A one-off look (`modsync sync status`) has no earlier poll to
+                # time the list by; files arriving show it has come.
+                if observe or self._index_seen is not None or not need:
+                    progress.phase = "indexing"
                 return progress
             if not self._copy_settled(status, ready, observe) or not act:
                 return progress
@@ -616,7 +619,7 @@ class ModSyncService:
         it, so the revert itself waits for a later, settled poll."""
         folder = client.get_folder(fid)
         versioning = dict(folder.get("versioning") or {})
-        current = Path(versioning.get("fsPath") or "")
+        current = Path(versioning["fsPath"]) if versioning.get("fsPath") else None  # not Path(""), the CWD
         if archive is not None and self._file_count(current):
             n = 1
             while (archive / f"during-copy-{n}").exists():
@@ -658,8 +661,7 @@ class ModSyncService:
             return quiet >= (self.INDEX_QUIET_S if received > 0 else self.INDEX_STALL_S)
         if received >= expected:  # an empty vault (0) is complete with nothing received
             return quiet >= self.INDEX_QUIET_S
-        if received <= 0:
-            return False
+        # Short of what the code promised: the source may have changed since.
         return quiet >= self.INDEX_STALL_S
 
     @staticmethod
@@ -709,7 +711,10 @@ class ModSyncService:
             return LaunchCheck()
         status = None
         try:
-            status = self.status()
+            # Starting Syncthing here would hold Play up to 40 s, and a daemon
+            # that has only just started knows nothing from the others yet.
+            if self.manager.running:
+                status = self.status()
         except Exception as exc:
             log.info("launch check: sync status unavailable: %s", exc)
         st = self.state  # as status() just read it
@@ -741,8 +746,8 @@ class ModSyncService:
     def conflicts(self) -> list[conflicts.Conflict]:
         """Every conflict waiting for a choice. Always walks the instance."""
         path = self.state.instance_path
-        if not self.state.syncing or not path:
-            return []
+        if not self.state.syncing or not path or self.state.copying:
+            return []  # while copying, the copy's revert settles what differs
         started = time.monotonic()
         found = conflicts.find(path)
         self._conflict_cache = (started, time.monotonic() - started, len(found))
@@ -764,7 +769,11 @@ class ModSyncService:
         instance = Path(self.state.instance_path or "")
         if not all(c.path.is_relative_to(instance) for c in group):
             raise RuntimeError("That file isn't in this instance.")
-        if self.launcher.running():
+        if self.reload_state().copying:
+            # The copy's own revert settles these: a choice made now is undone by it.
+            raise RuntimeError("Mods are still being copied. Choose once the copy has finished.")
+        # MO2 started by Steam or by another ModSync isn't in our Launcher.
+        if self.launcher.running() or usvfs.in_use(instance):
             raise RuntimeError("Close Mod Organizer 2 and the game first.")
         gone = [c for c in group if not c.path.is_file()]
         if gone:

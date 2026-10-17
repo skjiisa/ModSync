@@ -246,6 +246,10 @@ def _sync_conflicts(args: list[str]) -> int:
     if not service.state.syncing:
         print("Sync is off on this machine, so there are no conflicts to look for.")
         return 0
+    if service.state.copying:
+        print("Mods are still being copied from another machine. Whatever differs is set aside when it "
+              "finishes, so there is nothing to choose yet.")
+        return 0
     instance = Path(service.state.instance_path or "")
     found = service.conflicts()
     if not args:
@@ -262,11 +266,17 @@ def _sync_conflicts(args: list[str]) -> int:
         return 0
     keep, target = args[1], args[2]
     wanted = Path(target).expanduser()
-    match = next((c for c in found if wanted in (c.original, c.path)
-                  or target in (c.relative(instance), c.path.relative_to(instance).as_posix())), None)
-    if match is None:
+    matches = [c for c in found if wanted in (c.original, c.path)
+               or target in (c.relative(instance), c.path.relative_to(instance).as_posix())]
+    if not matches:
         print(f"No conflict for {target}. 'modsync sync conflicts' lists them.")
         return 1
+    if len(matches) > 1:
+        print(f"{target} has {len(matches)} other versions. Name the one to settle:")
+        for c in matches:
+            print(f"    {c.path.relative_to(instance).as_posix()}")
+        return 1
+    match = matches[0]
     group = conflicts.related(found, match)
     try:
         archive = service.resolve_conflicts(group, keep)

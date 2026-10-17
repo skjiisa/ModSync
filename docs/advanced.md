@@ -319,7 +319,11 @@ lost change from an intentional one.
 `modsync sync conflicts` lists them from the command line with the same
 descriptions, and `modsync sync conflicts keep current|other <file>` settles
 one (with the rest of its profile, for a mod list, plugins or load order).
-`modsync sync status` shows the vault, the machines, any copy under way and
+When a file has more than one other version, name the conflict copy itself.
+Either way, a choice waits until MO2, and anything started from it, is closed,
+including an MO2 that Steam or another ModSync started. While a copy from
+another machine is under way there is nothing to choose: whatever differs is
+set aside when the copy finishes. `modsync sync status` shows the vault, the machines, any copy under way and
 the number of conflicts.
 
 Looking through `mods/` reads every file name in it. On a large instance the
