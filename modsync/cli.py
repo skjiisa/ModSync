@@ -270,7 +270,7 @@ def _sync_conflicts(args: list[str]) -> int:
     group = conflicts.related(found, match)
     try:
         archive = service.resolve_conflicts(group, keep)
-    except RuntimeError as exc:
+    except (RuntimeError, OSError) as exc:
         print(exc)
         return 1
     which = "the version in use" if keep == "current" else "the other version"

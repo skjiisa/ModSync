@@ -613,17 +613,24 @@ class SyncPage(Page):
 
     # --- review: conflicts and set-aside files ---
     def review_conflicts(self) -> None:
-        worker.run_async(self.service.conflicts, on_done=self._next_conflict,
+        worker.run_async(self._find_next_conflict, on_done=self._next_conflict,
                          on_failed=lambda m: self.host.notify(f"⚠ {m}"))
 
-    def _next_conflict(self, found: list) -> None:
+    def _find_next_conflict(self) -> tuple[list, list, list[list[str]]]:
+        """Off the GUI thread: the walk, and reading both versions to describe
+        them, which for a download can mean gigabytes."""
+        found = self.service.conflicts()
+        group = conflicts.related(found, found[0]) if found else []
+        return found, group, [conflicts.differences(g) for g in group]
+
+    def _next_conflict(self, result: tuple[list, list, list[list[str]]]) -> None:
         if not shiboken6.isValid(self):
             return
+        found, group, differences = result
         if not found:
             self.host.notify("No conflicts left.", "ok")
             self.refresh()
             return
-        group = conflicts.related(found, found[0])
         c = group[0]
         instance = self.service.state.instance_path or ""
         # Which machine made either change isn't known (see modsync.sync.conflicts).
@@ -641,8 +648,8 @@ class SyncPage(Page):
             intro = (f"The {changed} of profile {profile} changed on two machines before they synced. "
                      "They're decided together, so the profile stays as one machine had it.")
         details = []
-        for g in group:
-            lines = "\n".join(f"•  {line}" for line in conflicts.differences(g))
+        for g, described in zip(group, differences):
+            lines = "\n".join(f"•  {line}" for line in described)
             details.append(lines if len(group) == 1 else f"{g.original.name}:\n{lines}")
         rest = len(found) - len(group)
         more = f"\n\n{rest} more after this." if rest else ""

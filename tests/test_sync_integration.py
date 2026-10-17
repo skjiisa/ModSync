@@ -508,6 +508,58 @@ class SyncthingIntegration(unittest.TestCase):
                 b.stop()
                 os.environ.pop("XDG_CONFIG_HOME", None)
 
+    def test_a_file_written_again_during_the_copy_keeps_both_versions(self) -> None:
+        """Trash-can versioning keeps one version per path. A file set aside by
+        the first revert and written again before the copy finishes must not
+        replace the version from before the join."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            os.environ["XDG_CONFIG_HOME"] = str(tmp / "cfg")
+            inst_a, inst_b = tmp / "A" / "MO2", tmp / "B" / "MO2"
+            for path, text in ((inst_a / "mods" / "OnlyA" / "x.esp", "only A"),
+                               (inst_b / "mods" / "OnlyB" / "y.esp", "before the join")):
+                path.parent.mkdir(parents=True)
+                path.write_text(text)
+            (a, port_a), (b, port_b) = self._two_nodes(tmp)
+            try:
+                with a.client() as ca, b.client() as cb:
+                    id_a = ca.my_id()
+                    pairing.add_peer_device(ca, cb.my_id(), "B", addresses=[f"tcp://127.0.0.1:{port_b}"])
+                    pairing.share_instance_folder(ca, "modsync-again", inst_a, [cb.my_id()])
+                    pairing.add_peer_device(cb, id_a, "A", addresses=[f"tcp://127.0.0.1:{port_a}"])
+                with a.client() as ca:
+                    deadline = time.monotonic() + 60
+                    while time.monotonic() < deadline and ca.folder_status("modsync-again")["state"] != "idle":
+                        time.sleep(0.5)
+                    sequence = ca.folder_status("modsync-again")["sequence"]
+                service = ModSyncService(manager=b)
+                service.INDEX_QUIET_S = 3.0
+                service.join_vault(PairingCode(id_a, "modsync-again", "A", sequence), inst_b)
+                archive = Path(service.state.copy_archive)
+                rewritten = False
+                deadline = time.monotonic() + 120
+                while time.monotonic() < deadline and service.state.copy_phase:
+                    progress = service.advance_copy()
+                    if progress and progress.phase == "setting-aside" and not rewritten:
+                        self.assertEqual((archive / "mods" / "OnlyB" / "y.esp").read_text(), "before the join")
+                        (inst_b / "mods" / "OnlyB").mkdir(exist_ok=True)
+                        (inst_b / "mods" / "OnlyB" / "y.esp").write_text("written during the copy")
+                        with b.client() as cb:
+                            cb.rescan("modsync-again")
+                        rewritten = True
+                    time.sleep(1)
+                self.assertTrue(rewritten)
+                self.assertEqual(service.state.copy_phase, "", "copy did not finish (see B.log)")
+                self.assertEqual((archive / "mods" / "OnlyB" / "y.esp").read_text(), "before the join")
+                self.assertEqual((archive / "during-copy-1" / "mods" / "OnlyB" / "y.esp").read_text(),
+                                 "written during the copy")
+                self.assertFalse((inst_b / "mods" / "OnlyB" / "y.esp").exists())
+                self.assertFalse((inst_a / "mods" / "OnlyB").exists())
+            finally:
+                a.stop()
+                b.stop()
+                os.environ.pop("XDG_CONFIG_HOME", None)
+
     def test_conflicts_are_found_and_settled_on_every_machine(self) -> None:
         """Both machines change a mod list and a mod's INI while B is paused.
         Syncthing keeps B's newer files and makes conflict copies of A's, on

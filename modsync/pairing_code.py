@@ -6,7 +6,7 @@ files went when the code was made (its Syncthing sequence), so a machine
 copying the vault can tell when it has the whole list. Syncthing's own global
 discovery handles actually connecting the two device IDs, so no IP addresses
 are needed. Codes without a sequence (older versions) still decode, and older
-versions ignore it.
+versions ignore it. A sequence of 0 means the vault had nothing in it.
 """
 
 from __future__ import annotations
@@ -23,11 +23,11 @@ class PairingCode:
     device_id: str
     folder_id: str
     label: str = ""
-    sequence: int = 0
+    sequence: int | None = None  # None: not known (older versions never say)
 
     def encode(self) -> str:
         data = {"d": self.device_id, "f": self.folder_id, "l": self.label}
-        if self.sequence:
+        if self.sequence is not None:
             data["s"] = self.sequence
         raw = json.dumps(data, separators=(",", ":"))
         body = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
@@ -42,4 +42,4 @@ class PairingCode:
         raw = base64.urlsafe_b64decode(code + padding).decode("utf-8")
         data = json.loads(raw)
         return cls(device_id=data["d"], folder_id=data["f"], label=data.get("l", ""),
-                   sequence=int(data.get("s") or 0))
+                   sequence=None if data.get("s") is None else int(data["s"]))

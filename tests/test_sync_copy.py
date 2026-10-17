@@ -4,9 +4,11 @@ only sync both ways once nothing local is left."""
 
 import os
 import tempfile
+import threading
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService
@@ -223,6 +225,111 @@ class CopyTests(unittest.TestCase):
         self.poll()
         self.assertEqual(self.fake.reverts, 1)
         self.assertEqual(self.fake.config["type"], "receiveonly")
+
+    def test_a_later_revert_never_replaces_what_the_first_set_aside(self):
+        """Trash-can versioning keeps one version per path, so a file written
+        during the copy must not be reverted into the folder holding the
+        version from before the join."""
+        archive = Path(self.fake.config["versioning"]["fsPath"])
+        self.source_ready()
+        self.fake.folder["receiveOnlyTotalItems"] = 1
+        self.poll()
+        self.poll()  # the first revert
+        self.assertEqual(self.fake.reverts, 1)
+        (archive / "mods" / "Mine").mkdir(parents=True)
+        (archive / "mods" / "Mine" / "a.esp").write_text("from before the join")
+        self.fake.folder["receiveOnlyTotalItems"] = 1  # written again during the copy
+        self.poll()
+        self.poll()
+        self.assertEqual(self.fake.reverts, 1)  # not into the same folder
+        self.assertEqual(self.fake.config["versioning"]["fsPath"], str(archive / "during-copy-1"))
+        self.poll()
+        self.poll()
+        self.assertEqual(self.fake.reverts, 2)
+        self.assertEqual((archive / "mods" / "Mine" / "a.esp").read_text(), "from before the join")
+        self.assertEqual(self.poll().phase, "setting-aside")
+        self.assertEqual(self.poll().phase, "done")
+        self.assertEqual(State.load().set_aside, str(archive))
+
+    def test_a_step_that_waited_for_the_locks_acts_on_the_state_then(self):
+        from modsync import service as service_module
+
+        self.source_ready()
+        original = service_module._copy_owner
+
+        @contextmanager
+        def finished_meanwhile(**kw):
+            State.update(copy_phase="", copy_source="", copy_archive="")  # the other process finished
+            with original(**kw) as owner:
+                yield owner
+
+        with patch.object(service_module, "_copy_owner", finished_meanwhile):
+            self.assertIsNone(self.svc.advance_copy())
+        self.assertEqual(State.load().copy_phase, "")
+        self.assertEqual(self.fake.reverts, 0)
+
+    def test_leaving_waits_for_a_copy_step_under_way(self):
+        from modsync import service as service_module
+
+        self.source_ready()
+        left = threading.Event()
+
+        def leave():
+            ModSyncService(manager=self.manager).stop_sync()
+            left.set()
+
+        with service_module._copy_owner() as held:  # the background service mid-step
+            self.assertTrue(held)
+            thread = threading.Thread(target=leave)
+            thread.start()
+            self.assertFalse(left.wait(0.3))
+            self.assertEqual(State.load().folder_id, "modsync-v")
+        thread.join(5)
+        self.assertTrue(left.is_set())
+        self.assertIsNone(State.load().folder_id)
+
+    def test_an_empty_vault_is_copied(self):
+        svc = ModSyncService(manager=self.manager)
+        svc.stop_sync()
+        svc.join_vault(PairingCode("SRC", "modsync-v", "Desktop", 0), self.instance)
+        svc.INDEX_QUIET_S = 0.0
+        self.fake.connected, self.fake.remote, self.fake.received = True, "valid", 0
+        phases = [svc.advance_copy().phase for _ in range(4)]
+        self.assertEqual(phases[-1], "done", phases)
+
+    def test_an_older_code_with_nothing_received_waits_for_the_stall_limit(self):
+        svc = ModSyncService(manager=self.manager)
+        svc.stop_sync()
+        svc.join_vault(PairingCode("SRC", "modsync-v", "Desktop"), self.instance)
+        self.assertEqual(State.load().copy_expected, -1)
+        svc.INDEX_QUIET_S = 0.0
+        self.fake.connected, self.fake.remote, self.fake.received = True, "valid", 0
+        self.assertEqual(svc.advance_copy().phase, "indexing")
+        svc._index_seen = (0, svc._index_seen[1] - svc.INDEX_STALL_S - 1)
+        self.assertEqual(svc.advance_copy().phase, "receiving")
+
+    def test_a_relative_instance_path_is_made_absolute(self):
+        svc = ModSyncService(manager=self.manager)
+        svc.stop_sync()
+        cwd = os.getcwd()
+        os.chdir(self.tmp)
+        self.addCleanup(os.chdir, cwd)
+        svc.join_vault(PairingCode("SRC", "modsync-v", "Desktop", 40), "MO2")
+        self.assertEqual(State.load().instance_path, str(self.instance))
+        self.assertEqual(self.fake.config["path"], str(self.instance))
+        self.assertTrue(Path(self.fake.config["versioning"]["fsPath"]).is_absolute())
+        self.assertTrue(State.load().copy_archive.startswith(str(self.instance)))
+
+    def test_the_sequence_given_out_is_unknown_until_the_first_scan(self):
+        svc = ModSyncService(manager=self.manager)
+        svc.stop_sync()
+        svc.create_vault(self.instance)
+        self.fake.folder.update(state="scanning", sequence=0)
+        self.assertIsNone(svc._folder_sequence())
+        self.fake.folder.update(state="idle")
+        self.assertEqual(svc._folder_sequence(), 0)
+        self.fake.folder.update(state="scanning", sequence=7)
+        self.assertEqual(svc._folder_sequence(), 7)
 
     def test_resumes_from_disk_after_a_restart(self):
         self.source_ready()

@@ -19,15 +19,18 @@ class PairingCodeTests(unittest.TestCase):
         code = PairingCode("XID", "fid", "Deck", 6031)
         self.assertEqual(PairingCode.decode(code.encode()), code)
         old = PairingCode("XID", "fid", "Deck").encode()  # what 1.1.0-beta1 makes
-        self.assertEqual(PairingCode.decode(old).sequence, 0)
-        self.assertEqual(old, PairingCode("XID", "fid", "Deck", 0).encode())
+        self.assertIsNone(PairingCode.decode(old).sequence)  # not known, unlike an empty vault's 0
+        empty = PairingCode("XID", "fid", "Deck", 0)
+        self.assertEqual(PairingCode.decode(empty.encode()), empty)
+        self.assertNotEqual(old, empty.encode())
 
     def test_lan_payload_carries_the_sequence_and_tolerates_its_absence(self):
         from modsync.pairing_lan import PairPayload
 
         payload = PairPayload("D", "f", "Deck", sequence=12)
         self.assertEqual(PairPayload.from_bytes(payload.to_bytes()).sequence, 12)
-        self.assertEqual(PairPayload.from_bytes(b'{"device_id":"D"}').sequence, 0)
+        self.assertIsNone(PairPayload.from_bytes(b'{"device_id":"D"}').sequence)
+        self.assertEqual(PairPayload.from_bytes(PairPayload("D", "f", sequence=0).to_bytes()).sequence, 0)
 
     def test_encode_has_readable_prefix(self):
         self.assertTrue(PairingCode("d", "f", "l").encode().startswith("MODSYNC1-"))

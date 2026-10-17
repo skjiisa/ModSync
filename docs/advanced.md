@@ -267,7 +267,9 @@ list has arrived, and until then the folder looks complete. So the pairing
 code and the network pairing carry how far the other machine's list went at
 the time, and the copy waits until the list here has reached that and stopped
 growing for a few seconds. (A code from an older ModSync doesn't say; then the
-list only has to stop growing.) Once everything on it has arrived, ModSync sets
+list only has to stop growing, or, if none arrives at all, five minutes pass.
+A machine with nothing in its vault says so, and the copy doesn't wait.) Once
+everything on it has arrived, ModSync sets
 aside what is left over here: files the vault doesn't have, and this machine's
 copy of any file that differs. They move to `.modsync-before-join/<date>/` in
 the instance, which never syncs. Then the folder syncs both ways. With more
@@ -279,8 +281,12 @@ restarts, wherever ModSync runs next (the app or the background service, which
 picks up a copy started in the app even if it was running before). One of them
 moves it on at a time.
 Until it finishes, Play and Open MO2 are blocked, since anything MO2 changes
-meanwhile would be set aside too. Afterwards, Sync lists the set-aside files
-until you delete them or dismiss the list.
+meanwhile would be set aside too. Anything written here after the first set of
+files was set aside (MO2 left open, say) goes to a `during-copy-<n>/` folder
+inside the same archive, so it never replaces a file from before the join.
+Afterwards, Sync lists the set-aside files until you delete them or dismiss
+the list. Leaving the vault during a copy waits for the step under way to
+finish, so the copy can't bring the folder back.
 
 When this machine already has mods, joining asks first. **Merge** joins both
 ways at once instead: mods from both machines end up on both, and where a file

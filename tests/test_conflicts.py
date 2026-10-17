@@ -1,9 +1,11 @@
 """Conflict copies are found, described without guessing which side is
 right, and settled by keeping one whole version and archiving the other."""
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from modsync.sync import conflicts, stignore
 
@@ -142,6 +144,49 @@ class ConflictTests(unittest.TestCase):
         self.assertTrue(all(c.device == "ABCDEFG" for c in group))
         ini = next(c for c in found if c.original.name == "settings.ini")
         self.assertEqual(conflicts.related(found, ini), [ini])
+
+    def test_the_chosen_copy_leads_its_profile_and_companions_are_the_nearest_in_time(self):
+        first, second, later = ("sync-conflict-20261001-120000-ABCDEFG", "sync-conflict-20261002-120000-ABCDEFG",
+                                "sync-conflict-20261002-120300-ABCDEFG")
+        self.write("profiles/Default/modlist.txt", "+Now\n")
+        self.write("profiles/Default/plugins.txt", "*Now.esp\n")
+        self.write(f"profiles/Default/modlist.{first}.txt", "+October1\n")
+        self.write(f"profiles/Default/modlist.{second}.txt", "+October2\n")
+        self.write(f"profiles/Default/plugins.{later}.txt", "*October2.esp\n")
+        found = conflicts.find(self.inst)
+        oct1, oct2 = (next(c for c in found if c.path.name == f"modlist.{s}.txt") for s in (first, second))
+        group = conflicts.related(found, oct2)
+        self.assertEqual([c.path.name for c in group], [f"modlist.{second}.txt", f"plugins.{later}.txt"])
+        self.assertEqual(conflicts.related(found, oct1), [oct1])  # a day away from the plugins copy
+
+    def test_using_a_copy_that_has_gone_changes_nothing(self):
+        live = self.write("profiles/Default/modlist.txt", "+Mine\n")
+        other = self.write(f"profiles/Default/modlist.{STAMP}.txt", "+Theirs\n")
+        (c,) = conflicts.find(self.inst)
+        other.unlink()  # another machine settled it meanwhile
+        for keep in ("other", "current"):
+            with self.assertRaises(conflicts.GoneError):
+                conflicts.resolve(self.inst, c, keep)
+        self.assertEqual(live.read_text(), "+Mine\n")
+        self.assertFalse((self.inst / ".modsync-conflicts").exists())
+
+    def test_undo_puts_both_versions_back(self):
+        live = self.write("profiles/Default/modlist.txt", "+Mine\n")
+        other = self.write(f"profiles/Default/modlist.{STAMP}.txt", "+Theirs\n")
+        for keep in ("other", "current"):
+            (c,) = conflicts.find(self.inst)
+            moved = conflicts.resolve(self.inst, c, keep)
+            conflicts.undo(self.inst, c, keep, moved)
+            self.assertEqual((live.read_text(), other.read_text()), ("+Mine\n", "+Theirs\n"))
+
+    def test_large_identical_files_are_compared_without_reading_them_whole(self):
+        data = os.urandom(1 << 20)
+        self.write("downloads/Big.7z", "")
+        (self.inst / "downloads" / "Big.7z").write_bytes(data)
+        (self.inst / "downloads" / f"Big.{STAMP}.7z").write_bytes(data)
+        (c,) = conflicts.find(self.inst)
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("read whole")):
+            self.assertEqual(conflicts.differences(c), ["Both versions are identical."])
 
     def test_archives_stay_out_of_sync(self):
         # Both archives sit at the instance root, which .stignore's "/*" excludes.

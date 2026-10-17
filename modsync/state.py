@@ -51,7 +51,8 @@ class State:
     copy_phase: str = ""
     copy_source: str = ""  # device id of the machine being copied
     # How far that machine's file list went when it gave out the pairing code
-    # (its Syncthing sequence for the folder); 0 when it didn't say.
+    # (its Syncthing sequence for the folder); 0 for an empty vault, -1 when
+    # the code didn't say.
     copy_expected: int = 0
     copy_archive: str = ""  # where this copy keeps what it replaced or set aside
     # A finished copy's archive, while it holds anything the user may want back.

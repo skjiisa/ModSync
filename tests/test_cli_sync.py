@@ -135,6 +135,46 @@ class SyncConflictsCli(_Vault):
         self.assertEqual((self.profile / "modlist.txt").read_text(), "+Mine\n")
 
 
+class ResolveAsOne(_Vault):
+    def test_a_profile_is_settled_whole_or_not_at_all(self):
+        from modsync.sync import conflicts
+
+        self.profile_conflict()
+        svc = ModSyncService(manager=self.manager)
+        found = svc.conflicts()
+        group = conflicts.related(found, found[0])
+        self.assertEqual(len(group), 2)
+        real = conflicts.resolve
+        calls = []
+
+        def second_fails(*args, **kwargs):
+            calls.append(args)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            return real(*args, **kwargs)
+
+        with patch.object(conflicts, "resolve", side_effect=second_fails), self.assertRaises(OSError):
+            svc.resolve_conflicts(group, "other")
+        self.assertEqual((self.profile / "modlist.txt").read_text(), "+Mine\n")
+        self.assertEqual((self.profile / "plugins.txt").read_text(), "*Mine.esp\n")
+        self.assertEqual(len(svc.conflicts()), 2)
+        self.assertEqual(list((self.instance / ".modsync-conflicts").iterdir()), [])  # no empty archive left
+
+    def test_a_gone_copy_stops_the_whole_profile(self):
+        from modsync.sync import conflicts
+
+        self.profile_conflict()
+        svc = ModSyncService(manager=self.manager)
+        found = svc.conflicts()
+        group = conflicts.related(found, found[0])
+        group[1].path.unlink()
+        with self.assertRaises(conflicts.GoneError):
+            svc.resolve_conflicts(group, "other")
+        self.assertEqual((self.profile / "modlist.txt").read_text(), "+Mine\n")
+        code, out = run_cli("sync", "conflicts", "keep", "other", "profiles/Default/modlist.txt")
+        self.assertEqual(code, 0, out)  # what's left can still be settled
+
+
 class ConflictRescanPacing(_Vault):
     def test_a_slow_walk_waits_longer_before_the_next(self):
         svc = ModSyncService(manager=self.manager)

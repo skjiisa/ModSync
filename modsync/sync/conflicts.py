@@ -27,11 +27,12 @@ took (``ModSyncService._conflict_count``).
 
 from __future__ import annotations
 
+import filecmp
 import os
 import re
 import shutil
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from modsync.sync.stignore import CONTENT_DIRS
@@ -101,18 +102,28 @@ def find(instance: Path | str) -> list[Conflict]:
     return sorted(found, key=lambda c: (c.kind == "file", c.relative(instance), c.when or datetime.min))
 
 
+# Conflicts found this close together by the same machine came from one sync.
+GROUP_WINDOW = timedelta(minutes=10)
+
+
 def related(found: list[Conflict], first: Conflict) -> list[Conflict]:
     """``first`` and the conflicts to decide with it. A profile's mod list,
     plugins and load order go together: keeping one machine's mod list with
-    the other's plugins makes a profile neither machine had. Grouped only when
-    the same machine found each conflict, one per file."""
+    the other's plugins makes a profile neither machine had. For each of the
+    other lists, the copy the same machine found closest in time to ``first``,
+    within ``GROUP_WINDOW``; a list conflicted more than once keeps its other
+    copies for later decisions."""
     if first.kind == "file":
         return [first]
-    group: list[Conflict] = []
-    for c in found:
-        if (c.kind != "file" and c.original.parent == first.original.parent and c.device == first.device
-                and all(g.original != c.original for g in group)):
-            group.append(c)
+    group = [first]
+    for kind in ("modlist", "plugins", "loadorder"):
+        if kind == first.kind:
+            continue
+        candidates = [c for c in found if c.kind == kind and c.original.parent == first.original.parent
+                      and c.device == first.device and c.when and first.when
+                      and abs(c.when - first.when) <= GROUP_WINDOW]
+        if candidates:
+            group.append(min(candidates, key=lambda c: abs(c.when - first.when)))
     return group
 
 
@@ -194,8 +205,8 @@ def differences(conflict: Conflict) -> list[str]:
         here, there = conflict.original.stat(), conflict.path.stat()
     except OSError:
         return ["Only the other version is left."]
-    if here.st_size == there.st_size and conflict.original.read_bytes() == conflict.path.read_bytes():
-        return ["Both versions are identical."]
+    if here.st_size == there.st_size and filecmp.cmp(conflict.original, conflict.path, shallow=False):
+        return ["Both versions are identical."]  # compared in chunks: downloads can be gigabytes
     if conflict.original.suffix.lower() in INI_SUFFIXES:
         lines = _ini_differences(conflict)
         if lines:
@@ -255,13 +266,22 @@ def new_archive(instance: Path | str) -> Path:
             n += 1
 
 
+class GoneError(FileNotFoundError):
+    """The other version is no longer there: another machine settled it, or
+    Syncthing replaced it, since the conflict was found."""
+
+
 def resolve(instance: Path | str, conflict: Conflict, keep: str, *, archive: Path | None = None) -> Path:
     """Keep ``"current"`` (the file in use) or ``"other"`` (the copy set aside).
     The version not kept moves into ``archive`` (a ``new_archive`` by default)
-    with its path in the instance. Returns where it went."""
+    with its path in the instance. Returns where it went. Raises ``GoneError``,
+    changing nothing, when the other version has gone meanwhile."""
     if keep not in ("current", "other"):
         raise ValueError(f"keep must be 'current' or 'other', not {keep!r}")
     instance = Path(instance)
+    if not conflict.path.is_file():
+        raise GoneError(f"The other version of {conflict.relative(instance)} is gone. Another machine may "
+                        "have settled it already.")
     archive = archive or new_archive(instance)
     if keep == "current":
         dest = archive / conflict.path.relative_to(instance)
@@ -276,5 +296,21 @@ def resolve(instance: Path | str, conflict: Conflict, keep: str, *, archive: Pat
             raise FileExistsError(f"{dest} is already archived")
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(conflict.original, dest)
-    os.replace(conflict.path, conflict.original)
+    try:
+        os.replace(conflict.path, conflict.original)
+    except OSError:
+        if dest.exists() and not conflict.original.exists():
+            shutil.move(dest, conflict.original)  # the version in use goes back
+        raise
     return dest
+
+
+def undo(instance: Path | str, conflict: Conflict, keep: str, moved: Path) -> None:
+    """Put back what ``resolve`` did, ``moved`` being what it returned, when a
+    later file of the same decision fails."""
+    if keep == "current":
+        shutil.move(moved, conflict.path)
+        return
+    os.replace(conflict.original, conflict.path)
+    if moved.exists():
+        shutil.move(moved, conflict.original)

@@ -90,11 +90,11 @@ class PairPayload:
     # its own LAN discovery (which firewalls drop just like ours).
     host: str = ""
     # How far the host's list of the vault's files goes (see PairingCode).
-    sequence: int = 0
+    sequence: int | None = None
 
     def to_bytes(self) -> bytes:
         data = {"device_id": self.device_id, "folder_id": self.folder_id, "label": self.label}
-        if self.sequence:
+        if self.sequence is not None:
             data["sequence"] = self.sequence
         return json.dumps(data, separators=(",", ":")).encode()
 
@@ -102,7 +102,7 @@ class PairPayload:
     def from_bytes(cls, data: bytes) -> "PairPayload":
         d = json.loads(data.decode())
         return cls(d["device_id"], d.get("folder_id", ""), d.get("label", ""),
-                   sequence=int(d.get("sequence") or 0))
+                   sequence=None if d.get("sequence") is None else int(d["sequence"]))
 
 
 def make_pin() -> str:
