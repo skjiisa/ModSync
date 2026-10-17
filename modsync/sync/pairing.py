@@ -51,8 +51,17 @@ def share_instance_folder(
     peer_device_ids: Iterable[str] = (),
     label: str = DEFAULT_FOLDER_LABEL,
     write_ignore: bool = True,
+    *,
+    receive_only: bool = False,
+    versions_dir: Path | str | None = None,
 ) -> dict:
-    """Create/replace the shared folder for an MO2 instance and write its .stignore."""
+    """Create/replace the shared folder for an MO2 instance and write its .stignore.
+
+    ``receive_only`` must be set in this first PUT: files Syncthing scans while
+    the folder is send-and-receive are announced to peers as ordinary changes,
+    and switching the type afterwards doesn't take them back. ``versions_dir``
+    keeps every file Syncthing replaces or removes there (trash-can versioning,
+    never cleaned out)."""
     instance_path = Path(instance_path)
     if write_ignore:
         stignore.write_stignore(instance_path)
@@ -62,6 +71,10 @@ def share_instance_folder(
     folder["id"] = folder_id
     folder["label"] = label
     folder["path"] = str(instance_path)
+    if receive_only:
+        folder["type"] = "receiveonly"
+    if versions_dir is not None:
+        folder["versioning"] = trashcan_versioning(versions_dir)
     device_ids = list(dict.fromkeys([self_id, *peer_device_ids]))
     folder["devices"] = [
         {"deviceID": d, "introducedBy": "", "encryptionPassword": ""}
@@ -69,3 +82,16 @@ def share_instance_folder(
     ]
     client.put_folder(folder)
     return client.get_folder(folder_id)
+
+
+def trashcan_versioning(versions_dir: Path | str) -> dict:
+    return {
+        "type": "trashcan",
+        "params": {"cleanoutDays": "0"},
+        "cleanupIntervalS": 3600,
+        "fsPath": str(versions_dir),
+        "fsType": "basic",
+    }
+
+
+NO_VERSIONING = {"type": "", "params": {}, "cleanupIntervalS": 3600, "fsPath": "", "fsType": "basic"}

@@ -122,6 +122,19 @@ class SyncthingClient:
             self._http.get("/rest/db/completion", params=params).raise_for_status().json()
         )
 
+    def local_changed(self, folder_id: str) -> list[dict[str, Any]]:
+        """A receive-only folder's local changes: files here the cluster doesn't have."""
+        return (
+            self._http.get("/rest/db/localchanged", params={"folder": folder_id, "perpage": 100000})
+            .raise_for_status()
+            .json()
+            .get("files", [])
+        )
+
+    def revert(self, folder_id: str) -> None:
+        """Undo a receive-only folder's local changes, through its versioner."""
+        self._http.post("/rest/db/revert", params={"folder": folder_id}).raise_for_status()
+
     def rescan(self, folder_id: str) -> None:
         self._http.post("/rest/db/scan", params={"folder": folder_id}).raise_for_status()
 

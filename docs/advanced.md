@@ -142,7 +142,7 @@ modsync diagnostics                 # doctor plus recent logs, secrets redacted:
 modsync mo2 status | use <dir> | install <dest>
 modsync mo2 usvfs status | apply | restore   # MO2 2.5.2's ARM64 workaround, see usvfs-arm64.md
 modsync game status | downgrade <version> | restore | pin | unpin | skse
-modsync sync create <instance-dir> | join <code> <instance-dir>
+modsync sync create <instance-dir> | join <code> <instance-dir> [--merge]
 modsync serve                       # foreground loop; what the background service runs
 modsync service install [--linger] | status | uninstall
 modsync firewall status | allow | remove   # ModSync's ports in ufw or firewalld
@@ -254,7 +254,98 @@ syncs. The files that differ between operating systems are exactly the ones
 that never sync, so a Steam Deck and a Windows machine can share an instance
 too. Steam Cloud already handles saves.
 
-"Stop syncing" leaves the vault but keeps the instance. Nothing is deleted.
+### Copying from another machine
+
+"Copy from another machine" makes this machine match the vault without
+changing the machines already in the vault. The folder starts out
+receive-only, so nothing here is sent anywhere. Files that already match are
+kept as they are, so a machine that synced before downloads only what changed.
+
+ModSync then waits for the other machine's whole list of files. Syncthing
+reports a machine as ready as soon as it shares the folder, before any of its
+list has arrived, and until then the folder looks complete. So the pairing
+code and the network pairing carry how far the other machine's list went at
+the time, and the copy waits until the list here has reached that and stopped
+growing for a few seconds. (A code from an older ModSync doesn't say; then the
+list only has to stop growing, or, if none arrives at all, five minutes pass.
+A machine with nothing in its vault says so, and the copy doesn't wait.) Once
+everything on it has arrived, ModSync sets
+aside what is left over here: files the vault doesn't have, and this machine's
+copy of any file that differs. They move to `.modsync-before-join/<date>/` in
+the instance, which never syncs. Then the folder syncs both ways. With more
+than two machines in the vault, this machine copies all of them together, not
+only the one whose code it used.
+
+The copy is saved as it goes, so it carries on after ModSync or the machine
+restarts, wherever ModSync runs next (the app or the background service, which
+picks up a copy started in the app even if it was running before). One of them
+moves it on at a time.
+Until it finishes, Play and Open MO2 are blocked, since anything MO2 changes
+meanwhile would be set aside too. Anything written here after the first set of
+files was set aside (MO2 left open, say) goes to a `during-copy-<n>/` folder
+inside the same archive, so it never replaces a file from before the join.
+Afterwards, Sync lists the set-aside files until you delete them or dismiss
+the list. Leaving the vault during a copy waits for the step under way to
+finish, so the copy can't bring the folder back.
+
+When this machine already has mods, joining asks first. **Merge** joins both
+ways at once instead: mods from both machines end up on both, and where a file
+differs, the newer one wins everywhere. `modsync sync join --merge` does the
+same from the command line.
+
+### Conflicts
+
+When two machines change the same file before they sync (a mod enabled on the
+desktop while the Steam Deck was off, then another on the Deck), Syncthing
+keeps the newer file and saves the other next to it as
+`<name>.sync-conflict-<date>-<time>-<device>.<ext>`. MO2 ignores those, so
+changes from one machine silently drop out of the mod list.
+
+ModSync looks for them in every folder that syncs (`mods/`, `profiles/`,
+`downloads/`, `overwrite/`) and at the instance root. Sync and Home show how
+many there are, and the check before playing mentions them. For each one, Sync
+describes what differs (mods only in one version, mods enabled in only one, a
+different order; for INI files and download `.meta` files, the settings added,
+removed or set differently) and lets you keep the version in use or the other
+one. Neither version is labelled with a machine: the device in a conflict
+copy's name is the machine that found the conflict, not the one that made the
+change, so ModSync shows when the other version was last changed instead. A
+profile's mod list, plugins and load order are decided together, so the
+profile stays as one machine had it. The version you don't keep moves to a new
+folder under `.modsync-conflicts/` in the instance. ModSync doesn't merge the
+two versions: without the version both machines started from, it can't tell a
+lost change from an intentional one.
+
+`modsync sync conflicts` lists them from the command line with the same
+descriptions, and `modsync sync conflicts keep current|other <file>` settles
+one (with the rest of its profile, for a mod list, plugins or load order).
+When a file has more than one other version, name the conflict copy itself.
+Either way, a choice waits until MO2, and anything started from it, is closed,
+including an MO2 that Steam or another ModSync started. While a copy from
+another machine is under way there is nothing to choose: whatever differs is
+set aside when the copy finishes. `modsync sync status` shows the vault, the machines, any copy under way and
+the number of conflicts.
+
+Looking through `mods/` reads every file name in it. On a large instance the
+background check spaces its searches out by how long the last one took, so the
+count on Home can lag by up to ten minutes. Opening the review on Sync, the
+check before playing and `modsync sync conflicts` always search afresh.
+
+### Before playing
+
+With a vault, Play and Open MO2 first ask Syncthing whether this machine is
+behind: changes another machine has announced but this one hasn't received,
+or unresolved conflicts. Either is worth a "Play anyway?". Changes another
+machine made while it was offline can't be known until it connects again.
+
+### Pausing and leaving
+
+"Stop syncing" offers two things. **Pause** keeps the vault and Syncthing's
+record of what was in sync, so on resuming, what changed on each machine
+meanwhile carries over, removed mods included. **Leave the vault** forgets it
+and the paired devices. Joining again later compares the machines from scratch,
+so a mod removed on one of them while apart comes back from the other. Either
+way the instance stays in use here, and nothing is deleted.
 
 ### Firewalls and "No machines found"
 

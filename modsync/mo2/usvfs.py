@@ -194,21 +194,27 @@ def _download(url: str, archive: Path) -> None:
         raise UsvfsError("The USVFS download did not match its pinned SHA-256. No instance files were changed.")
 
 
-def _require_closed(root: Path) -> None:
-    """Refuse while any process has this instance's USVFS files loaded. It runs
-    on the host: MO2 launched through Steam isn't in our Launcher, and the
-    Flatpak sandbox can't see host processes."""
-    patterns = [arg for name in ORIGINAL for arg in ("-e", str(root / name))]
+def in_use(instance: Path | str) -> bool:
+    """Whether any process has this instance's USVFS files loaded: MO2, or a
+    game or tool started from it. It runs on the host: MO2 launched through
+    Steam isn't in our Launcher, and the Flatpak sandbox can't see host
+    processes. Raises UsvfsError when it can't tell."""
+    patterns = [arg for name in ORIGINAL for arg in ("-e", str(Path(instance) / name))]
     try:
         result = background.run_host(["sh", "-c", _IN_USE_SCRIPT, "sh", *patterns], timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise UsvfsError("Could not check whether MO2 is running on the host. Close it and try again.") from exc
-    if result.returncode == 0:
+    if result.returncode not in (0, 1):
+        raise UsvfsError("Could not check whether MO2 is running on the host. Close it and try again.")
+    return result.returncode == 0
+
+
+def _require_closed(root: Path) -> None:
+    """Refuse while MO2, or anything started from it, uses this instance."""
+    if in_use(root):
         raise UsvfsError(
             "Mod Organizer 2, or a game or tool started from it, is still running. Close them before changing USVFS."
         )
-    if result.returncode != 1:
-        raise UsvfsError("Could not check whether MO2 is running on the host. Close it and try again.")
 
 
 @contextmanager

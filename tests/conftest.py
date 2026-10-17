@@ -1,6 +1,7 @@
-"""Keep the test-suite's logs out of the developer's real ~/.local/state, and
-keep it offline: no test may download Syncthing or anything else. Set
-``MODSYNC_IT=1`` for the integration tests, which do use the network."""
+"""Keep the test-suite's logs and state out of the developer's real
+~/.local/state and ~/.config, and keep it offline: no test may download
+Syncthing or anything else. Set ``MODSYNC_IT=1`` for the integration tests,
+which do use the network."""
 
 import os
 import tempfile
@@ -12,18 +13,28 @@ import pytest
 INTEGRATION = os.environ.get("MODSYNC_IT") == "1"
 
 
-@pytest.fixture(autouse=True, scope="session")
-def _isolated_state_home():
+@pytest.fixture(scope="session")
+def _scratch_home():
     with tempfile.TemporaryDirectory() as tmp:
-        previous = os.environ.get("XDG_STATE_HOME")
-        os.environ["XDG_STATE_HOME"] = tmp
-        try:
-            yield
-        finally:
-            if previous is None:
-                os.environ.pop("XDG_STATE_HOME", None)
+        yield Path(tmp)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_state_and_config_home(_scratch_home):
+    """Logs and ModSync's state.json go to a scratch dir, so a test that misses
+    a patch can't overwrite the developer's real setup. Set before every test:
+    tests that point XDG_CONFIG_HOME at their own tmp dir unset it afterwards."""
+    previous = {name: os.environ.get(name) for name in ("XDG_STATE_HOME", "XDG_CONFIG_HOME")}
+    for name in previous:
+        os.environ[name] = str(_scratch_home / name)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
             else:
-                os.environ["XDG_STATE_HOME"] = previous
+                os.environ[name] = value
 
 
 @pytest.fixture(autouse=True, scope="session")

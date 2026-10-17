@@ -224,8 +224,15 @@ class Cli(unittest.TestCase):
 
         out = io.StringIO()
         state = State(instance_path="/x")
+
+        def update(**changes):
+            for name, value in changes.items():
+                setattr(state, name, value)
+            return state
+
         with patch.object(firewall, "check", return_value=chk), redirect_stdout(out), \
                 patch.object(State, "load", return_value=state), patch.object(State, "save"), \
+                patch.object(State, "update", side_effect=update), \
                 patch.multiple(firewall, **patches) if patches else patch.object(firewall, "PORTS", firewall.PORTS):
             code = firewall_cmd(args)
         return code, out.getvalue(), state

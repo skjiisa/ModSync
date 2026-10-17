@@ -32,6 +32,9 @@ usage:
 
   modsync sync create <instance-dir>     optional: share this setup; prints a pairing code
   modsync sync join <code> <instance>    optional: copy another machine's setup here
+  modsync sync status                    the vault, its machines, and conflicts waiting
+  modsync sync conflicts [keep current|other <file>]
+                                         list files changed on two machines, or keep one version
   modsync serve                          keep syncing (if set up) and watching Steam, in the foreground
 
   modsync service install [--linger]     run 'modsync serve' at login (systemd --user)
@@ -41,7 +44,7 @@ usage:
   modsync launch status | enable | disable
                                          open ModSync when Skyrim is launched from Steam
 
-sync commands run headless and keep Syncthing alive until Ctrl-C.
+sync create and join run headless and keep Syncthing alive until Ctrl-C.
 logs: ~/.local/state/modsync/modsync.log (MODSYNC_LOG_LEVEL=DEBUG for more).
 """
 
