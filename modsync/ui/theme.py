@@ -1,9 +1,13 @@
-"""One dark, console-style look, sized for a Steam Deck held at arm's length.
+"""One dark theme, sized for a Steam Deck held at arm's length.
 
-ModSync always uses this theme, whatever the desktop's color scheme. Gaming
-Mode is dark, and the backdrop is painted rather than taken from the palette.
-Text colors are explicit, and tests check their contrast against every
-surface they sit on.
+It borrows the Deck's own vocabulary: a matte charcoal ground, flat rows with
+small corners, white legends, and the blue of the app icon as the only accent.
+Focus is a lit row: the focused control fills white with dark text. Nothing
+glows.
+
+ModSync always uses this theme, whatever the desktop's color scheme. Text
+colors are explicit, and tests check their contrast against every surface
+they sit on.
 """
 
 from __future__ import annotations
@@ -12,28 +16,35 @@ from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import QApplication, QWidget
 
 C = {
-    "night": "#070c14",  # top of the backdrop
-    "dusk": "#0d1724",  # bottom of the backdrop
-    "surface": "#132030",  # panels and tiles
-    "raised": "#1b2b3f",  # hovered and focused tiles
-    "sunken": "#0d1622",  # pressed tiles, wells
-    "border": "#29405a",
-    "text": "#eef4f8",
-    "secondary": "#b1c3d1",
-    "muted": "#8499ab",
-    "accent": "#7fe0d0",  # frost
-    "accent_hi": "#b0f2e6",
-    "accent_deep": "#3fb8a6",
-    "on_accent": "#052520",
-    "ok": "#86e3a9",
-    "warn": "#f6c86b",
-    "warn_bg": "#33291a",
-    "danger": "#ff958c",
-    "danger_bg": "#3a1d1f",
-    "info": "#9cc2ff",
-    "aurora_a": "#36d1b5",
-    "aurora_b": "#7a6cf0",
-    "disabled": "#6c7f90",
+    "night": "#1b1d21",  # the window ground
+    "dusk": "#1b1d21",
+    "bar": "#23262b",  # top bar, hint bar, readout panels
+    "surface": "#26292f",  # rows
+    "raised": "#32363d",  # rows under the mouse
+    "sunken": "#16181b",  # pressed rows, wells, fields
+    "border": "#3a3e45",
+    "text": "#f4f5f7",
+    "secondary": "#b8bdc4",
+    "muted": "#9aa1aa",
+    "accent": "#4fb4ff",  # links and accent text
+    "accent_hi": "#7cc6ff",
+    "accent_deep": "#1a9fff",  # the app icon's blue: primary fills
+    "on_accent": "#00182c",
+    "focus": "#f4f5f7",  # the lit row
+    "focus_pressed": "#d9dce1",
+    "on_focus": "#16181b",
+    "on_focus_dim": "#4a4f57",
+    "ok": "#7dd88b",
+    "ok_on_focus": "#1d7a33",
+    "warn": "#ffc857",
+    "warn_on_focus": "#8a5a00",
+    "warn_bg": "#3a3020",
+    "danger": "#ff8a80",
+    "danger_on_focus": "#b3261e",
+    "danger_bg": "#3d2424",
+    "info": "#8cc8ff",
+    "info_on_focus": "#0b63b8",
+    "disabled": "#737a84",
 }
 
 BASE_POINT_SIZE = 12.0
@@ -44,6 +55,14 @@ def color(name: str, alpha: int | None = None) -> QColor:
     if alpha is not None:
         c.setAlpha(alpha)
     return c
+
+
+def tone_color(tone: str, *, lit: bool = False) -> QColor:
+    """The color a state word or dot uses, on a plain row or a lit one."""
+    name = {"ok": "ok", "warn": "warn", "danger": "danger", "info": "info", "busy": "info"}.get(tone)
+    if name is None:
+        return color("on_focus_dim" if lit else "secondary")
+    return color(f"{name}_on_focus" if lit else name)
 
 
 def font(points: float, weight: QFont.Weight = QFont.Weight.Normal, *, spacing: float = 0.0) -> QFont:
@@ -75,9 +94,9 @@ def role(widget: QWidget, name: str) -> None:
 def apply_theme(app: QApplication) -> None:
     palette = QPalette(app.palette())
     for name, value in {
-        "Window": C["dusk"], "WindowText": C["text"], "Base": C["sunken"],
+        "Window": C["night"], "WindowText": C["text"], "Base": C["sunken"],
         "AlternateBase": C["surface"], "Text": C["text"], "Button": C["surface"],
-        "ButtonText": C["text"], "Highlight": C["accent"],
+        "ButtonText": C["text"], "Highlight": C["accent_deep"],
         "HighlightedText": C["on_accent"], "PlaceholderText": C["muted"],
         "ToolTipBase": C["raised"], "ToolTipText": C["text"], "Link": C["accent"],
     }.items():
@@ -94,88 +113,77 @@ def apply_theme(app: QApplication) -> None:
 
 
 STYLE = """
-QMainWindow { background: %(dusk)s; }
+QMainWindow { background: %(night)s; }
 QLabel { color: %(text)s; background: transparent; }
 QLabel:disabled { color: %(disabled)s; }
 QLabel[role="secondary"] { color: %(secondary)s; }
 QLabel[role="muted"] { color: %(muted)s; }
-QLabel[role="eyebrow"] {
-    color: %(accent)s; font-size: 10pt; font-weight: 700; letter-spacing: 2px;
-}
-QLabel[role="title"] { font-size: 25pt; font-weight: 800; }
-QLabel[role="hero"] { font-size: 34pt; font-weight: 800; }
+QLabel[role="title"] { font-size: 22pt; font-weight: 700; }
 QLabel[role="heading"] { font-size: 14pt; font-weight: 700; }
-QLabel[role="bignum"] { font-size: 46pt; font-weight: 800; color: %(text)s; }
 QLabel[role="ok"] { color: %(ok)s; font-weight: 600; }
 QLabel[role="warning"], QLabel[role="danger"], QLabel[role="note"] {
-    border-radius: 12px; padding: 12px 16px;
+    border-radius: 4px; padding: 12px 16px;
 }
-QLabel[role="warning"] {
-    color: %(warn)s; background: %(warn_bg)s; border: 1px solid #6b5426;
-}
-QLabel[role="danger"] {
-    color: %(danger)s; background: %(danger_bg)s; border: 1px solid #6e3236;
-}
-QLabel[role="note"] {
-    color: %(secondary)s; background: rgba(156, 194, 255, 18); border: 1px solid #2c4560;
-}
-QLabel[pill] {
-    border-radius: 11px; padding: 3px 11px; font-size: 10pt; font-weight: 700;
-}
-QLabel[pill="ok"] { color: %(ok)s; background: rgba(134, 227, 169, 30); }
-QLabel[pill="warn"] { color: %(warn)s; background: rgba(246, 200, 107, 30); }
-QLabel[pill="danger"] { color: %(danger)s; background: rgba(255, 149, 140, 30); }
-QLabel[pill="off"] { color: %(secondary)s; background: rgba(177, 195, 209, 22); }
-QLabel[pill="info"] { color: %(info)s; background: rgba(156, 194, 255, 26); }
-QLabel[pill="busy"] { color: %(accent)s; background: rgba(127, 224, 208, 26); }
+QLabel[role="warning"] { color: %(warn)s; background: %(warn_bg)s; }
+QLabel[role="danger"] { color: %(danger)s; background: %(danger_bg)s; }
+QLabel[role="note"] { color: %(secondary)s; background: %(surface)s; }
+QLabel[pill] { font-weight: 600; }
+QLabel[pill="ok"] { color: %(ok)s; }
+QLabel[pill="warn"] { color: %(warn)s; }
+QLabel[pill="danger"] { color: %(danger)s; }
+QLabel[pill="off"] { color: %(secondary)s; }
+QLabel[pill="info"], QLabel[pill="busy"] { color: %(info)s; }
 
-QFrame#panel {
-    background: rgba(19, 32, 48, 222); border: 1px solid rgba(80, 120, 160, 60);
-    border-radius: 20px;
-}
-QFrame#sheet {
-    background: %(surface)s; border: 1px solid %(border)s; border-radius: 24px;
-}
+QFrame#panel { background: %(bar)s; border: none; border-radius: 4px; }
+QFrame#sheet { background: %(night)s; border: none; border-radius: 6px; }
 
-QLabel#tileTitle { font-size: 13pt; font-weight: 700; color: %(text)s; }
+QLabel#tileTitle { font-size: 13pt; font-weight: 600; color: %(text)s; }
 QLabel#tileDesc { color: %(secondary)s; }
-QLabel#tileTitle:disabled, QLabel#tileDesc:disabled { color: %(disabled)s; }
-QAbstractButton[tileRole="primary"] QLabel#tileTitle,
-QAbstractButton[tileRole="primary"] QLabel#tileDesc { color: %(on_accent)s; }
+QLabel#tileValue { color: %(secondary)s; font-weight: 600; }
+QLabel#tileValue[tone="ok"] { color: %(ok)s; }
+QLabel#tileValue[tone="warn"] { color: %(warn)s; }
+QLabel#tileValue[tone="danger"] { color: %(danger)s; }
+QLabel#tileValue[tone="info"], QLabel#tileValue[tone="busy"] { color: %(info)s; }
+QLabel#tileTitle:disabled, QLabel#tileDesc:disabled, QLabel#tileValue:disabled { color: %(disabled)s; }
+QAbstractButton[tileRole="primary"] QLabel#tileTitle { color: %(on_accent)s; font-weight: 700; }
+QAbstractButton[tileRole="primary"] QLabel#tileDesc,
+QAbstractButton[tileRole="primary"] QLabel#tileValue { color: %(on_accent)s; }
 QAbstractButton[tileRole="danger"] QLabel#tileTitle { color: %(danger)s; }
-QAbstractButton[tileSize="hero"] QLabel#tileTitle { font-size: 21pt; font-weight: 800; }
-QAbstractButton[tileSize="choice"] QLabel#tileTitle { font-size: 16pt; font-weight: 800; }
-QAbstractButton[tileSize="compact"] QLabel#tileTitle { font-size: 12pt; font-weight: 600; }
+QAbstractButton[lit="true"] QLabel#tileTitle { color: %(on_focus)s; }
+QAbstractButton[lit="true"] QLabel#tileDesc,
+QAbstractButton[lit="true"] QLabel#tileValue { color: %(on_focus_dim)s; }
+QAbstractButton[lit="true"] QLabel#tileValue[tone="ok"] { color: %(ok_on_focus)s; }
+QAbstractButton[lit="true"] QLabel#tileValue[tone="warn"] { color: %(warn_on_focus)s; }
+QAbstractButton[lit="true"] QLabel#tileValue[tone="danger"],
+QAbstractButton[lit="true"][tileRole="danger"] QLabel#tileTitle { color: %(danger_on_focus)s; }
+QAbstractButton[lit="true"] QLabel#tileValue[tone="info"],
+QAbstractButton[lit="true"] QLabel#tileValue[tone="busy"] { color: %(info_on_focus)s; }
+QAbstractButton[tileSize="hero"] QLabel#tileTitle { font-size: 20pt; font-weight: 700; }
+QAbstractButton[tileSize="choice"] QLabel#tileTitle { font-size: 15pt; font-weight: 700; }
 
 QLineEdit {
     color: %(text)s; background: %(sunken)s; border: 2px solid %(border)s;
-    border-radius: 12px; padding: 10px 14px; font-size: 15pt;
-    selection-background-color: %(accent)s; selection-color: %(on_accent)s;
+    border-radius: 4px; padding: 10px 14px; font-size: 15pt;
+    selection-background-color: %(accent_deep)s; selection-color: %(on_accent)s;
 }
-QLineEdit:focus { border-color: %(accent)s; }
+QLineEdit:focus { border-color: %(focus)s; }
 QPlainTextEdit {
-    color: %(secondary)s; background: %(sunken)s; border: 1px solid %(border)s;
-    border-radius: 12px; padding: 8px; font-family: monospace; font-size: 10pt;
+    color: %(secondary)s; background: %(sunken)s; border: none;
+    border-radius: 4px; padding: 8px; font-family: monospace; font-size: 10pt;
+    selection-background-color: %(accent_deep)s; selection-color: %(on_accent)s;
 }
+QPlainTextEdit:focus { border: 2px solid %(focus)s; }
 QProgressBar {
-    color: %(text)s; background: %(sunken)s; border: none; border-radius: 7px;
-    min-height: 14px; max-height: 14px; text-align: center; font-size: 1px;
+    color: %(text)s; background: %(sunken)s; border: none; border-radius: 3px;
+    min-height: 8px; max-height: 8px; text-align: center; font-size: 1px;
 }
-QProgressBar::chunk {
-    border-radius: 7px;
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 %(accent_deep)s, stop:1 %(accent_hi)s);
-}
+QProgressBar::chunk { border-radius: 3px; background: %(accent_deep)s; }
 QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }
-QScrollBar:vertical { background: transparent; width: 8px; margin: 4px 0; }
-QScrollBar::handle:vertical {
-    background: rgba(177, 195, 209, 60); border-radius: 4px; min-height: 40px;
-}
-QScrollBar::handle:vertical:hover { background: rgba(177, 195, 209, 120); }
+QScrollBar:vertical { background: transparent; width: 6px; margin: 4px 0; }
+QScrollBar::handle:vertical { background: %(border)s; border-radius: 3px; min-height: 40px; }
+QScrollBar::handle:vertical:hover { background: %(muted)s; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
 QScrollBar:horizontal { height: 0; }
-QToolTip {
-    color: %(text)s; background: %(raised)s; border: 1px solid %(border)s; padding: 6px;
-}
+QToolTip { color: %(text)s; background: %(raised)s; border: none; padding: 6px; }
 """

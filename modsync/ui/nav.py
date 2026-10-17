@@ -48,14 +48,16 @@ def _gap(a0: int, a1: int, b0: int, b1: int) -> int:
 
 
 def _score(r: QRect, c: QRect, direction: str) -> float | None:
+    # Up and down need the candidate to start (end) beyond this widget: a row
+    # beside a taller tile, sharing its top edge, is beside it, not above it.
     if direction == DOWN:
-        if c.center().y() <= r.center().y() or c.top() < r.top() + 4:
+        if c.center().y() <= r.center().y() or c.top() < r.top() + 4 or c.bottom() < r.bottom() + 4:
             return None
         primary = max(0, c.top() - r.bottom())
         ortho = _gap(r.left(), r.right(), c.left(), c.right())
         offset = abs(c.center().x() - r.center().x())
     elif direction == UP:
-        if c.center().y() >= r.center().y() or c.bottom() > r.bottom() - 4:
+        if c.center().y() >= r.center().y() or c.bottom() > r.bottom() - 4 or c.top() > r.top() - 4:
             return None
         primary = max(0, r.top() - c.bottom())
         ortho = _gap(r.left(), r.right(), c.left(), c.right())

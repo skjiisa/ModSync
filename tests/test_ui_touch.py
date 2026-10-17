@@ -92,13 +92,13 @@ class TouchTests(UiTestCase):
         window = self.window()
         window.resize(800, 600)
         home = window.pages["home"]
-        self.assertTrue(shows_focus(home.setup))
+        self.assertTrue(shows_focus(home.install_mo2))
         self.tap(window, QPoint(400, 700))  # empty space below the tiles
         router = InputRouter.instance()
         self.assertEqual((router.mode, router.pointer), ("mouse", "touch"))
         self.assertEqual(window.hintbar.device_label.text(), "Touch")
         self.assertFalse(window.halo.enabled)
-        self.assertFalse(shows_focus(home.setup))  # nothing looks selected that wasn't tapped
+        self.assertFalse(shows_focus(home.install_mo2))  # nothing looks selected that wasn't tapped
 
 
 @unittest.skipIf(QApplication is None, "PySide6 not installed")
@@ -115,7 +115,7 @@ class PointerTests(UiTestCase):
 
         window = self.window()
         shown = [b.text() for b in window.hintbar.findChildren(HintButton) if b.isVisibleTo(window)]
-        self.assertEqual(shown, ["Quit"])  # no "Select" or "Sections": those are on the screen
+        self.assertEqual(shown, ["Check again", "Quit"])  # no "Select" or "Sections": those are on the screen
         self.assertFalse(window.topbar.lb.isVisibleTo(window))  # no Q/E keycaps by the tabs
         next(b for b in window.hintbar.findChildren(HintButton) if b.text() == "Quit").click()
         self.assertEqual(window.top_overlay.title.text(), "Quit ModSync?")

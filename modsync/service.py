@@ -134,6 +134,7 @@ class GameStatus:
     backup_from: str | None = None  # the game version the backup came from, per its manifest
     backup_bytes: int = 0
     pinned_by_modsync: bool = False  # a pin record exists, so 'unpin' can put the manifest back
+    awaiting_vault_version: bool = False
 
     @property
     def mismatch(self) -> bool:
@@ -143,11 +144,15 @@ class GameStatus:
     def wanted(self) -> gameversion.GameVersion | None:
         """The runtime this setup should be on: the vault's record when it has
         one, otherwise what the installed SKSE was built for."""
+        if self.awaiting_vault_version:
+            return None
         return self.expected if self.expected is not None else self.skse_runtime
 
     @property
     def wanted_from(self) -> str:
         """"vault" | "skse" | "" — where ``wanted`` came from."""
+        if self.awaiting_vault_version:
+            return ""
         if self.expected is not None:
             return "vault"
         return "skse" if self.skse_runtime is not None else ""
@@ -177,7 +182,7 @@ class GameStatus:
         "ok" | "missing" | "wrong" (built for another runtime) | "several" | "".
         Empty while the game version is unknown, Steam is mid-update, or the
         game itself still needs switching — SKSE is the step *after* that."""
-        if self.installed is None or self.steam_updating or self.needs_downgrade:
+        if self.awaiting_vault_version or self.installed is None or self.steam_updating or self.needs_downgrade:
             return ""
         if self.skse_runtimes and len(self.skse_runtimes) > 1:
             return "several"
@@ -195,7 +200,7 @@ class GameStatus:
     @property
     def needs_pin(self) -> bool:
         """Steam wants to update; pinning would keep the installed files."""
-        return self.steam_is_current is False and not self.steam_updating
+        return self.steam_is_current is False and not self.steam_updating and not self.awaiting_vault_version
 
     @property
     def can_unpin(self) -> bool:
@@ -277,7 +282,7 @@ class ModSyncService:
         log.info("using MO2 instance %s", instance_path)
         self.update_state(instance_path=str(instance_path),
                           instance_label=label or instance_path.name or "Mod Organizer 2")
-        if gameversion.VaultMeta.load(instance_path) is None:
+        if not self.state.awaiting_vault_version and gameversion.VaultMeta.load(instance_path) is None:
             self.record_initial_vault_version()
 
     def prepare_mo2(self, *, play: bool = False) -> tuple[LaunchPlan, str]:
@@ -451,7 +456,8 @@ class ModSyncService:
         self._remember(instance_path, code.folder_id, label, sync_paused=False,
                        copy_phase="" if merge else "receiving", copy_source="" if merge else code.device_id,
                        copy_expected=0 if merge else code.sequence,
-                       copy_archive=str(archive) if archive else "", set_aside="")
+                       copy_archive=str(archive) if archive else "", set_aside="",
+                       awaiting_vault_version=True)
         log.info("joined vault %s from device %s… into %s (%s)", code.folder_id, code.device_id[:7],
                  instance_path, "merge" if merge else "copy")
         return PairingCode(device_id, code.folder_id, label)
@@ -852,7 +858,7 @@ class ModSyncService:
             pass  # daemon may be down; clearing our own state is what matters
         # A copy left half-way leaves what it set aside so far in its archive.
         self.update_state(folder_id=None, sync_paused=False, copy_phase="", copy_source="", copy_expected=0,
-                          copy_archive="", set_aside="")
+                          copy_archive="", set_aside="", awaiting_vault_version=False)
 
     def reset(self, *, forget_devices: bool = True) -> None:
         """Forget everything on this machine: the vault and the chosen instance."""
@@ -951,6 +957,9 @@ class ModSyncService:
     def game_status(self, *, refresh_index: bool = True) -> GameStatus:
         app, acf, appinfo_path = self._steam_app()
         vc = gameversion.check(self.state.instance_path)
+        waiting = self.state.awaiting_vault_version and vc.expected is None
+        if self.state.awaiting_vault_version and not waiting:
+            self.update_state(awaiting_vault_version=False)
         language = "english"
         steam_current: bool | None = None
         public_build: int | None = None
@@ -989,6 +998,7 @@ class ModSyncService:
             skse_runtimes=[str(v) for v in vc.skse.runtimes],
             skse_source=vc.skse.describe(),
             pinned_by_modsync=self._pin_record_path().exists(),
+            awaiting_vault_version=waiting,
             **self._backup_fields(app.install_path if app else vc.game_dir),
         )
 

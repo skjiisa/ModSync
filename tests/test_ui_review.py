@@ -199,7 +199,7 @@ class BackgroundScrollTests(UiTestCase):
                     QTest.qWait(220)
                     router.pad_button("rb", False)
                     QTest.keyRelease(window.focusWidget(), Qt.Key.Key_Alt)
-                self.assertEqual(window._current, "game")
+                self.assertEqual(window._current, "sync")
 
 
 class PairingRestartTests(UiTestCase):

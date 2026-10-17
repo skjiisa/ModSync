@@ -137,6 +137,7 @@ def _mo2_install(args: list[str]) -> int:
     import sys
     from pathlib import Path
 
+    from modsync import steamos
     from modsync.games import SKYRIM_SE
     from modsync.mo2.installers import Mo2LintBackend
     from modsync.service import ModSyncService
@@ -151,7 +152,10 @@ def _mo2_install(args: list[str]) -> int:
     if not ok:
         print(f"Cannot install: {reason}")
         return 1
-    if shortcuts.steam_is_running():
+    # Steam can't be closed on the Steam Frame; MO2-LINT leaves it running there
+    # and Steam picks up the new launcher at the next boot.
+    frame = steamos.is_steam_frame()
+    if shortcuts.steam_is_running() and not frame:
         print("Close Steam first — the installer configures the game's Proton prefix.")
         return 1
     print(f"Installing Mod Organizer 2 for {SKYRIM_SE.name} to {dest} … (this can take several minutes)")
@@ -161,6 +165,8 @@ def _mo2_install(args: list[str]) -> int:
         return 1
     ModSyncService().choose_instance(result.instance_path)
     print(f"Installed and now in use: {result.instance_path}")
+    if frame:
+        print("Reboot the Steam Frame so Steam's Play button uses Mod Organizer 2.")
     return 0
 
 

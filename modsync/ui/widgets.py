@@ -1,16 +1,14 @@
 """The building blocks every screen is made of.
 
-Everything that can be chosen is a ``Tile``: a large button with an icon, a
-title and the description a tooltip would otherwise hide (a controller can't
-hover). The rest dresses the window: a painted northern-sky backdrop, the
-focus halo that glides between tiles, toasts, the section tabs and the hint
-bar along the bottom that shows which button does what.
+Everything that can be chosen is a ``Tile``: a flat row with a title, the
+description a tooltip would otherwise hide (a controller can't hover) and an
+optional value on the right. A focused row lights up white and shows the
+button that chooses it. The rest dresses the window: toasts, the section
+tabs and the hint bar along the bottom that shows which button does what.
 """
 
 from __future__ import annotations
 
-import random
-import time
 from typing import Callable
 
 import shiboken6
@@ -26,19 +24,7 @@ from PySide6.QtCore import (
     QTimer,
     QVariantAnimation,
 )
-from PySide6.QtGui import (
-    QBrush,
-    QColor,
-    QConicalGradient,
-    QFont,
-    QFontMetricsF,
-    QLinearGradient,
-    QPainter,
-    QPainterPath,
-    QPen,
-    QPixmap,
-    QRadialGradient,
-)
+from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
     QFrame,
@@ -54,6 +40,8 @@ from PySide6.QtWidgets import (
 
 from modsync.ui import icons, theme
 from modsync.ui.input import Action
+
+RADIUS = 4  # rows, buttons, keys and sheets all share the Deck's small corner
 
 # --- small helpers -------------------------------------------------------------------
 
@@ -93,6 +81,7 @@ def label(text: str = "", role: str = "", *, wrap: bool = True, selectable: bool
 
 
 def pill(text: str = "", tone: str = "off") -> QLabel:
+    """A short state word in its tone's color, such as "Needs 1.5.97"."""
     lab = QLabel(text)
     lab.setProperty("pill", tone)
     lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -109,9 +98,10 @@ def set_pill(lab: QLabel, text: str, tone: str) -> None:
 
 
 class Panel(QFrame):
-    """A translucent card the backdrop glows through."""
+    """A flat block a little lighter than the ground, for readouts that aren't
+    choices (the installed version, the devices in sync)."""
 
-    def __init__(self, parent: QWidget | None = None, *, margins: int = 24, spacing: int = 14) -> None:
+    def __init__(self, parent: QWidget | None = None, *, margins: int = 20, spacing: int = 12) -> None:
         super().__init__(parent)
         self.setObjectName("panel")
         self.layout_ = QVBoxLayout(self)
@@ -123,14 +113,36 @@ class Panel(QFrame):
         return widget
 
 
+def _router():
+    from modsync.ui.input import InputRouter
+
+    return InputRouter._instance
+
+
 def shows_focus(w: QWidget) -> bool:
     """Whether to draw ``w`` as focused. With a mouse or touch screen, the
     focused tile is only where Qt's keyboard focus happens to sit, and
     lighting it would look like a selection the user never made."""
-    from modsync.ui.input import InputRouter
-
-    router = InputRouter._instance
+    router = _router()
     return w.hasFocus() and (router is None or router.mode != "mouse")
+
+
+def glyph_style() -> str:
+    router = _router()
+    return router.glyph_style if router is not None else "xbox"
+
+
+def sync_lit(w: QWidget | None) -> None:
+    """Re-light ``w`` after the input device changed (a mouse unlights it)."""
+    if w is not None and shiboken6.isValid(w) and hasattr(w, "sync_lit"):
+        w.sync_lit()
+
+
+def restyle_rows(root: QWidget) -> None:
+    """The input device changed: rows re-measure their legend slot."""
+    for end in root.findChildren(TileEnd):
+        end.updateGeometry()
+        end.update()
 
 
 def touch_scroll(area) -> None:
@@ -151,13 +163,13 @@ def scroller(content: QWidget) -> QScrollArea:
 
 
 class Icon(QWidget):
-    """A line icon in a soft rounded square."""
+    """A line icon. ``tone`` names a theme color; a lit tile paints it dark."""
 
-    def __init__(self, name: str, size: int = 44, parent: QWidget | None = None) -> None:
+    def __init__(self, name: str, size: int = 24, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.name = name
-        self.tone = "accent"
-        self.boxed = True
+        self.tone = "secondary"
+        self.lit = False
         self.setFixedSize(size, size)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
@@ -170,29 +182,90 @@ class Icon(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(self.rect())
-        on_accent = self.tone == "on_accent"
-        if self.boxed:
-            bg = QColor(theme.C["on_accent"]) if on_accent else theme.color(self.tone if self.tone != "accent" else "accent")
-            bg.setAlpha(40 if not on_accent else 34)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(bg)
-            p.drawRoundedRect(r, r.width() * 0.3, r.height() * 0.3)
-        fg = theme.color("on_accent") if on_accent else theme.color(self.tone)
         if not self.isEnabled():
             fg = theme.color("disabled")
-        inset = r.width() * (0.22 if self.boxed else 0.04)
-        icons.paint_icon(p, self.name, r.adjusted(inset, inset, -inset, -inset), fg, weight=2.0)
+        elif self.lit and self.tone != "on_accent":
+            fg = theme.color("on_focus")
+        else:
+            fg = theme.color(self.tone)
+        icons.paint_icon(p, self.name, QRectF(self.rect()), fg, weight=2.0)
+
+
+class Dot(QWidget):
+    """A small status light: green ready, amber needs you, grey not yet."""
+
+    def __init__(self, tone: str = "off", parent: QWidget | None = None, *, size: int = 10) -> None:
+        super().__init__(parent)
+        self.tone = tone
+        self.lit = False
+        self.setFixedSize(size, size)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def set_tone(self, tone: str) -> None:
+        self.tone = tone
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        if self.tone in ("ok", "warn", "danger", "info", "busy"):
+            p.setBrush(theme.tone_color(self.tone, lit=self.lit))
+        else:
+            p.setBrush(theme.color("on_focus_dim" if self.lit else "border"))
+        p.drawEllipse(QRectF(self.rect()))
 
 
 # --- tiles ---------------------------------------------------------------------------
 
 
+class TileEnd(QWidget):
+    """The right edge of a row: a chevron when it leads somewhere, and the
+    button that chooses it while it is lit."""
+
+    def __init__(self, tile: "Tile") -> None:
+        super().__init__(tile)
+        self.tile = tile
+        self.chevron = False
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def _glyph_width(self) -> float:
+        return icons.glyph_width("accept", glyph_style(), 26, theme.font(11))
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        # A mouse or a finger never lights a row, so only the chevron needs room.
+        router = _router()
+        legend = 0.0 if router is not None and router.mode == "mouse" else self._glyph_width()
+        return QSize(int(max(22, legend)) + 2, 26)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        tile = self.tile
+        if tile.lit and tile.isEnabled():
+            w = self._glyph_width()
+            rect = QRectF(self.width() - w - 1, (self.height() - 26) / 2, w, 26)
+            icons.paint_glyph(p, "accept", rect, glyph_style(), theme.font(11),
+                              on="accent" if tile.property("tileRole") == "primary" else "focus")
+            return
+        if self.chevron:
+            fg = theme.color("on_accent" if tile.property("tileRole") == "primary" else "muted")
+            if not tile.isEnabled():
+                fg = theme.color("disabled")
+            icons.paint_icon(p, "chevron", QRectF(self.width() - 22, (self.height() - 22) / 2, 22, 22), fg,
+                             weight=2.0)
+
+
 class Tile(QAbstractButton):
-    """A big, focusable choice: icon, title, description, optional pill.
+    """A focusable row: title, description, an optional value on the right.
 
     ``role`` is "normal", "primary" (filled with the accent) or "danger".
-    ``size`` is "normal", "compact", "choice" (a tall card) or "hero"."""
+    ``size`` is "normal", "compact", "choice" (a tall card) or "hero". Only
+    hero and choice tiles show their icon; a list of rows reads better
+    without one on every line."""
+
+    SHOWS_ICON = ("hero", "choice")
 
     def __init__(
         self,
@@ -203,6 +276,7 @@ class Tile(QAbstractButton):
         role: str = "normal",
         size: str = "normal",
         chevron: bool = False,
+        status: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -211,27 +285,43 @@ class Tile(QAbstractButton):
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
         self.setProperty("tileRole", role)
         self.setProperty("tileSize", size)
-        self._glow = 0.0
+        self.setProperty("ownFocus", True)
+        self.setProperty("lit", False)
 
         vertical = size == "choice"
         outer = QVBoxLayout(self) if vertical else QHBoxLayout(self)
-        pad = {"compact": (16, 10, 14, 10), "hero": (28, 22, 28, 22), "choice": (24, 24, 24, 24)}.get(
-            size, (18, 14, 18, 14))
+        pad = {"compact": (18, 11, 14, 11), "hero": (26, 20, 20, 20), "choice": (24, 22, 24, 22)}.get(
+            size, (18, 14, 14, 14))
         outer.setContentsMargins(*pad)
-        outer.setSpacing(16 if not vertical else 12)
-        icon_px = {"compact": 34, "hero": 60, "choice": 56}.get(size, 44)
+        outer.setSpacing(14 if not vertical else 12)
         # Children get their parent up front: a parentless widget made visible
         # becomes a window of its own, however briefly.
-        self.icon = Icon(icon or "chevron", icon_px, self)
-        self.icon.setVisible(icon is not None)
+        self.lead = QWidget(self)  # the status dot of a StatusRow sits here
+        self.lead.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        lead = QHBoxLayout(self.lead)
+        lead.setContentsMargins(0, 0, 0, 0)
+        lead.setSpacing(0)
+        self.icon = Icon(icon or "chevron", {"hero": 30, "choice": 32}.get(size, 24), self.lead)
         if role == "primary":
             self.icon.tone = "on_accent"
         elif role == "danger":
             self.icon.tone = "danger"
-        outer.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignTop if vertical else Qt.AlignmentFlag.AlignVCenter)
+        lead.addWidget(self.icon)
+        self.lead.setVisible(icon is not None and size in self.SHOWS_ICON)
+        # A row with a state gets a status dot before its title; the value word
+        # on the right takes the same tone.
+        self.dot: Dot | None = None
+        if status:
+            self.dot = Dot("off", self.lead)
+            lead.addWidget(self.dot)
+            self.icon.hide()
+            self.lead.setFixedWidth(12)
+            self.lead.setVisible(True)
+        outer.addWidget(self.lead, 0, (Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft) if vertical
+                        else Qt.AlignmentFlag.AlignVCenter)
 
         text = QVBoxLayout()
-        text.setSpacing(3)
+        text.setSpacing(2)
         self.title = QLabel(title, self)
         self.title.setObjectName("tileTitle")
         self.title.setWordWrap(True)
@@ -246,16 +336,15 @@ class Tile(QAbstractButton):
             text.addStretch(1)
         outer.addLayout(text, 1)
 
-        self.badge = pill()
-        self.badge.setParent(self)
+        self.badge = QLabel(self)  # the value on the right: "Ready", "1.6.1170", "Off"
+        self.badge.setObjectName("tileValue")
+        self.badge.setProperty("tone", "off")
         self.badge.setVisible(False)
         self.badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         outer.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignVCenter)
-        self.chevron = Icon("chevron", 22, self)
-        self.chevron.boxed = False
-        self.chevron.tone = "muted" if role != "primary" else "on_accent"
-        self.chevron.setVisible(chevron)
-        outer.addWidget(self.chevron, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.end = TileEnd(self)
+        self.end.chevron = chevron
+        outer.addWidget(self.end, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         super().setText(title)
         sp = self.sizePolicy()
         sp.setHorizontalPolicy(QSizePolicy.Policy.Preferred)
@@ -273,23 +362,56 @@ class Tile(QAbstractButton):
         self.desc.setVisible(bool(text))
 
     def set_badge(self, text: str, tone: str = "off") -> None:
-        set_pill(self.badge, text, tone)
+        self.badge.setText(text)
+        self.badge.setVisible(bool(text))
+        if self.dot is not None:
+            self.dot.set_tone(tone)
+        if self.badge.property("tone") != tone:
+            self.badge.setProperty("tone", tone)
+            theme.repolish(self.badge)
 
     def set_icon(self, name: str, tone: str | None = None) -> None:
         self.icon.set(name, tone)
-        self.icon.setVisible(True)
+        self.lead.setVisible(self.dot is not None or self.property("tileSize") in self.SHOWS_ICON)
+
+    def set_chevron(self, on: bool) -> None:
+        self.end.chevron = on
+        self.end.update()
 
     def set_role(self, role: str) -> None:
         if self.property("tileRole") == role:
             return
         self.setProperty("tileRole", role)
-        self.icon.tone = "on_accent" if role == "primary" else ("danger" if role == "danger" else "accent")
-        self.chevron.tone = "on_accent" if role == "primary" else "muted"
+        self.icon.tone = "on_accent" if role == "primary" else ("danger" if role == "danger" else "secondary")
         theme.repolish(self)
 
     @property
     def description(self) -> str:
         return self.desc.text()
+
+    # --- focus: a lit row ---
+    @property
+    def lit(self) -> bool:
+        return bool(self.property("lit"))
+
+    def sync_lit(self) -> None:
+        lit = shows_focus(self)
+        if lit == self.lit:
+            return
+        self.setProperty("lit", lit)
+        self.icon.lit = lit
+        for dot in self.findChildren(Dot):
+            dot.lit = lit
+        self.end.updateGeometry()  # the legend is wider for a keyboard's Enter
+        theme.repolish(self)
+
+    def focusInEvent(self, event) -> None:  # noqa: N802
+        super().focusInEvent(event)
+        self.sync_lit()
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802
+        super().focusOutEvent(event)
+        self.sync_lit()
 
     # --- geometry: the layout knows best ---
     def sizeHint(self) -> QSize:  # noqa: N802
@@ -307,6 +429,7 @@ class Tile(QAbstractButton):
     def changeEvent(self, event) -> None:  # noqa: N802
         if event.type() == event.Type.EnabledChange:
             self.icon.update()
+            self.end.update()
         super().changeEvent(event)
 
     # A press that travels is a scroll, not a choice. With touch scrolling the
@@ -342,114 +465,92 @@ class Tile(QAbstractButton):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        size = self.property("tileSize")
-        radius = 22 if size in ("hero", "choice") else 16
-        role_ = self.property("tileRole")
-        hot = self.isDown()
-        lit = shows_focus(self) or self.underMouse()
+        r = QRectF(self.rect())
+        radius = RADIUS + (2 if self.property("tileSize") == "hero" else 0)
+        primary = self.property("tileRole") == "primary"
+        lit = self.lit and shows_focus(self)
+        down = self.isDown()
+        hover = self.underMouse() and not lit
         if not self.isEnabled():
             p.setOpacity(0.5)
-        if role_ == "primary":
-            grad = QLinearGradient(r.topLeft(), r.bottomRight())
-            top = theme.color("accent_hi" if lit else "accent")
-            grad.setColorAt(0, top)
-            grad.setColorAt(1, theme.color("accent_deep" if not hot else "accent"))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(grad)
+        p.setPen(Qt.PenStyle.NoPen)
+        if primary:
+            fill = theme.color("accent_deep")
+            if down:
+                fill = fill.darker(112)
+            elif hover:
+                fill = fill.lighter(112)
+            p.setBrush(fill)
             p.drawRoundedRect(r, radius, radius)
-            if size == "hero":
-                self._paint_shine(p, r, radius)
+            if lit:  # the blue stays; a white ring says it is the one selected
+                p.setPen(QPen(theme.color("focus"), 3))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRoundedRect(r.adjusted(1.5, 1.5, -1.5, -1.5), radius, radius)
             return
-        base = theme.color("sunken" if hot else ("raised" if lit else "surface"))
-        base.setAlpha(236)
-        p.setBrush(base)
-        border = theme.color("border")
-        if role_ == "danger":
-            border = QColor(theme.C["danger"])
-            border.setAlpha(110 if lit else 60)
-        elif lit:
-            border = theme.color("accent", 120)
-        p.setPen(QPen(border, 1.2))
+        if lit:
+            fill = theme.color("focus_pressed" if down else "focus")
+        else:
+            fill = theme.color("sunken" if down else ("raised" if hover else "surface"))
+        p.setBrush(fill)
         p.drawRoundedRect(r, radius, radius)
-
-    def _paint_shine(self, p: QPainter, r: QRectF, radius: float) -> None:
-        """A slow sheen across the hero tile, so the main action reads as alive."""
-        phase = (time.monotonic() % 6.0) / 6.0
-        x = r.left() - r.width() * 0.4 + phase * r.width() * 1.8
-        grad = QLinearGradient(QPointF(x - 80, r.top()), QPointF(x + 80, r.bottom()))
-        grad.setColorAt(0, QColor(255, 255, 255, 0))
-        grad.setColorAt(0.5, QColor(255, 255, 255, 46))
-        grad.setColorAt(1, QColor(255, 255, 255, 0))
-        path = QPainterPath()
-        path.addRoundedRect(r, radius, radius)
-        p.setClipPath(path)
-        p.setBrush(grad)
-        p.drawRect(r)
 
 
 class HeroTile(Tile):
-    """The one big action on a screen (Play, Continue, Start setup)."""
+    """The one big action on a screen (Play, Continue, Install MO2). While a
+    repair is recommended it steps down to a plain row, so the screen has one
+    blue action."""
 
     def __init__(self, title: str, description: str = "", icon: str = "play", parent: QWidget | None = None) -> None:
         super().__init__(title, description, icon, role="primary", size="hero", parent=parent)
-        self.setMinimumHeight(118)
-        self._sheen = QTimer(self)
-        self._sheen.setInterval(50)
-        self._sheen.timeout.connect(self._shine)
+        self.setMinimumHeight(96)
 
-    def _shine(self) -> None:
-        # The sheen is only painted on the primary fill; Home demotes Play to
-        # a plain tile while it recommends a repair.
-        if self.property("tileRole") == "primary" and self.window().isActiveWindow():
-            self.update()
-
-    def showEvent(self, event) -> None:  # noqa: N802
-        self._sheen.start()
-        super().showEvent(event)
-
-    def hideEvent(self, event) -> None:  # noqa: N802
-        self._sheen.stop()
-        super().hideEvent(event)
+    def set_role(self, role: str) -> None:
+        if self.property("tileRole") == role:
+            return
+        primary = role == "primary"
+        self.setProperty("tileSize", "hero" if primary else "normal")
+        self.lead.setVisible(primary)
+        self.setMinimumHeight(96 if primary else 0)
+        self.layout().setContentsMargins(*((26, 20, 20, 20) if primary else (18, 14, 14, 14)))
+        super().set_role(role)
+        self.updateGeometry()
 
 
 class StatusRow(Tile):
-    """One line of the readiness checklist: what, its state, and a way there."""
-
-    TONE_ICON = {"ok": ("check", "ok"), "warn": ("warning", "warn"), "danger": ("warning", "danger"),
-                 "off": ("pulse", "muted"), "busy": ("sync", "accent"), "info": ("info", "info")}
+    """One line of the readiness list: a status dot, what it is, its state on
+    the right, and a way there."""
 
     def __init__(self, title: str, icon: str, parent: QWidget | None = None) -> None:
-        super().__init__(title, "", icon, size="compact", chevron=True, parent=parent)
+        super().__init__(title, "", None, size="compact", chevron=True, status=True, parent=parent)
         self.base_icon = icon
 
     def set_state(self, value: str, tone: str, detail: str = "") -> None:
         self.set_badge(value, tone)
         self.set_description(detail)
-        self.icon.set(self.base_icon, {"ok": "ok", "warn": "warn", "danger": "danger"}.get(tone, "accent"))
 
 
 # --- big readouts ------------------------------------------------------------------------
 
 
-class ProgressRing(QWidget):
-    """A large circular gauge for the sync completion."""
+class SyncMeter(QWidget):
+    """How much of the shared folder is here, as a flat bar. The words next to
+    it say whether Syncthing is still working."""
 
-    def __init__(self, size: int = 200, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedSize(size, size)
+        self.setFixedHeight(8)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._value = 0.0
         self._target = 0.0
-        self._spin = 0.0
         self.caption = ""
         self.busy = False
         self._anim = QVariantAnimation(self)
-        self._anim.setDuration(600)
+        self._anim.setDuration(500)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._anim.valueChanged.connect(self._on_anim)
-        self._spinner = QTimer(self)
-        self._spinner.setInterval(33)
-        self._spinner.timeout.connect(self._tick)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(320, 8)
 
     def set_value(self, percent: float, caption: str = "", *, busy: bool = False) -> None:
         self.caption = caption
@@ -462,10 +563,6 @@ class ProgressRing(QWidget):
             self._anim.setStartValue(float(self._value))
             self._anim.setEndValue(target)
             self._anim.start()
-        if busy and not self._spinner.isActive():
-            self._spinner.start()
-        elif not busy:
-            self._spinner.stop()
         self.update()
 
     @property
@@ -478,74 +575,31 @@ class ProgressRing(QWidget):
         self._value = float(v)
         self.update()
 
-    def _tick(self) -> None:
-        self._spin = (self._spin + 4) % 360
-        self.update()
-
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        side = min(self.width(), self.height())
-        thick = side * 0.085
-        r = QRectF(thick, thick, side - 2 * thick, side - 2 * thick)
-        p.setPen(QPen(theme.color("sunken"), thick, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        p.drawArc(r, 0, 360 * 16)
-        if self._value > 0:
-            grad = QConicalGradient(r.center(), 90)
-            grad.setColorAt(0, theme.color("accent_hi"))
-            grad.setColorAt(0.5, theme.color("accent"))
-            grad.setColorAt(1, theme.color("accent_deep"))
-            p.setPen(QPen(QBrush(grad), thick, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-            p.drawArc(r, 90 * 16, -int(self._value / 100 * 360 * 16))
-        if self.busy:
-            p.setPen(QPen(theme.color("accent_hi", 150), thick * 0.35, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-            p.drawArc(r.adjusted(-thick * 0.9, -thick * 0.9, thick * 0.9, thick * 0.9),
-                      int(-self._spin * 16), 50 * 16)
-        p.setPen(theme.color("text"))
-        p.setFont(theme.font(side * 0.15, QFont.Weight.Black))
-        p.drawText(r.adjusted(0, -side * 0.08, 0, -side * 0.08), Qt.AlignmentFlag.AlignCenter, f"{int(round(self._value))}%")
-        p.setPen(theme.color("secondary"))
-        p.setFont(theme.font(max(9.0, side * 0.052), QFont.Weight.DemiBold, spacing=1.2))
-        p.drawText(r.adjusted(0, side * 0.2, 0, side * 0.2), Qt.AlignmentFlag.AlignCenter, self.caption.upper())
-
-
-class Dot(QWidget):
-    """A small status light (connected / offline)."""
-
-    def __init__(self, tone: str = "off", parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.tone = tone
-        self.setFixedSize(14, 14)
-
-    def paintEvent(self, _event) -> None:  # noqa: N802
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        c = theme.color({"ok": "ok", "warn": "warn", "danger": "danger"}.get(self.tone, "muted"))
-        glow = QRadialGradient(QPointF(7, 7), 7)
-        halo = QColor(c)
-        halo.setAlpha(90)
-        glow.setColorAt(0, halo)
-        glow.setColorAt(1, QColor(0, 0, 0, 0))
+        bar = QRectF(self.rect())
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(glow)
-        p.drawEllipse(QRectF(0, 0, 14, 14))
-        p.setBrush(c)
-        p.drawEllipse(QRectF(3.5, 3.5, 7, 7))
+        p.setBrush(theme.color("sunken"))
+        p.drawRoundedRect(bar, 3, 3)
+        if self._value > 0:
+            p.setBrush(theme.color("accent_deep"))
+            p.drawRoundedRect(QRectF(bar.left(), bar.top(), bar.width() * self._value / 100, bar.height()), 3, 3)
 
 
 # --- page furniture ------------------------------------------------------------------------
 
 
 class PageHeader(QWidget):
-    def __init__(self, eyebrow: str, title: str, subtitle: str = "", parent: QWidget | None = None) -> None:
+    """A page title, with a line under it only when the title needs one."""
+
+    def __init__(self, title: str, subtitle: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(4)
-        self.eyebrow = label(eyebrow.upper(), "eyebrow", wrap=False)
         self.title = label(title, "title")
         self.subtitle = label(subtitle, "secondary")
-        v.addWidget(self.eyebrow)
         v.addWidget(self.title)
         v.addWidget(self.subtitle)
         self.subtitle.setVisible(bool(subtitle))
@@ -558,91 +612,22 @@ class PageHeader(QWidget):
 # --- window chrome ---------------------------------------------------------------------------
 
 
-def paint_backdrop(size: QSize) -> QPixmap:
-    """A night sky over a mountain range: gradient, aurora, stars, three ridges.
-    Seeded, so it's the same every time and only depends on the window size."""
-    w, h = max(1, size.width()), max(1, size.height())
-    pix = QPixmap(w, h)
-    p = QPainter(pix)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    sky = QLinearGradient(0, 0, 0, h)
-    sky.setColorAt(0, theme.color("night"))
-    sky.setColorAt(0.65, QColor("#0b1522"))
-    sky.setColorAt(1, theme.color("dusk"))
-    p.fillRect(0, 0, w, h, sky)
-
-    for cx, cy, rx, hue, alpha in (
-        (0.18, 0.05, 0.55, "aurora_a", 52),
-        (0.62, 0.0, 0.5, "aurora_b", 40),
-        (0.92, 0.18, 0.35, "aurora_a", 30),
-    ):
-        g = QRadialGradient(QPointF(cx * w, cy * h), rx * w)
-        c = theme.color(hue, alpha)
-        g.setColorAt(0, c)
-        g.setColorAt(1, QColor(c.red(), c.green(), c.blue(), 0))
-        p.fillRect(0, 0, w, h, g)
-
-    rng = random.Random(489830)
-    p.setPen(Qt.PenStyle.NoPen)
-    for _ in range(int(w * h / 9000)):
-        x, y = rng.random() * w, rng.random() * h * 0.6
-        a = int(30 + rng.random() * 110 * (1 - y / (h * 0.6)))
-        p.setBrush(QColor(220, 235, 255, a))
-        s = 0.6 + rng.random() * 1.1
-        p.drawEllipse(QPointF(x, y), s, s)
-
-    for depth, (base, rough, tone, alpha) in enumerate((
-        (0.70, 0.16, "#14243a", 150), (0.79, 0.12, "#101d2f", 200), (0.88, 0.08, "#0b1522", 255),
-    )):
-        path = QPainterPath(QPointF(0, h))
-        y = base * h
-        x = 0.0
-        step = w / (14 + depth * 6)
-        path.lineTo(0, y)
-        while x < w + step:
-            x += step * (0.6 + rng.random() * 0.8)
-            peak = base * h - rng.random() * rough * h
-            path.lineTo(x - step * 0.5, peak)
-            path.lineTo(x, base * h - rng.random() * rough * h * 0.35)
-        path.lineTo(w, h)
-        path.closeSubpath()
-        c = QColor(tone)
-        c.setAlpha(alpha)
-        p.setBrush(c)
-        p.drawPath(path)
-        if depth == 0:  # snow-lit edge on the far ridge
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(theme.color("accent", 26), 1.2))
-            p.drawPath(path)
-            p.setPen(Qt.PenStyle.NoPen)
-    p.end()
-    return pix
-
-
 class Backdrop(QWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._pix: QPixmap | None = None
-
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        self._pix = None
-        super().resizeEvent(event)
+    """The window ground: one flat color."""
 
     def paintEvent(self, event) -> None:  # noqa: N802
-        if self._pix is None or self._pix.size() != self.size():
-            self._pix = paint_backdrop(self.size())
         p = QPainter(self)
-        p.drawPixmap(event.rect(), self._pix, event.rect())
+        p.fillRect(event.rect(), theme.color("night"))
 
 
 class FocusHalo(QWidget):
-    """A single outline that slides to whatever has focus.
+    """A white outline that slides to whatever has focus, for controls that
+    don't light up themselves (rows and keys do).
 
     It is one overlay over the whole window that never takes the mouse; it
-    follows its target through scrolling and layout changes on a frame timer
-    while the tile fill identifies the recommended action."""
+    follows its target through scrolling and layout changes on a frame timer."""
 
-    PAD = 5
+    PAD = 4
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
@@ -663,19 +648,22 @@ class FocusHalo(QWidget):
         self._tracker.start()
 
     def follow(self, widget: QWidget | None) -> None:
-        if widget is not None and (widget.property("noHalo") or widget is self.parent()):
+        if widget is not None and (widget.property("noHalo") or widget.property("ownFocus")
+                                   or widget is self.parent()):
             widget = None
         self.target = widget
         rect = self._target_rect()
         if rect is None:
+            old = self._shown
             self._shown = QRectF()
             self._rect = QRectF()
-            self.update()
+            if not old.isNull():
+                self._dirty(old)
             return
         if self._shown.isNull():
             self._shown = rect
             self._rect = rect
-            self.update()
+            self._dirty(QRectF())
             return
         self._rect = rect
         self._anim.stop()
@@ -698,7 +686,7 @@ class FocusHalo(QWidget):
             return None
         visible = QRect(w.mapTo(root, QPoint(0, 0)), w.size())
         # Clip to every ancestor (scroll viewports especially), so a
-        # half-scrolled tile is framed only where it shows.
+        # half-scrolled control is framed only where it shows.
         a = w.parentWidget()
         while a is not None and a is not root:
             visible = visible.intersected(QRect(a.mapTo(root, QPoint(0, 0)), a.size()))
@@ -739,18 +727,16 @@ class FocusHalo(QWidget):
     def _dirty(self, old: QRectF) -> None:
         region = old.united(self._shown) if not old.isNull() else self._shown
         if not region.isNull():
-            self.update(region.adjusted(-14, -14, 14, 14).toAlignedRect())
+            self.update(region.adjusted(-6, -6, 6, 6).toAlignedRect())
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         if self._shown.isNull():
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = self._shown
-        radius = 26 if r.height() > 110 else 20
-        p.setPen(QPen(theme.color("accent_hi"), 2.5))
+        p.setPen(QPen(theme.color("focus"), 3))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(r, radius, radius)
+        p.drawRoundedRect(self._shown.adjusted(1.5, 1.5, -1.5, -1.5), RADIUS + 2, RADIUS + 2)
 
 
 class Toast(QFrame):
@@ -759,10 +745,10 @@ class Toast(QFrame):
         self.tone = tone
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
         h = QHBoxLayout(self)
-        h.setContentsMargins(16, 12, 18, 12)
+        h.setContentsMargins(16, 13, 18, 13)
         h.setSpacing(12)
-        icon = Icon({"ok": "check", "warn": "warning", "danger": "warning"}.get(tone, "info"), 30)
-        icon.tone = {"ok": "ok", "warn": "warn", "danger": "danger"}.get(tone, "accent")
+        icon = Icon({"ok": "check", "warn": "warning", "danger": "warning"}.get(tone, "info"), 22)
+        icon.tone = {"ok": "ok", "warn": "warn", "danger": "danger"}.get(tone, "info")
         h.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
         self.text = label(text)
         h.addWidget(self.text, 1)
@@ -771,7 +757,7 @@ class Toast(QFrame):
         effect.setOpacity(0.0)
         self.setGraphicsEffect(effect)
         self._fade = QVariantAnimation(self)
-        self._fade.setDuration(220)
+        self._fade.setDuration(180)
         self._fade.valueChanged.connect(lambda v: effect.setOpacity(float(v)))
 
     def fade(self, to: float, then: Callable[[], None] | None = None) -> None:
@@ -788,10 +774,9 @@ class Toast(QFrame):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        p.setPen(QPen(theme.color(self.tone if self.tone in ("ok", "warn", "danger") else "accent", 120), 1.2))
-        p.setBrush(theme.color("raised", 246))
-        p.drawRoundedRect(r, 16, 16)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(theme.color("raised"))
+        p.drawRoundedRect(QRectF(self.rect()), RADIUS, RADIUS)
 
 
 class Toasts(QWidget):
@@ -803,7 +788,7 @@ class Toasts(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         self.v = QVBoxLayout(self)
         self.v.setContentsMargins(0, 0, 0, 0)
-        self.v.setSpacing(10)
+        self.v.setSpacing(8)
         self.v.addStretch(1)
         self.setFixedWidth(520)
 
@@ -836,7 +821,7 @@ class Toasts(QWidget):
         height = self.v.totalHeightForWidth(self.width())
         if height <= 0:
             height = self.v.sizeHint().height()
-        self.setGeometry(parent.width() - self.width() - 24, 76, self.width(), height)
+        self.setGeometry(parent.width() - self.width() - 24, 72, self.width(), height)
         self.raise_()
 
 
@@ -850,34 +835,48 @@ class TabButton(QAbstractButton):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
-        self.alert = ""  # "", "warn" or "danger": a small dot on the tab
+        self.setProperty("ownFocus", True)
+        self.alert = ""  # "", "warn" or "danger": a small dot after the name
 
     def sizeHint(self) -> QSize:  # noqa: N802
-        fm = QFontMetricsF(theme.font(12.5, QFont.Weight.Bold))
-        return QSize(int(fm.horizontalAdvance(self.text()) + 66), 46)
+        fm = QFontMetricsF(theme.font(12.5, QFont.Weight.DemiBold))
+        return QSize(int(fm.horizontalAdvance(self.text()) + 36 + (12 if self.alert else 0)), 40)
+
+    def focusInEvent(self, event) -> None:  # noqa: N802
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802
+        super().focusOutEvent(event)
+        self.update()
+
+    def sync_lit(self) -> None:
+        self.update()
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(self.rect()).adjusted(2, 2, -2, -2)
+        r = QRectF(self.rect()).adjusted(0, 2, 0, -2)
         on = self.isChecked()
-        if on:
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(theme.color("accent", 36))
-            p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+        lit = shows_focus(self)
+        p.setPen(Qt.PenStyle.NoPen)
+        if lit:
+            p.setBrush(theme.color("focus"))
+            p.drawRoundedRect(r, RADIUS, RADIUS)
+        elif on:
+            p.setBrush(theme.color("border"))
+            p.drawRoundedRect(r, RADIUS, RADIUS)
         elif self.underMouse():
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(theme.color("raised", 160))
-            p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
-        fg = theme.color("accent_hi" if on else "secondary")
-        icons.paint_icon(p, self.icon_name, QRectF(r.left() + 14, r.center().y() - 10, 20, 20), fg, weight=2.1)
-        p.setPen(theme.color("text") if on else fg)
-        p.setFont(theme.font(12.5, QFont.Weight.Bold))
-        p.drawText(r.adjusted(42, 0, -12, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self.text())
+            p.setBrush(theme.color("surface"))
+            p.drawRoundedRect(r, RADIUS, RADIUS)
+        p.setPen(theme.color("on_focus" if lit else ("text" if on else "secondary")))
+        p.setFont(theme.font(12.5, QFont.Weight.DemiBold))
+        text_rect = r.adjusted(18, 0, -18 - (12 if self.alert else 0), 0)
+        p.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self.text())
         if self.alert:
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(theme.color("warn" if self.alert == "warn" else "danger"))
-            p.drawEllipse(QPointF(r.left() + 34, r.top() + 10), 4.5, 4.5)
+            p.setBrush(theme.tone_color(self.alert, lit=lit))
+            p.drawEllipse(QPointF(r.right() - 18, r.center().y()), 4, 4)
 
 
 class GlyphLabel(QWidget):
@@ -922,25 +921,62 @@ POINTER_SKIP = {Action.ACCEPT, Action.UP, Action.DOWN, Action.LEFT, Action.RIGHT
                 Action.PREV_TAB, Action.NEXT_TAB, Action.SCROLL_UP, Action.SCROLL_DOWN}
 
 
-class HintButton(QAbstractButton):
-    """One "glyph + label" entry of the hint bar; clicking it does the same as
-    pressing the button. With a mouse or touch screen it drops the glyph and
-    becomes a plain button, the only on-screen way to some actions (Back,
-    Cancel, Leave setup)."""
+Hint = tuple  # (actions, text) or (actions, text, keys): ``keys`` overrides the key caps shown
 
-    def __init__(self, actions: list[Action], text: str, router, parent: QWidget | None = None) -> None:
+
+class HintButton(QAbstractButton):
+    """One entry of the hint bar: the controller button, the keyboard key and
+    what they do. Clicking it does the same as pressing the button. With a
+    mouse or touch screen it drops the glyphs and becomes a plain button, the
+    only on-screen way to some actions (Back, Cancel, Leave setup).
+
+    ModSync can't tell a keyboard from a controller Steam turns into keys, so
+    wherever a controller may be in use both are shown. ``keys`` names the key
+    caps when they differ from the usual ones (``InputRouter.key_label``), and
+    an empty list means no key does this here."""
+
+    GAP = 6
+
+    def __init__(self, actions: list[Action], text: str, router, parent: QWidget | None = None, *,
+                 keys: list[str] | None = None) -> None:
         super().__init__(parent)
         self.actions = actions
         self.router = router
+        self.keys = keys
+        self.compact = False  # the bar is short of room: controller glyphs only
         self.setText(text)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
         self.clicked.connect(lambda: router.dispatch(actions[-1]))
 
-    def _glyphs(self) -> list[tuple[str, float]]:
-        style = self.router.glyph_style
-        return [(ACTION_GLYPH[a], icons.glyph_width(ACTION_GLYPH[a], style, 26, theme.font(11))) for a in self.actions]
+    def key_caps(self) -> list[str]:
+        if self.keys is not None:
+            return list(self.keys)
+        caps: list[str] = []
+        for action in self.actions:
+            label = self.router.key_label(action)
+            if label and label not in caps:
+                caps.append(label)
+        return caps
+
+    def _parts(self) -> list[tuple[str, str, float]]:
+        """("pad", glyph, width) for the controller, then a "/" and ("key",
+        label, width) for the keyboard."""
+        font = theme.font(11)
+        parts = []
+        if self.router.controller_present:
+            style = self.router.pad_style
+            glyphs: list[str] = []
+            for action in self.actions:
+                if ACTION_GLYPH[action] not in glyphs:
+                    glyphs.append(ACTION_GLYPH[action])
+            parts += [("pad", g, icons.glyph_width(g, style, 26, font)) for g in glyphs]
+        caps = [] if parts and self.compact else self.key_caps()
+        if parts and caps:
+            parts.append(("sep", "/", QFontMetricsF(theme.font(11.5)).horizontalAdvance("/")))
+        parts += [("key", k, icons.keycap_width(k, 26, font)) for k in caps]
+        return parts
 
     @property
     def pointer(self) -> bool:
@@ -949,30 +985,39 @@ class HintButton(QAbstractButton):
     def sizeHint(self) -> QSize:  # noqa: N802
         fm = QFontMetricsF(theme.font(11.5, QFont.Weight.DemiBold))
         if self.pointer:
-            return QSize(int(fm.horizontalAdvance(self.text()) + 40), 44)
-        glyphs = sum(w + 6 for _, w in self._glyphs())
+            return QSize(int(fm.horizontalAdvance(self.text()) + 40), 42)
+        glyphs = sum(w + self.GAP for _, _, w in self._parts())
         return QSize(int(glyphs + fm.horizontalAdvance(self.text()) + 22), 40)
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self.pointer:
-            r = QRectF(self.rect()).adjusted(1, 3, -1, -3)
-            p.setPen(QPen(theme.color("border"), 1.2))
+            r = QRectF(self.rect()).adjusted(1, 4, -1, -4)
+            p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(theme.color("raised" if self.underMouse() or self.isDown() else "surface"))
-            p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+            p.drawRoundedRect(r, RADIUS, RADIUS)
             p.setPen(theme.color("text"))
             p.setFont(theme.font(11.5, QFont.Weight.DemiBold))
             p.drawText(r, Qt.AlignmentFlag.AlignCenter, self.text())
             return
         if self.underMouse():
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(theme.color("raised", 200))
-            p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 4, -1, -4), 14, 14)
+            p.setBrush(theme.color("surface"))
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 4, -1, -4), RADIUS, RADIUS)
         x = 8.0
-        for key, w in self._glyphs():
-            icons.paint_glyph(p, key, QRectF(x, (self.height() - 26) / 2, w, 26), self.router.glyph_style, theme.font(11))
-            x += w + 6
+        font = theme.font(11)
+        for kind, name, w in self._parts():
+            rect = QRectF(x, (self.height() - 26) / 2, w, 26)
+            if kind == "pad":
+                icons.paint_glyph(p, name, rect, self.router.pad_style, font)
+            elif kind == "sep":
+                p.setPen(theme.color("muted"))
+                p.setFont(theme.font(11.5))
+                p.drawText(rect, Qt.AlignmentFlag.AlignCenter, name)
+            else:
+                icons.paint_keycap(p, name, rect, font)
+            x += w + self.GAP
         p.setPen(theme.color("secondary"))
         p.setFont(theme.font(11.5, QFont.Weight.DemiBold))
         p.drawText(QRectF(x + 2, 0, self.width() - x, self.height()),
@@ -986,16 +1031,15 @@ class HintBar(QWidget):
     def __init__(self, router, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.router = router
-        self.setFixedHeight(54)
+        self.setFixedHeight(52)
         h = QHBoxLayout(self)
-        h.setContentsMargins(24, 4, 24, 6)
+        h.setContentsMargins(24, 4, 24, 4)
         h.setSpacing(8)
         self.device = QWidget()
         dv = QHBoxLayout(self.device)
         dv.setContentsMargins(0, 0, 0, 0)
         dv.setSpacing(8)
-        self.device_icon = Icon("gamepad", 26)
-        self.device_icon.boxed = False
+        self.device_icon = Icon("gamepad", 22)
         self.device_icon.tone = "muted"
         self.device_label = label("", "muted", wrap=False)
         dv.addWidget(self.device_icon)
@@ -1005,13 +1049,12 @@ class HintBar(QWidget):
         self.slots = QHBoxLayout()
         self.slots.setSpacing(6)
         h.addLayout(self.slots)
-        self._hints: list[tuple[list[Action], str]] = []
-        self._rendered_pointer: bool | None = None
+        self._hints: list[Hint] = []
         router.modeChanged.connect(self._refresh_device)
         router.controllersChanged.connect(self._refresh_device)
         self._refresh_device()
 
-    def set_hints(self, hints: list[tuple[list[Action], str]]) -> None:
+    def set_hints(self, hints: list[Hint]) -> None:
         if hints == self._hints:
             return
         self._hints = hints
@@ -1020,41 +1063,60 @@ class HintBar(QWidget):
     def _render(self) -> None:
         clear_layout(self.slots)
         pointer = self.router.mode == "mouse"
-        for actions, text in self._hints:
+        for actions, text, *keys in self._hints:
             if pointer and all(a in POINTER_SKIP for a in actions):
                 continue
-            self.slots.addWidget(HintButton(actions, text, self.router))
+            button = HintButton(actions, text, self.router, keys=keys[0] if keys else None)
+            if not pointer and not button._parts():
+                discard(button)  # nothing on this machine does it: no controller and no key
+                continue
+            self.slots.addWidget(button)
+        self._fit()
+
+    def _fit(self) -> None:
+        """Short of room (a narrow window, many hints), drop the device name,
+        then the keyboard keys beside controller glyphs. Never clip a label."""
+        buttons = [self.slots.itemAt(i).widget() for i in range(self.slots.count())]
+        buttons = [b for b in buttons if isinstance(b, HintButton)]
+        room = self.width() - 48 - 6 * max(0, len(buttons) - 1)
+
+        def needed() -> int:
+            return sum(b.sizeHint().width() for b in buttons)
+
+        for b in buttons:
+            b.compact = False
+        self.device.setVisible(needed() + self.device.sizeHint().width() + 16 <= room)
+        if needed() > room:
+            for b in buttons:
+                b.compact = True
+        for b in buttons:
+            b.updateGeometry()
+            b.update()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit()
 
     @property
     def texts(self) -> list[str]:
-        return [text for _, text in self._hints]
+        return [hint[1] for hint in self._hints]
 
     def _refresh_device(self, *_args) -> None:
-        names = self.router.controller_names
-        mode = self.router.mode
-        if (mode == "mouse") != self._rendered_pointer:
-            self._rendered_pointer = mode == "mouse"
-            self._render()
-        if names:
-            self.device_icon.set("gamepad", "accent" if mode == "gamepad" else "muted")
+        router = self.router
+        names = router.controller_names
+        self._render()  # pointer buttons, or glyphs for what is connected now
+        if router.mode == "mouse":
+            self.device_icon.set("pointer", "muted")
+            self.device_label.setText("Touch" if router.pointer == "touch" else "Mouse")
+        elif names:
+            self.device_icon.set("gamepad", "muted")
             self.device_label.setText(names[-1] if len(names) == 1 else f"{len(names)} controllers")
+        elif router.controller_present:
+            self.device_icon.set("gamepad", "muted")
+            self.device_label.setText("Steam Deck" if router.family == "deck" else "Controller")
         else:
-            icon = {"mouse": "pointer", "keyboard": "keyboard"}.get(mode, "gamepad")
-            self.device_icon.set(icon, "muted")
-            pointer = "Touch" if self.router.pointer == "touch" else "Mouse"
-            self.device_label.setText({"mouse": pointer, "keyboard": "Keyboard"}.get(mode, "Controller"))
-        for i in range(self.slots.count()):
-            w = self.slots.itemAt(i).widget()
-            if w is not None:
-                w.updateGeometry()
-                w.update()
+            self.device_icon.set("keyboard", "muted")
+            self.device_label.setText("Keyboard")
 
     def paintEvent(self, _event) -> None:  # noqa: N802
-        p = QPainter(self)
-        g = QLinearGradient(0, 0, 0, self.height())
-        g.setColorAt(0, QColor(7, 12, 20, 0))
-        g.setColorAt(0.35, QColor(7, 12, 20, 200))
-        g.setColorAt(1, QColor(7, 12, 20, 235))
-        p.fillRect(self.rect(), g)
-        p.setPen(QPen(theme.color("border", 90), 1))
-        p.drawLine(QPointF(24, 0.5), QPointF(self.width() - 24, 0.5))
+        QPainter(self).fillRect(self.rect(), theme.color("bar"))

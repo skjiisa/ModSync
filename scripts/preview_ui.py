@@ -51,7 +51,7 @@ def main():
         language="english", steam_public_build=1, steam_is_current=True,
         steam_running=False, pending_pin=False, recipe_from="1.6.1170",
         recipe_targets=["1.5.97", "1.6.1170"], skse_runtime=version("1.5.97"),
-        skse_source="skse64_1_5_97.dll in the game folder", backup_present=True,
+        skse_source="skse64_1_5_97.dll in the game folder", backup_present=True, backup_bytes=1_140_000_000,
     )
     check = gameversion.VersionCheck(
         game.installed, None, skse=gameversion.SkseCheck([
@@ -59,7 +59,11 @@ def main():
         ])
     )
     hook = launchhook.LaunchHookStatus(SKYRIM_SE, False, None, False, None, None, False, None, False, True)
+    # The controller family Steam Input would report: a Steam Deck unless a shot
+    # says otherwise, never this machine's own controllers.
+    family = {"value": "deck"}
     patches = [
+        patch("modsync.ui.steaminput.family", lambda *a, **k: family["value"]),
         patch.object(State, "load", return_value=State()),
         patch.object(ModSyncService, "game_status", return_value=game),
         patch.object(ModSyncService, "game_version_check", return_value=check),
@@ -73,6 +77,7 @@ def main():
         patch.object(ModSyncService, "usvfs_status", return_value=usvfs.Status("missing", "")),
         patch("modsync.ui.pages.system.background.status", return_value={"installed": True, "active": "active"}),
         patch("modsync.ui.pages.system.launchhook.status", return_value=hook),
+        patch("modsync.launchhook.upgrade", return_value=None),
         patch("modsync.ui.pages.system.firewall.check", return_value=Check(Firewall("ufw"), False, "ufw:1")),
         patch("modsync.ui.pages.mods.scan_instances", return_value=[INSTANCE]),
         patch("modsync.ui.pages.mods.describe_setup", return_value=["Profile: Default  ·  42 mods enabled"]),
@@ -99,10 +104,17 @@ def main():
             raise RuntimeError(f"Could not save {path}")
         overflow = [s.horizontalScrollBar().maximum() for s in window.findChildren(QScrollArea) if s.isVisible()]
         print(f"{path}: {window.width()}×{window.height()}, horizontal overflow={overflow}")
+        if name.startswith(("home", "launch")):
+            vertical = window.pages["home"].area.verticalScrollBar().maximum()
+            print(f"  Home vertical overflow={vertical}")
+            if width == 1280 and vertical:
+                raise RuntimeError(f"Home needs scrolling on the Steam Deck: {name}")
         if any(overflow):
             raise RuntimeError(f"Content exceeds the requested width: {name}")
 
-    def window_for(state: State, *, steam=None, mode="keyboard") -> MainWindow:
+    def window_for(state: State, *, steam=None, mode="keyboard", machine="deck") -> MainWindow:
+        family["value"] = machine
+        router._family = None
         router._set_mode(mode)
         service = ModSyncService(manager=Mock())
         service.state = state
@@ -118,9 +130,12 @@ def main():
 
     configured = dict(instance_path=INSTANCE, instance_label="Skyrim setup")
     try:
-        w = window_for(State())
-        capture(w, "home-welcome")
-        w.close()
+        fresh = replace(game, skse_runtime=None)
+        with patch.object(ModSyncService, "game_status", return_value=fresh), \
+                patch.object(ModSyncService, "game_version_check", return_value=gameversion.VersionCheck(fresh.installed, None)):
+            w = window_for(State(), machine="keyboard")  # a desktop with no controller: keys only
+            capture(w, "home-welcome")
+            w.close()
 
         w = window_for(State(**configured), mode="gamepad")
         router.pad_style = "xbox"
@@ -129,14 +144,35 @@ def main():
         w.pages["home"].on_game_checked(ready, gameversion.VersionCheck(ready.installed, ready.expected))
         w.pages["home"].focus_default()
         capture(w, "home-ready")
+        missing = replace(ready, skse_runtime=None)
+        with patch.object(ModSyncService, "game_status", return_value=missing):
+            w.pages["game"].panel.refresh()
+            settle()
+        capture(w, "home-skse")
+        panel = w.pages["game"].panel
+        panel._begin_file_operation("Installing SKSE…")
+        capture(w, "home-working")
+        panel._end_file_operation()
+        settle()
+        waiting = replace(game, expected=None, awaiting_vault_version=True)
+        with patch.object(ModSyncService, "game_status", return_value=waiting):
+            waiting_window = window_for(State(**configured, folder_id="example", awaiting_vault_version=True))
+            capture(waiting_window, "home-waiting")
+            waiting_window.close()
+        w.activateWindow()
         w.pages["home"].on_game_checked(game, check)
         w.go("game")
         capture(w, "game")
         w.pages["game"].panel._start_downgrade()
         capture(w, "game-confirm")
         w.top_overlay.cancel()
+        w.top_overlay.cancel()  # game maintenance sheet
         w.go("mods")
         capture(w, "mods")
+        w.top_overlay.cancel()
+        w.pages["home"].steam_options.click()
+        capture(w, "steam-setup")
+        w.top_overlay.cancel()
         w.go("sync")
         capture(w, "sync-offer")
         w.pages["sync"].toggle_join()
@@ -168,8 +204,8 @@ def main():
         keyboard.symbols.click()
         capture(w, "keyboard-symbols")
         keyboard.symbols.click()
-        keyboard.field.setText("/home/you/Games/mod_list")
-        keyboard.field.setCursorPosition(20)
+        keyboard.field.setText("MODSYNC1-7QK2-X9PL")
+        keyboard.field.setCursorPosition(14)
         keyboard.select.click()
         keyboard.move_cursor(1)
         keyboard.move_cursor(1)
@@ -191,6 +227,11 @@ def main():
         steam = launchhook.SteamLaunch(SKYRIM_SE, "mo2_489830_redirector")
         w = window_for(State(**configured, folder_id="example"), steam=steam)
         capture(w, "launch")
+        with patch.object(ModSyncService, "game_status", return_value=missing):
+            w.pages["game"].panel.refresh()
+            settle()
+            w.pages["home"].play.setFocus()
+            capture(w, "launch-skse-optional")
         steam.decision = 0
         w.close()
 
@@ -217,6 +258,7 @@ def main():
         w = window_for(State(**configured), mode="mouse")
         capture(w, "compact-mouse", width=1000)
         router.pointer = "touch"  # what the Deck's screen and the Steam Frame's pointer report
+        router.modeChanged.emit("mouse")  # as a real touch does: relabel "Mouse" as "Touch"
         capture(w, "touch-home")
         w.go("sync")
         w.pages["sync"].toggle_join()

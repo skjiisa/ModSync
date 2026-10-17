@@ -1,4 +1,4 @@
-"""The **Mod Organizer 2** section: the instance this machine uses (choose,
+"""The Mod Organizer 2 maintenance sheet: the instance this machine uses (choose,
 install, open), its profile and mod count, and two repairs: a current Visual
 C++ runtime in the game prefix and the USVFS fix for ARM64.
 
@@ -14,7 +14,7 @@ from PySide6.QtCore import QObject, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
 
-from modsync import platforms
+from modsync import platforms, steamos
 from modsync.games import SKYRIM_SE, Game
 from modsync.mo2 import discover as mo2_discover
 from modsync.mo2 import instance as mo2_instance
@@ -66,7 +66,7 @@ class InstallSheet(Overlay):
 
     def __init__(self, host, on_installed, *, installer: InstallerBackend | None = None,
                  game: Game = SKYRIM_SE) -> None:
-        super().__init__(host, "Install Mod Organizer 2", eyebrow="Mod Organizer 2", width=900)
+        super().__init__(host, "Install Mod Organizer 2", width=900)
         self._installer = installer or Mo2LintBackend()
         self._game = game
         self._on_installed = on_installed
@@ -81,9 +81,14 @@ class InstallSheet(Overlay):
         self.type_tile.clicked.connect(self._type)
         self.body.addWidget(self.dest_tile)
         self.body.addWidget(self.type_tile)
+        before, after = (
+            # Steam can't be closed on the Steam Frame; MO2-LINT leaves it running.
+            ("", " Reboot the Steam Frame afterwards so Steam's Play button uses it.")
+            if steamos.is_steam_frame() else ("Close Steam before installing. ", "")
+        )
         self.body.addWidget(label(
-            "Close Steam before installing. This downloads Mod Organizer 2 and sets up the game's Proton "
-            "prefix, which can take several minutes. SKSE can be installed afterwards from Game.", "note"))
+            f"{before}This downloads Mod Organizer 2 and sets up the game's Proton prefix, which can take "
+            f"several minutes.{after} Home offers the matching SKSE afterwards.", "note"))
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(2000)
@@ -188,11 +193,12 @@ class Mo2Chooser(QWidget):
         self.installer = installer
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(12)
+        v.setSpacing(4)
         self.status = label("Looking for Mod Organizer 2 instances…", "secondary")
         v.addWidget(self.status)
+        v.addSpacing(6)
         self.found = QVBoxLayout()
-        self.found.setSpacing(12)
+        self.found.setSpacing(4)
         v.addLayout(self.found)
         self.found_tiles: list[Tile] = []
         self.browse = Tile("Choose a folder…", "Pick the folder of an existing portable instance.", "folder",
@@ -245,13 +251,15 @@ class ModsPage(Page):
     label = "Mod Organizer"
     icon = "box"
 
+    repairsChecked = Signal()
+
     def __init__(self, host) -> None:
         super().__init__(host)
         state = self.service.state
         self.usvfs_busy = False
         self.open_mo2: Tile | None = None
         self.chooser: Mo2Chooser | None = None
-        self.header("Mod Organizer 2", state.instance_label if state.has_instance else "Mod Organizer 2",
+        self.header(state.instance_label if state.has_instance else "Mod Organizer 2",
                     "" if state.has_instance else
                     "No instance chosen yet. Pick the folder of an existing portable instance, or install a "
                     "fresh one.")
@@ -263,7 +271,7 @@ class ModsPage(Page):
             left.addWidget(self.chooser)
             left.addStretch(1)
             info = Panel()
-            info.add(label("WHY AN INSTANCE", "eyebrow", wrap=False))
+            info.add(label("Why an instance", "heading", wrap=False))
             info.add(label(
                 "ModSync works with a portable Mod Organizer 2 instance: one folder holding MO2, its "
                 "profiles, mods and downloads. That folder is what Play launches and what Sync shares.",
@@ -276,8 +284,8 @@ class ModsPage(Page):
     def _build_instance(self) -> None:
         state = self.service.state
         left, right = self.columns()
+        right.setSpacing(4)
         card = Panel()
-        card.add(label("INSTANCE", "eyebrow", wrap=False))
         card.add(label(state.instance_path, "secondary", selectable=True))
         self.setup_label = card.add(label("", "heading"))
         self.setup_label.setVisible(False)
@@ -298,16 +306,15 @@ class ModsPage(Page):
         left.addWidget(self.usvfs_note)
         left.addStretch(1)
 
-        self.open_mo2 = Tile("Open Mod Organizer 2", "Open the chosen instance. Play Skyrim on Home uses "
-                             "the profile selected in MO2, with SKSE when it is installed.", "play-circle",
+        self.open_mo2 = Tile("Open Mod Organizer 2", "Play on Home uses the profile you pick here.", "play-circle",
                              role="primary")
         self.open_mo2.clicked.connect(lambda: self.host.launch(play=False))
         right.addWidget(self.open_mo2)
-        folder = Tile("Open instance folder", "Show the instance in the file manager.", "folder")
+        folder = Tile("Open instance folder", "", "folder", size="compact")
         folder.clicked.connect(self._open_folder)
         right.addWidget(folder)
         if not state.syncing:
-            change = Tile("Change instance…", "Use a different MO2 instance folder on this machine.", "refresh")
+            change = Tile("Change instance…", "Use a different MO2 folder on this machine.", "refresh", size="compact")
             change.clicked.connect(self._change)
             right.addWidget(change)
         self.runtime_tile = Tile("Install Visual C++ runtime…", "Microsoft's 2015-2022 runtime (x64) for the "
@@ -326,9 +333,21 @@ class ModsPage(Page):
             tile.setVisible(False)
             right.addWidget(tile)
         right.addStretch(1)
-        self._refresh_runtime()
-        self.usvfs_refresh()
+        self.recheck()
         self.host.busyChanged.connect(self._update_enabled)
+
+    def recheck(self) -> None:
+        if self.open_mo2 is not None:
+            self._refresh_runtime()
+            self.usvfs_refresh()
+
+    @property
+    def repairs(self) -> list[tuple[Tile, str]]:
+        if self.open_mo2 is None:
+            return []
+        actions = [(self.runtime_tile, "MO2 needs a newer Visual C++ runtime."),
+                   (self.usvfs_apply, "MO2 needs the ARM64 fix to start games.")]
+        return [(tile, reason) for tile, reason in actions if not tile.isHidden()]
 
     def preferred_focus(self):
         if self.open_mo2 is not None:
@@ -378,6 +397,7 @@ class ModsPage(Page):
             self.runtime_note.setText(
                 "This MO2's virtual file system needs a newer Visual C++ runtime in the game's Proton prefix, "
                 "or nothing started from MO2 will run (" + "; ".join(problems) + ").")
+        self.repairsChecked.emit()
 
     def _install_runtime(self) -> None:
         def chosen(key: str | None) -> None:
@@ -417,12 +437,14 @@ class ModsPage(Page):
         self.usvfs_apply.setVisible(relevant and result.can_apply)
         self.usvfs_restore.setVisible(relevant and result.can_restore)
         self._update_enabled()
+        self.repairsChecked.emit()
 
     def _usvfs_check_failed(self, message: str) -> None:
         self.usvfs_note.setVisible(usvfs.is_arm64())
         self.usvfs_note.setText(f"Could not check USVFS: {message}")
         self.usvfs_apply.setVisible(False)
         self.usvfs_restore.setVisible(False)
+        self.repairsChecked.emit()
 
     def _usvfs_change(self, restore: bool) -> None:
         if self.usvfs_busy or self.host.busy:
@@ -431,6 +453,7 @@ class ModsPage(Page):
         self.host.set_busy("usvfs", True)
         self.usvfs_note.setText("Restoring original USVFS…" if restore else
                                 "Downloading and applying the USVFS ARM64 fix…")
+        self.host.notify(self.usvfs_note.text())
         operation = self.service.restore_usvfs if restore else self.service.apply_usvfs_fix
         worker.run_async(operation, on_done=self._usvfs_finished, on_failed=self._usvfs_failed)
 

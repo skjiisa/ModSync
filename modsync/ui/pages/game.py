@@ -1,10 +1,10 @@
-"""The **Game** section: which Skyrim runtime is installed, which one this
+"""The game maintenance sheet: which Skyrim runtime is installed, which one this
 setup needs, and the actions that fix a mismatch (downgrade with community
 patches, pin the Steam manifest, install the matching SKSE, re-record the
 version) and undo them (restore the original files, unpin).
 
 It needs nothing but Steam, so it works before an MO2 instance is chosen. The
-setup flow's last step shows the same ``GamePanel``.
+setup flow's game step shows the same ``GamePanel``.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ class GamePanel(QWidget):
     status = Signal(str)  # one-line messages for the host's toasts
     changed = Signal()  # the game files or the setup record were modified
     busyChanged = Signal(bool)  # a downgrade, restore or SKSE install is rewriting game files
+    progressed = Signal(str, int, int)  # text, value, maximum; 0 means no estimate
     checked = Signal(object, object)  # GameStatus, VersionCheck after every check
 
     def __init__(self, host, *, refresh_index: bool = True, parent: QWidget | None = None) -> None:
@@ -53,10 +54,15 @@ class GamePanel(QWidget):
 
         # --- readout ---
         readout = Panel()
-        readout.add(label("INSTALLED", "eyebrow", wrap=False))
-        self.version = readout.add(label("…", "bignum", wrap=False))
+        installed = QHBoxLayout()
+        installed.setSpacing(12)
+        installed.addWidget(label("Installed", "secondary", wrap=False), 0, Qt.AlignmentFlag.AlignBaseline)
+        self.version = label("…", "title", wrap=False)
+        installed.addWidget(self.version, 0, Qt.AlignmentFlag.AlignBaseline)
+        installed.addStretch(1)
+        readout.layout_.addLayout(installed)
         chips = QHBoxLayout()
-        chips.setSpacing(8)
+        chips.setSpacing(20)
         self.wanted_chip = pill()
         self.skse_chip = pill()
         self.steam_chip = pill()
@@ -76,7 +82,7 @@ class GamePanel(QWidget):
 
         # --- actions ---
         actions = QVBoxLayout()
-        actions.setSpacing(12)
+        actions.setSpacing(4)
         self.downgrade = self._tile(
             "Downgrade…", "Switch Skyrim to the version your mods need. Original files are backed up.",
             "download", self._start_downgrade,
@@ -99,11 +105,9 @@ class GamePanel(QWidget):
             "Delete leftover backup", "Steam has replaced these files. Delete the old backup to free disk space.", "trash",
             self._discard_backup)
         self.refresh_tile = self._tile(
-            "Check again", "Re-read the installed version, SKSE and Steam's update state.", "refresh",
-            self.refresh, size="compact")
+            "Check again", "", "refresh", self.refresh, size="compact")
         self.details_tile = self._tile(
-            "Technical details", "Where these versions come from, and the files behind them.", "info",
-            self._show_details, size="compact")
+            "Technical details", "", "info", self._show_details, size="compact")
         for tile in (self.downgrade, self.skse, self.pin, self.unpin, self.adopt, self.restore, self.discard):
             tile.setVisible(False)
             actions.addWidget(tile)
@@ -123,6 +127,10 @@ class GamePanel(QWidget):
     @property
     def action_tiles(self) -> list[Tile]:
         return [self.downgrade, self.skse, self.pin, self.unpin, self.adopt, self.restore, self.discard]
+
+    def offered(self, tile: Tile) -> Tile | None:
+        """Return a currently offered action, even when its page is hidden."""
+        return tile if not tile.isHidden() and not self._busy else None
 
     # --- data flow ----------------------------------------------------------
     @property
@@ -175,7 +183,10 @@ class GamePanel(QWidget):
         lines = []
         warning = False
         self.version.setText(str(vc.installed) if vc.installed is not None else "—")
-        if vc.installed is None and st.game_dir is None:
+        if st.awaiting_vault_version:
+            lines.append("Waiting for the source's game-version record to sync. Keep the source machine "
+                         "online; version and SKSE setup will be available when the record arrives.")
+        elif vc.installed is None and st.game_dir is None:
             lines.append("Skyrim wasn't found. Install it through Steam first.")
         elif vc.installed is None:
             lines.append("Could not read Skyrim's version. Try \"Check again\".")
@@ -235,14 +246,16 @@ class GamePanel(QWidget):
             lines.append(f"\"Restore original files\" puts back the files{came_from} from before your last downgrade.")
 
         theme.role(self.message, "warning" if warning else "note")
-        self.message.setText("\n".join(lines))
+        # The box's color carries the warning; the text needn't shout it too.
+        self.message.setText("\n".join(line.removeprefix("⚠ ") for line in lines))
         details = [vc.summary(), vc.skse_note()]
         if st.recipe_from:
             details.append(f"Available downgrade patches start from Skyrim {st.recipe_from}.")
         self.details = "\n".join(detail for detail in details if detail)
         self._update_chips(st, vc)
 
-        self.adopt.setVisible(has_instance and vc.installed is not None and not vc.ok and not self._busy)
+        self.adopt.setVisible(has_instance and vc.installed is not None and not vc.ok and not self._busy
+                              and not st.awaiting_vault_version)
         target = st.suggested_target
         self.downgrade.setVisible(target is not None and not self._busy)
         if target:
@@ -322,7 +335,7 @@ class GamePanel(QWidget):
                 )
 
         self.host.confirm(
-            "Files from an earlier downgrade are still backed up",
+            "An earlier backup is still here",
             f"ModSync still has the {came_from}files it set aside before your last downgrade "
             f"({st.backup_bytes / 1e9:.1f} GB), and they differ from what is installed now. "
             "Downgrading again would replace that backup.",
@@ -370,7 +383,6 @@ class GamePanel(QWidget):
             [("go", f"Downgrade to {target}", "Takes a few minutes.", "primary", "download"),
              ("cancel", "Cancel", "", "normal", "close")],
             chosen,
-            eyebrow="Game version",
         )
 
     def _run_downgrade(self, target: str) -> None:
@@ -396,28 +408,27 @@ class GamePanel(QWidget):
             tile.setVisible(False)
         self.refresh_tile.setEnabled(False)
         self._show_progress(True)
-        self.progress.setRange(0, 0)
-        self.progress_label.setText(message)
+        self._set_progress(message, 0, 0)
 
     @property
     def busy(self) -> bool:
         """A downgrade or restore is rewriting game files; don't navigate away."""
         return self._busy
 
+    def _set_progress(self, text: str, value: int, maximum: int) -> None:
+        self.progress.setRange(0, maximum)
+        self.progress.setValue(value)
+        self.progress_label.setText(text)
+        self.progressed.emit(text, value, maximum)
+
     def _on_progress(self, p: Progress) -> None:
         if p.stage == "download" and p.total:
-            self.progress.setRange(0, 100)
-            self.progress.setValue(int(100 * (p.done or 0) / p.total))
-            self.progress_label.setText(
-                f"Downloading {p.message}: {(p.done or 0) / 1e6:,.0f} / {p.total / 1e6:,.0f} MB"
-            )
+            self._set_progress(f"Downloading {p.message}: {(p.done or 0) / 1e6:,.0f} / {p.total / 1e6:,.0f} MB",
+                               int(100 * (p.done or 0) / p.total), 100)
         elif p.total:
-            self.progress.setRange(0, p.total)
-            self.progress.setValue(p.done or 0)
-            self.progress_label.setText(f"{p.stage.capitalize()}: {p.message}")
+            self._set_progress(f"{p.stage.capitalize()}: {p.message}", p.done or 0, p.total)
         else:
-            self.progress.setRange(0, 0)
-            self.progress_label.setText(f"{p.stage.capitalize()}: {p.message}")
+            self._set_progress(f"{p.stage.capitalize()}: {p.message}", 0, 0)
 
     def _end_file_operation(self) -> None:
         self._busy = False
@@ -465,7 +476,6 @@ class GamePanel(QWidget):
                  ("cancel", "Cancel", "", "normal", "close")],
                 chosen,
                 default="cancel",
-                eyebrow="Game version",
             )
             return
         self._begin_file_operation("Restoring original files…")
@@ -576,9 +586,7 @@ class GamePage(Page):
 
     def __init__(self, host) -> None:
         super().__init__(host)
-        self.header("Game", f"{SKYRIM_SE.name} version",
-                    "SKSE and native DLL mods only load on the exact game version they were built for. "
-                    "Steam updates the game silently; this puts it back.")
+        self.header("Game version", "Match Skyrim and SKSE to the version your mods need.")
         self.panel = GamePanel(host, refresh_index=host.steam_launch is None)
         self.panel.status.connect(host.notify)
         self.panel.busyChanged.connect(lambda on: host.set_busy("game", on))

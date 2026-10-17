@@ -27,8 +27,8 @@ except ImportError:  # pragma: no cover - not on Windows
 
 from modsync import config
 
-_FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "sync_paused",
-           "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside")
+_FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "awaiting_vault_version",
+           "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside")
 
 
 @dataclass
@@ -39,6 +39,9 @@ class State:
     # Fingerprint of the firewall rules right after ModSync added its own (see
     # modsync.firewall). Only consulted when the rules can't be read at launch.
     firewall_rules_stamp: str = ""
+    # Joining discards the local version record. Wait for the source's record,
+    # including when the app is reopened before the first sync finishes.
+    awaiting_vault_version: bool = False
     # The user paused the vault. Syncthing keeps the folder and its history, so
     # resuming carries over what changed in between, deletions included.
     sync_paused: bool = False

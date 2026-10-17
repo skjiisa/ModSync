@@ -1,10 +1,8 @@
 """The one ModSync window, built like a console app.
 
-A row of sections across the top (Home, Game, Mod Organizer, Sync, System),
-switched with the bumpers or Q/E, or by moving up onto them. The section's
-tiles fill the middle and the hint bar along the bottom says what each button
-does. Everything that used to be a dialog is a sheet over the window, and a
-glowing halo marks focus. The setup wizard takes over the middle when it runs.
+Home, Sync and Settings are switched with the bumpers or Q/E. Home holds
+setup, repairs and launch actions. Game and MO2 maintenance open as sheets
+without leaving Home. The setup wizard takes over the middle when it runs.
 
 The same window serves Steam's launch hook. Given a ``SteamLaunch``, Steam is
 waiting on it: Play and Open MO2 prepare the same launch as ever and hand it to
@@ -22,16 +20,21 @@ from __future__ import annotations
 import os
 import time
 from functools import partial
+from pathlib import Path
 
 import shiboken6
-from PySide6.QtCore import QThreadPool, Qt, QTimer, Signal
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
+
+from PySide6.QtCore import QSize, QThreadPool, Qt, QTimer, Signal
+from PySide6.QtGui import QIcon, QPainter
+from PySide6.QtWidgets import (
+    QApplication, QHBoxLayout, QLabel, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
+)
 
 from modsync import __version__, launchhook
 from modsync.service import ModSyncService
-from modsync.ui import nav, worker
+from modsync.ui import nav, theme, worker
 from modsync.ui.input import Action, DIRECTIONS, InputRouter
-from modsync.ui.overlays import ConfirmSheet, Overlay
+from modsync.ui.overlays import ConfirmSheet, Overlay, PageSheet
 from modsync.ui.pages import Page
 from modsync.ui.pages.game import GamePage
 from modsync.ui.pages.home import HomePage
@@ -40,7 +43,8 @@ from modsync.ui.pages.setup import SetupFlow
 from modsync.ui.pages.sync import SyncPage
 from modsync.ui.pages.system import SystemPage
 from modsync.ui.widgets import (
-    Backdrop, FocusHalo, GlyphLabel, HintBar, Icon, TabButton, Toasts, discard, label, pill,
+    Backdrop, FocusHalo, GlyphLabel, HintBar, Icon, TabButton, Toasts, discard, label, pill, restyle_rows,
+    sync_lit,
 )
 
 # Testing aid: MODSYNC_HUB_AUTO_DECISION=continue|cancel decides a Steam launch by
@@ -51,24 +55,43 @@ _AUTO_DECISION_ENV = "MODSYNC_HUB_AUTO_DECISION"
 _AUTO_DECISION_MS = 3000
 _POLL_MS = 4000
 
+APP_ID = "io.github.skjiisa.ModSync"
+
 PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage)
+TAB_KEYS = ("home", "sync", "system")
 
 
 def alive(w: QWidget | None) -> bool:
     return w is not None and shiboken6.isValid(w)
 
 
+def app_mark(size: int) -> QWidget:
+    """The app icon, as installed (Flatpak) or from the checkout."""
+    icon = QApplication.windowIcon()
+    if icon.isNull():
+        png = Path(__file__).resolve().parents[2] / "packaging" / "flatpak" / "icons" / f"{APP_ID}.png"
+        icon = QIcon(str(png)) if png.is_file() else QIcon()
+    if icon.isNull():
+        return Icon("sync", size)
+    mark = QLabel()
+    ratio = QApplication.instance().devicePixelRatio() if QApplication.instance() else 1.0
+    pixmap = icon.pixmap(QSize(size, size), ratio)
+    mark.setPixmap(pixmap)
+    mark.setFixedSize(size, size)
+    mark.setScaledContents(True)
+    return mark
+
+
 class TopBar(QWidget):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__()
-        self.setFixedHeight(72)
+        self.setFixedHeight(60)
         h = QHBoxLayout(self)
-        h.setContentsMargins(28, 12, 28, 4)
+        h.setContentsMargins(24, 10, 24, 10)
         h.setSpacing(10)
-        mark = Icon("sync", 40)
-        h.addWidget(mark)
+        h.addWidget(app_mark(32))
         h.addWidget(label("ModSync", "heading", wrap=False))
-        h.addSpacing(18)
+        h.addSpacing(24)
         self.lb = GlyphLabel("prev_tab", window.router)
         h.addWidget(self.lb)
         self.tabs_row = QHBoxLayout()
@@ -79,7 +102,7 @@ class TopBar(QWidget):
         h.addStretch(1)
         if window.steam_launch is not None:
             h.addWidget(pill("Steam is waiting", "info"))
-            h.addSpacing(8)
+            h.addSpacing(12)
         self.clock = label("", "secondary", wrap=False)
         h.addWidget(self.clock)
         self._tabs_on = True
@@ -90,6 +113,9 @@ class TopBar(QWidget):
         timer = QTimer(self)
         timer.timeout.connect(self._tick)
         timer.start(15000)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        QPainter(self).fillRect(self.rect(), theme.color("bar"))
 
     def _tick(self) -> None:
         self.clock.setText(time.strftime("%H:%M"))
@@ -113,6 +139,8 @@ class MainWindow(QMainWindow):
     gameChecked = Signal(object, object)  # GameStatus, VersionCheck
     syncStatus = Signal(object)  # SyncStatus
     setupDescribed = Signal(list)  # the instance's profile line and problems
+    mo2Checked = Signal()  # runtime and USVFS checks finished
+    steamHookChecked = Signal(object)  # shared Home and Settings launch status
     _call = Signal(object)  # run a callable on the UI thread
 
     def __init__(self, *, steam_launch: launchhook.SteamLaunch | None = None,
@@ -160,6 +188,7 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         app.focusChanged.connect(self._on_focus_changed)
         self.router.modeChanged.connect(self._on_mode_changed)
+        self.router.controllersChanged.connect(self._on_controllers_changed)
         self._on_mode_changed(self.router.mode)
         self.go("home")
 
@@ -180,13 +209,18 @@ class MainWindow(QMainWindow):
             page = page_cls(self)
             self.pages[page.key] = page
             self.stack.addWidget(page)
+            if page.key not in TAB_KEYS:
+                continue
             tab = TabButton(page.key, page.label, page.icon)
             tab.clicked.connect(lambda _=False, k=page.key: self.go(k, focus=self.router.mode != "mouse"))
             self.tabs[page.key] = tab
             self.topbar.tabs_row.addWidget(tab)
             tab.setVisible(self.setup is None)  # rebuilt while the wizard is open
-        sync = self.pages["sync"]
-        sync.synced.connect(self.pages["game"].panel.refresh)  # mods just arrived: re-check SKSE/version
+        panel, home = self.pages["game"].panel, self.pages["home"]
+        self.pages["sync"].synced.connect(panel.refresh)
+        panel.busyChanged.connect(home.on_game_busy)
+        panel.progressed.connect(home.on_game_progress)
+        self.pages["mods"].repairsChecked.connect(self.mo2Checked)
 
     def _clear_pages(self) -> None:
         for page in self.pages.values():
@@ -206,6 +240,16 @@ class MainWindow(QMainWindow):
     def go(self, key: str, *, focus: bool = True) -> None:
         if key not in self.pages or self.setup is not None:
             return
+        if key not in self.tabs:
+            if self.busy:
+                return
+            page = self.pages[key]
+            if any(isinstance(sheet, PageSheet) and sheet.page is page for sheet in self.overlays):
+                return
+            PageSheet(self, page).open()
+            return
+        if self.overlays:
+            return
         old = self._current
         self._current = key
         for k, tab in self.tabs.items():
@@ -213,7 +257,7 @@ class MainWindow(QMainWindow):
         page = self.pages[key]
         if self.stack.currentWidget() is not page:
             self.stack.setCurrentWidget(page)
-            keys = list(self.pages)
+            keys = list(self.tabs)
             if old in keys:
                 self._slide(page, keys.index(key) - keys.index(old))
         if focus:
@@ -235,7 +279,7 @@ class MainWindow(QMainWindow):
         anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
     def cycle(self, step: int) -> None:
-        keys = list(self.pages)
+        keys = list(self.tabs)
         self.go(keys[(keys.index(self._current) + step) % len(keys)])
 
     def prepare_rebuild(self) -> None:
@@ -253,7 +297,7 @@ class MainWindow(QMainWindow):
             return
         self._rebuild_pending = False
         current = self._current
-        for overlay in list(self.overlays):
+        for overlay in reversed(self.overlays[:]):
             overlay.dismiss()
         self._clear_pages()
         self._build_pages()
@@ -263,10 +307,12 @@ class MainWindow(QMainWindow):
         self.go(self._current)
 
     # --- setup wizard ---
-    def start_setup(self) -> SetupFlow | None:
+    def start_setup(self, *, copy_from_machine: bool = False) -> SetupFlow | None:
         if self.busy or self.setup is not None:
             return None
-        self.setup = SetupFlow(self)
+        for overlay in reversed(self.overlays[:]):
+            overlay.dismiss()
+        self.setup = SetupFlow(self, copy_from_machine=copy_from_machine)
         self.root.addWidget(self.setup)
         self.root.setCurrentWidget(self.setup)
         self.topbar.set_tabs_visible(False)
@@ -305,8 +351,8 @@ class MainWindow(QMainWindow):
     def last_message(self) -> str:
         return self.messages[-1] if self.messages else ""
 
-    def confirm(self, title, text, choices, on_choice, *, default=None, eyebrow="") -> ConfirmSheet:
-        sheet = ConfirmSheet(self, title, text, choices, on_choice, default=default, eyebrow=eyebrow)
+    def confirm(self, title, text, choices, on_choice, *, default=None) -> ConfirmSheet:
+        sheet = ConfirmSheet(self, title, text, choices, on_choice, default=default)
         sheet.open()
         return sheet
 
@@ -324,7 +370,7 @@ class MainWindow(QMainWindow):
     def vault_created(self) -> None:
         self.set_busy("sync-setup", False)
         if self.setup is not None:
-            self.setup.go_to(2)  # sharing from here: the game step comes next
+            self.finish_setup()  # sharing is the optional final step
         else:
             self.rebuild()
 
@@ -339,7 +385,9 @@ class MainWindow(QMainWindow):
 
     def instance_chosen(self, path: str) -> None:
         if self.setup is not None:
-            self.setup.go_to(1)
+            self.setup.go_to(2 if self.setup.copy_from_machine else 1)
+            if self.setup.copy_from_machine:
+                self.setup._show_join()
         else:
             self.rebuild()
 
@@ -474,7 +522,7 @@ class MainWindow(QMainWindow):
             [("play", "Play anyway" if play else "Open MO2 anyway", "", "primary", "play"),
              ("sync", "Go to Sync", "See what's arriving and choose versions.", "normal", "sync"),
              ("wait", "Not now", "", "normal", "close")],
-            chosen, default="play", eyebrow="Sync")
+            chosen, default="play")
 
     def _on_prepared(self, result) -> None:
         plan, _note = result  # the window closes now; prepare_mo2 has logged the note
@@ -499,7 +547,7 @@ class MainWindow(QMainWindow):
 
     # --- quitting ---
     def request_quit(self) -> None:
-        """Ask before closing: B on Home, Quit under System, or Ctrl+Q. Closing
+        """Ask before closing: B on Home, Quit under Settings, or Ctrl+Q. Closing
         while Steam waits cancels its launch, which the question says."""
         if self.overlays and isinstance(self.top_overlay, ConfirmSheet) and self.top_overlay.property("quit"):
             return
@@ -510,7 +558,7 @@ class MainWindow(QMainWindow):
         text = (
             f"Steam is waiting to start {steam.game.name}. Quitting returns to Steam without starting "
             "anything." if steam is not None else
-            "Syncing and a queued Steam pin carry on only if the background service is on (under System)."
+            "Syncing and a queued Steam pin carry on only if the background service is on (under Settings)."
         )
 
         def chosen(key: str | None) -> None:
@@ -521,7 +569,7 @@ class MainWindow(QMainWindow):
             "Quit ModSync?", text,
             [("quit", "Quit and return to Steam" if steam is not None else "Quit ModSync", "", "primary", "power"),
              ("stay", "Stay", "", "normal", "close")],
-            chosen, eyebrow="ModSync")
+            chosen)
         sheet.setProperty("quit", True)
 
     # --- Steam launch ---
@@ -659,9 +707,14 @@ class MainWindow(QMainWindow):
         if not alive(focus) or not (focus is scope or scope.isAncestorOf(focus)) or not focus.isEnabled():
             self.focus_scope_default()
 
+    def _on_controllers_changed(self) -> None:
+        restyle_rows(self)  # a lit row's legend follows what is connected
+
     def _on_mode_changed(self, mode: str) -> None:
         self.halo.enabled = mode != "mouse"
         self.halo.follow(self.focusWidget())
+        sync_lit(self.focusWidget())  # a mouse unlights the focused row, a pad lights it
+        restyle_rows(self)
         self.refresh_hints()
         self.shell.update()  # tiles drop or regain their focus styling
 

@@ -20,6 +20,21 @@ All notable changes to ModSync are documented here. The format follows
 - "Stop syncing" can pause instead of leaving the vault. Resuming carries over
   what changed meanwhile, removed mods included, which leaving and joining
   again can't.
+- Redesigned the window to look at home on a Steam Deck: a flat matte
+  charcoal theme with the app icon's blue as the only accent, in place of the
+  painted night sky, glowing teal cards and boxed icons. The real app icon
+  sits in the top bar and the section tabs are plain text. The focused row
+  lights up white and shows the button that chooses it (A, the PlayStation
+  cross, or Enter), and the hint bar's button glyphs match. Status reads as a
+  colored dot and a word instead of a chip. Sync progress is a bar instead of
+  a ring. While a repair is recommended it is the one blue action on Home and
+  Play becomes a plain row. Labels and descriptions are shorter. Controller,
+  Steam Input, keyboard, mouse and touch input work as before.
+- Button hints no longer guess between a keyboard and a controller, which
+  look the same when Steam turns the controller into keys. Wherever a
+  controller may be in use, each hint shows the controller button and the
+  keyboard key together, such as A / Enter. A machine with no controller
+  shows only keys.
 
 ### Added
 
@@ -28,6 +43,55 @@ All notable changes to ModSync are documented here. The format follows
   moves to `.modsync-conflicts` in the instance.
 - With a vault, Play and Open MO2 first check whether changes from another
   machine haven't arrived yet or conflicts are waiting, and ask before playing.
+
+### Fixed
+
+- The X and Y keys now do what the controller's X and Y do (for example
+  "Check again"), as the keyboard hints already said.
+
+## [1.1.0-beta2] - 2026-10-11
+
+Install MO2 now works on the Steam Frame. It was tested end to end on a
+Frame with the aarch64 Flatpak: Install MO2 with no 7-Zip or cabextract on
+the system, a reboot, then Steam's Play button through ModSync to Skyrim's
+title screen. The same MO2-LINT fix should let Install MO2 work on a stock
+Steam Deck, which is still to be tested. Also brings the consolidated Home.
+
+### Changed
+
+- Consolidated navigation into Home, Sync and Settings. Home now offers MO2
+  installation and selection, matching SKSE, relevant repairs and launch
+  actions. Game and MO2 maintenance open in sheets with a fixed Close button.
+  Home shows sync status only when sync is enabled, and includes Steam setup
+  with the launch hook's current status. Missing SKSE is an optional suggestion
+  that leaves Play primary and keeps controller focus on Play.
+  The guided setup prepares MO2, then the game and SKSE, then optional sync.
+  An early copy route pairs before checking the incoming setup's game version;
+  version-dependent repairs wait for the source's version record to arrive,
+  including after closing and reopening ModSync during the first sync.
+  Home layouts are checked at the Steam Deck's 1280 × 800 resolution.
+- Install MO2 uses MO2-LINT 7.0.3 (was 7.0.1) and works on ARM64 machines
+  such as the Steam Frame. ModSync downloads MO2-LINT's aarch64 build there
+  and its x86_64 build elsewhere, each checked against its own SHA-256. On
+  ARM64, MO2-LINT installs an MO2 2.5.2 build whose USVFS files are the same
+  backport "Apply ARM64 fix" installs, so ModSync shows the fix as installed
+  right away. Apply is only needed for instances installed before. Other
+  machines still need an mo2-lint built for them on `PATH`.
+- On the Steam Frame, where Steam can't be closed, Install MO2 no longer asks
+  to close Steam first, and `modsync mo2 install` no longer refuses while it
+  runs. MO2-LINT leaves Steam running there, so a reboot afterwards lets
+  Steam's Play button use the new instance.
+
+### Fixed
+
+- Install MO2 failed on stock SteamOS, which has no `cabextract`, and on the
+  Steam Frame, which also has no 7-Zip. MO2-LINT 7.0.2 and newer download
+  them when the system lacks them.
+- ModSync didn't recognize Mod Organizer 2 behind Steam's Play button when
+  MO2-LINT 7.0.2 or newer installed it. MO2-LINT renamed its compatibility
+  tool to `mo2_<appid>_proton_redirector` so Steam Cloud syncs saves, and
+  ModSync only knew the old `mo2_<appid>_redirector`. The Play button hook
+  now hands off to either one, preferring the new name.
 
 ## [1.1.0-beta1] - 2026-10-04
 

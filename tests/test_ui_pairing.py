@@ -63,7 +63,7 @@ class JoinPanelTests(UiTestCase):
         window, panel = self._panel()
         window.firewall_check = Check(Firewall("ufw"), False, "ufw:1")
         panel.on_scanned([])
-        self.assertTrue(any("ufw is on here" in r and "System" in r for r in panel.placeholder_texts))
+        self.assertTrue(any("ufw is on here" in r and "Settings" in r for r in panel.placeholder_texts))
 
     def test_empty_scan_is_generic_when_nothing_blocks(self):
         from modsync.firewall import Check, Firewall

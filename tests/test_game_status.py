@@ -26,6 +26,17 @@ def status(installed: str | None, expected: str | None, skse: str | None, **kw) 
 
 
 class SuggestedTargetTests(unittest.TestCase):
+    def test_joining_waits_for_the_source_instead_of_using_local_skse(self):
+        st = status("1.7.104", None, "1.6.640", awaiting_vault_version=True)
+        st.steam_is_current = False
+        self.assertIsNone(st.wanted)
+        self.assertEqual(st.wanted_from, "")
+        self.assertIsNone(st.suggested_target)
+        self.assertFalse(st.needs_downgrade)
+        self.assertFalse(st.needs_pin)
+        self.assertEqual(st.skse_state, "")
+        self.assertIsNone(st.skse_build)
+
     def test_vault_version_is_suggested(self):
         st = status("1.7.104", "1.6.1170", None)
         self.assertTrue(st.needs_downgrade)

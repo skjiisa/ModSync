@@ -144,6 +144,10 @@ class InstanceLifecycleTests(unittest.TestCase):
         svc.join_vault(PairingCode("PEER", "modsync-abc", "Deck"), self.instance, peer_host="192.0.2.7")
         self.assertIsNone(gameversion.VaultMeta.load(self.instance))
         self.assertTrue(State.load().syncing)
+        self.assertTrue(State.load().awaiting_vault_version)
+        # Re-selecting the joined installation cannot recreate a local record.
+        svc.choose_instance(self.instance)
+        self.assertIsNone(gameversion.VaultMeta.load(self.instance))
         # ...and Syncthing is told where the peer is, not left to discover it.
         self.assertEqual(self.manager.devices[0]["addresses"], ["tcp://192.0.2.7:22000", "dynamic"])
 
@@ -156,7 +160,8 @@ class InstanceLifecycleTests(unittest.TestCase):
         self.assertEqual(State.load().instance_label, "Same")
 
     def test_stop_sync_keeps_the_instance(self):
-        State(instance_path=str(self.instance), folder_id="modsync-1", instance_label="Deck").save()
+        State(instance_path=str(self.instance), folder_id="modsync-1", instance_label="Deck",
+              awaiting_vault_version=True).save()
         svc = ModSyncService(manager=self.manager)
         svc.stop_sync()
         self.assertEqual(self.manager.deleted_folders, ["modsync-1"])
@@ -165,6 +170,7 @@ class InstanceLifecycleTests(unittest.TestCase):
         self.assertTrue(loaded.has_instance)
         self.assertFalse(loaded.syncing)
         self.assertEqual(loaded.instance_label, "Deck")
+        self.assertFalse(loaded.awaiting_vault_version)
 
     def test_reset_forgets_everything(self):
         State(instance_path=str(self.instance), folder_id="modsync-1").save()
