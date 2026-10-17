@@ -16,10 +16,14 @@ On first run, install MO2 directly, use an existing installation, or follow
 guided setup. Copying an existing setup from another machine has an early
 entry point too.
 
+This machine has no controller, so the hints show only keys.
+
 ![First-run Home](home-welcome.png)
 
 A repair runs from Home and shows its progress there. Play remains available
-with any launch consequence explained. A single outline marks focus.
+with any launch consequence explained. The focused row lights up white and
+shows the button that chooses it. On a Steam Deck each hint pairs the
+controller button with its keyboard key, since Steam sends keys for both.
 
 ![Home with a repair](home.png)
 
@@ -43,7 +47,7 @@ The same settings remain available in Settings.
 With the launch hook on, Steam's Play button opens this same window. Play
 uses the selected MO2 setup. Before MO2 is chosen, Continue hands the launch
 on to MO2-LINT or the game. Cancel launch returns to Steam. A warning appears
-while the vault is still syncing. Here a keyboard is in use, so the hints show keys.
+while the vault is still syncing.
 
 ![Opened from Steam](launch.png)
 
@@ -88,7 +92,7 @@ focus.
 
 ## Settings
 
-Short descriptions keep the actions visible together. Settings details and
+Short descriptions keep the actions visible together. "How these settings work" and
 Controls open in sheets with the background-service explanation, Steam
 launch status, firewall ports and input shortcuts.
 

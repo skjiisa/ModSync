@@ -6,6 +6,29 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Redesigned the window to look at home on a Steam Deck: a flat matte
+  charcoal theme with the app icon's blue as the only accent, in place of the
+  painted night sky, glowing teal cards and boxed icons. The real app icon
+  sits in the top bar and the section tabs are plain text. The focused row
+  lights up white and shows the button that chooses it (A, the PlayStation
+  cross, or Enter), and the hint bar's button glyphs match. Status reads as a
+  colored dot and a word instead of a chip. Sync progress is a bar instead of
+  a ring. While a repair is recommended it is the one blue action on Home and
+  Play becomes a plain row. Labels and descriptions are shorter. Controller,
+  Steam Input, keyboard, mouse and touch input work as before.
+- Button hints no longer guess between a keyboard and a controller, which
+  look the same when Steam turns the controller into keys. Wherever a
+  controller may be in use, each hint shows the controller button and the
+  keyboard key together, such as A / Enter. A machine with no controller
+  shows only keys.
+
+### Fixed
+
+- The X and Y keys now do what the controller's X and Y do (for example
+  "Check again"), as the keyboard hints already said.
+
 ## [1.1.0-beta2] - 2026-10-11
 
 Install MO2 now works on the Steam Frame. It was tested end to end on a

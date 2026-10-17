@@ -3,7 +3,7 @@
 The background service, the Steam launch hook ("Open ModSync before
 Skyrim"), the firewall rules for pairing and syncing, the Steam shortcut,
 diagnostics for bug reports, the setup wizard and a reset. Each toggle shows
-its current state as a pill, so the answer to "is it on?" is on the tile.
+its current state on the right, so the answer to "is it on?" is on the row.
 """
 
 from __future__ import annotations
@@ -27,9 +27,10 @@ class SystemPage(Page):
 
     def __init__(self, host) -> None:
         super().__init__(host)
-        self.header("Settings", "On this machine",
-                    "How ModSync fits in here: Steam, the background service and the firewall.")
+        self.header("Settings")
         left, right = self.columns(1, 1)
+        left.setSpacing(4)
+        right.setSpacing(4)
         state = self.service.state
         what = (
             "keeps syncing and applies a queued Steam pin the moment Steam exits"
@@ -39,48 +40,47 @@ class SystemPage(Page):
         self._bg_what = f"A user service that starts at login and {what}, even when ModSync is closed."
         self._bg_summary = ("Keep syncing while ModSync is closed." if state.syncing else
                             "Apply queued Steam changes while ModSync is closed.")
-        self.bg_tile = Tile("Run in background", self._bg_summary, "moon")
+        self.bg_tile = Tile("Run in background", self._bg_summary, "moon", status=True)
         self.bg_tile.set_badge("checking", "off")
         self.bg_tile.clicked.connect(self._toggle_bg)
         self.bg_installed = False
-        self.hook_tile = Tile("Open ModSync before Skyrim", "Steam launch: checking…", "rocket")
+        self.hook_tile = Tile("Open ModSync before Skyrim", "Checking Steam…", "rocket", status=True)
         self.hook_tile.set_badge("checking", "off")
         self.hook_tile.clicked.connect(self._toggle_hook)
         self.hook: launchhook.LaunchHookStatus | None = None
         self._hook_toggling = False
-        self.fw_tile = Tile("Allow in firewall…", "", "shield")
+        self.fw_tile = Tile("Allow in firewall…", "", "shield", status=True)
         self.fw_tile.clicked.connect(self._toggle_firewall)
         self.fw_tile.setVisible(False)
-        self.steam_tile = Tile("Add ModSync shortcut to Steam", "Open ModSync from your Steam library. "
-                               "Close Steam first.", "plus-box")
+        self.steam_tile = Tile("Add ModSync shortcut to Steam", "Puts ModSync in your Steam library. "
+                               "Close Steam first.", "plus-box", status=True)
+        self.steam_tile.dot.hide()  # an action, not a state: keep only the dot column, for alignment
         self.steam_tile.clicked.connect(self._add_to_steam)
         for tile in (self.bg_tile, self.hook_tile, self.fw_tile, self.steam_tile):
             left.addWidget(tile)
         left.addStretch(1)
 
-        self.diag_tile = Tile("Copy diagnostics", "Copy a bug report with pairing codes and keys removed.",
+        self.diag_tile = Tile("Copy diagnostics", "A bug report, with pairing codes and keys removed.",
                               "clipboard", size="compact")
         self.diag_tile.clicked.connect(self._copy_diagnostics)
-        self.wizard_tile = Tile("Setup wizard", "Go through the setup one step at a time.", "layers",
+        self.wizard_tile = Tile("Setup wizard", "MO2, the game version, then optional sync.", "layers",
                                 size="compact")
         self.wizard_tile.clicked.connect(lambda: host.start_setup())
         right.addWidget(self.wizard_tile)
         right.addWidget(self.diag_tile)
         self.reset_tile = None
         if state.has_instance:
-            self.reset_tile = Tile("Reset setup…", "Forget the instance and any sync on this machine. Mods are "
-                                   "not deleted.", "undo", role="danger", size="compact")
+            self.reset_tile = Tile("Reset setup…", "Forget the instance and sync here. Your mods stay on disk.",
+                                   "undo", role="danger", size="compact")
             self.reset_tile.clicked.connect(self._reset)
             right.addWidget(self.reset_tile)
-        self.quit_tile = Tile("Quit ModSync", "Close the app. B on Home does the same.", "power", size="compact")
+        self.quit_tile = Tile("Quit ModSync", "", "power", size="compact")
         self.quit_tile.clicked.connect(host.request_quit)
         right.addWidget(self.quit_tile)
-        self.details_tile = Tile("Settings details", "How background syncing, Steam and the firewall work.",
-                                 "info", size="compact")
+        self.details_tile = Tile("How these settings work", "", "info", size="compact")
         self.details_tile.clicked.connect(self._show_settings_details)
         right.addWidget(self.details_tile)
-        self.controls_tile = Tile("Controls", "Controller, keyboard and mouse shortcuts.", "gamepad",
-                                  size="compact")
+        self.controls_tile = Tile("Controls", "", "gamepad", size="compact")
         self.controls_tile.clicked.connect(self._show_controls)
         right.addWidget(self.controls_tile)
         right.addStretch(1)
@@ -102,15 +102,15 @@ class SystemPage(Page):
     def _show_settings_details(self) -> None:
         hook = self.hook.summary() if self.hook is not None else "Still checking Steam's launch settings."
         ports = ", ".join(f"{p}/{proto}" for p, proto, _ in firewall.PORTS)
-        DetailsSheet(self.host, "Settings details",
+        DetailsSheet(self.host, "How these settings work",
                      f"Run in background\n{self._bg_what}\n\n"
                      f"Open ModSync before Skyrim\n{hook}\n\n"
                      f"Firewall\nPairing and syncing use {ports}. Allowing access adds ModSync's rules; "
                      "removing access deletes only the rules ModSync added. Both ask for your password. "
-                     "Existing firewall rules are kept.", eyebrow="Settings").open()
+                     "Existing firewall rules are kept.").open()
 
     def _show_controls(self) -> None:
-        sheet = Overlay(self.host, "Controls", eyebrow="Settings")
+        sheet = Overlay(self.host, "Controls")
         sheet.body.addWidget(self._controls_panel())
         sheet.body.addWidget(label("Keyboard: arrow keys move, Enter chooses, Escape goes back, "
                                    "Q / E switch sections, and Ctrl+Q quits.", "secondary"))
@@ -121,13 +121,12 @@ class SystemPage(Page):
 
     def _controls_panel(self) -> Panel:
         panel = Panel(margins=20, spacing=10)
-        panel.add(label("CONTROLS", "eyebrow", wrap=False))
         grid = QGridLayout()
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(8)
         router = self.host.router
         for row, (key, text) in enumerate((
-            ("dpad", "Move between tiles"),
+            ("dpad", "Move"),
             ("accept", "Choose"),
             ("back", "Back, or quit from Home"),
             ("prev_tab", "Previous section"),
@@ -164,7 +163,6 @@ class SystemPage(Page):
             [("reset", "Reset setup", "", "danger", "power"), ("cancel", "Cancel", "", "normal", "close")],
             chosen,
             default="cancel",
-            eyebrow="Settings",
         )
 
     # --- firewall ---
@@ -219,8 +217,7 @@ class SystemPage(Page):
             return
         fw = (self.firewall.firewall if self.firewall else None) or firewall.Firewall("ufw")
         DetailsSheet(self.host, "Could not change the firewall",
-                     f"{message}\n\nIn a terminal, run:\n\n" + firewall.manual_instructions(fw, remove=remove),
-                     eyebrow="Firewall").open()
+                     f"{message}\n\nIn a terminal, run:\n\n" + firewall.manual_instructions(fw, remove=remove)).open()
 
     # --- launch hook ---
     def _toggle_hook(self) -> None:
@@ -277,13 +274,7 @@ class SystemPage(Page):
         else:
             summary = "Check your setup before Skyrim starts through Steam."
         self.hook_tile.set_badge(head, tone)
-        if (st.pending and st.pending.action == "select") or st.enabled:
-            action = "Choose to turn it off."
-        elif st.installed or st.selected:
-            action = "Choose to turn it off and reset."
-        else:
-            action = "Choose to turn it on."
-        self.hook_tile.set_description(f"{summary} {action}".strip())
+        self.hook_tile.set_description(summary)
         self._update_hook_enabled()
         self.host.steamHookChecked.emit(st)
 
@@ -335,8 +326,7 @@ class SystemPage(Page):
         else:
             text, tone = ("Off" if active == "inactive" else str(active).capitalize()), "off"
         self.bg_tile.set_badge(text, tone)
-        self.bg_tile.set_description(self._bg_summary + (" Choose to turn it off." if self.bg_installed
-                                                      else " Choose to turn it on."))
+        self.bg_tile.set_description(self._bg_summary)
 
     # --- Steam shortcut ---
     def _add_to_steam(self) -> None:

@@ -49,7 +49,7 @@ keyboard, a mouse and the Deck's touch screen work too.
 | A | Enter | Choose |
 | B | Escape | Back: close a sheet, go back a wizard step, or return to Home. On Home it asks to quit |
 | LB / RB | Q / E, Ctrl+Tab, or a tap of Ctrl / Alt | Previous / next section |
-| X, Y | | Shortcuts named in the hint bar, such as "Check again" |
+| X, Y | X, Y | Shortcuts named in the hint bar, such as "Check again" |
 | LT / RT, right stick | Page Up / Page Down | Scroll |
 | Start | Home | Home |
 
@@ -57,8 +57,13 @@ On a keyboard, Space also chooses, Backspace goes back and Ctrl+Q quits.
 "Quit ModSync" under Settings quits too. When Steam's Play button opened
 ModSync, quitting returns to Steam without starting the game.
 
-The hint bar along the bottom shows the buttons for the device in use, with
-PlayStation symbols for a PlayStation controller. Moving up from the top of a
+The hint bar along the bottom shows what each button does. ModSync can't tell
+a keyboard from a controller that Steam turns into keys, so wherever a
+controller may be in use (a Steam Deck, or any controller Steam or ModSync can
+see) each hint shows the controller button and the keyboard key together, with
+PlayStation symbols for a PlayStation controller. On a machine with no
+controller it shows only keys, and if the bar runs short of room it keeps the
+controller buttons. A focused row shows the button that chooses it. Moving up from the top of a
 section reaches the section tabs. Moving left and right along them switches
 sections, and moving down goes back into the section.
 
@@ -123,7 +128,7 @@ Continue remains available and says what may fail if you launch now. Missing
 SKSE is an optional suggestion: it leaves Play primary and never takes default
 controller focus, including when Steam's Play button opened ModSync. The Steam
 launch entry shows On, Off, Pending or Needs attention and opens the shared
-Steam controls. Under Settings, Settings details explains the background service,
+Steam controls. Under Settings, "How these settings work" explains the background service,
 Steam launch settings and firewall ports; Controls shows the input shortcuts.
 
 ## Command line

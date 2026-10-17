@@ -41,7 +41,7 @@ To bring a setup from another machine, choose "Copy setup from another machineâ€
 on Home. That route pairs first and checks the required game version after the
 source's game-version record arrives, including if ModSync is reopened during sync.
 
-"Steam launchâ€¦" on Home shows whether the launch hook is on, off, pending or
+"Steam launch" on Home shows whether the launch hook is on, off, pending or
 needs attention. It lets you add ModSync to Steam or have Steam's
 Play button open ModSync before Skyrim. These settings also remain available
 in Settings.

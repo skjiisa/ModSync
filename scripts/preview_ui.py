@@ -51,7 +51,7 @@ def main():
         language="english", steam_public_build=1, steam_is_current=True,
         steam_running=False, pending_pin=False, recipe_from="1.6.1170",
         recipe_targets=["1.5.97", "1.6.1170"], skse_runtime=version("1.5.97"),
-        skse_source="skse64_1_5_97.dll in the game folder", backup_present=True,
+        skse_source="skse64_1_5_97.dll in the game folder", backup_present=True, backup_bytes=1_140_000_000,
     )
     check = gameversion.VersionCheck(
         game.installed, None, skse=gameversion.SkseCheck([
@@ -59,7 +59,11 @@ def main():
         ])
     )
     hook = launchhook.LaunchHookStatus(SKYRIM_SE, False, None, False, None, None, False, None, False, True)
+    # The controller family Steam Input would report: a Steam Deck unless a shot
+    # says otherwise, never this machine's own controllers.
+    family = {"value": "deck"}
     patches = [
+        patch("modsync.ui.steaminput.family", lambda *a, **k: family["value"]),
         patch.object(State, "load", return_value=State()),
         patch.object(ModSyncService, "game_status", return_value=game),
         patch.object(ModSyncService, "game_version_check", return_value=check),
@@ -108,7 +112,9 @@ def main():
         if any(overflow):
             raise RuntimeError(f"Content exceeds the requested width: {name}")
 
-    def window_for(state: State, *, steam=None, mode="keyboard") -> MainWindow:
+    def window_for(state: State, *, steam=None, mode="keyboard", machine="deck") -> MainWindow:
+        family["value"] = machine
+        router._family = None
         router._set_mode(mode)
         service = ModSyncService(manager=Mock())
         service.state = state
@@ -127,7 +133,7 @@ def main():
         fresh = replace(game, skse_runtime=None)
         with patch.object(ModSyncService, "game_status", return_value=fresh), \
                 patch.object(ModSyncService, "game_version_check", return_value=gameversion.VersionCheck(fresh.installed, None)):
-            w = window_for(State())
+            w = window_for(State(), machine="keyboard")  # a desktop with no controller: keys only
             capture(w, "home-welcome")
             w.close()
 
@@ -198,8 +204,8 @@ def main():
         keyboard.symbols.click()
         capture(w, "keyboard-symbols")
         keyboard.symbols.click()
-        keyboard.field.setText("/home/you/Games/mod_list")
-        keyboard.field.setCursorPosition(20)
+        keyboard.field.setText("MODSYNC1-7QK2-X9PL")
+        keyboard.field.setCursorPosition(14)
         keyboard.select.click()
         keyboard.move_cursor(1)
         keyboard.move_cursor(1)
@@ -252,6 +258,7 @@ def main():
         w = window_for(State(**configured), mode="mouse")
         capture(w, "compact-mouse", width=1000)
         router.pointer = "touch"  # what the Deck's screen and the Steam Frame's pointer report
+        router.modeChanged.emit("mouse")  # as a real touch does: relabel "Mouse" as "Touch"
         capture(w, "touch-home")
         w.go("sync")
         w.pages["sync"].toggle_join()

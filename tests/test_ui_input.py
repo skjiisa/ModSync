@@ -304,11 +304,22 @@ class GamepadRoutingTests(UiTestCase):
         self.assertIs(self.app.focusWidget(), start)
         self.assertIsNone(window.setup)
 
-    def test_glyphs_and_halo_follow_the_device_in_use(self):
+    def test_prompts_follow_the_controllers_present_not_the_last_key(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        from modsync.ui.widgets import HintButton
+
         window = self.window()
-        self.assertEqual(self.router.glyph_style, "keyboard")
+        self.assertEqual(self.router.glyph_style, "keyboard")  # no controller anywhere: keys only
         self.press("down")
         self.assertEqual(self.router.glyph_style, "xbox")
+        # Steam's keys for a controller look like a keyboard; the prompts stay put.
+        QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Down)
+        self.assertEqual(self.router.mode, "keyboard")
+        self.assertEqual(self.router.glyph_style, "xbox")
+        select = next(b for b in window.hintbar.findChildren(HintButton) if b.text() == "Select")
+        self.assertEqual([(kind, name) for kind, name, _ in select._parts() if kind != "sep"], [("pad", "accept"), ("key", "Enter")])
         self.router.pad_style = "playstation"
         self.assertEqual(self.router.glyph_style, "playstation")
         self.router.pad_style = "xbox"
@@ -502,6 +513,43 @@ class SteamDesktopConfigTests(UiTestCase):
                 self.assertEqual(key_action(key(Qt.Key.Key_Return), button, family), Action.ACCEPT)
                 self.assertEqual(key_action(key(Qt.Key.Key_Escape), button, family), Action.BACK)
         self.assertIsNone(key_action(space, QLineEdit(), "steam"))  # typing a space still types
+
+    def test_x_and_y_keys_are_the_shortcut_buttons_except_while_typing(self):
+        from modsync.ui.input import Action, key_action
+
+        button = QPushButton()
+        self.assertEqual(key_action(key(Qt.Key.Key_X, "x"), button), Action.AUX)
+        self.assertEqual(key_action(key(Qt.Key.Key_Y, "y"), button), Action.ALT)
+        self.assertIsNone(key_action(key(Qt.Key.Key_Y, "y"), QLineEdit()))
+
+    def test_a_deck_shows_controller_and_keyboard_prompts_together(self):
+        from modsync.ui.overlays import KeyboardSheet
+        from modsync.ui.widgets import HintButton
+
+        self._family("deck")
+        window = self.window()
+        parts = {b.text(): [name for kind, name, _ in b._parts() if kind != "sep"] for b in window.hintbar.findChildren(HintButton)}
+        self.assertEqual(parts["Check again"], ["alt", "Y"])
+        self.assertEqual(parts["Sections"], ["prev_tab", "next_tab", "Q", "E"])
+        self.assertEqual(window.hintbar.device_label.text(), "Steam Deck")
+        KeyboardSheet(window, "Path", "Enter a path.", lambda text: None).open()
+        self.settle()
+        parts = {b.text(): [name for kind, name, _ in b._parts() if kind != "sep"] for b in window.hintbar.findChildren(HintButton)}
+        self.assertEqual(parts["Move cursor"], ["prev_tab", "next_tab"])  # letters type here
+        self.assertEqual(parts["Delete"], ["alt", "Backspace"])
+
+    def test_a_keyboard_only_machine_shows_keys_and_drops_controller_only_hints(self):
+        from modsync.ui.overlays import KeyboardSheet
+        from modsync.ui.widgets import HintButton
+
+        window = self.window()
+        KeyboardSheet(window, "Path", "Enter a path.", lambda text: None).open()
+        self.settle()
+        shown = {b.text(): [name for kind, name, _ in b._parts() if kind != "sep"] for b in window.hintbar.findChildren(HintButton)
+                 if b.isVisibleTo(window)}
+        self.assertNotIn("Move cursor", shown)
+        self.assertEqual(shown["Space"], ["Space"])
+        self.assertEqual(window.hintbar.device_label.text(), "Keyboard")
 
     def test_bumpers_arrive_as_a_tap_of_ctrl_or_alt(self):
         self._family("steam")

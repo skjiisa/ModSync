@@ -17,9 +17,11 @@ Steam's desktop configuration sends Space (accept) for Y. So any press within
 ``DEDUPE_S`` of a press from the other source is dropped, whatever it maps to,
 and so are key repeats for a direction already held on the controller.
 
-The router also tracks which device was used last (``mode``), so the hint bar
-can show the matching glyphs and the focus highlight can stay out of the way
-of the mouse.
+The router also tracks which device was used last (``mode``), so the focus
+highlight can stay out of the way of the mouse. It can't tell a keyboard from
+a controller that Steam turns into keys, so button prompts don't follow
+``mode``: wherever a controller may be in use (``controller_present``) they
+show the controller's button and the keyboard key side by side.
 """
 
 from __future__ import annotations
@@ -70,6 +72,14 @@ CONTROLLER_KEYS = {
     K.Key_Escape, K.Key_Space, K.Key_PageUp, K.Key_PageDown, K.Key_Tab,
 }
 TAP_KEYS = {K.Key_Control: Action.PREV_TAB, K.Key_Alt: Action.NEXT_TAB}  # LB, RB
+
+# The key shown beside each controller button in the prompts (see key_action).
+KEY_LABELS = {
+    Action.UP: "Arrows", Action.DOWN: "Arrows", Action.LEFT: "Arrows", Action.RIGHT: "Arrows",
+    Action.ACCEPT: "Enter", Action.BACK: "Esc", Action.AUX: "X", Action.ALT: "Y",
+    Action.PREV_TAB: "Q", Action.NEXT_TAB: "E", Action.MENU: "Home",
+    Action.SCROLL_UP: "PgUp/PgDn", Action.SCROLL_DOWN: "PgUp/PgDn",
+}
 TAP_S = 0.6  # a modifier released this soon, with nothing pressed meanwhile, is a tap
 FAMILY_TTL_S = 5.0
 
@@ -131,6 +141,10 @@ def key_action(event: QKeyEvent, focus: QWidget | None, family: str = "keyboard"
         return Action.PREV_TAB
     if key in (K.Key_E, K.Key_BracketRight):
         return Action.NEXT_TAB
+    if key == K.Key_X:  # the keyboard's X and Y for the controller's
+        return Action.AUX
+    if key == K.Key_Y:
+        return Action.ALT
     if key == K.Key_Home:
         return Action.MENU
     return None
@@ -164,6 +178,7 @@ class InputRouter(QObject):
         self._family: tuple[str, float] | None = None
         self.last_input = 0.0  # monotonic time of the last press of any kind
         self.pointer = "mouse"  # "mouse" or "touch": which kind drove the last pointer press
+        self._pad_seen = False  # SDL reported a button press at some point
         app.installEventFilter(self)
 
     @classmethod
@@ -192,8 +207,27 @@ class InputRouter(QObject):
         return self.gamepads.names if self.gamepads is not None else []
 
     @property
+    def controller_present(self) -> bool:
+        """Whether a controller may be driving ModSync: a Steam Deck, a Valve
+        or other controller Steam can turn into keys, or one SDL reads."""
+        return self._pad_seen or bool(self.controller_names) or self.family != "keyboard"
+
+    @property
     def glyph_style(self) -> str:
-        return self.pad_style if self.mode == "gamepad" else "keyboard"
+        """The style of single-glyph prompts (a lit row's legend, the bumpers
+        beside the tabs): the controller's wherever one may be in use."""
+        return self.pad_style if self.controller_present else "keyboard"
+
+    def key_label(self, action: Action) -> str | None:
+        """The keyboard key for ``action`` outside text entry, if there is one."""
+        if action in (Action.SCROLL_UP, Action.SCROLL_DOWN) and self.family == "steam":
+            return None  # Page Up and Down are X and Y on those controllers
+        return KEY_LABELS.get(action)
+
+    def _saw_pad(self) -> None:
+        if not self._pad_seen:
+            self._pad_seen = True
+            self.controllersChanged.emit()
 
     @property
     def family(self) -> str:
@@ -236,6 +270,7 @@ class InputRouter(QObject):
         if not self._app_active():
             return
         self._held[name] = action
+        self._saw_pad()
         self._set_mode("gamepad")
         if not self._duplicate(action, "pad"):
             self.dispatch(action)
@@ -246,6 +281,7 @@ class InputRouter(QObject):
     def pad_scroll(self, value: float) -> None:
         self._scroll_speed = value
         if value and self._app_active():
+            self._saw_pad()
             self._set_mode("gamepad")
             if not self._scroll_timer.isActive():
                 self._scroll_timer.start()
