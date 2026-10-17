@@ -265,13 +265,34 @@ KEYS = {"accept": "Enter", "back": "Esc", "aux": "X", "alt": "Y", "prev_tab": "Q
 SHOULDERS = {"xbox": ("LB", "RB", "☰"), "playstation": ("L1", "R1", "≡")}
 
 
-def glyph_width(key: str, style: str, height: float, metrics_font: QFont) -> float:
-    """How wide ``paint_glyph`` draws the glyph for ``key`` at ``height``."""
+def keycap_width(text: str, height: float, metrics_font: QFont) -> float:
+    """How wide ``paint_keycap`` draws a key labelled ``text``."""
     from PySide6.QtGui import QFontMetricsF
 
+    return max(height, QFontMetricsF(metrics_font).horizontalAdvance(text) + height * 0.7)
+
+
+def paint_keycap(p: QPainter, text: str, rect: QRectF, label_font: QFont, *, on: str = "") -> None:
+    """A keyboard key: an outlined cap with its name. ``on`` as for ``paint_glyph``."""
+    p.save()
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    dark = theme.color("on_accent" if on == "accent" else "on_focus")
+    p.setPen(QPen(dark if on else theme.color("muted"), 1.4))
+    p.setBrush(Qt.BrushStyle.NoBrush if on else theme.color("surface"))
+    p.drawRoundedRect(rect.adjusted(0.7, 0.7, -0.7, -0.7), 4, 4)
+    p.setPen(dark if on else theme.color("text"))
+    f = QFont(label_font)
+    f.setPointSizeF(label_font.pointSizeF() * 0.82)
+    f.setBold(True)
+    p.setFont(f)
+    p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+    p.restore()
+
+
+def glyph_width(key: str, style: str, height: float, metrics_font: QFont) -> float:
+    """How wide ``paint_glyph`` draws the glyph for ``key`` at ``height``."""
     if style == "keyboard":
-        text = KEYS.get(key, "?")
-        return max(height, QFontMetricsF(metrics_font).horizontalAdvance(text) + height * 0.7)
+        return keycap_width(KEYS.get(key, "?"), height, metrics_font)
     if key in ("prev_tab", "next_tab", "scroll"):
         return height * 1.7
     return height
@@ -291,16 +312,8 @@ def paint_glyph(p: QPainter, key: str, rect: QRectF, style: str, label_font: QFo
     chip = dark if on else theme.color("border")
     chip_text = theme.color("text")
     if style == "keyboard":
-        p.setPen(QPen(dark if on else theme.color("muted"), 1.4))
-        p.setBrush(Qt.BrushStyle.NoBrush if on else theme.color("surface"))
-        p.drawRoundedRect(rect.adjusted(0.7, 0.7, -0.7, -0.7), 4, 4)
-        p.setPen(dark if on else theme.color("text"))
-        f = QFont(label_font)
-        f.setPointSizeF(label_font.pointSizeF() * 0.82)
-        f.setBold(True)
-        p.setFont(f)
-        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, KEYS.get(key, "?"))
         p.restore()
+        paint_keycap(p, KEYS.get(key, "?"), rect, label_font, on=on)
         return
     if key in ("prev_tab", "next_tab", "scroll"):
         left, right, _ = SHOULDERS.get(style, SHOULDERS["xbox"])

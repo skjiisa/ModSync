@@ -492,11 +492,11 @@ class KeyboardSheet(Overlay):
             accept = names.get(focus, focus.text())
         else:
             accept = "Type"
-        if self.host.router.mode == "gamepad":
-            return [([Action.ACCEPT], accept), ([Action.PREV_TAB, Action.NEXT_TAB], "Move cursor"),
-                    ([Action.AUX], "Space"), ([Action.ALT], "Delete"), ([Action.MENU], "Done"),
-                    ([Action.BACK], "Cancel")]
-        return [([Action.ACCEPT], accept), ([Action.BACK], "Cancel")]
+        # Letters type here, so Q, E, X and Y aren't shortcuts: a keyboard's own
+        # Space and Backspace do those jobs, and the rest are controller-only.
+        return [([Action.ACCEPT], accept), ([Action.PREV_TAB, Action.NEXT_TAB], "Move cursor", []),
+                ([Action.AUX], "Space", ["Space"]), ([Action.ALT], "Delete", ["Backspace"]),
+                ([Action.MENU], "Done", []), ([Action.BACK], "Cancel")]
 
     def handle_action(self, action: Action) -> bool:
         focus = self.host.focusWidget()

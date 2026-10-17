@@ -921,25 +921,62 @@ POINTER_SKIP = {Action.ACCEPT, Action.UP, Action.DOWN, Action.LEFT, Action.RIGHT
                 Action.PREV_TAB, Action.NEXT_TAB, Action.SCROLL_UP, Action.SCROLL_DOWN}
 
 
-class HintButton(QAbstractButton):
-    """One "glyph + label" entry of the hint bar; clicking it does the same as
-    pressing the button. With a mouse or touch screen it drops the glyph and
-    becomes a plain button, the only on-screen way to some actions (Back,
-    Cancel, Leave setup)."""
+Hint = tuple  # (actions, text) or (actions, text, keys): ``keys`` overrides the key caps shown
 
-    def __init__(self, actions: list[Action], text: str, router, parent: QWidget | None = None) -> None:
+
+class HintButton(QAbstractButton):
+    """One entry of the hint bar: the controller button, the keyboard key and
+    what they do. Clicking it does the same as pressing the button. With a
+    mouse or touch screen it drops the glyphs and becomes a plain button, the
+    only on-screen way to some actions (Back, Cancel, Leave setup).
+
+    ModSync can't tell a keyboard from a controller Steam turns into keys, so
+    wherever a controller may be in use both are shown. ``keys`` names the key
+    caps when they differ from the usual ones (``InputRouter.key_label``), and
+    an empty list means no key does this here."""
+
+    GAP = 6
+
+    def __init__(self, actions: list[Action], text: str, router, parent: QWidget | None = None, *,
+                 keys: list[str] | None = None) -> None:
         super().__init__(parent)
         self.actions = actions
         self.router = router
+        self.keys = keys
+        self.compact = False  # the bar is short of room: controller glyphs only
         self.setText(text)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
         self.clicked.connect(lambda: router.dispatch(actions[-1]))
 
-    def _glyphs(self) -> list[tuple[str, float]]:
-        style = self.router.glyph_style
-        return [(ACTION_GLYPH[a], icons.glyph_width(ACTION_GLYPH[a], style, 26, theme.font(11))) for a in self.actions]
+    def key_caps(self) -> list[str]:
+        if self.keys is not None:
+            return list(self.keys)
+        caps: list[str] = []
+        for action in self.actions:
+            label = self.router.key_label(action)
+            if label and label not in caps:
+                caps.append(label)
+        return caps
+
+    def _parts(self) -> list[tuple[str, str, float]]:
+        """("pad", glyph, width) for the controller, then a "/" and ("key",
+        label, width) for the keyboard."""
+        font = theme.font(11)
+        parts = []
+        if self.router.controller_present:
+            style = self.router.pad_style
+            glyphs: list[str] = []
+            for action in self.actions:
+                if ACTION_GLYPH[action] not in glyphs:
+                    glyphs.append(ACTION_GLYPH[action])
+            parts += [("pad", g, icons.glyph_width(g, style, 26, font)) for g in glyphs]
+        caps = [] if parts and self.compact else self.key_caps()
+        if parts and caps:
+            parts.append(("sep", "/", QFontMetricsF(theme.font(11.5)).horizontalAdvance("/")))
+        parts += [("key", k, icons.keycap_width(k, 26, font)) for k in caps]
+        return parts
 
     @property
     def pointer(self) -> bool:
@@ -949,7 +986,7 @@ class HintButton(QAbstractButton):
         fm = QFontMetricsF(theme.font(11.5, QFont.Weight.DemiBold))
         if self.pointer:
             return QSize(int(fm.horizontalAdvance(self.text()) + 40), 42)
-        glyphs = sum(w + 6 for _, w in self._glyphs())
+        glyphs = sum(w + self.GAP for _, _, w in self._parts())
         return QSize(int(glyphs + fm.horizontalAdvance(self.text()) + 22), 40)
 
     def paintEvent(self, _event) -> None:  # noqa: N802
@@ -969,9 +1006,18 @@ class HintButton(QAbstractButton):
             p.setBrush(theme.color("surface"))
             p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 4, -1, -4), RADIUS, RADIUS)
         x = 8.0
-        for key, w in self._glyphs():
-            icons.paint_glyph(p, key, QRectF(x, (self.height() - 26) / 2, w, 26), self.router.glyph_style, theme.font(11))
-            x += w + 6
+        font = theme.font(11)
+        for kind, name, w in self._parts():
+            rect = QRectF(x, (self.height() - 26) / 2, w, 26)
+            if kind == "pad":
+                icons.paint_glyph(p, name, rect, self.router.pad_style, font)
+            elif kind == "sep":
+                p.setPen(theme.color("muted"))
+                p.setFont(theme.font(11.5))
+                p.drawText(rect, Qt.AlignmentFlag.AlignCenter, name)
+            else:
+                icons.paint_keycap(p, name, rect, font)
+            x += w + self.GAP
         p.setPen(theme.color("secondary"))
         p.setFont(theme.font(11.5, QFont.Weight.DemiBold))
         p.drawText(QRectF(x + 2, 0, self.width() - x, self.height()),
@@ -1003,13 +1049,12 @@ class HintBar(QWidget):
         self.slots = QHBoxLayout()
         self.slots.setSpacing(6)
         h.addLayout(self.slots)
-        self._hints: list[tuple[list[Action], str]] = []
-        self._rendered_pointer: bool | None = None
+        self._hints: list[Hint] = []
         router.modeChanged.connect(self._refresh_device)
         router.controllersChanged.connect(self._refresh_device)
         self._refresh_device()
 
-    def set_hints(self, hints: list[tuple[list[Action], str]]) -> None:
+    def set_hints(self, hints: list[Hint]) -> None:
         if hints == self._hints:
             return
         self._hints = hints
@@ -1018,34 +1063,60 @@ class HintBar(QWidget):
     def _render(self) -> None:
         clear_layout(self.slots)
         pointer = self.router.mode == "mouse"
-        for actions, text in self._hints:
+        for actions, text, *keys in self._hints:
             if pointer and all(a in POINTER_SKIP for a in actions):
                 continue
-            self.slots.addWidget(HintButton(actions, text, self.router))
+            button = HintButton(actions, text, self.router, keys=keys[0] if keys else None)
+            if not pointer and not button._parts():
+                discard(button)  # nothing on this machine does it: no controller and no key
+                continue
+            self.slots.addWidget(button)
+        self._fit()
+
+    def _fit(self) -> None:
+        """Short of room (a narrow window, many hints), drop the device name,
+        then the keyboard keys beside controller glyphs. Never clip a label."""
+        buttons = [self.slots.itemAt(i).widget() for i in range(self.slots.count())]
+        buttons = [b for b in buttons if isinstance(b, HintButton)]
+        room = self.width() - 48 - 6 * max(0, len(buttons) - 1)
+
+        def needed() -> int:
+            return sum(b.sizeHint().width() for b in buttons)
+
+        for b in buttons:
+            b.compact = False
+        self.device.setVisible(needed() + self.device.sizeHint().width() + 16 <= room)
+        if needed() > room:
+            for b in buttons:
+                b.compact = True
+        for b in buttons:
+            b.updateGeometry()
+            b.update()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit()
 
     @property
     def texts(self) -> list[str]:
-        return [text for _, text in self._hints]
+        return [hint[1] for hint in self._hints]
 
     def _refresh_device(self, *_args) -> None:
-        names = self.router.controller_names
-        mode = self.router.mode
-        if (mode == "mouse") != self._rendered_pointer:
-            self._rendered_pointer = mode == "mouse"
-            self._render()
-        if names:
-            self.device_icon.set("gamepad", "secondary" if mode == "gamepad" else "muted")
+        router = self.router
+        names = router.controller_names
+        self._render()  # pointer buttons, or glyphs for what is connected now
+        if router.mode == "mouse":
+            self.device_icon.set("pointer", "muted")
+            self.device_label.setText("Touch" if router.pointer == "touch" else "Mouse")
+        elif names:
+            self.device_icon.set("gamepad", "muted")
             self.device_label.setText(names[-1] if len(names) == 1 else f"{len(names)} controllers")
+        elif router.controller_present:
+            self.device_icon.set("gamepad", "muted")
+            self.device_label.setText("Steam Deck" if router.family == "deck" else "Controller")
         else:
-            icon = {"mouse": "pointer", "keyboard": "keyboard"}.get(mode, "gamepad")
-            self.device_icon.set(icon, "muted")
-            pointer = "Touch" if self.router.pointer == "touch" else "Mouse"
-            self.device_label.setText({"mouse": pointer, "keyboard": "Keyboard"}.get(mode, "Controller"))
-        for i in range(self.slots.count()):
-            w = self.slots.itemAt(i).widget()
-            if w is not None:
-                w.updateGeometry()
-                w.update()
+            self.device_icon.set("keyboard", "muted")
+            self.device_label.setText("Keyboard")
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         QPainter(self).fillRect(self.rect(), theme.color("bar"))

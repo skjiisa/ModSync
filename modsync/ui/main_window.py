@@ -188,6 +188,7 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         app.focusChanged.connect(self._on_focus_changed)
         self.router.modeChanged.connect(self._on_mode_changed)
+        self.router.controllersChanged.connect(self._on_controllers_changed)
         self._on_mode_changed(self.router.mode)
         self.go("home")
 
@@ -673,6 +674,9 @@ class MainWindow(QMainWindow):
         scope = self.scope()
         if not alive(focus) or not (focus is scope or scope.isAncestorOf(focus)) or not focus.isEnabled():
             self.focus_scope_default()
+
+    def _on_controllers_changed(self) -> None:
+        restyle_rows(self)  # a lit row's legend follows what is connected
 
     def _on_mode_changed(self, mode: str) -> None:
         self.halo.enabled = mode != "mouse"

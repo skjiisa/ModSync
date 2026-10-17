@@ -232,7 +232,7 @@ components:
 
 ModSync is part of the Steam Deck, not a poster on it. The window speaks the device's own vocabulary: a matte charcoal ground, flat rows with small corners, white legends, and the blue of the app icon as the one accent. A screen is a short list. Each line says what it is on the left and its state on the right, and the line that needs the player is the one that is lit. It is a native Qt window sized for 1280 × 800 at arm's length (type in Qt points, geometry in pixels), and everything is painted flat: no gradients, glows, sheens or shadows.
 
-Focus carries the identity. A controller never hovers, so the selected control is unmistakable without color: the focused row fills white, its text turns dark, and the button that chooses it is printed at its right edge in the glyphs of the device in hand (the Deck's A disc, an Xbox or PlayStation face button, or an Enter key cap). Nothing else lights up. With a mouse or a finger, rows never light; they only tint on hover and press.
+Focus carries the identity. A controller never hovers, so the selected control is unmistakable without color: the focused row fills white, its text turns dark, and the button that chooses it is printed at its right edge: the controller's (the Deck's A disc, an Xbox or PlayStation face button) wherever a controller may be in use, an Enter key cap on a machine with none. Nothing else lights up. With a mouse or a finger, rows never light; they only tint on hover and press.
 
 The look deliberately replaces the earlier aurora-backdrop, glowing-teal-card dashboard. Icons in boxes on every tile, uppercase eyebrows and filled status chips are not part of this world.
 
@@ -295,7 +295,7 @@ A cool charcoal ramp with white legends, one saturated blue taken from the app i
 
 ## Layout
 
-The design canvas is 1280 × 800 with the window always maximized in Gaming Mode. A 60px top bar (24px side margins) carries the app icon at 32px, the wordmark, bumper legends around the text tabs Home / Sync / Settings, and the clock on the right. A 52px hint bar along the bottom shows the input device on the left and the live button hints on the right.
+The design canvas is 1280 × 800 with the window always maximized in Gaming Mode. A 60px top bar (24px side margins) carries the app icon at 32px, the wordmark, bumper legends around the text tabs Home / Sync / Settings, and the clock on the right. A 52px hint bar along the bottom shows the controller ModSync can see on the left (dropped when the hints need the room) and the live button hints on the right.
 
 Pages sit between them with 40px side margins (18px top, 28px bottom; Home tightens to 16 and 12) and 20px between blocks (14px on Home). Content is two columns with a 24px gutter: on the left the readiness list or readouts, on the right the action column with the blue primary bar on top. Rows in a list stack with a 4px gap, so the list reads as one block of lines; in sheets and the folder picker they stack at 8px. Every standard Home action fits without scrolling; where a page does scroll, the scrollbar is a 6px handle with no track.
 
@@ -328,13 +328,13 @@ The one blue bar per screen: Deck Icon Blue, at least 96px tall, 6px corners, a 
 ### The lit legend (TileEnd)
 **The Lit Row Rule.** Focus is a lit row: the focused row fills white with dark text and prints the device's accept legend at its right edge; the primary bar keeps its blue and adds a white ring plus the legend. Nothing else glows.
 
-Legends are drawn as the device prints them: Deck and Xbox face buttons as a light disc with a dark letter (dark disc on lit or blue rows), PlayStation as its colored symbols, keyboard keys as outlined caps ("Enter", "Esc"), bumpers and triggers as small 4px-cornered caps. The glyph set follows whichever input was used last.
+Legends are drawn as the device prints them: Deck and Xbox face buttons as a light disc with a dark letter (dark disc on lit or blue rows), PlayStation as its colored symbols, keyboard keys as outlined caps ("Enter", "Esc"), bumpers and triggers as small 4px-cornered caps. ModSync can't tell a keyboard from a controller Steam turns into keys, so prompts follow the hardware present, not the input used last.
 
 ### Navigation (TabButton, TopBar)
 Text-only tabs, 36px tall inside a 40px slot, 18px side padding, 12.5pt semibold. Unselected tabs are Secondary Grey text on nothing; hover adds Row Slate; the current tab sits on a Seam fill in Legend White; a focused tab lights white with Ink text. A tab needing attention shows an 8px tone dot after its name. Bumper legends flank the tab row.
 
 ### Hint bar (HintBar, HintButton)
-Bar Charcoal, 52px. With a controller or keyboard, each hint is the device legend(s) followed by an 11.5pt semibold Secondary Grey label. With a mouse or touch, hints become plain text buttons: Legend White on Row Slate with 4px corners, Lifted Slate under the pointer, no legends. Either way, clicking or tapping a hint performs it.
+Bar Charcoal, 52px. With a controller or keyboard, each hint is the controller legend(s), a Muted Grey "/", the keyboard key cap(s), then an 11.5pt semibold Secondary Grey label. On a machine with no controller only the key caps show, and a hint no key performs is left out. Short of room, the bar drops the device name, then the key caps. With a mouse or touch, hints become plain text buttons: Legend White on Row Slate with 4px corners, Lifted Slate under the pointer, no legends. Either way, clicking or tapping a hint performs it.
 
 ### Panels and callouts
 - **Panel:** a read-only Bar Charcoal block, 4px corners, 20px padding, 12px gap, for readouts that are not choices (installed version, sync progress, devices).
@@ -363,7 +363,7 @@ Keys are 58 × 54px (wide keys span multiples with 8px gaps), Lifted Slate at re
 - **Do** switch every tone to its on-focus twin when its row lights.
 - **Do** express state as a 10px dot and a semibold value word in the tone's color.
 - **Do** build depth from the charcoal steps (Well, Night, Bar Charcoal, Row Slate, Lifted Slate) and keep rows borderless at 4px corners.
-- **Do** print button hints in the glyphs of the device in hand.
+- **Do** print each button hint as the controller button and the keyboard key together wherever a controller may be in use; never guess which one is in hand.
 - **Do** keep every standard Home action visible at 1280 × 800 without scrolling.
 
 ### Don't:

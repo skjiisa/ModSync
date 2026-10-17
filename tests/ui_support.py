@@ -112,6 +112,7 @@ class UiTestCase(unittest.TestCase):
         router._last_press = None
         router._family = None
         router._tap = None
+        router._pad_seen = False
 
     def _no_slot_errors(self):
         self.settle()

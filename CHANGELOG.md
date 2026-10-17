@@ -18,6 +18,16 @@ All notable changes to ModSync are documented here. The format follows
   a ring. While a repair is recommended it is the one blue action on Home and
   Play becomes a plain row. Labels and descriptions are shorter. Controller,
   Steam Input, keyboard, mouse and touch input work as before.
+- Button hints no longer guess between a keyboard and a controller, which
+  look the same when Steam turns the controller into keys. Wherever a
+  controller may be in use, each hint shows the controller button and the
+  keyboard key together, such as A / Enter. A machine with no controller
+  shows only keys.
+
+### Fixed
+
+- The X and Y keys now do what the controller's X and Y do (for example
+  "Check again"), as the keyboard hints already said.
 
 ## [1.1.0-beta2] - 2026-10-11
 

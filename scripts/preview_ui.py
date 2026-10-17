@@ -59,7 +59,11 @@ def main():
         ])
     )
     hook = launchhook.LaunchHookStatus(SKYRIM_SE, False, None, False, None, None, False, None, False, True)
+    # The controller family Steam Input would report: a Steam Deck unless a shot
+    # says otherwise, never this machine's own controllers.
+    family = {"value": "deck"}
     patches = [
+        patch("modsync.ui.steaminput.family", lambda *a, **k: family["value"]),
         patch.object(State, "load", return_value=State()),
         patch.object(ModSyncService, "game_status", return_value=game),
         patch.object(ModSyncService, "game_version_check", return_value=check),
@@ -108,7 +112,9 @@ def main():
         if any(overflow):
             raise RuntimeError(f"Content exceeds the requested width: {name}")
 
-    def window_for(state: State, *, steam=None, mode="keyboard") -> MainWindow:
+    def window_for(state: State, *, steam=None, mode="keyboard", machine="deck") -> MainWindow:
+        family["value"] = machine
+        router._family = None
         router._set_mode(mode)
         service = ModSyncService(manager=Mock())
         service.state = state
@@ -127,7 +133,7 @@ def main():
         fresh = replace(game, skse_runtime=None)
         with patch.object(ModSyncService, "game_status", return_value=fresh), \
                 patch.object(ModSyncService, "game_version_check", return_value=gameversion.VersionCheck(fresh.installed, None)):
-            w = window_for(State())
+            w = window_for(State(), machine="keyboard")  # a desktop with no controller: keys only
             capture(w, "home-welcome")
             w.close()
 
