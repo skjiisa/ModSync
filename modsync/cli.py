@@ -179,15 +179,105 @@ def vault(args: list[str]) -> int:
         return _vault_create(rest)
     if sub == "join":
         return _vault_join(rest)
+    if sub == "status":
+        return _sync_status()
+    if sub == "conflicts":
+        return _sync_conflicts(rest)
     if sub == "serve":  # kept for units installed by older versions
         return serve(rest)
     print(
         "usage:\n"
         "  modsync sync create <instance-dir> [--label NAME]\n"
         "  modsync sync join <pairing-code> <instance-dir> [--merge]\n"
+        "  modsync sync status\n"
+        "  modsync sync conflicts [keep current|other <file>]\n"
         "  modsync serve                       keep syncing / watching in the foreground"
     )
     return 2
+
+
+def _sync_status() -> int:
+    from modsync.service import ModSyncService
+
+    service = ModSyncService()
+    if not service.state.syncing:
+        print("Sync: off. 'modsync sync create' shares this setup; 'modsync sync join' copies another.")
+        return 0
+    try:
+        st = service.status()
+    except Exception as exc:
+        print(f"Syncthing didn't answer: {exc}")
+        return 1
+    finally:
+        service.shutdown()
+    print(f"Vault:      {st.folder_id}  ({service.state.instance_path})")
+    if st.paused:
+        print("State:      paused. Nothing syncs until you resume it under Sync in the app.")
+    elif st.copy is not None:
+        phase = {"waiting": f"waiting for {st.copy.source} to connect",
+                 "indexing": f"receiving the list of files from {st.copy.source}",
+                 "receiving": f"copying from {st.copy.source}, {st.copy.need_items} item(s) to go",
+                 "setting-aside": "setting aside what the vault doesn't have"}.get(st.copy.phase, st.copy.phase)
+        print(f"Copy:       {phase}")
+    else:
+        pct = int(round(st.completion or 0))
+        print(f"State:      {st.folder_state or 'starting'}, {pct}% here"
+              + (f", {st.need_items} item(s) still to arrive" if st.need_items else ""))
+    for d in st.devices:
+        print(f"Machine:    {d.name or d.id[:7]}  {'connected' if d.connected else 'offline'}")
+    if not st.devices:
+        print("Machines:   none paired yet")
+    n = len(service.conflicts())
+    print(f"Conflicts:  {n}" + ("  ('modsync sync conflicts' lists them)" if n else ""))
+    return 0
+
+
+def _sync_conflicts(args: list[str]) -> int:
+    from pathlib import Path
+
+    from modsync.service import ModSyncService
+    from modsync.sync import conflicts
+
+    usage = "usage: modsync sync conflicts [keep current|other <file>]"
+    if args and (len(args) != 3 or args[0] != "keep" or args[1] not in ("current", "other")):
+        print(usage)
+        return 2
+    service = ModSyncService()
+    if not service.state.syncing:
+        print("Sync is off on this machine, so there are no conflicts to look for.")
+        return 0
+    instance = Path(service.state.instance_path or "")
+    found = service.conflicts()
+    if not args:
+        if not found:
+            print("No conflicts.")
+            return 0
+        print(f"{len(found)} file(s) changed on two machines before they synced. MO2 uses the version in use.\n")
+        for c in found:
+            changed = f"  (other version last changed {c.changed:%Y-%m-%d %H:%M})" if c.changed else ""
+            print(c.relative(instance) + changed)
+            for line in conflicts.differences(c):
+                print(f"    {line}")
+        print("\nKeep one: modsync sync conflicts keep current|other <file>")
+        return 0
+    keep, target = args[1], args[2]
+    wanted = Path(target).expanduser()
+    match = next((c for c in found if wanted in (c.original, c.path)
+                  or target in (c.relative(instance), c.path.relative_to(instance).as_posix())), None)
+    if match is None:
+        print(f"No conflict for {target}. 'modsync sync conflicts' lists them.")
+        return 1
+    group = conflicts.related(found, match)
+    try:
+        archive = service.resolve_conflicts(group, keep)
+    except RuntimeError as exc:
+        print(exc)
+        return 1
+    which = "the version in use" if keep == "current" else "the other version"
+    for c in group:
+        print(f"Kept {which} of {c.relative(instance)}.")
+    print(f"The other version is in {archive}.")
+    return 0
 
 
 def _vault_create(args: list[str]) -> int:

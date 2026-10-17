@@ -340,7 +340,8 @@ class HomePage(Page):
             arriving = copy is not None or (not status.paused and (state == "syncing" or pct < 100))
             self.sync_warning.setVisible(arriving)
             if copy is not None:
-                self.sync_warning.setText(f"Still copying the mods from {copy.source}. Play once the copy has finished.")
+                self.sync_warning.setText(
+                    f"Still copying the mods from {copy.source}. Play once the copy has finished.")
             elif arriving:
                 self.sync_warning.setText(f"Still syncing ({pct}%). Continuing uses only the mods that have arrived.")
 

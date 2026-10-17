@@ -22,7 +22,7 @@ from modsync.games import SKYRIM_SE
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService
 from modsync.state import State
-from modsync.sync import pairing, stignore
+from modsync.sync import conflicts, pairing, stignore
 from modsync.sync.binary import ensure_syncthing
 from modsync.sync.manager import SyncthingManager
 
@@ -503,6 +503,91 @@ class SyncthingIntegration(unittest.TestCase):
                     time.sleep(0.5)
                 self.assertFalse((inst_a / "mods" / "Gone" / "g.esp").exists())
                 self.assertFalse((inst_b / "mods" / "Gone").exists())
+            finally:
+                a.stop()
+                b.stop()
+                os.environ.pop("XDG_CONFIG_HOME", None)
+
+    def test_conflicts_are_found_and_settled_on_every_machine(self) -> None:
+        """Both machines change a mod list and a mod's INI while B is paused.
+        Syncthing keeps B's newer files and makes conflict copies of A's, on
+        both machines. B finds them, keeps A's mod list (with the rest of its
+        profile) and its own INI; the result reaches A, and the versions not
+        kept stay in B's archive without syncing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            os.environ["XDG_CONFIG_HOME"] = str(tmp / "cfg")
+            inst_a, inst_b = tmp / "A" / "MO2", tmp / "B" / "MO2"
+            files = {"profiles/Default/modlist.txt": "+Shared\n", "mods/Tweaks/tweaks.ini": "[General]\nfScale=1.0\n"}
+            for inst in (inst_a, inst_b):
+                for rel, text in files.items():
+                    (inst / rel).parent.mkdir(parents=True, exist_ok=True)
+                    (inst / rel).write_text(text)
+            (a, port_a), (b, port_b) = self._two_nodes(tmp)
+
+            def wait_for(check, what: str, timeout: float = 90) -> None:
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    if check():
+                        return
+                    time.sleep(0.5)
+                self.fail(f"timed out waiting for {what} (see A.log, B.log)")
+
+            def idle(mgr) -> bool:
+                with mgr.client() as c:
+                    s = c.folder_status("modsync-c")
+                return s.get("state") == "idle" and bool(s.get("globalFiles")) and not s.get("needTotalItems")
+
+            try:
+                with a.client() as ca, b.client() as cb:
+                    id_a, id_b = ca.my_id(), cb.my_id()
+                    pairing.add_peer_device(ca, id_b, "A's peer", addresses=[f"tcp://127.0.0.1:{port_b}"])
+                    pairing.add_peer_device(cb, id_a, "Desktop", addresses=[f"tcp://127.0.0.1:{port_a}"])
+                    pairing.share_instance_folder(ca, "modsync-c", inst_a, [id_b])
+                service = ModSyncService(manager=b)
+                service.join_vault(PairingCode(id_a, "modsync-c", "A"), inst_b, merge=True)
+                wait_for(lambda: idle(a) and idle(b), "the first sync")
+
+                service.pause_sync()
+                older, newer = time.time() - 120, time.time() - 30
+                edits = {inst_a: ("+Shared\n+FromA\n", "[General]\nfScale=2.5\n", older),
+                         inst_b: ("+Shared\n+FromB\n", "[General]\nfScale=1.0\nbNew=1\n", newer)}
+                for inst, (modlist, ini, mtime) in edits.items():
+                    for rel, text in zip(files, (modlist, ini)):
+                        (inst / rel).write_text(text)
+                        os.utime(inst / rel, (mtime, mtime))
+                with a.client() as ca:
+                    ca.rescan("modsync-c")
+                wait_for(lambda: idle(a), "A to scan its changes")
+                service.pause_sync(False)
+
+                wait_for(lambda: len(service.conflicts()) == 2, "B's conflict copies")
+                found = service.conflicts()
+                self.assertEqual([c.relative(inst_b) for c in found],
+                                 ["profiles/Default/modlist.txt", "mods/Tweaks/tweaks.ini"])
+                # The copies hold A's changes, but the id in their names is B's,
+                # the machine that found the conflict: it can't name the author.
+                self.assertTrue(all(c.device == id_b[:7] for c in found))
+                self.assertEqual(round(found[0].changed.timestamp()), round(older))
+                self.assertEqual(service.status().conflicts, 2)
+                wait_for(lambda: len(list(inst_a.rglob("*.sync-conflict-*"))) == 2, "A's conflict copies")
+
+                modlist, ini = found
+                self.assertIn("Only in the other version: FromA.", conflicts.differences(modlist))
+                self.assertIn("Set differently: [General] fScale (1.0 in use, 2.5 in the other).",
+                              conflicts.differences(ini))
+                archive_1 = service.resolve_conflicts(conflicts.related(found, modlist), "other")
+                archive_2 = service.resolve_conflicts([ini], "current")
+
+                self.assertEqual(service.conflicts(), [])
+                self.assertEqual((inst_b / "profiles/Default/modlist.txt").read_text(), "+Shared\n+FromA\n")
+                self.assertEqual((archive_1 / "profiles/Default/modlist.txt").read_text(), "+Shared\n+FromB\n")
+                self.assertEqual(len(list(archive_2.rglob("tweaks.sync-conflict-*.ini"))), 1)
+                wait_for(lambda: not list(inst_a.rglob("*.sync-conflict-*")), "A to drop its conflict copies")
+                wait_for(lambda: (inst_a / "profiles/Default/modlist.txt").read_text() == "+Shared\n+FromA\n",
+                         "A to get the kept mod list")
+                self.assertEqual((inst_a / "mods/Tweaks/tweaks.ini").read_text(), "[General]\nfScale=1.0\nbNew=1\n")
+                self.assertFalse((inst_a / conflicts.ARCHIVE_DIR).exists())
             finally:
                 a.stop()
                 b.stop()

@@ -38,14 +38,20 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
-- Sync lists files changed on two machines before they synced, describes what
-  differs in a mod or plugin list, and keeps the version you choose. The other
-  moves to `.modsync-conflicts` in the instance.
+- Sync lists files changed on two machines before they synced, anywhere in the
+  synced folders (mods and downloads included), describes what differs in a
+  mod list, plugin list or INI file, and keeps the version you choose. The
+  other moves to `.modsync-conflicts` in the instance. `modsync sync conflicts`
+  does the same from the command line.
+- `modsync sync status` shows the vault, its machines, a copy under way and
+  any conflicts waiting.
 - With a vault, Play and Open MO2 first check whether changes from another
   machine haven't arrived yet or conflicts are waiting, and ask before playing.
 
 ### Fixed
 
+- The test suite no longer writes to the developer's own
+  `~/.config/modsync/state.json`.
 - The X and Y keys now do what the controller's X and Y do (for example
   "Check again"), as the keyboard hints already said.
 

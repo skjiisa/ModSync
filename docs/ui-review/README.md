@@ -74,6 +74,17 @@ PlayStation symbols. Y (triangle) rescans.
 
 ![Live sync](sync-live.png)
 
+Files changed on two machines before they synced. Reviewing them becomes the
+one blue action until they're settled.
+
+![Conflicts waiting](sync-conflicts.png)
+
+The review describes what differs. A profile's mod list and plugins are
+decided together. Neither version is attributed to a machine, because
+Syncthing's conflict copies don't record who made the change.
+
+![Conflict review](conflict-sheet.png)
+
 Pairing with a machine found on the network, here with a mouse. With a
 controller, up and down turn each digit and left and right move between
 digits; with a mouse or touch screen, the digit row fills them in. Typed

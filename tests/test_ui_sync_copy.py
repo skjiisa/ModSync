@@ -169,16 +169,15 @@ class LiveSyncTests(UiTestCase):
         self.assertTrue(sync.conflicts_tile.isVisibleTo(sync))
         self.assertEqual(sync.conflicts_tile.text(), "3 files were changed on two machines")
         self.assertEqual(window.pages["home"].sync_row.badge.text(), "3 conflicts")
-        sync._names["AAAAAAA"] = "Desktop"
         sync.conflicts_tile.click()
         self.settle()
         sheet = window.top_overlay
         self.assertEqual(sheet.title.text(), "Profile Default")
         self.assertIn("mod list and plugins of profile Default", sheet.text.text())
-        self.assertIn("Only in the version from Desktop: Theirs.", sheet.text.text())
+        self.assertIn("Only in the other version: Theirs.", sheet.text.text())
         self.assertIn("Enabled only in the version in use: A.esp.", sheet.text.text())
         self.assertIn("1 more after this", sheet.text.text())
-        self.assertEqual(sheet.tiles["other"].text(), "Use the versions from Desktop")
+        self.assertEqual(sheet.tiles["other"].text(), "Use the other versions")
         sheet.choose("other")  # both lists together
         self.settle(4)
         self.assertEqual((profile / "modlist.txt").read_text(), "+Theirs\n")

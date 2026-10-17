@@ -275,6 +275,8 @@ class SyncPage(Page):
 
     def preferred_focus(self):
         if self.live:
+            if self.conflicts_tile.isVisibleTo(self):
+                return self.conflicts_tile
             return self.resume_tile or self.pair_tile
         return getattr(self, "share", None) or getattr(self, "choose_first", None)
 
@@ -298,7 +300,8 @@ class SyncPage(Page):
 
         state = self.service.state
         self._built_copying = state.copying
-        self.conflicts_tile = Tile("Files changed on two machines", "", "warning", role="primary", chevron=True)
+        self.conflicts_tile = Tile("Files changed on two machines", "", "warning",
+                                   role="normal" if state.sync_paused else "primary", chevron=True)
         self.conflicts_tile.clicked.connect(self.review_conflicts)
         self.conflicts_tile.setVisible(False)
         right.addWidget(self.conflicts_tile)
@@ -342,7 +345,6 @@ class SyncPage(Page):
         for tile in tiles:
             right.addWidget(tile)
         right.addStretch(1)
-        self._names: dict[str, str] = {}
         self._load_code()
         self.refresh()
         self._accept_pending()
@@ -385,14 +387,14 @@ class SyncPage(Page):
         return status
 
     def on_status(self, status: SyncStatus) -> None:
-        self._names = {d.id[:7]: d.name or d.id[:7] for d in status.devices}
-        self._names[status.device_id[:7]] = "this machine"
         self.conflicts_tile.setVisible(bool(status.conflicts))
+        if self.resume_tile is None and not self._built_copying:
+            # One blue action: reviewing conflicts while any wait, pairing otherwise.
+            self.pair_tile.set_role("normal" if status.conflicts else "primary")
         if status.conflicts:
             n = status.conflicts
             self.conflicts_tile.setText(f"{n} file{' was' if n == 1 else 's were'} changed on two machines")
-            self.conflicts_tile.set_description("MO2 uses the newer version of each. Choose which to keep. "
-                                                "(Looks in profiles, overwrite and the instance folder.)")
+            self.conflicts_tile.set_description("MO2 uses the newer version of each. Choose which to keep.")
         clear_layout(self.devices)
         if not status.devices:
             self.devices.addWidget(label("No other devices yet. Pair one to start syncing.", "muted"))
@@ -618,14 +620,15 @@ class SyncPage(Page):
         if not shiboken6.isValid(self):
             return
         if not found:
-            self.host.notify("No conflicts left in profiles, overwrite or the instance folder.", "ok")
+            self.host.notify("No conflicts left.", "ok")
             self.refresh()
             return
         group = conflicts.related(found, found[0])
         c = group[0]
         instance = self.service.state.instance_path or ""
-        other = self._names.get(c.device, "another machine")
-        when = f", saved {c.when.day} {c.when:%b %H:%M}," if c.when else ""
+        # Which machine made either change isn't known (see modsync.sync.conflicts).
+        changed = c.changed
+        when = f", last changed {changed.day} {changed:%b %H:%M}," if changed else ""
         if c.kind == "file":
             title = c.relative(instance)
             intro = f"{title} changed on two machines before they synced."
@@ -639,11 +642,11 @@ class SyncPage(Page):
                      "They're decided together, so the profile stays as one machine had it.")
         details = []
         for g in group:
-            lines = "\n".join(f"•  {line}" for line in conflicts.differences(g, other))
+            lines = "\n".join(f"•  {line}" for line in conflicts.differences(g))
             details.append(lines if len(group) == 1 else f"{g.original.name}:\n{lines}")
         rest = len(found) - len(group)
         more = f"\n\n{rest} more after this." if rest else ""
-        text = (f"{intro} MO2 uses the version in use; the version from {other}{when} is kept next to it."
+        text = (f"{intro} MO2 uses the version in use; the other version{when} is kept next to it."
                 f"\n\n" + "\n\n".join(details) + more)
         files = "versions" if len(group) > 1 else "version"
 
@@ -659,7 +662,7 @@ class SyncPage(Page):
             title, text,
             [("current", f"Keep the {files} in use", "The other goes to .modsync-conflicts in the instance.",
               "primary", "check"),
-             ("other", f"Use the {files} from {other}", "The one in use goes to .modsync-conflicts in the "
+             ("other", f"Use the other {files}", "The one in use goes to .modsync-conflicts in the "
               "instance. Close MO2 first.", "normal", "undo"),
              ("later", "Decide later", "", "normal", "close")],
             chosen, default="current")

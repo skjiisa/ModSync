@@ -11,6 +11,7 @@ from dataclasses import replace
 import os
 from pathlib import Path
 import sys
+import tempfile
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -29,11 +30,30 @@ from modsync.pairing_code import PairingCode
 from modsync.pairing_lan import Announcement
 from modsync.service import DeviceStatus, GameStatus, ModSyncService, SyncStatus
 from modsync.state import State
+from modsync.sync import conflicts
 from modsync.ui.app import _application
 from modsync.ui.input import InputRouter
 from modsync.ui.main_window import MainWindow
 
 INSTANCE = "/home/you/Games/ModOrganizer2-SkyrimSE"
+
+
+def example_conflicts(root: Path) -> list:
+    """A profile whose mod list and plugins changed on two machines, and a
+    mod's INI. Written to a scratch dir so the review sheet reads real files."""
+    stamp = "sync-conflict-20261016-213012-7JNL5T2"
+    files = {
+        "profiles/Default/modlist.txt": ("+SkyUI\n+Immersive Armors\n-Frostfall\n", "+SkyUI\n+Frostfall\n+Campfire\n"),
+        "profiles/Default/plugins.txt": ("*SkyUI_SE.esp\n*Hothtrooper44_ArmorCompilation.esp\n",
+                                         "*SkyUI_SE.esp\n*Frostfall.esp\n*Campfire.esm\n"),
+        "mods/SkyUI/SKSE/Plugins/SkyUI.ini": ("[General]\nfScale=1.0\n", "[General]\nfScale=0.8\nbCompact=1\n"),
+    }
+    for rel, (here, there) in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(here)
+        path.with_name(f"{path.stem}.{stamp}{path.suffix}").write_text(there)
+    return conflicts.find(root)
 
 
 def main():
@@ -194,6 +214,18 @@ def main():
         w = window_for(State(**configured, folder_id="example"), mode="gamepad")
         w.go("sync")
         capture(w, "sync-live")
+        with tempfile.TemporaryDirectory() as tmp:
+            found = example_conflicts(Path(tmp))
+            settled = SyncStatus("DEMO", "example", True, "idle", 100.0,
+                                 [DeviceStatus("DEMO-DECK", "Steam Deck", True)], conflicts=len(found))
+            with patch.object(ModSyncService, "conflicts", return_value=found), \
+                    patch.object(ModSyncService, "status", return_value=settled):
+                w.pages["sync"].refresh()
+                capture(w, "sync-conflicts")
+                w.pages["sync"].conflicts_tile.click()
+                capture(w, "conflict-sheet")
+                w.top_overlay.cancel()
+                settle()
         router.pad_style = "xbox"
         w.pages["sync"].add_device()
         capture(w, "keyboard")

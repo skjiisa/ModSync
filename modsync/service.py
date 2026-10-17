@@ -686,21 +686,30 @@ class ModSyncService:
         return check
 
     # --- conflicts ---
-    _CONFLICT_RESCAN_S = 30.0  # status polls every few seconds; the walk needn't
-    _conflict_cache: tuple[float, int] | None = None
+    # Status polls every few seconds; the walk needn't. It reads every name in
+    # mods/, so a big instance on an SD card waits longer between walks: the
+    # walk takes at most about 1% of the time, and runs at least every 10 minutes.
+    _CONFLICT_RESCAN_S = 30.0
+    _CONFLICT_RESCAN_MAX_S = 600.0
+    _conflict_cache: tuple[float, float, int] | None = None  # (when, walk seconds, count)
 
     def conflicts(self) -> list[conflicts.Conflict]:
+        """Every conflict waiting for a choice. Always walks the instance."""
         path = self.state.instance_path
         if not self.state.syncing or not path:
             return []
+        started = time.monotonic()
         found = conflicts.find(path)
-        self._conflict_cache = (time.monotonic(), len(found))
+        self._conflict_cache = (started, time.monotonic() - started, len(found))
         return found
 
     def _conflict_count(self) -> int:
         cached = self._conflict_cache
-        if cached is not None and time.monotonic() - cached[0] < self._CONFLICT_RESCAN_S:
-            return cached[1]
+        if cached is not None:
+            when, took, count = cached
+            wait = min(max(self._CONFLICT_RESCAN_S, 100 * took), self._CONFLICT_RESCAN_MAX_S)
+            if time.monotonic() - when < wait:
+                return count
         return len(self.conflicts())
 
     def resolve_conflicts(self, group: list[conflicts.Conflict], keep: str) -> Path:

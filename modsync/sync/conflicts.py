@@ -5,6 +5,13 @@ newer one under the real name and the other next to it as
 ``<name>.sync-conflict-<date>-<time>-<device><ext>``. MO2 never reads those
 copies, so a mod enabled on the machine that lost silently stays disabled.
 
+The name doesn't say whose change the copy holds. ``<device>`` and the time are
+the machine that found the conflict and when (checked with Syncthing 2.1: on
+both machines the copy of A's change carried B's id), and the copy reaches every
+machine, so on the machine that made that change it holds its own edit. The two
+are only "the version in use" and "the other version", and the copy's own
+modification time, which Syncthing keeps, says when that version was changed.
+
 ModSync only finds them and lets the user keep one version or the other, whole.
 It never merges the two: MO2 writes ``modlist.txt`` in reverse priority order
 and ignores a name after its first line, and without the version both machines
@@ -12,9 +19,10 @@ started from, a two-file comparison can't tell a lost change from an
 intentional one. The version not kept goes to ``.modsync-conflicts`` in the
 instance, which ``.stignore`` keeps out of sync, rather than being deleted.
 
-Only ``profiles/``, ``overwrite/`` and the files at the instance root are
-searched. ``mods/`` can hold hundreds of thousands of files and is rarely
-edited on both machines.
+Every folder that syncs is searched (see ``stignore.CONTENT_DIRS``), plus the
+files at the instance root. ``mods/`` can hold hundreds of thousands of files,
+so the walk only reads names; callers that poll pace themselves by how long it
+took (``ModSyncService._conflict_count``).
 """
 
 from __future__ import annotations
@@ -26,8 +34,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from modsync.sync.stignore import CONTENT_DIRS
+
 ARCHIVE_DIR = ".modsync-conflicts"
-SEARCHED_DIRS = ("profiles", "overwrite")
+SEARCHED_DIRS = CONTENT_DIRS
+# Files read as INI (key = value under [sections]) to describe a difference:
+# mod and game settings, and the .meta file MO2 writes next to each download.
+INI_SUFFIXES = (".ini", ".meta")
 
 _CONFLICT_RE = re.compile(
     r"^(?P<stem>.+?)\.sync-conflict-(?P<date>\d{8})-(?P<time>\d{6})-(?P<device>[A-Z2-7]{7})(?P<ext>\.[^.]*)?$"
@@ -38,8 +51,16 @@ _CONFLICT_RE = re.compile(
 class Conflict:
     path: Path  # the copy Syncthing set aside
     original: Path  # the file under the real name, which MO2 uses
-    device: str  # short id of the machine whose change was set aside
-    when: datetime | None
+    device: str  # short id of the machine that found the conflict (not who made either change)
+    when: datetime | None  # when it was found
+
+    @property
+    def changed(self) -> datetime | None:
+        """When the other version was last changed."""
+        try:
+            return datetime.fromtimestamp(self.path.stat().st_mtime)
+        except OSError:
+            return None
 
     @property
     def kind(self) -> str:
@@ -84,7 +105,7 @@ def related(found: list[Conflict], first: Conflict) -> list[Conflict]:
     """``first`` and the conflicts to decide with it. A profile's mod list,
     plugins and load order go together: keeping one machine's mod list with
     the other's plugins makes a profile neither machine had. Grouped only when
-    the same machine's change was set aside in each, one per file."""
+    the same machine found each conflict, one per file."""
     if first.kind == "file":
         return [first]
     group: list[Conflict] = []
@@ -138,7 +159,7 @@ def _listing(names: list[str], limit: int = 6) -> str:
     return shown + (f" and {len(names) - limit} more" if len(names) > limit else "")
 
 
-def differences(conflict: Conflict, other: str = "the other machine") -> list[str]:
+def differences(conflict: Conflict) -> list[str]:
     """What differs between the version in use and the one set aside, in plain
     words. Describes, never judges: either side may be the intended one."""
     kind = conflict.kind
@@ -156,11 +177,11 @@ def differences(conflict: Conflict, other: str = "the other machine") -> list[st
         on_there = [n for n in there_names if key(n) in there_on and key(n) in here_set - here_on]
         on_here = [n for n in here_names if key(n) in here_on and key(n) in there_set - there_on]
         if only_there:
-            lines.append(f"Only in the version from {other}: {_listing(only_there)}.")
+            lines.append(f"Only in the other version: {_listing(only_there)}.")
         if only_here:
             lines.append(f"Only in the version in use: {_listing(only_here)}.")
         if on_there:
-            lines.append(f"Enabled only in the version from {other}: {_listing(on_there)}.")
+            lines.append(f"Enabled only in the other version: {_listing(on_there)}.")
         if on_here:
             lines.append(f"Enabled only in the version in use: {_listing(on_here)}.")
         if [key(n) for n in here_names if key(n) in there_set] != [key(n) for n in there_names if key(n) in here_set]:
@@ -172,10 +193,50 @@ def differences(conflict: Conflict, other: str = "the other machine") -> list[st
     try:
         here, there = conflict.original.stat(), conflict.path.stat()
     except OSError:
-        return ["Only the version from the other machine is left."]
+        return ["Only the other version is left."]
     if here.st_size == there.st_size and conflict.original.read_bytes() == conflict.path.read_bytes():
         return ["Both versions are identical."]
-    return [f"The contents differ ({here.st_size:,} bytes in use, {there.st_size:,} from {other})."]
+    if conflict.original.suffix.lower() in INI_SUFFIXES:
+        lines = _ini_differences(conflict)
+        if lines:
+            return lines
+    return [f"The contents differ ({here.st_size:,} bytes in use, {there.st_size:,} in the other)."]
+
+
+def _ini(path: Path) -> dict[tuple[str, str], tuple[str, str]]:
+    """``(section, key)`` → ``(written key, value)``, both matched without case
+    as Skyrim and MO2 read them. A later line wins over an earlier one."""
+    values: dict[tuple[str, str], tuple[str, str]] = {}
+    section = ""
+    for line in _read_lines(path):
+        if line.startswith(";"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+        elif "=" in line:
+            key, value = line.split("=", 1)
+            key = key.strip()
+            values[(section.lower(), key.lower())] = (f"[{section}] {key}" if section else key, value.strip())
+    return values
+
+
+def _ini_differences(conflict: Conflict) -> list[str]:
+    """Settings added, removed or changed, or nothing when either side isn't INI."""
+    here, there = _ini(conflict.original), _ini(conflict.path)
+    if not here or not there:
+        return []
+    only_there = [there[k][0] for k in there if k not in here]
+    only_here = [here[k][0] for k in here if k not in there]
+    changed = [f"{here[k][0]} ({here[k][1] or 'empty'} in use, {there[k][1] or 'empty'} in the other)"
+               for k in here if k in there and here[k][1] != there[k][1]]
+    lines = []
+    if only_there:
+        lines.append(f"Settings only in the other version: {_listing(only_there)}.")
+    if only_here:
+        lines.append(f"Settings only in the version in use: {_listing(only_here)}.")
+    if changed:
+        lines.append(f"Set differently: {_listing(changed, limit=4)}.")
+    return lines or ["Both versions have the same settings, written differently."]
 
 
 # --- settling them ------------------------------------------------------------------

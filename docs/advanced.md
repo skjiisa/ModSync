@@ -295,16 +295,31 @@ keeps the newer file and saves the other next to it as
 `<name>.sync-conflict-<date>-<time>-<device>.<ext>`. MO2 ignores those, so
 changes from one machine silently drop out of the mod list.
 
-ModSync looks for them in `profiles/`, `overwrite/` and the instance root. Sync
-and Home show how many there are, and the check before playing mentions them.
-For each one, Sync describes what differs (mods only in one version, mods
-enabled in only one, a different order) and lets you keep the version in use
-or the other one. A profile's mod list, plugins and load order are decided
-together, so the profile stays as one machine had it. The version you don't
-keep moves to a new folder under `.modsync-conflicts/` in the instance.
-Conflicts inside `mods/` aren't looked for: it can hold hundreds of thousands
-of files and is rarely edited on two machines. ModSync doesn't merge the two lists: without the version both
-machines started from, it can't tell a lost change from an intentional one.
+ModSync looks for them in every folder that syncs (`mods/`, `profiles/`,
+`downloads/`, `overwrite/`) and at the instance root. Sync and Home show how
+many there are, and the check before playing mentions them. For each one, Sync
+describes what differs (mods only in one version, mods enabled in only one, a
+different order; for INI files and download `.meta` files, the settings added,
+removed or set differently) and lets you keep the version in use or the other
+one. Neither version is labelled with a machine: the device in a conflict
+copy's name is the machine that found the conflict, not the one that made the
+change, so ModSync shows when the other version was last changed instead. A
+profile's mod list, plugins and load order are decided together, so the
+profile stays as one machine had it. The version you don't keep moves to a new
+folder under `.modsync-conflicts/` in the instance. ModSync doesn't merge the
+two versions: without the version both machines started from, it can't tell a
+lost change from an intentional one.
+
+`modsync sync conflicts` lists them from the command line with the same
+descriptions, and `modsync sync conflicts keep current|other <file>` settles
+one (with the rest of its profile, for a mod list, plugins or load order).
+`modsync sync status` shows the vault, the machines, any copy under way and
+the number of conflicts.
+
+Looking through `mods/` reads every file name in it. On a large instance the
+background check spaces its searches out by how long the last one took, so the
+count on Home can lag by up to ten minutes. Opening the review on Sync, the
+check before playing and `modsync sync conflicts` always search afresh.
 
 ### Before playing
 

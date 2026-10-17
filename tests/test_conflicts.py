@@ -24,31 +24,34 @@ class ConflictTests(unittest.TestCase):
         path.write_text(text)
         return path
 
-    def test_finds_conflicts_in_profiles_overwrite_and_the_root_only(self):
+    def test_finds_conflicts_in_every_synced_folder_and_the_root(self):
         self.write(f"profiles/Default/modlist.{STAMP}.txt", "")
         self.write(f"overwrite/SKSE/Plugins/settings.{STAMP}.ini", "")
         self.write(f"categories.{STAMP}.dat", "")
         self.write(f"Makefile.{STAMP}", "")  # no extension
-        self.write(f"mods/Big/huge.{STAMP}.esp", "")  # not searched
+        self.write(f"mods/Big/SKSE/Plugins/big.{STAMP}.ini", "")
+        self.write(f"downloads/Big-123.7z.{STAMP}.meta", "")
+        self.write(f".modsync-conflicts/20261004-101500/mods/Old/old.{STAMP}.ini", "")  # an archive: not synced
+        self.write(f"logs/mo_interface.{STAMP}.log", "")  # not synced either
         self.write("profiles/Default/modlist.sync-conflict-notreally.txt", "")
         found = conflicts.find(self.inst)
         self.assertEqual([c.relative(self.inst) for c in found],
-                         ["profiles/Default/modlist.txt", "Makefile", "categories.dat",
-                          "overwrite/SKSE/Plugins/settings.ini"])
+                         ["profiles/Default/modlist.txt", "Makefile", "categories.dat", "downloads/Big-123.7z.meta",
+                          "mods/Big/SKSE/Plugins/big.ini", "overwrite/SKSE/Plugins/settings.ini"])
         modlist = found[0]
         self.assertEqual(modlist.kind, "modlist")
         self.assertEqual(modlist.device, "ABCDEFG")
         self.assertEqual(modlist.when.isoformat(), "2026-10-04T10:15:00")
-        self.assertEqual(found[3].kind, "file")
+        self.assertEqual(found[4].kind, "file")
 
     def test_describes_a_modlist_difference_in_both_directions(self):
         self.write("profiles/Default/modlist.txt", "# MO2\n+Shared\n+OnlyHere\n-Toggled\n+Both\n*DLC: Dawnguard\n")
         self.write(f"profiles/Default/modlist.{STAMP}.txt", "+Both\n+Toggled\n+Shared\n+OnlyThere\n+OnlyThere\n")
         (c,) = conflicts.find(self.inst)
-        lines = conflicts.differences(c, "Steam Deck")
-        self.assertIn("Only in the version from Steam Deck: OnlyThere.", lines)
+        lines = conflicts.differences(c)
+        self.assertIn("Only in the other version: OnlyThere.", lines)
         self.assertIn("Only in the version in use: OnlyHere.", lines)
-        self.assertIn("Enabled only in the version from Steam Deck: Toggled.", lines)
+        self.assertIn("Enabled only in the other version: Toggled.", lines)
         self.assertIn("The mods in both are in a different order.", lines)
         self.assertFalse(any("DLC" in line for line in lines))
 
@@ -59,10 +62,34 @@ class ConflictTests(unittest.TestCase):
         self.assertEqual(conflicts.differences(c), ["Both versions list the same plugins the same way."])
 
     def test_other_files_compare_bytes(self):
-        self.write("overwrite/x.ini", "a=1")
-        self.write(f"overwrite/x.{STAMP}.ini", "a=22")
+        self.write("overwrite/x.json", "{}")
+        self.write(f"overwrite/x.{STAMP}.json", "{ }")
         (c,) = conflicts.find(self.inst)
-        self.assertIn("contents differ", conflicts.differences(c)[0])
+        self.assertEqual(conflicts.differences(c), ["The contents differ (2 bytes in use, 3 in the other)."])
+
+    def test_describes_an_ini_difference_by_setting(self):
+        self.write("mods/Tweaks/SKSE/Plugins/tweaks.ini",
+                   "; tweaks\n[General]\nbFast = 1\nfScale=1.0\n[Extra]\niMine=3\n")
+        self.write(f"mods/Tweaks/SKSE/Plugins/tweaks.{STAMP}.ini",
+                   "[general]\nBFAST=1\nfScale = 2.5\nsNew=\n")
+        (c,) = conflicts.find(self.inst)
+        self.assertEqual(conflicts.differences(c), [
+            "Settings only in the other version: [general] sNew.",
+            "Settings only in the version in use: [Extra] iMine.",
+            "Set differently: [General] fScale (1.0 in use, 2.5 in the other).",
+        ])
+
+    def test_download_meta_files_read_as_ini(self):
+        self.write("downloads/Mod-1.7z.meta", "[General]\nversion=1.0\ninstalled=true\n")
+        self.write(f"downloads/Mod-1.7z.{STAMP}.meta", "[General]\ninstalled=true\nversion=1.0\n")
+        (c,) = conflicts.find(self.inst)
+        self.assertEqual(conflicts.differences(c), ["Both versions have the same settings, written differently."])
+
+    def test_an_ini_that_does_not_parse_falls_back_to_bytes(self):
+        self.write("mods/Odd/odd.ini", "not settings at all\n")
+        self.write(f"mods/Odd/odd.{STAMP}.ini", "[x]\na=1\n")
+        (c,) = conflicts.find(self.inst)
+        self.assertIn("The contents differ", conflicts.differences(c)[0])
 
     def test_keeping_the_current_version_archives_the_other(self):
         self.write("profiles/Default/modlist.txt", "+Mine\n")
