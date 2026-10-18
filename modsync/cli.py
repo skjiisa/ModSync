@@ -655,6 +655,8 @@ def _game_skse(service) -> int:
     print(f"\nDone: {result.files} files copied in.")
     if result.removed:
         print(f"  • Removed the old {', '.join(result.removed)}.")
+    if result.old_scripts:
+        print(f"  • Removed {result.old_scripts} script(s) another SKSE build left under other capitalisation.")
     return 0
 
 

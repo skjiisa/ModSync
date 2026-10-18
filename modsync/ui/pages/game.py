@@ -261,6 +261,10 @@ class GamePanel(QWidget):
         if st.recipe_from:
             details.append(f"Available downgrade patches start from Skyrim {st.recipe_from}.")
         details.append(st.recipe_note)
+        if st.skse_case_duplicates:
+            details.append(f"{st.skse_case_duplicates} scripts in Data/Scripts are there twice, spelled with "
+                           "different capitals, one from another SKSE build. Wine may load either one, and "
+                           "Steam can't move the game to another library. Installing SKSE removes the old ones.")
         self.details = "\n".join(detail for detail in details if detail)
         self._update_chips(st, vc)
 
@@ -541,6 +545,8 @@ class GamePanel(QWidget):
         msg = f"Installed SKSE {build.version} for Skyrim {build.runtime}." if build else "Installed SKSE."
         if removed:
             msg += f" Removed the old {', '.join(removed)}."
+        if getattr(result, "old_scripts", 0):
+            msg += f" Removed {result.old_scripts} old scripts left by another SKSE build."
         self.status.emit(msg)
         self.changed.emit()
 

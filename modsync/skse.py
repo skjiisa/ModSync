@@ -111,6 +111,7 @@ class Installed:
     build: SkseBuild
     game_dir: Path
     removed: list[str] = field(default_factory=list)  # old SKSE files taken out of the game folder
+    old_scripts: int = 0  # another build's scripts, named in other case, taken out of Data
     files: int = 0  # files copied in
 
 
@@ -136,6 +137,44 @@ def _fetch(build: SkseBuild, cache_dir: Path, progress: engine.ProgressFn | None
         archive.unlink(missing_ok=True)
         raise SkseError(f"SKSE {build.version} download didn't match its checksum; deleted it, please retry")
     return archive
+
+
+def _same_name(folder: Path, name: str) -> list[Path]:
+    """What in ``folder`` Wine and Steam take for ``name``. They ignore case
+    and Linux doesn't, so one name can be several files here."""
+    folded = name.casefold()
+    try:
+        return sorted(e for e in folder.iterdir() if e.name.casefold() == folded)
+    except OSError:
+        return []
+
+
+def _folder(parent: Path, name: str) -> Path:
+    """``parent / name``, spelled as it already is when it exists in another case."""
+    found = [e for e in _same_name(parent, name) if e.is_dir()]
+    return parent / name if not found or parent / name in found else found[0]
+
+
+def case_duplicates(game_dir: Path | str | None) -> list[list[Path]]:
+    """Scripts in the game's ``Data/Scripts`` that share a name in different
+    case. Before 1.1, installing SKSE over another build kept the other's
+    scripts when their names differed only in case (2.0.20 has
+    ``ActiveMagicEffect.pex``, 2.2.6 ``activemagiceffect.pex``). Under Wine
+    either may load, and Steam can't move the game to another library."""
+    if not game_dir:
+        return []
+    scripts = _folder(_folder(Path(game_dir), "Data"), "Scripts")
+    out: list[list[Path]] = []
+    for folder in (scripts, _folder(scripts, "Source")):
+        groups: dict[str, list[Path]] = {}
+        try:
+            for entry in folder.iterdir():
+                if entry.is_file():
+                    groups.setdefault(entry.name.casefold(), []).append(entry)
+        except OSError:
+            continue
+        out += [sorted(g) for g in groups.values() if len(g) > 1]
+    return sorted(out)
 
 
 def installed_files(game_dir: Path) -> list[Path]:
@@ -186,14 +225,26 @@ def install(
         for f in _root_files(src):
             shutil.copy2(f, game_dir / f.name)
             result.files += 1
+            if f.name in result.removed:  # replaced, not gone
+                result.removed.remove(f.name)
         data = src / "Data"
         if data.is_dir():
-            for f in data.rglob("*"):
-                if f.is_file():
-                    dest = game_dir / "Data" / f.relative_to(data)
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(f, dest)
-                    result.files += 1
+            for f in sorted(data.rglob("*")):
+                if not f.is_file():
+                    continue
+                folder = _folder(game_dir, "Data")
+                for part in f.relative_to(data).parts[:-1]:
+                    folder = _folder(folder, part)
+                folder.mkdir(parents=True, exist_ok=True)
+                # The same file in another case, from another build, would
+                # stay beside this one: take it out.
+                for other in _same_name(folder, f.name):
+                    if other.name != f.name and other.is_file():
+                        other.unlink()
+                        result.old_scripts += 1
+                        log.info("removed old SKSE file %s", other)
+                shutil.copy2(f, folder / f.name)
+                result.files += 1
     log.info(
         "installed SKSE %s for %s into %s (%d files, removed %s)",
         build.version, build.runtime, game_dir, result.files, result.removed or "nothing",

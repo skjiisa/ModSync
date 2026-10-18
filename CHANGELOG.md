@@ -55,6 +55,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Installing SKSE over another build left the other build's scripts in
+  `Data/Scripts` when their names differed only in capitals (2.0.20 has
+  `ActiveMagicEffect.pex`, 2.2.6 `activemagiceffect.pex`). Wine could load
+  either, and Steam refused to move the game to another library ("Content
+  file locked"). Installing SKSE now replaces those, and the Game version
+  sheet offers to reinstall SKSE when an older ModSync left them behind.
 - A game newer than the downgrade patches (Steam updated past them) no longer
   says "Update Skyrim in Steam first". That advice is now kept for a game older
   than where the patches start.

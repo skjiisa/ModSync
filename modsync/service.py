@@ -138,6 +138,7 @@ class GameStatus:
     skse_runtime: gameversion.GameVersion | None = None  # what the installed SKSE is built for
     skse_runtimes: list[str] = field(default_factory=list)  # all of them, when DLLs for several exist
     skse_source: str = ""  # e.g. "skse64_1_6_1170.dll in the game folder"
+    skse_case_duplicates: int = 0  # scripts in Data/Scripts under two spellings (skse.case_duplicates)
     backup_present: bool = False  # a downgrade left the originals in .modsync-downgrade/backup
     backup_stale: bool = False  # ...but the game folder already holds those files again (Steam re-installed)
     backup_from: str | None = None  # the game version the backup came from, per its manifest
@@ -205,7 +206,7 @@ class GameStatus:
         game itself still needs switching — SKSE is the step *after* that."""
         if self.awaiting_vault_version or self.installed is None or self.steam_updating or self.needs_downgrade:
             return ""
-        if self.skse_runtimes and len(self.skse_runtimes) > 1:
+        if (self.skse_runtimes and len(self.skse_runtimes) > 1) or self.skse_case_duplicates:
             return "several"
         if self.skse_runtime is None:
             return "missing"
@@ -1106,6 +1107,7 @@ class ModSyncService:
             skse_runtime=vc.skse.runtime,
             skse_runtimes=[str(v) for v in vc.skse.runtimes],
             skse_source=vc.skse.describe(),
+            skse_case_duplicates=len(skse.case_duplicates(app.install_path if app else vc.game_dir)),
             pinned_by_modsync=self._pin_record_path().exists(),
             awaiting_vault_version=waiting,
             **self._backup_fields(app.install_path if app else vc.game_dir),

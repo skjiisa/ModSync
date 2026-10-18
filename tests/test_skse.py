@@ -42,6 +42,9 @@ class GameStatusSkse(unittest.TestCase):
         self.assertEqual(status("1.6.1170", "1.6.1170", "1.5.97").skse_state, "wrong")
         self.assertEqual(status("1.6.1170", "1.6.1170", None).skse_state, "missing")
         self.assertEqual(status("1.6.1170", None, None, skse_runtimes=["1.5.97", "1.6.1170"]).skse_state, "several")
+        leftovers = status("1.6.1170", "1.6.1170", "1.6.1170", skse_case_duplicates=62)
+        self.assertEqual(leftovers.skse_state, "several")
+        self.assertEqual(leftovers.skse_build.version, "2.2.6")  # reinstalling cleans them up
 
     def test_no_skse_advice_until_the_game_version_itself_is_right(self):
         self.assertEqual(status("1.7.104", "1.6.1170", "1.5.97").skse_state, "")  # needs downgrade first
@@ -119,10 +122,51 @@ class Install(unittest.TestCase):
         self.assertEqual((self.game / "Data" / "Scripts" / "actor.pex").read_bytes(), b"new pex")
         self.assertEqual((self.game / "Data" / "Skyrim.esm").read_bytes(), b"keep")
         self.assertTrue((self.game / "Data" / "Scripts" / "Source" / "actor.psc").exists())
-        self.assertEqual(sorted(result.removed), ["skse64_1_5_97.dll", "skse64_loader.exe", "skse64_steam_loader.dll"])
+        self.assertEqual(sorted(result.removed), ["skse64_1_5_97.dll", "skse64_steam_loader.dll"])
         self.assertEqual(result.files, 4)
         self.assertEqual([s.stage for s in seen], ["download", "extract", "install"])
         self.assertTrue((self.cache / "skse64_2_02_06.7z").exists())  # kept for next time
+
+    def test_another_builds_scripts_in_other_case_are_replaced_not_kept(self):
+        """2.0.20 names scripts in CamelCase and 2.2.6 in lowercase. Linux kept
+        both; Wine loads either, and Steam can't move the game."""
+        scripts = self.game / "Data" / "Scripts"
+        (scripts / "actor.pex").unlink()
+        (scripts / "Actor.pex").write_bytes(b"2.0.20 pex")
+        (scripts / "Source").mkdir()
+        (scripts / "Source" / "Actor.psc").write_bytes(b"2.0.20 source")
+        (scripts / "Quest.pex").write_bytes(b"not SKSE's")
+        self.assertEqual(skse.case_duplicates(self.game), [])  # one spelling each so far
+        p, _ = self._fake_extractor(self.GOOD)
+        with p, patch.object(engine, "_download", side_effect=self._fake_download):
+            result = skse.install(self.build, self.game, self.cache)
+        self.assertEqual(sorted(f.name for f in scripts.iterdir()), ["Quest.pex", "Source", "actor.pex"])
+        self.assertEqual((scripts / "actor.pex").read_bytes(), b"new pex")
+        self.assertEqual([f.name for f in (scripts / "Source").iterdir()], ["actor.psc"])
+        self.assertEqual(result.old_scripts, 2)
+        self.assertEqual(sorted(result.removed), ["skse64_1_5_97.dll", "skse64_steam_loader.dll"])
+
+    def test_an_install_that_already_has_both_spellings_is_found_and_cleaned(self):
+        scripts = self.game / "Data" / "Scripts"
+        (scripts / "Actor.pex").write_bytes(b"2.0.20 pex")  # beside actor.pex, as an older ModSync left it
+        dupes = skse.case_duplicates(self.game)
+        self.assertEqual(dupes, [[scripts / "Actor.pex", scripts / "actor.pex"]])
+        p, _ = self._fake_extractor(self.GOOD)
+        with p, patch.object(engine, "_download", side_effect=self._fake_download):
+            skse.install(self.build, self.game, self.cache)
+        self.assertEqual(skse.case_duplicates(self.game), [])
+        self.assertEqual((scripts / "actor.pex").read_bytes(), b"new pex")
+
+    def test_folders_keep_the_spelling_already_on_disk(self):
+        (self.game / "Data").rename(self.game / "data")
+        (self.game / "data" / "Scripts").rename(self.game / "data" / "scripts")
+        p, _ = self._fake_extractor(self.GOOD)
+        with p, patch.object(engine, "_download", side_effect=self._fake_download):
+            skse.install(self.build, self.game, self.cache)
+        self.assertEqual(sorted(f.name for f in self.game.iterdir()),
+                         ["SkyrimSE.exe", "data", "skse64_1_6_1170.dll", "skse64_loader.exe"])
+        self.assertEqual((self.game / "data" / "scripts" / "actor.pex").read_bytes(), b"new pex")
+        self.assertTrue((self.game / "data" / "scripts" / "Source" / "actor.psc").exists())
 
     def test_cached_archive_is_reused(self):
         self.cache.mkdir()
