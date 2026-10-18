@@ -181,3 +181,17 @@ class ShortcutRemoveCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DowngradeConfirmTests(unittest.TestCase):
+    def test_no_answer_is_no_without_a_traceback(self):
+        plan = SimpleNamespace(estimated_bytes=0, from_version="1.7.104", target="1.6.1170", language="english",
+                               game_dir=Path("/games/Skyrim"), archives=[])
+        with patch.object(ModSyncService, "plan_downgrade", return_value=plan), \
+                patch.object(engine, "preflight"), \
+                patch.object(ModSyncService, "run_downgrade") as run, \
+                patch("builtins.input", side_effect=EOFError):
+            code, out = run_cli("game", "downgrade", "1.6.1170")
+        self.assertEqual(code, 1)
+        self.assertIn("Pass --yes", out)
+        run.assert_not_called()

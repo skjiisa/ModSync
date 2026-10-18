@@ -170,6 +170,33 @@ class GameCopyTests(UiTestCase):
             panel._on_game_status(status)
         self.assertFalse(panel.skse.isVisibleTo(panel))
 
+    def test_a_list_that_may_be_out_of_date_is_mentioned_only_when_it_matters(self):
+        service, panel = self._panel()
+        version = gameversion.GameVersion.parse
+        status = fake_game_status()
+        status.installed = version("1.7.120")  # a Steam update newer than the saved list knows
+        status.expected = version("1.6.1170")
+        status.recipe_origin, status.recipe_skipped = "cached", "offline"
+        check = gameversion.VersionCheck(status.installed, status.expected)
+        with patch.object(service, "game_version_check", return_value=check):
+            panel._on_game_status(status)
+            text = panel.message.text()
+            self.assertIn("can't switch this install to 1.6.1170 yet", text)
+            self.assertIn("couldn't download its latest list of downgrade patches, so it used the one it saved "
+                          "last time. Choose \"Check again\" once you're online.", text)
+            self.assertIn("the one it saved last time", panel.details)
+            status.recipe_skipped = "newer"
+            panel._on_game_status(status)
+            self.assertIn("Update ModSync, then choose \"Check again\".", panel.message.text())
+            status.installed = version("1.7.104")  # the list covers it: a downgrade is offered
+            panel._on_game_status(status)
+            self.assertNotIn("list of downgrade patches", panel.message.text())
+            self.assertTrue(panel.downgrade.isVisibleTo(panel))
+            self.assertIn("for a newer ModSync", panel.details)  # still noted aside
+            status.recipe_skipped = ""
+            panel._on_game_status(status)
+            self.assertNotIn("list of downgrade patches", panel.details)
+
     def test_unsupported_target_and_active_update_do_not_suggest_updating_to_downgrade(self):
         service, panel = self._panel()
         version = gameversion.GameVersion.parse

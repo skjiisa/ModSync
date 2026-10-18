@@ -115,7 +115,8 @@ class HomeSetupTests(UiTestCase):
         service.join_vault(PairingCode("PEER", "vault", "Source"), self.tmp)
         self.assertTrue(State.load().awaiting_vault_version)
         # Use actual service checks and a real metadata file; Steam and the game are synthetic.
-        index = SimpleNamespace(from_version=str(installed), targets=[str(source), "1.6.640"], origin="test")
+        index = SimpleNamespace(from_version=str(installed), targets=[str(source), "1.6.640"], origin="test",
+                                skipped="")
         with patch.object(ModSyncService, "game_status", _GAME_STATUS), \
                 patch.object(ModSyncService, "game_version_check", _VERSION_CHECK), \
                 patch.object(ModSyncService, "_steam_app", return_value=(None, None, None)), \

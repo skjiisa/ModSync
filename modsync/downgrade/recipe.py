@@ -50,6 +50,10 @@ class Archive:
 class Index:
     raw: dict[str, Any]
     origin: str  # "remote" | "cached" | "bundled"
+    # Why the copy on main wasn't used when it was asked for: "offline" (it
+    # couldn't be downloaded) or "newer" (it is for a newer ModSync). Empty
+    # when it was used or wasn't asked for.
+    skipped: str = ""
 
     @property
     def game_appid(self) -> int:
@@ -137,6 +141,7 @@ def _parse(text: str, origin: str) -> Index:
 
 def load_index(*, refresh: bool = True, timeout: float = 15.0) -> Index:
     """Remote → cached → bundled. Never raises for network problems."""
+    skipped = ""
     if refresh:
         try:
             req = urllib.request.Request(INDEX_URL, headers={"User-Agent": "ModSync"})
@@ -150,10 +155,13 @@ def load_index(*, refresh: bool = True, timeout: float = 15.0) -> Index:
             except OSError:
                 pass
             return idx
-        except Exception:
-            pass
+        except RecipeError:
+            skipped = "newer"
+        except Exception:  # offline, GitHub down, the file moved, a cut-off download
+            skipped = "offline"
     try:
-        return _parse(cache_path().read_text(encoding="utf-8"), "cached")
+        idx = _parse(cache_path().read_text(encoding="utf-8"), "cached")
     except Exception:
-        pass
-    return _parse(BUNDLED.read_text(encoding="utf-8"), "bundled")
+        idx = _parse(BUNDLED.read_text(encoding="utf-8"), "bundled")
+    idx.skipped = skipped
+    return idx

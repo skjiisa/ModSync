@@ -205,8 +205,14 @@ Recipes come from [Mulderland's open-source downgrader](https://www.mulderland.c
 xdelta3 patches on a public CDN, described by an NSIS script on GitHub that
 Mulderland updates within hours of each Bethesda patch. A scheduled GitHub
 Action converts that script into `modsync/downgrade/recipes/skyrim-se.json`.
-ModSync fetches the JSON at runtime and falls back to the bundled copy, so
-new recipes reach users without a ModSync release.
+ModSync fetches the JSON at runtime, so new recipes reach users without a
+ModSync release, and keeps the last copy it fetched. Offline, with GitHub
+down, or with the file moved, it uses that copy, then the one bundled with
+ModSync. A list for a newer ModSync is skipped the same way. If the game then
+needs a version the list can't reach, the Game version sheet says which copy
+it used and why, since a newer list may cover it. `modsync game status` says
+the same. Opened from Steam's Play, ModSync doesn't fetch the list at all, so
+the game starts sooner.
 
 Applying a recipe is native. ModSync downloads the archive and checks its
 SHA1, unpacks the 7z, runs `xdelta3 -d` on every file into a staging
@@ -239,6 +245,24 @@ Deck: Power, then Restart Steam). Steam can't be quit on the Steam Frame, so
 reboot it instead: the service starts before Steam and applies the pin first.
 No vault is needed. `modsync game unpin`
 lets Steam update the game again.
+
+### When Steam updates the game anyway
+
+A pin only stops automatic updates. Steam still replaces a downgraded game
+when you choose Update, when "Verify integrity of game files" finds the
+patched files, or when the next Bethesda patch arrives and nothing pins it.
+ModSync reads the installed version from the game itself, so Home shows
+"Needs 1.6.1170" again and offers the downgrade. The Game version sheet says
+the backup from the last downgrade is no longer needed, because Steam has put
+those files back. The next downgrade replaces that backup, and "Delete leftover
+backup" removes it sooner. When Steam only wants to update, Home offers "Keep
+this version" first.
+
+These were checked on a real install on 2026-10-18. A verify restored 1.7.104
+(5.2 GB downloaded), Home offered the downgrade, and the downgrade replaced the
+leftover backup. With the pin undone, Home offered "Keep this version". With
+Steam open the pin was queued, and the open app applied it within seconds of
+Steam closing.
 
 ## How sync works
 

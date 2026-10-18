@@ -47,8 +47,19 @@ All notable changes to ModSync are documented here. The format follows
   any conflicts waiting.
 - With a vault, Play and Open MO2 first check whether changes from another
   machine haven't arrived yet or conflicts are waiting, and ask before playing.
+- When the game needs a version ModSync's list of downgrade patches can't
+  reach, the Game version sheet says if that list may be out of date: the
+  latest couldn't be downloaded, or is for a newer ModSync, so it used the one
+  saved last time or the one it came with. `modsync game status` says the
+  same.
 
 ### Fixed
+
+- A game newer than the downgrade patches (Steam updated past them) no longer
+  says "Update Skyrim in Steam first". That advice is now kept for a game older
+  than where the patches start.
+- `modsync game downgrade` without a terminal to answer "Proceed?" stops with a
+  message instead of a traceback. `--yes` still skips the question.
 
 - The test suite no longer writes to the developer's own
   `~/.config/modsync/state.json`.

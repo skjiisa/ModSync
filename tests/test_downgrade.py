@@ -64,6 +64,76 @@ class RecipeIndexTests(unittest.TestCase):
         self.assertIn("bink2w64.dll", idx.deletes_for("1.5.97"))
 
 
+class UnreachableIndexTests(unittest.TestCase):
+    """Offline, GitHub down, or the file moved: the last copy fetched, then the
+    bundled one, never an error, and the reason is kept for the game card."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cache = Path(tmp.name) / "downgrade" / "index.json"
+        cache = patch.object(recipe, "cache_path", return_value=self.cache)
+        cache.start()
+        self.addCleanup(cache.stop)
+        self.remote = json.loads(recipe.BUNDLED.read_text())
+        self.remote["generated_at"] = "from main"
+
+    def load(self, failure=None, **kwargs):
+        if failure is None:
+            answer = {"return_value": io.BytesIO(json.dumps(self.remote).encode())}
+        else:
+            answer = {"side_effect": failure}
+        with patch.object(recipe.urllib.request, "urlopen", **answer) as urlopen:
+            idx = recipe.load_index(**kwargs)
+        self.urlopen = urlopen
+        return idx
+
+    def test_a_fetched_copy_is_kept_for_later(self):
+        idx = self.load()
+        self.assertEqual((idx.origin, idx.skipped), ("remote", ""))
+        self.assertEqual(json.loads(self.cache.read_text())["generated_at"], "from main")
+
+    def test_offline_uses_the_copy_fetched_last_time(self):
+        self.load()
+        for failure in (urllib.error.URLError("Name or service not known"), TimeoutError("timed out"),
+                        ConnectionResetError(104, "Connection reset by peer"),
+                        urllib.error.HTTPError(recipe.INDEX_URL, 404, "Not Found", {}, None),  # moved
+                        urllib.error.HTTPError(recipe.INDEX_URL, 503, "Service Unavailable", {}, None)):
+            with self.subTest(failure=failure):
+                idx = self.load(failure)
+                self.assertEqual((idx.origin, idx.skipped), ("cached", "offline"))
+                self.assertEqual(idx.generated_at, "from main")
+
+    def test_offline_without_a_copy_uses_the_bundled_one(self):
+        idx = self.load(urllib.error.URLError("Network is unreachable"))
+        self.assertEqual((idx.origin, idx.skipped), ("bundled", "offline"))
+        self.assertIn("1.6.1170", idx.targets)
+        self.assertFalse(self.cache.exists())
+
+    def test_a_damaged_copy_falls_back_to_the_bundled_one(self):
+        self.cache.parent.mkdir(parents=True)
+        self.cache.write_text('{"schema": 2, "from": {')  # cut off mid-write
+        idx = self.load(urllib.error.URLError("Network is unreachable"))
+        self.assertEqual((idx.origin, idx.skipped), ("bundled", "offline"))
+
+    def test_a_cut_off_download_counts_as_offline_and_is_not_kept(self):
+        with patch.object(recipe.urllib.request, "urlopen", return_value=io.BytesIO(b'{"schema": 2, "fr')):
+            idx = recipe.load_index()
+        self.assertEqual((idx.origin, idx.skipped), ("bundled", "offline"))
+        self.assertFalse(self.cache.exists())
+
+    def test_a_list_for_a_newer_modsync_is_told_apart(self):
+        self.remote["schema"] = 3
+        idx = self.load()
+        self.assertEqual((idx.origin, idx.skipped), ("bundled", "newer"))
+        self.assertFalse(self.cache.exists())
+
+    def test_not_asking_is_not_a_failure(self):
+        self.load()
+        idx = self.load(AssertionError("must not be called"), refresh=False)
+        self.assertEqual((idx.origin, idx.skipped), ("cached", ""))
+        self.urlopen.assert_not_called()
+
 class DownloadTests(unittest.TestCase):
     def test_unhashed_interrupted_part_resumes_then_becomes_offline_cache_hit(self):
         with tempfile.TemporaryDirectory() as tmp:

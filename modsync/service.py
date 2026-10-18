@@ -134,6 +134,7 @@ class GameStatus:
     steam_updating: bool = False  # Steam is mid-download/commit; nothing here is final
     recipe_targets: list[str] = field(default_factory=list)
     recipe_origin: str = ""
+    recipe_skipped: str = ""  # why the latest list wasn't used (recipe.Index.skipped)
     skse_runtime: gameversion.GameVersion | None = None  # what the installed SKSE is built for
     skse_runtimes: list[str] = field(default_factory=list)  # all of them, when DLLs for several exist
     skse_source: str = ""  # e.g. "skse64_1_6_1170.dll in the game folder"
@@ -164,6 +165,18 @@ class GameStatus:
         if self.expected is not None:
             return "vault"
         return "skse" if self.skse_runtime is not None else ""
+
+    @property
+    def recipe_note(self) -> str:
+        """Why the list of downgrade patches may be out of date, when it may be."""
+        if self.recipe_origin == "unavailable":
+            return "ModSync couldn't load its list of downgrade patches."
+        used = "the one it saved last time" if self.recipe_origin == "cached" else "the one it came with"
+        if self.recipe_skipped == "newer":
+            return f"ModSync's latest list of downgrade patches is for a newer ModSync, so it used {used}."
+        if self.recipe_skipped:
+            return f"ModSync couldn't download its latest list of downgrade patches, so it used {used}."
+        return ""
 
     @property
     def needs_downgrade(self) -> bool:
@@ -1073,9 +1086,9 @@ class ModSyncService:
                 pass
         try:
             idx = recipe.load_index(refresh=refresh_index)
-            recipe_from, targets, origin = idx.from_version, idx.targets, idx.origin
+            recipe_from, targets, origin, skipped = idx.from_version, idx.targets, idx.origin, idx.skipped
         except Exception:
-            recipe_from, targets, origin = None, [], "unavailable"
+            recipe_from, targets, origin, skipped = None, [], "unavailable", ""
         return GameStatus(
             installed=vc.installed,
             expected=vc.expected,
@@ -1089,6 +1102,7 @@ class ModSyncService:
             recipe_from=recipe_from,
             recipe_targets=targets,
             recipe_origin=origin,
+            recipe_skipped=skipped,
             skse_runtime=vc.skse.runtime,
             skse_runtimes=[str(v) for v in vc.skse.runtimes],
             skse_source=vc.skse.describe(),
