@@ -80,6 +80,11 @@ class Server:
         """One pass. Errors are logged, never raised, so the loop keeps going."""
         self._ticks += 1
         try:
+            # The app may have joined, left or paused a vault since the last tick.
+            self.service.reload_state()
+        except Exception as exc:
+            self.log(f"  (state unreadable: {exc})")
+        try:
             pin = self.service.apply_pending_pin()
             if pin is not None:
                 self.log(f"  {'✓' if pin.applied else '!'} {pin.message}")
@@ -94,19 +99,31 @@ class Server:
                 self.notify("ModSync launch hook", hook)
         except Exception as exc:
             self.log(f"  (launch hook check failed: {exc})")
-        if self._ticks % _VERSION_CHECK_EVERY == 1:
+        # Mid-copy the vault's game-version record may not have arrived yet.
+        if self._ticks % _VERSION_CHECK_EVERY == 1 and not self.service.state.copy_phase:
             self._check_game_version()
         if not self.syncing:
             return
         try:
             for device_id in self.service.accept_pending():
                 self.log(f"  ✓ accepted new device {device_id[:13]}…")
+            progress = self.service.advance_copy() if self.service.state.copy_phase else None
             status = self.service.status()
             connected = sum(1 for d in status.devices if d.connected)
             line = f"  devices {connected}/{len(status.devices)} connected"
             if status.folder_state is not None:
                 line += f" · folder {status.folder_state} · {int(status.completion or 0)}% in sync"
+            copy = progress if progress is not None and progress.phase == "done" else status.copy
+            if copy is not None and copy.phase != "done":
+                line += f" · copying from {copy.source}: {copy.phase}"
             self.log(line)
+            if copy is not None and copy.phase == "done":
+                body = f"This machine now has the same mods as {copy.source}."
+                if copy.set_aside:
+                    body += (f" {copy.set_aside} file(s) that were only here are kept in "
+                             f"{self.service.state.set_aside}.")
+                self.log(f"  ✓ {body}")
+                self.notify("Copy finished", body)
         except Exception as exc:
             self.log(f"  (status unavailable: {exc})")
 

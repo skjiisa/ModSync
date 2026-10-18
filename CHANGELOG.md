@@ -8,6 +8,18 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Changed
 
+- "Copy from another machine" copies. Before, joining merged both machines:
+  mods only on the joining machine spread to the one being copied, and where
+  a file differed the newer one won on both. Now this machine only receives
+  until it matches the vault; files that already match aren't downloaded
+  again, and what is only here, or different here, moves to
+  `.modsync-before-join` in the instance instead of being sent or deleted.
+  The copy carries on across restarts and waits for the other machine to
+  connect, and Play is blocked until it finishes. When this machine already
+  has mods, joining asks whether to copy or merge (`modsync sync join --merge`).
+- "Stop syncing" can pause instead of leaving the vault. Resuming carries over
+  what changed meanwhile, removed mods included, which leaving and joining
+  again can't.
 - Redesigned the window to look at home on a Steam Deck: a flat matte
   charcoal theme with the app icon's blue as the only accent, in place of the
   painted night sky, glowing teal cards and boxed icons. The real app icon
@@ -24,8 +36,22 @@ All notable changes to ModSync are documented here. The format follows
   keyboard key together, such as A / Enter. A machine with no controller
   shows only keys.
 
+### Added
+
+- Sync lists files changed on two machines before they synced, anywhere in the
+  synced folders (mods and downloads included), describes what differs in a
+  mod list, plugin list or INI file, and keeps the version you choose. The
+  other moves to `.modsync-conflicts` in the instance. `modsync sync conflicts`
+  does the same from the command line.
+- `modsync sync status` shows the vault, its machines, a copy under way and
+  any conflicts waiting.
+- With a vault, Play and Open MO2 first check whether changes from another
+  machine haven't arrived yet or conflicts are waiting, and ask before playing.
+
 ### Fixed
 
+- The test suite no longer writes to the developer's own
+  `~/.config/modsync/state.json`.
 - The X and Y keys now do what the controller's X and Y do (for example
   "Check again"), as the keyboard hints already said.
 
