@@ -532,6 +532,8 @@ def _game_status(service) -> int:
             print(f"Downgradable:   none from {st.installed} (recipes start at {st.recipe_from})")
     else:
         print("Recipes:        unavailable")
+    if st.recipe_note and st.recipe_origin != "unavailable":
+        print(f"                {st.recipe_note}")
     if st.steam_updating:
         print(f"\n! Steam is still updating {SKYRIM_SE.name}; version checks wait until it finishes.")
     elif st.mismatch:
@@ -572,7 +574,11 @@ def _game_downgrade(service, args: list[str]) -> int:
     print(f"  {len(plan.archives)} patch archive(s), {est} to download (cached for next time).")
     print("  Game files are replaced in place; Steam keeps launching the game normally.")
     if not yes:
-        ans = input("Proceed? [y/N] ").strip().lower()
+        try:
+            ans = input("Proceed? [y/N] ").strip().lower()
+        except EOFError:  # nothing to answer with: a script, or input closed
+            print("\nAborted. Pass --yes to downgrade without asking.")
+            return 1
         if ans not in {"y", "yes"}:
             print("Aborted.")
             return 1
@@ -649,6 +655,8 @@ def _game_skse(service) -> int:
     print(f"\nDone: {result.files} files copied in.")
     if result.removed:
         print(f"  • Removed the old {', '.join(result.removed)}.")
+    if result.old_scripts:
+        print(f"  • Removed {result.old_scripts} script(s) another SKSE build left under other capitalisation.")
     return 0
 
 

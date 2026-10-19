@@ -111,6 +111,7 @@ class Installed:
     build: SkseBuild
     game_dir: Path
     removed: list[str] = field(default_factory=list)  # old SKSE files taken out of the game folder
+    old_scripts: int = 0  # another build's scripts, named in other case, taken out of Data
     files: int = 0  # files copied in
 
 
@@ -136,6 +137,83 @@ def _fetch(build: SkseBuild, cache_dir: Path, progress: engine.ProgressFn | None
         archive.unlink(missing_ok=True)
         raise SkseError(f"SKSE {build.version} download didn't match its checksum; deleted it, please retry")
     return archive
+
+
+# The scripts SKSE ships: ``<name>.pex`` in ``Data/Scripts`` and ``<name>.psc``
+# in ``Data/Scripts/Source``. 2.0.20 and 2.2.6 ship the same names, spelled
+# differently (``ActiveMagicEffect.pex``, ``activemagiceffect.pex``).
+SCRIPT_NAMES = frozenset("""
+    activemagiceffect actorbase actor actorvalueinfo alias ammo apparatus armoraddon armor art book
+    camera cell colorcomponent colorform combatstyle constructibleobject defaultobjectmanager
+    enchantment equipslot faction flora formlist form formtype gamedata game headpart ingredient
+    input keyword leveledactor leveleditem leveledspell location magiceffect math modevent
+    netimmerse objectreference outfit perk potion quest race scroll shout skse soulgem
+    sounddescriptor sound spawnertask spell stringutil textureset treeobject uicallback ui utility
+    weapon weather wornobject
+""".split())
+_SCRIPT_FOLDERS = ((("Data", "Scripts"), ".pex"), (("Data", "Scripts", "Source"), ".psc"))
+
+
+def _same_name(folder: Path, name: str) -> list[Path]:
+    """What in ``folder`` Wine and Steam take for ``name``. They ignore case
+    and Linux doesn't, so one name can be several files here."""
+    folded = name.casefold()
+    try:
+        return sorted(e for e in folder.iterdir() if e.name.casefold() == folded)
+    except OSError:
+        return []
+
+
+def _variants(parent: Path, name: str) -> list[Path]:
+    """Every folder in ``parent`` spelled like ``name`` in any case, the exact spelling first."""
+    return sorted((e for e in _same_name(parent, name) if e.is_dir()), key=lambda e: e.name != name)
+
+
+def _folder(parent: Path, name: str) -> Path:
+    """``parent / name``, spelled as it already is when it exists in another case."""
+    found = _variants(parent, name)
+    return found[0] if found else parent / name
+
+
+def _folders(root: Path, parts: tuple[str, ...]) -> list[Path]:
+    """Every folder ``root / parts`` can mean, through any spelling of each part."""
+    out = [root]
+    for part in parts:
+        out = [v for folder in out for v in _variants(folder, part)]
+    return out
+
+
+def _removable(path: Path, game_root: Path) -> bool:
+    """A file of the game's own: not a link, and not reached through one to
+    somewhere outside the game folder (a Data folder kept on another drive)."""
+    try:
+        return not path.is_symlink() and path.is_file() and path.resolve().is_relative_to(game_root)
+    except OSError:
+        return False
+
+
+def case_duplicates(game_dir: Path | str | None) -> list[list[Path]]:
+    """SKSE scripts in the game's ``Data/Scripts`` (and ``Source``) under more
+    than one spelling. Before 1.1, installing SKSE over another build kept the
+    other's scripts when their names differed only in case. Under Wine either
+    may load, and Steam can't move the game to another library. Every spelling
+    of each folder counts; scripts SKSE doesn't ship don't."""
+    if not game_dir:
+        return []
+    out: list[list[Path]] = []
+    for parts, suffix in _SCRIPT_FOLDERS:
+        groups: dict[str, list[Path]] = {}
+        for folder in _folders(Path(game_dir), parts):
+            try:
+                entries = list(folder.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                folded = entry.name.casefold()
+                if folded.endswith(suffix) and folded[: -len(suffix)] in SCRIPT_NAMES and entry.is_file():
+                    groups.setdefault(folded, []).append(entry)
+        out += [sorted(g) for g in groups.values() if len(g) > 1]
+    return sorted(out)
 
 
 def installed_files(game_dir: Path) -> list[Path]:
@@ -186,14 +264,30 @@ def install(
         for f in _root_files(src):
             shutil.copy2(f, game_dir / f.name)
             result.files += 1
+            if f.name in result.removed:  # replaced, not gone
+                result.removed.remove(f.name)
         data = src / "Data"
+        game_root = game_dir.resolve()
         if data.is_dir():
-            for f in data.rglob("*"):
-                if f.is_file():
-                    dest = game_dir / "Data" / f.relative_to(data)
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(f, dest)
-                    result.files += 1
+            for f in sorted(data.rglob("*")):
+                if not f.is_file():
+                    continue
+                parts = ("Data", *f.relative_to(data).parts[:-1])
+                folder = game_dir
+                for part in parts:
+                    folder = _folder(folder, part)
+                folder.mkdir(parents=True, exist_ok=True)
+                # The same file in another case, from another build, would stay
+                # beside this one, in this folder or another spelling of it.
+                target = folder / f.name
+                for variant in _folders(game_dir, parts):
+                    for other in _same_name(variant, f.name):
+                        if other != target and _removable(other, game_root):
+                            other.unlink()
+                            result.old_scripts += 1
+                            log.info("removed old SKSE file %s", other)
+                shutil.copy2(f, target)
+                result.files += 1
     log.info(
         "installed SKSE %s for %s into %s (%d files, removed %s)",
         build.version, build.runtime, game_dir, result.files, result.removed or "nothing",

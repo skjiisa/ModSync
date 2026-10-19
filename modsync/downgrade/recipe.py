@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from modsync import config
+from modsync.gameversion import GameVersion
 
 INDEX_URL = (
     "https://raw.githubusercontent.com/skjiisa/ModSync/main/"
@@ -26,6 +27,10 @@ BASE_DEPOTS = ("489831", "489832", "489833")
 
 class RecipeError(RuntimeError):
     pass
+
+
+class RecipeTooNewError(RecipeError):
+    """An index in a schema newer than this ModSync reads."""
 
 
 @dataclass(frozen=True)
@@ -50,6 +55,11 @@ class Archive:
 class Index:
     raw: dict[str, Any]
     origin: str  # "remote" | "cached" | "bundled"
+    # Why the copy on main wasn't used when it was asked for: "offline" (it
+    # couldn't be downloaded), "newer" (it is for a newer ModSync) or
+    # "unreadable" (it isn't a usable index). Empty when it was used or
+    # wasn't asked for.
+    skipped: str = ""
 
     @property
     def game_appid(self) -> int:
@@ -126,17 +136,30 @@ def cache_path() -> Path:
     return config.data_dir() / "downgrade" / "index.json"
 
 
+SCHEMA = 2
+
+
 def _parse(text: str, origin: str) -> Index:
     data = json.loads(text)
+    schema = data.get("schema") if isinstance(data, dict) else None
+    if isinstance(schema, int) and schema > SCHEMA:
+        raise RecipeTooNewError(f"recipe index schema {schema} is newer than this ModSync ({origin})")
     # Schema 1 omitted required target-specific deletions. Reject it so an
     # older remote/cache cannot override the complete bundled recipes.
-    if data.get("schema") != 2 or "from" not in data or "targets" not in data:
+    if schema != SCHEMA or "from" not in data or "targets" not in data:
         raise RecipeError(f"unrecognised recipe index ({origin})")
-    return Index(data, origin)
+    idx = Index(data, origin)
+    try:  # every version in it must read as one; the game card compares them
+        for version in (idx.from_version, *idx.targets):
+            GameVersion.parse(version)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise RecipeError(f"recipe index has a malformed version ({origin}): {exc}") from exc
+    return idx
 
 
 def load_index(*, refresh: bool = True, timeout: float = 15.0) -> Index:
     """Remote → cached → bundled. Never raises for network problems."""
+    skipped = ""
     if refresh:
         try:
             req = urllib.request.Request(INDEX_URL, headers={"User-Agent": "ModSync"})
@@ -150,10 +173,15 @@ def load_index(*, refresh: bool = True, timeout: float = 15.0) -> Index:
             except OSError:
                 pass
             return idx
-        except Exception:
-            pass
+        except RecipeTooNewError:
+            skipped = "newer"
+        except RecipeError:  # an older schema, or not a usable index
+            skipped = "unreadable"
+        except Exception:  # offline, GitHub down, the file moved, a cut-off download
+            skipped = "offline"
     try:
-        return _parse(cache_path().read_text(encoding="utf-8"), "cached")
+        idx = _parse(cache_path().read_text(encoding="utf-8"), "cached")
     except Exception:
-        pass
-    return _parse(BUNDLED.read_text(encoding="utf-8"), "bundled")
+        idx = _parse(BUNDLED.read_text(encoding="utf-8"), "bundled")
+    idx.skipped = skipped
+    return idx

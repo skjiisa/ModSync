@@ -134,9 +134,11 @@ class GameStatus:
     steam_updating: bool = False  # Steam is mid-download/commit; nothing here is final
     recipe_targets: list[str] = field(default_factory=list)
     recipe_origin: str = ""
+    recipe_skipped: str = ""  # why the latest list wasn't used (recipe.Index.skipped)
     skse_runtime: gameversion.GameVersion | None = None  # what the installed SKSE is built for
     skse_runtimes: list[str] = field(default_factory=list)  # all of them, when DLLs for several exist
     skse_source: str = ""  # e.g. "skse64_1_6_1170.dll in the game folder"
+    skse_case_duplicates: int = 0  # scripts in Data/Scripts under two spellings (skse.case_duplicates)
     backup_present: bool = False  # a downgrade left the originals in .modsync-downgrade/backup
     backup_stale: bool = False  # ...but the game folder already holds those files again (Steam re-installed)
     backup_from: str | None = None  # the game version the backup came from, per its manifest
@@ -166,6 +168,20 @@ class GameStatus:
         return "skse" if self.skse_runtime is not None else ""
 
     @property
+    def recipe_note(self) -> str:
+        """Why the list of downgrade patches may be out of date, when it may be."""
+        if self.recipe_origin == "unavailable":
+            return "ModSync couldn't load its list of downgrade patches."
+        used = "the one it saved last time" if self.recipe_origin == "cached" else "the one it came with"
+        if self.recipe_skipped == "newer":
+            return f"ModSync's latest list of downgrade patches is for a newer ModSync, so it used {used}."
+        if self.recipe_skipped == "unreadable":
+            return f"ModSync couldn't read its latest list of downgrade patches, so it used {used}."
+        if self.recipe_skipped:
+            return f"ModSync couldn't download its latest list of downgrade patches, so it used {used}."
+        return ""
+
+    @property
     def needs_downgrade(self) -> bool:
         return not self.steam_updating and self.installed is not None and self.wanted is not None and self.installed != self.wanted
 
@@ -192,7 +208,7 @@ class GameStatus:
         game itself still needs switching — SKSE is the step *after* that."""
         if self.awaiting_vault_version or self.installed is None or self.steam_updating or self.needs_downgrade:
             return ""
-        if self.skse_runtimes and len(self.skse_runtimes) > 1:
+        if (self.skse_runtimes and len(self.skse_runtimes) > 1) or self.skse_case_duplicates:
             return "several"
         if self.skse_runtime is None:
             return "missing"
@@ -1073,9 +1089,9 @@ class ModSyncService:
                 pass
         try:
             idx = recipe.load_index(refresh=refresh_index)
-            recipe_from, targets, origin = idx.from_version, idx.targets, idx.origin
+            recipe_from, targets, origin, skipped = idx.from_version, idx.targets, idx.origin, idx.skipped
         except Exception:
-            recipe_from, targets, origin = None, [], "unavailable"
+            recipe_from, targets, origin, skipped = None, [], "unavailable", ""
         return GameStatus(
             installed=vc.installed,
             expected=vc.expected,
@@ -1089,9 +1105,11 @@ class ModSyncService:
             recipe_from=recipe_from,
             recipe_targets=targets,
             recipe_origin=origin,
+            recipe_skipped=skipped,
             skse_runtime=vc.skse.runtime,
             skse_runtimes=[str(v) for v in vc.skse.runtimes],
             skse_source=vc.skse.describe(),
+            skse_case_duplicates=len(skse.case_duplicates(app.install_path if app else vc.game_dir)),
             pinned_by_modsync=self._pin_record_path().exists(),
             awaiting_vault_version=waiting,
             **self._backup_fields(app.install_path if app else vc.game_dir),

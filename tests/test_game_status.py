@@ -80,3 +80,23 @@ class SuggestedTargetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecipeNoteTests(unittest.TestCase):
+    def test_says_nothing_when_the_latest_list_was_used_or_not_asked_for(self):
+        self.assertEqual(status("1.7.104", None, None, recipe_origin="remote").recipe_note, "")
+        self.assertEqual(status("1.7.104", None, None, recipe_origin="cached").recipe_note, "")
+
+    def test_says_which_copy_was_used_and_why(self):
+        note = status("1.7.104", None, None, recipe_origin="cached", recipe_skipped="offline").recipe_note
+        self.assertEqual(note, "ModSync couldn't download its latest list of downgrade patches, so it used the one "
+                               "it saved last time.")
+        note = status("1.7.104", None, None, recipe_origin="bundled", recipe_skipped="newer").recipe_note
+        self.assertEqual(note, "ModSync's latest list of downgrade patches is for a newer ModSync, so it used the "
+                               "one it came with.")
+        note = status("1.7.104", None, None, recipe_origin="cached", recipe_skipped="unreadable").recipe_note
+        self.assertEqual(note, "ModSync couldn't read its latest list of downgrade patches, so it used the one it "
+                               "saved last time.")
+        note = status("1.7.104", None, None, recipe_from=None, recipe_targets=[],
+                      recipe_origin="unavailable").recipe_note
+        self.assertEqual(note, "ModSync couldn't load its list of downgrade patches.")

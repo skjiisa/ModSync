@@ -24,6 +24,14 @@ from modsync.ui.pages import Page
 from modsync.ui.widgets import Panel, Tile, label, pill, set_pill
 
 
+
+def _parts(version: str) -> tuple[int, ...]:
+    """A version's parts to compare by; one that doesn't read sorts first."""
+    try:
+        return gameversion.GameVersion.parse(version).parts
+    except ValueError:
+        return ()
+
 class _ProgressBridge(QObject):
     """Marshals engine progress callbacks from the worker thread to the UI."""
 
@@ -226,10 +234,20 @@ class GamePanel(QWidget):
         if st.suggested_target:
             lines.append(f"Choose \"Downgrade to {st.suggested_target}\" to switch versions.")
         elif st.needs_downgrade:
-            if st.recipe_from and str(st.installed) != st.recipe_from and str(st.wanted) in st.recipe_targets:
+            # Updating helps only an install older than where the patches start;
+            # one newer than that (Steam updated past the list) waits for a newer list.
+            behind = (st.recipe_from is not None and str(st.wanted) in st.recipe_targets
+                      and st.installed.parts < _parts(st.recipe_from))
+            if behind:
                 lines.append(f"Update Skyrim in Steam first, then return here to switch to {st.wanted}.")
             else:
                 lines.append(f"ModSync can't switch this install to {st.wanted} yet.")
+                # A newer list might: say when this one could be out of date.
+                if st.recipe_note:
+                    lines.append(st.recipe_note + {
+                        "newer": " Update ModSync, then choose \"Check again\".",
+                        "offline": " Choose \"Check again\" once you're online.",
+                    }.get(st.recipe_skipped, ""))
 
         if st.pending_pin:
             lines.append("Close Steam to apply \"Keep this version\".")
@@ -251,6 +269,11 @@ class GamePanel(QWidget):
         details = [vc.summary(), vc.skse_note()]
         if st.recipe_from:
             details.append(f"Available downgrade patches start from Skyrim {st.recipe_from}.")
+        details.append(st.recipe_note)
+        if st.skse_case_duplicates:
+            details.append(f"{st.skse_case_duplicates} scripts in Data/Scripts are there twice, spelled with "
+                           "different capitals, one from another SKSE build. Wine may load either one, and "
+                           "Steam can't move the game to another library. Installing SKSE removes the old ones.")
         self.details = "\n".join(detail for detail in details if detail)
         self._update_chips(st, vc)
 
@@ -531,6 +554,8 @@ class GamePanel(QWidget):
         msg = f"Installed SKSE {build.version} for Skyrim {build.runtime}." if build else "Installed SKSE."
         if removed:
             msg += f" Removed the old {', '.join(removed)}."
+        if getattr(result, "old_scripts", 0):
+            msg += f" Removed {result.old_scripts} old scripts left by another SKSE build."
         self.status.emit(msg)
         self.changed.emit()
 

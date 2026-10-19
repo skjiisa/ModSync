@@ -205,8 +205,15 @@ Recipes come from [Mulderland's open-source downgrader](https://www.mulderland.c
 xdelta3 patches on a public CDN, described by an NSIS script on GitHub that
 Mulderland updates within hours of each Bethesda patch. A scheduled GitHub
 Action converts that script into `modsync/downgrade/recipes/skyrim-se.json`.
-ModSync fetches the JSON at runtime and falls back to the bundled copy, so
-new recipes reach users without a ModSync release.
+ModSync fetches the JSON at runtime, so new recipes reach users without a
+ModSync release, and keeps the last copy it fetched. Offline, with GitHub
+down, or with the file moved, it uses that copy, then the one bundled with
+ModSync. A list for a newer ModSync, or one it can't read, is skipped the
+same way, and so is a saved copy it can't read. If the game then
+needs a version the list can't reach, the Game version sheet says which copy
+it used and why, since a newer list may cover it. `modsync game status` says
+the same. Opened from Steam's Play, ModSync doesn't fetch the list at all, so
+the game starts sooner.
 
 Applying a recipe is native. ModSync downloads the archive and checks its
 SHA1, unpacks the 7z, runs `xdelta3 -d` on every file into a staging
@@ -239,6 +246,44 @@ Deck: Power, then Restart Steam). Steam can't be quit on the Steam Frame, so
 reboot it instead: the service starts before Steam and applies the pin first.
 No vault is needed. `modsync game unpin`
 lets Steam update the game again.
+
+### When Steam updates the game anyway
+
+A pin only stops automatic updates. Steam still replaces a downgraded game
+when you choose Update, when "Verify integrity of game files" finds the
+patched files, or when the next Bethesda patch arrives and nothing pins it.
+ModSync reads the installed version from the game itself, so Home shows
+"Needs 1.6.1170" again and offers the downgrade. The Game version sheet says
+the backup from the last downgrade is no longer needed, because Steam has put
+those files back. The next downgrade replaces that backup, and "Delete leftover
+backup" removes it sooner. When Steam only wants to update, Home offers "Keep
+this version" first.
+
+Moving the game to another Steam library also undoes the pin. Steam marks the
+moved game "Update Required, Files Missing", which leaves it free to check the
+files and put the current version back. ModSync finds the game in its new
+library, with the downgrade backup inside it, and Home offers "Keep this
+version". Pinning clears both flags, so pin again after every move, before
+playing.
+
+These were checked on a real install on 2026-10-18. A verify restored 1.7.104
+(5.2 GB downloaded), Home offered the downgrade, and the downgrade replaced the
+leftover backup. With the pin undone, Home offered "Keep this version". With
+Steam open the pin was queued, and the open app applied it within seconds of
+Steam closing. After a move to a second library, Home offered "Keep this
+version", and once pinned, Steam left the game alone.
+
+If Steam's move stops with "Content file locked", the game folder or its
+Proton prefix holds two files whose names differ only in capitals. Steam,
+like Windows, takes them for one file. Its `content_log.txt` names the file.
+SKSE scripts left by an older ModSync are one cause: Home offers to reinstall
+SKSE, which removes them. Proton Experimental 11 is another: Wine keeps its
+drivers in the prefix's `system32/driverstore/filerepository`, and Proton
+adds `system32/DriverStore/FileRepository/igd_faux.inf_1` beside it at every
+launch ([Proton#10270](https://github.com/ValveSoftware/Proton/issues/10270)).
+Moving anything from `DriverStore` that `driverstore` lacks into
+`driverstore`, then deleting `DriverStore`, lets the move finish. Keep the
+lowercase folder: the proposed Proton fix deletes `DriverStore` outright.
 
 ## How sync works
 

@@ -221,7 +221,8 @@ class HomePage(Page):
             repair = panel.offered(panel.downgrade) if panel else None
         elif st.skse_state in ("wrong", "several"):
             title, icon = "Fix Script Extender (SKSE)", "layers"
-            detail = "SKSE does not match the installed game."
+            detail = ("Files from another SKSE build are in the game folder." if st.skse_state == "several"
+                      else "SKSE does not match the installed game.")
             risk = "SKSE mods may not load if you play now."
             repair = panel.offered(panel.skse) if panel else None
         elif st.needs_pin and not st.pending_pin:
