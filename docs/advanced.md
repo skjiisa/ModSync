@@ -258,11 +258,28 @@ those files back. The next downgrade replaces that backup, and "Delete leftover
 backup" removes it sooner. When Steam only wants to update, Home offers "Keep
 this version" first.
 
+Moving the game to another Steam library also undoes the pin. Steam marks the
+moved game "Update Required, Files Missing", which leaves it free to check the
+files and put the current version back. ModSync finds the game in its new
+library, with the downgrade backup inside it, and Home offers "Keep this
+version". Pinning clears both flags, so pin again after every move, before
+playing.
+
 These were checked on a real install on 2026-10-18. A verify restored 1.7.104
 (5.2 GB downloaded), Home offered the downgrade, and the downgrade replaced the
 leftover backup. With the pin undone, Home offered "Keep this version". With
 Steam open the pin was queued, and the open app applied it within seconds of
-Steam closing.
+Steam closing. After a move to a second library, Home offered "Keep this
+version", and once pinned, Steam left the game alone.
+
+If Steam's move stops with "Content file locked", the game folder or its
+Proton prefix holds two files whose names differ only in capitals. Steam,
+like Windows, takes them for one file. Its `content_log.txt` names the file.
+SKSE scripts left by an older ModSync are one cause: Home offers to reinstall
+SKSE, which removes them. Proton can be another: it can keep both
+`system32/driverstore` and `system32/DriverStore` in the prefix. Moving the
+contents of the lowercase folder into the other and deleting the lowercase
+folder lets the move finish.
 
 ## How sync works
 
