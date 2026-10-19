@@ -15,8 +15,10 @@ installed before that, or from the official MO2 archive.
 ## Apply or restore the fix
 
 Choose the MO2 instance in ModSync. Close MO2, Skyrim, and all programs started
-by MO2. On an ARM64 machine, **Apply ARM64 fix** appears in the dashboard's MO2
-card and in the Steam launch hub when ModSync recognizes the original files.
+by MO2. On an ARM64 machine, when ModSync recognizes the original files, Home
+suggests **Apply ARM64 fix** as the next step, also when Steam's Play button
+opened ModSync. It's also in the Mod Organizer 2 sheet, opened from the Mod
+Organizer 2 row on Home.
 The download is about 13 MB. This is an explicit action, and the fix remains
 installed for launches through Steam as well as ModSync.
 

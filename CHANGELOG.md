@@ -6,6 +6,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A Steam Frame page in the docs (`docs/steam-frame.md`): which download to
+  use, installing MO2, the ARM64 fix, playing, rebooting where other machines
+  restart Steam, troubleshooting and known limits. The README links it.
+
 ## [2.0.0-rc1] - 2026-10-18
 
 Joining a vault now copies the other machine exactly instead of merging both
