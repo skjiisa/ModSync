@@ -276,10 +276,13 @@ If Steam's move stops with "Content file locked", the game folder or its
 Proton prefix holds two files whose names differ only in capitals. Steam,
 like Windows, takes them for one file. Its `content_log.txt` names the file.
 SKSE scripts left by an older ModSync are one cause: Home offers to reinstall
-SKSE, which removes them. Proton can be another: it can keep both
-`system32/driverstore` and `system32/DriverStore` in the prefix. Moving the
-contents of the lowercase folder into the other and deleting the lowercase
-folder lets the move finish.
+SKSE, which removes them. Proton Experimental 11 is another: Wine keeps its
+drivers in the prefix's `system32/driverstore/filerepository`, and Proton
+adds `system32/DriverStore/FileRepository/igd_faux.inf_1` beside it at every
+launch ([Proton#10270](https://github.com/ValveSoftware/Proton/issues/10270)).
+Moving anything from `DriverStore` that `driverstore` lacks into
+`driverstore`, then deleting `DriverStore`, lets the move finish. Keep the
+lowercase folder: the proposed Proton fix deletes `DriverStore` outright.
 
 ## How sync works
 
