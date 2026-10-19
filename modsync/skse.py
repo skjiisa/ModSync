@@ -139,6 +139,21 @@ def _fetch(build: SkseBuild, cache_dir: Path, progress: engine.ProgressFn | None
     return archive
 
 
+# The scripts SKSE ships: ``<name>.pex`` in ``Data/Scripts`` and ``<name>.psc``
+# in ``Data/Scripts/Source``. 2.0.20 and 2.2.6 ship the same names, spelled
+# differently (``ActiveMagicEffect.pex``, ``activemagiceffect.pex``).
+SCRIPT_NAMES = frozenset("""
+    activemagiceffect actorbase actor actorvalueinfo alias ammo apparatus armoraddon armor art book
+    camera cell colorcomponent colorform combatstyle constructibleobject defaultobjectmanager
+    enchantment equipslot faction flora formlist form formtype gamedata game headpart ingredient
+    input keyword leveledactor leveleditem leveledspell location magiceffect math modevent
+    netimmerse objectreference outfit perk potion quest race scroll shout skse soulgem
+    sounddescriptor sound spawnertask spell stringutil textureset treeobject uicallback ui utility
+    weapon weather wornobject
+""".split())
+_SCRIPT_FOLDERS = ((("Data", "Scripts"), ".pex"), (("Data", "Scripts", "Source"), ".psc"))
+
+
 def _same_name(folder: Path, name: str) -> list[Path]:
     """What in ``folder`` Wine and Steam take for ``name``. They ignore case
     and Linux doesn't, so one name can be several files here."""
@@ -149,30 +164,54 @@ def _same_name(folder: Path, name: str) -> list[Path]:
         return []
 
 
+def _variants(parent: Path, name: str) -> list[Path]:
+    """Every folder in ``parent`` spelled like ``name`` in any case, the exact spelling first."""
+    return sorted((e for e in _same_name(parent, name) if e.is_dir()), key=lambda e: e.name != name)
+
+
 def _folder(parent: Path, name: str) -> Path:
     """``parent / name``, spelled as it already is when it exists in another case."""
-    found = [e for e in _same_name(parent, name) if e.is_dir()]
-    return parent / name if not found or parent / name in found else found[0]
+    found = _variants(parent, name)
+    return found[0] if found else parent / name
+
+
+def _folders(root: Path, parts: tuple[str, ...]) -> list[Path]:
+    """Every folder ``root / parts`` can mean, through any spelling of each part."""
+    out = [root]
+    for part in parts:
+        out = [v for folder in out for v in _variants(folder, part)]
+    return out
+
+
+def _removable(path: Path, game_root: Path) -> bool:
+    """A file of the game's own: not a link, and not reached through one to
+    somewhere outside the game folder (a Data folder kept on another drive)."""
+    try:
+        return not path.is_symlink() and path.is_file() and path.resolve().is_relative_to(game_root)
+    except OSError:
+        return False
 
 
 def case_duplicates(game_dir: Path | str | None) -> list[list[Path]]:
-    """Scripts in the game's ``Data/Scripts`` that share a name in different
-    case. Before 1.1, installing SKSE over another build kept the other's
-    scripts when their names differed only in case (2.0.20 has
-    ``ActiveMagicEffect.pex``, 2.2.6 ``activemagiceffect.pex``). Under Wine
-    either may load, and Steam can't move the game to another library."""
+    """SKSE scripts in the game's ``Data/Scripts`` (and ``Source``) under more
+    than one spelling. Before 1.1, installing SKSE over another build kept the
+    other's scripts when their names differed only in case. Under Wine either
+    may load, and Steam can't move the game to another library. Every spelling
+    of each folder counts; scripts SKSE doesn't ship don't."""
     if not game_dir:
         return []
-    scripts = _folder(_folder(Path(game_dir), "Data"), "Scripts")
     out: list[list[Path]] = []
-    for folder in (scripts, _folder(scripts, "Source")):
+    for parts, suffix in _SCRIPT_FOLDERS:
         groups: dict[str, list[Path]] = {}
-        try:
-            for entry in folder.iterdir():
-                if entry.is_file():
-                    groups.setdefault(entry.name.casefold(), []).append(entry)
-        except OSError:
-            continue
+        for folder in _folders(Path(game_dir), parts):
+            try:
+                entries = list(folder.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                folded = entry.name.casefold()
+                if folded.endswith(suffix) and folded[: -len(suffix)] in SCRIPT_NAMES and entry.is_file():
+                    groups.setdefault(folded, []).append(entry)
         out += [sorted(g) for g in groups.values() if len(g) > 1]
     return sorted(out)
 
@@ -228,22 +267,26 @@ def install(
             if f.name in result.removed:  # replaced, not gone
                 result.removed.remove(f.name)
         data = src / "Data"
+        game_root = game_dir.resolve()
         if data.is_dir():
             for f in sorted(data.rglob("*")):
                 if not f.is_file():
                     continue
-                folder = _folder(game_dir, "Data")
-                for part in f.relative_to(data).parts[:-1]:
+                parts = ("Data", *f.relative_to(data).parts[:-1])
+                folder = game_dir
+                for part in parts:
                     folder = _folder(folder, part)
                 folder.mkdir(parents=True, exist_ok=True)
-                # The same file in another case, from another build, would
-                # stay beside this one: take it out.
-                for other in _same_name(folder, f.name):
-                    if other.name != f.name and other.is_file():
-                        other.unlink()
-                        result.old_scripts += 1
-                        log.info("removed old SKSE file %s", other)
-                shutil.copy2(f, folder / f.name)
+                # The same file in another case, from another build, would stay
+                # beside this one, in this folder or another spelling of it.
+                target = folder / f.name
+                for variant in _folders(game_dir, parts):
+                    for other in _same_name(variant, f.name):
+                        if other != target and _removable(other, game_root):
+                            other.unlink()
+                            result.old_scripts += 1
+                            log.info("removed old SKSE file %s", other)
+                shutil.copy2(f, target)
                 result.files += 1
     log.info(
         "installed SKSE %s for %s into %s (%d files, removed %s)",

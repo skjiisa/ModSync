@@ -24,6 +24,14 @@ from modsync.ui.pages import Page
 from modsync.ui.widgets import Panel, Tile, label, pill, set_pill
 
 
+
+def _parts(version: str) -> tuple[int, ...]:
+    """A version's parts to compare by; one that doesn't read sorts first."""
+    try:
+        return gameversion.GameVersion.parse(version).parts
+    except ValueError:
+        return ()
+
 class _ProgressBridge(QObject):
     """Marshals engine progress callbacks from the worker thread to the UI."""
 
@@ -229,16 +237,17 @@ class GamePanel(QWidget):
             # Updating helps only an install older than where the patches start;
             # one newer than that (Steam updated past the list) waits for a newer list.
             behind = (st.recipe_from is not None and str(st.wanted) in st.recipe_targets
-                      and st.installed.parts < gameversion.GameVersion.parse(st.recipe_from).parts)
+                      and st.installed.parts < _parts(st.recipe_from))
             if behind:
                 lines.append(f"Update Skyrim in Steam first, then return here to switch to {st.wanted}.")
             else:
                 lines.append(f"ModSync can't switch this install to {st.wanted} yet.")
                 # A newer list might: say when this one could be out of date.
                 if st.recipe_note:
-                    lines.append(st.recipe_note + (" Update ModSync, then choose \"Check again\"."
-                                                   if st.recipe_skipped == "newer" else
-                                                   " Choose \"Check again\" once you're online."))
+                    lines.append(st.recipe_note + {
+                        "newer": " Update ModSync, then choose \"Check again\".",
+                        "offline": " Choose \"Check again\" once you're online.",
+                    }.get(st.recipe_skipped, ""))
 
         if st.pending_pin:
             lines.append("Close Steam to apply \"Keep this version\".")

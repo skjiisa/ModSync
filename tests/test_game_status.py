@@ -94,6 +94,9 @@ class RecipeNoteTests(unittest.TestCase):
         note = status("1.7.104", None, None, recipe_origin="bundled", recipe_skipped="newer").recipe_note
         self.assertEqual(note, "ModSync's latest list of downgrade patches is for a newer ModSync, so it used the "
                                "one it came with.")
+        note = status("1.7.104", None, None, recipe_origin="cached", recipe_skipped="unreadable").recipe_note
+        self.assertEqual(note, "ModSync couldn't read its latest list of downgrade patches, so it used the one it "
+                               "saved last time.")
         note = status("1.7.104", None, None, recipe_from=None, recipe_targets=[],
                       recipe_origin="unavailable").recipe_note
         self.assertEqual(note, "ModSync couldn't load its list of downgrade patches.")

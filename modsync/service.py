@@ -175,6 +175,8 @@ class GameStatus:
         used = "the one it saved last time" if self.recipe_origin == "cached" else "the one it came with"
         if self.recipe_skipped == "newer":
             return f"ModSync's latest list of downgrade patches is for a newer ModSync, so it used {used}."
+        if self.recipe_skipped == "unreadable":
+            return f"ModSync couldn't read its latest list of downgrade patches, so it used {used}."
         if self.recipe_skipped:
             return f"ModSync couldn't download its latest list of downgrade patches, so it used {used}."
         return ""

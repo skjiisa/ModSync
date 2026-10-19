@@ -128,6 +128,29 @@ class UnreachableIndexTests(unittest.TestCase):
         self.assertEqual((idx.origin, idx.skipped), ("bundled", "newer"))
         self.assertFalse(self.cache.exists())
 
+    def test_an_older_or_broken_list_is_not_called_newer(self):
+        for change in ({"schema": 1}, {"targets": None}, {"from": {"version": "not-a-version"}}):
+            with self.subTest(change=change):
+                self.remote = json.loads(recipe.BUNDLED.read_text())
+                for key, value in change.items():
+                    if value is None:
+                        del self.remote[key]
+                    elif isinstance(value, dict):
+                        self.remote[key] = {**self.remote[key], **value}
+                    else:
+                        self.remote[key] = value
+                idx = self.load()
+                self.assertEqual((idx.origin, idx.skipped), ("bundled", "unreadable"))
+                self.assertFalse(self.cache.exists())
+
+    def test_a_saved_copy_with_a_malformed_version_is_skipped(self):
+        broken = json.loads(recipe.BUNDLED.read_text())
+        broken["targets"] = {**broken["targets"], "1.x": broken["targets"]["1.6.1170"]}
+        self.cache.parent.mkdir(parents=True)
+        self.cache.write_text(json.dumps(broken))
+        idx = self.load(urllib.error.URLError("Network is unreachable"))
+        self.assertEqual((idx.origin, idx.skipped), ("bundled", "offline"))
+
     def test_not_asking_is_not_a_failure(self):
         self.load()
         idx = self.load(AssertionError("must not be called"), refresh=False)

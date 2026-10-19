@@ -197,6 +197,17 @@ class GameCopyTests(UiTestCase):
             panel._on_game_status(status)
             self.assertNotIn("list of downgrade patches", panel.details)
 
+    def test_a_version_that_doesnt_read_is_not_compared(self):
+        service, panel = self._panel()
+        version = gameversion.GameVersion.parse
+        status = fake_game_status()
+        status.installed, status.expected = version("1.7.120"), version("1.6.1170")
+        status.recipe_from = "not-a-version"
+        with patch.object(service, "game_version_check",
+                          return_value=gameversion.VersionCheck(status.installed, status.expected)):
+            panel._on_game_status(status)
+        self.assertIn("can't switch this install to 1.6.1170 yet", panel.message.text())
+
     def test_unsupported_target_and_active_update_do_not_suggest_updating_to_downgrade(self):
         service, panel = self._panel()
         version = gameversion.GameVersion.parse

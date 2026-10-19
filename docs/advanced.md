@@ -208,7 +208,8 @@ Action converts that script into `modsync/downgrade/recipes/skyrim-se.json`.
 ModSync fetches the JSON at runtime, so new recipes reach users without a
 ModSync release, and keeps the last copy it fetched. Offline, with GitHub
 down, or with the file moved, it uses that copy, then the one bundled with
-ModSync. A list for a newer ModSync is skipped the same way. If the game then
+ModSync. A list for a newer ModSync, or one it can't read, is skipped the
+same way, and so is a saved copy it can't read. If the game then
 needs a version the list can't reach, the Game version sheet says which copy
 it used and why, since a newer list may cover it. `modsync game status` says
 the same. Opened from Steam's Play, ModSync doesn't fetch the list at all, so
