@@ -2,7 +2,7 @@
 
 Details that the README leaves out: running from source, controls, every
 command, and how the downgrade, Steam pin, launch hook, sync and background
-service work.
+service work. The Steam Frame has [its own page](steam-frame.md).
 
 ## Running from source
 
