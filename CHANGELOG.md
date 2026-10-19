@@ -6,6 +6,17 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.0.0-rc1] - 2026-10-18
+
+Joining a vault now copies the other machine exactly instead of merging both
+ways. A machine that already has mods asks whether to copy or merge, and
+nothing it has is deleted: what differs is set aside in the instance. Sync also finds files changed on two machines at once
+and lets you choose which version to keep. The window is redesigned to feel
+native on a Steam Deck. Steam updating a pinned game (a verify, a lost pin, a
+library move) was checked on a real install and is handled. Still to do
+before 2.0.0: a full Steam Deck pass (#74) and Steam Frame documentation
+(#73).
+
 ### Changed
 
 - "Copy from another machine" copies. Before, joining merged both machines:
@@ -67,7 +78,6 @@ All notable changes to ModSync are documented here. The format follows
   than where the patches start.
 - `modsync game downgrade` without a terminal to answer "Proceed?" stops with a
   message instead of a traceback. `--yes` still skips the question.
-
 - The test suite no longer writes to the developer's own
   `~/.config/modsync/state.json`.
 - The X and Y keys now do what the controller's X and Y do (for example
