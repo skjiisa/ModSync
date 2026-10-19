@@ -15,6 +15,7 @@ Features include:
 ## Install
 
 Download the `.flatpak` from the [releases tab](https://github.com/skjiisa/ModSync/releases).
+Use the `x86_64` one for the Steam Deck and other PCs, and the `aarch64` one for the Steam Frame.
 
 SteamOS:
 
@@ -23,7 +24,7 @@ SteamOS:
 Other:
 
 ```bash
-flatpak install --user ~/Downloads/ModSync-*-x86_64.flatpak
+flatpak install --user ~/Downloads/ModSync-*-x86_64.flatpak   # or -aarch64 on ARM
 flatpak run io.github.skjiisa.ModSync
 ```
 
@@ -31,7 +32,7 @@ To build from source, see [advanced.md](docs/advanced.md).
 
 ## First run
 
-It's recommended to close Steam for the first run
+It's recommended to close Steam for the first run (Steam can't be closed on the Steam Frame, so see [the Steam Frame page](docs/steam-frame.md) there)
 
 Home has buttons to install Mod Organizer 2 or use an existing installation.
 It offers the matching SKSE and any game-version repairs you need. Missing
@@ -72,6 +73,12 @@ Mod list syncing uses [Syncthing](https://github.com/syncthing/syncthing) under 
 You can Launch Skyrim or Mod Organizer 2 through Proton with ModSync directly.
 If you want to have ModSync open when launching the game through Steam, click "Open ModSync before Skyrim", that way your mods can always stay in sync if you change them frequently.
  - If using this setting, restart steam after enabling it
+ - On the Steam Frame, turn on "Run in background" and reboot instead
+
+## Steam Frame
+
+ModSync works on the Steam Frame too, with a few differences: the `aarch64` download, an ARM64 fix for Mod Organizer 2, and rebooting where other machines restart Steam.
+See [the Steam Frame page](docs/steam-frame.md) for setup and known limits.
 
 ## Command line
 
