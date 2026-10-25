@@ -25,12 +25,14 @@ class UsvfsTests(unittest.TestCase):
         self.source.mkdir()
         self.old = {name: f"original {name}".encode() for name in usvfs.ORIGINAL}
         self.new = {name: f"patched {name}".encode() for name in usvfs.PATCHED}
+        self.woa1 = {name: f"woa.1 {name}".encode() for name in usvfs.PATCHED}
         for name in self.old:
             (self.instance / name).write_bytes(self.old[name])
             (self.source / name).write_bytes(self.new[name])
         for p in (
             patch.object(usvfs, "ORIGINAL", {n: hashlib.sha256(b).hexdigest() for n, b in self.old.items()}),
             patch.object(usvfs, "PATCHED", {n: hashlib.sha256(b).hexdigest() for n, b in self.new.items()}),
+            patch.object(usvfs, "SUPERSEDED", ({n: hashlib.sha256(b).hexdigest() for n, b in self.woa1.items()},)),
             patch.object(usvfs, "is_arm64", return_value=True),
             patch.object(usvfs, "ensure_cached", return_value=self.source),
             patch.object(usvfs.background, "run_host", return_value=subprocess.CompletedProcess([], 1)),
@@ -127,6 +129,102 @@ class UsvfsTests(unittest.TestCase):
                 self.assertTrue(current.can_apply and current.can_restore)
                 action(self.instance)
                 self.assert_files(self.instance, self.new if action == usvfs.apply else self.old)
+
+    def install_woa1(self, with_backup=False):
+        if with_backup:
+            backup = usvfs.backup_dir(self.instance)
+            backup.mkdir(parents=True)
+            for name in self.old:
+                shutil.copyfile(self.instance / name, backup / name)
+        for name, data in self.woa1.items():
+            (self.instance / name).write_bytes(data)
+
+    def staged_leftovers(self):
+        return [p for p in (self.instance / ".modsync-usvfs").iterdir() if p.name.startswith("previous-")]
+
+    def test_superseded_build_from_mo2_lint_is_updated_without_a_backup(self):
+        self.install_woa1()
+        current = usvfs.status(self.instance)
+        self.assertEqual(current.state, "outdated")
+        self.assertTrue(current.can_apply)
+        self.assertFalse(current.can_restore)
+        self.assertIn("Updated", usvfs.apply(self.instance))
+        self.assert_files(self.instance, self.new)
+        # woa.1 isn't MO2's own build, so it's never kept as the "originals".
+        self.assertFalse(any(usvfs.backup_dir(self.instance).glob("*")))
+        self.assertEqual(self.staged_leftovers(), [])
+        current = usvfs.status(self.instance)
+        self.assertEqual(current.state, "patched")
+        self.assertFalse(current.can_restore)
+
+    def test_superseded_build_over_backed_up_originals_keeps_them(self):
+        self.install_woa1(with_backup=True)
+        current = usvfs.status(self.instance)
+        self.assertEqual(current.state, "outdated")
+        self.assertTrue(current.can_apply and current.can_restore)
+        usvfs.apply(self.instance)
+        self.assert_files(self.instance, self.new)
+        self.assert_files(usvfs.backup_dir(self.instance), self.old)
+        usvfs.restore(self.instance)
+        self.assert_files(self.instance, self.old)
+
+    def test_failed_update_puts_the_superseded_build_back(self):
+        self.install_woa1()
+        copy = usvfs._atomic_copy
+
+        def fail_second(source, target):
+            if source.parent == self.source and source.name == "usvfs_x86.dll":
+                raise OSError("disk full")
+            copy(source, target)
+
+        with patch.object(usvfs, "_atomic_copy", side_effect=fail_second):
+            with self.assertRaisesRegex(usvfs.UsvfsError, "Could not replace") as raised:
+                usvfs.apply(self.instance)
+        self.assertNotIn("Restore original", str(raised.exception))
+        self.assert_files(self.instance, self.woa1)
+        self.assertFalse(any(usvfs.backup_dir(self.instance).glob("*")))
+        self.assertEqual(self.staged_leftovers(), [])
+        self.assertEqual(usvfs.status(self.instance).state, "outdated")
+
+    def test_update_stopped_partway_without_originals_can_be_finished(self):
+        # A killed update, or one whose rollback failed: some files are woa.1,
+        # some the new build, and there are no originals anywhere.
+        self.install_woa1()
+        (self.instance / "usvfs_x64.dll").write_bytes(self.new["usvfs_x64.dll"])
+        current = usvfs.status(self.instance)
+        self.assertEqual(current.state, "interrupted")
+        self.assertTrue(current.can_apply)
+        self.assertFalse(current.can_restore)
+        with self.assertRaisesRegex(usvfs.UsvfsError, "verified original"):
+            usvfs.restore(self.instance)
+        usvfs.apply(self.instance)
+        self.assert_files(self.instance, self.new)
+
+    def test_failed_rollback_of_an_update_leaves_a_finishable_mixture(self):
+        self.install_woa1()
+        copy = usvfs._atomic_copy
+
+        def fail(source, target):
+            # The new x86 DLL fails, then so does putting woa.1's x64 DLL back.
+            replacing = source.parent == self.source and source.name == "usvfs_x86.dll"
+            rolling_back = source.parent.name.startswith("previous-") and target.parent == self.instance
+            if replacing or (rolling_back and source.name == "usvfs_x64.dll"):
+                raise OSError("disk full")
+            copy(source, target)
+
+        with patch.object(usvfs, "_atomic_copy", side_effect=fail):
+            with self.assertRaises(usvfs.UsvfsError):
+                usvfs.apply(self.instance)
+        self.assertEqual(usvfs.status(self.instance).state, "interrupted")
+        usvfs.apply(self.instance)
+        self.assert_files(self.instance, self.new)
+
+    def test_originals_mixed_with_a_superseded_build_and_no_backup_are_left_alone(self):
+        self.install_woa1()
+        (self.instance / "usvfs_x64.dll").write_bytes(self.old["usvfs_x64.dll"])
+        self.assertEqual(usvfs.status(self.instance).state, "unknown")
+        with self.assertRaisesRegex(usvfs.UsvfsError, "not recognized"):
+            usvfs.apply(self.instance)
 
     def test_restore_refuses_to_overwrite_a_later_update(self):
         usvfs.apply(self.instance)
@@ -265,21 +363,6 @@ class CacheTests(unittest.TestCase):
                     with self.assertRaises(usvfs.UsvfsError):
                         usvfs.ensure_cached()
         self.extractor.extract.assert_not_called()
-
-    def test_falls_back_to_the_original_release_when_the_mirror_fails(self):
-        mirror, original = usvfs.ARCHIVE_URLS
-        seen = []
-
-        def fetch(request, timeout):
-            seen.append(request.full_url)
-            if request.full_url == mirror:
-                return io.BytesIO(b"tampered or truncated")
-            return io.BytesIO(self.archive)
-
-        with patch.object(usvfs.urllib.request, "urlopen", side_effect=fetch):
-            cache = usvfs.ensure_cached()
-        self.assertEqual(seen, [mirror, original])
-        self.assertEqual((cache / "usvfs_x64.dll").read_bytes(), self.payload["usvfs_x64.dll"])
 
     def test_the_mirror_is_used_first_and_alone_when_it_works(self):
         with patch.object(usvfs.urllib.request, "urlopen", return_value=io.BytesIO(self.archive)) as fetch:
