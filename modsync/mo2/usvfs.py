@@ -1,8 +1,11 @@
-"""Install the pinned USVFS stack-alignment backport for MO2 2.5.2 on ARM64.
+"""Install the pinned USVFS ARM64 backport for MO2 2.5.2.
 
-Only exact known files are replaced. Originals stay beside the instance in
-``.modsync-usvfs/backup``. Each replacement is atomic; an interrupted batch can
-be completed or restored because every file must match either known build.
+Only exact known files are replaced: the originals, or an earlier build of the
+fix (``SUPERSEDED``), which is what MO2-LINT installs on ARM64. Originals stay
+beside the instance in ``.modsync-usvfs/backup``; a superseded build is never
+kept there, since restoring means going back to MO2's own files. Each
+replacement is atomic; an interrupted batch can be completed (or restored, when
+there are originals to restore) because every file must match a known build.
 The instance root and this backup are excluded from ModSync's sync allowlist.
 
 Source and build instructions: docs/usvfs-arm64.md.
@@ -29,29 +32,39 @@ from modsync.steam.compattools import is_arm64
 
 log = logging.getLogger(__name__)
 
-PATCH_ID = "v0.5.6.1-woa.1"
-SOURCE_COMMIT = "866ce70040c4fc34fd2ddb59b3567a97f20cd50e"
-# Tried in order; both serve the same file, checked against the same hash. The
-# first is ModSync's own mirror (skjiisa/usvfs, a fork carrying the source), so
-# Apply keeps working if the original release is ever removed.
+PATCH_ID = "v0.5.6.1-woa.2"
+SOURCE_COMMIT = "b06d1a9660e5c8eada5644b3dcb57ee2346cb84a"
+# ModSync's own mirror (skjiisa/usvfs, a fork carrying the source), checked
+# against the pinned hash. woa.1 was also on ndabas/usvfs; woa.2 isn't.
 ARCHIVE_URLS = (
     f"https://github.com/skjiisa/usvfs/releases/download/{PATCH_ID}/usvfs_{PATCH_ID}.7z",
-    f"https://github.com/ndabas/usvfs/releases/download/{PATCH_ID}/usvfs_{PATCH_ID}.7z",
 )
-ARCHIVE_SHA256 = "acfbdb928078686d3f5709fc57e416ebb524292174878a297f1b6cf8d3a88f8e"
-ARCHIVE_SIZE = 12_822_348
+ARCHIVE_SHA256 = "123abba9f63d6840978a3a03416d0a0be4c9aaa0f0f80ad1d1e73b5d82dcd04f"
+ARCHIVE_SIZE = 12_825_800
 ORIGINAL = {
     "usvfs_x64.dll": "e2b766f418575021b9d350f384195ce6f23173169b37222cdef3d7fe5495f8b5",
     "usvfs_x86.dll": "c89d9587c7f725927f3ce03076e85af2dfd134909d6d769455be3d21e086a478",
     "usvfs_proxy_x64.exe": "186fa5f2b60c8a1f4e7aafd323d3131111866e58bb25bde91429a1c1b4d3def4",
     "usvfs_proxy_x86.exe": "cc41543f444c0441c93b1476cb09a55192651661231a1ae71f2ca115829cbac0",
 }
+# woa.2: woa.1, plus CreateProcessA/W hooks so a program started from MO2 (SKSE's
+# loader) gets USVFS into what it starts (the game). See docs/usvfs-arm64.md.
 PATCHED = {
-    "usvfs_x64.dll": "b453f2bde5c39be1cd1ace1102f71f42e18dea1103b057d8b12a3c89ff5f5ef6",
-    "usvfs_x86.dll": "482133421bd95791bc3be81b09665ccce5dd2fecb1d82838e060d4ec2313271a",
-    "usvfs_proxy_x64.exe": "ce91820c18c9a56b4cc199defd534d900e1ae6be17f8ec23997959b2e6300385",
-    "usvfs_proxy_x86.exe": "d2aa70835cdda8cfdf07b4afd956345fc04a696e55b23bba393d6ed94302fcf5",
+    "usvfs_x64.dll": "820a90d11d54ec2fa4e91737f52bda9f902fd91086aafacc157e63c13a13806f",
+    "usvfs_x86.dll": "90abcea9de129b6974d4f39bc909836fd0a41be519953f32993ca0407444677b",
+    "usvfs_proxy_x64.exe": "ae6fe04d8ae45b46ef025f5831cb57d39ec3034b7c749899f7c678debcfdc31b",
+    "usvfs_proxy_x86.exe": "58e36cceee650f746e93c7bee71455701e0b9f266bc7e31ccab9c804deeb392c",
 }
+# Earlier builds of the fix, replaced by Apply. v0.5.6.1-woa.1 (the stack
+# alignment fix alone) is also the set in MO2-LINT's MO2 2.5.2-woa.1.
+SUPERSEDED = (
+    {
+        "usvfs_x64.dll": "b453f2bde5c39be1cd1ace1102f71f42e18dea1103b057d8b12a3c89ff5f5ef6",
+        "usvfs_x86.dll": "482133421bd95791bc3be81b09665ccce5dd2fecb1d82838e060d4ec2313271a",
+        "usvfs_proxy_x64.exe": "ce91820c18c9a56b4cc199defd534d900e1ae6be17f8ec23997959b2e6300385",
+        "usvfs_proxy_x86.exe": "d2aa70835cdda8cfdf07b4afd956345fc04a696e55b23bba393d6ed94302fcf5",
+    },
+)
 
 
 class UsvfsError(RuntimeError):
@@ -101,16 +114,28 @@ def status(instance: Path | str) -> Status:
         return Status("unreadable", f"Could not verify this instance's USVFS files or backups: {exc}")
     restored = actual == ORIGINAL
     patched = actual == PATCHED
-    known = all(actual[name] in (ORIGINAL[name], PATCHED[name]) for name in ORIGINAL)
+    outdated = actual in SUPERSEDED
+    builds = (ORIGINAL, PATCHED, *SUPERSEDED)
+    known = all(actual[name] in {build[name] for build in builds} for name in ORIGINAL)
+    any_original = any(actual[name] == ORIGINAL[name] for name in ORIGINAL)
     if patched:
         return Status("patched", "The USVFS ARM64 fix is installed.", can_restore=recoverable)
     if not is_arm64() and restored:
         return Status("not-needed", "This machine does not need the USVFS ARM64 fix.")
     if restored:
         return Status("available", "This MO2 cannot start games on ARM64 until the USVFS fix is applied.", True)
+    if outdated:
+        return Status("outdated", "This MO2 has an older USVFS ARM64 fix. Games started by another program, "
+                      "like SKSE's loader, start without your mods until it's updated.",
+                      can_apply=is_arm64(), can_restore=recoverable)
     if known and recoverable:
         return Status("interrupted", "The USVFS replacement was interrupted. Apply the fix again or restore the originals.",
                       can_apply=is_arm64(), can_restore=True)
+    if known and not any_original:
+        # An update from a superseded build stopped partway. There are no
+        # originals to go back to, but finishing it is safe.
+        return Status("interrupted", "The USVFS update was interrupted. Apply the fix again to finish it.",
+                      can_apply=is_arm64())
     return Status("unknown", "This USVFS build is not recognized. ModSync cannot verify its ARM64 fix and will leave it unchanged.")
 
 
@@ -252,32 +277,49 @@ def apply(instance: Path | str) -> str:
         current = status(root)
         if not current.can_apply:
             raise UsvfsError("The instance changed while preparing the fix. Check its USVFS status and try again.")
+        updating = current.state == "outdated"
         backup = backup_dir(root)
-        backup.mkdir(exist_ok=True)
-        for name, expected in ORIGINAL.items():
-            saved = backup / name
-            if saved.exists() or saved.is_symlink():
-                if _digest(saved) != expected:
-                    raise UsvfsError(f"USVFS backup {saved} is not the expected original. It was left unchanged.")
-            else:
-                if _digest(root / name) != expected:
-                    raise UsvfsError("An original USVFS file is missing from the backup; cannot replace it.")
-                _atomic_copy(root / name, saved)
-        if not _matches(backup, ORIGINAL) or not _matches(source, PATCHED):
+        # Originals are backed up when there are any: in the instance, or a
+        # backup started before. A superseded build alone has none to keep.
+        started = any((backup / name).exists() or (backup / name).is_symlink() for name in ORIGINAL)
+        if started or any(_digest(root / name) == ORIGINAL[name] for name in ORIGINAL):
+            backup.mkdir(exist_ok=True)
+            for name, expected in ORIGINAL.items():
+                saved = backup / name
+                if saved.exists() or saved.is_symlink():
+                    if _digest(saved) != expected:
+                        raise UsvfsError(f"USVFS backup {saved} is not the expected original. It was left unchanged.")
+                else:
+                    if _digest(root / name) != expected:
+                        raise UsvfsError("An original USVFS file is missing from the backup; cannot replace it.")
+                    _atomic_copy(root / name, saved)
+            if not _matches(backup, ORIGINAL):
+                raise UsvfsError("USVFS verification failed before replacement. No instance files were changed.")
+        if not _matches(source, PATCHED):
             raise UsvfsError("USVFS verification failed before replacement. No instance files were changed.")
-        try:
+        # What is in place now, to put back if a replacement fails. Kept apart
+        # from the backup, and deleted afterwards: it may be a superseded build.
+        with tempfile.TemporaryDirectory(prefix="previous-", dir=root / ".modsync-usvfs") as tmp:
+            previous = Path(tmp)
             for name in PATCHED:
-                _atomic_copy(source / name, root / name)
-        except OSError as exc:
-            # Keep the verified backup even if rollback fails. A subsequent
-            # apply/restore accepts this exact mixture of old and new files.
+                _atomic_copy(root / name, previous / name)
             try:
-                for name in ORIGINAL:
-                    _atomic_copy(backup / name, root / name)
-            except OSError:
-                log.exception("USVFS rollback incomplete in %s; originals remain in %s", root, backup)
-            raise UsvfsError(f"Could not replace USVFS. Originals are in {backup}; use Restore original USVFS. {exc}") from exc
-    log.info("installed USVFS %s in %s; originals in %s", PATCH_ID, root, backup)
+                for name in PATCHED:
+                    _atomic_copy(source / name, root / name)
+            except OSError as exc:
+                # A subsequent apply (or restore, with originals) accepts any
+                # mixture of known builds this leaves behind.
+                try:
+                    for name in PATCHED:
+                        _atomic_copy(previous / name, root / name)
+                except OSError:
+                    log.exception("USVFS rollback incomplete in %s", root)
+                where = f" Originals are in {backup}; use Restore original USVFS." if _matches(backup, ORIGINAL) else ""
+                raise UsvfsError(f"Could not replace USVFS.{where} {exc}") from exc
+    log.info("installed USVFS %s in %s%s", PATCH_ID, root,
+             f"; originals in {backup}" if _matches(backup, ORIGINAL) else "")
+    if updating:
+        return "Updated the USVFS ARM64 fix. Games started through SKSE now get your mods too."
     return "Applied the USVFS ARM64 fix. You can now try launching the game through MO2."
 
 

@@ -6,6 +6,18 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- On ARM64 (the Steam Frame), SKSE now starts the game with your mods.
+  Proton's ARM64 builds of Windows' system DLLs start a process without
+  running the code MO2's virtual file system hooks, so when MO2 ran SKSE's
+  loader, the game the loader started saw only the real Data folder. The
+  ARM64 fix is now USVFS `v0.5.6.1-woa.2`, which also hooks `CreateProcessA`
+  and `CreateProcessW`. Instances with the earlier fix, including MO2
+  installed by MO2-LINT, show **Update ARM64 fix**. The update keeps
+  existing backups of the original files and never saves the earlier fix as
+  one.
+
 ## [2.0.0-rc1] - 2026-10-18
 
 Joining a vault now copies the other machine exactly instead of merging both
