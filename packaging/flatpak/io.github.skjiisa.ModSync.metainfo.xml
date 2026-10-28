@@ -34,6 +34,12 @@
   <url type="homepage">https://github.com/skjiisa/ModSync</url>
   <url type="bugtracker">https://github.com/skjiisa/ModSync/issues</url>
   <releases>
+    <release version="2.0.0~rc2" date="2026-10-28" type="development">
+      <url>https://github.com/skjiisa/ModSync/releases/tag/v2.0.0-rc2</url>
+      <description>
+        <p>On the Steam Frame, starting Skyrim through SKSE now loads your mods: the ARM64 USVFS fix is updated, and instances with the earlier fix are offered the update. Picking ModSync's launch tool by hand in Steam while a switch was queued shows as On without a restart.</p>
+      </description>
+    </release>
     <release version="2.0.0~rc1" date="2026-10-18" type="development">
       <url>https://github.com/skjiisa/ModSync/releases/tag/v2.0.0-rc1</url>
       <description>

@@ -6,6 +6,16 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.0.0-rc2] - 2026-10-28
+
+Two fixes from trying 2.0.0-rc1 on a Steam Frame and a Steam Deck. On the
+Frame, starting Skyrim through SKSE ran it without mods: the ARM64 USVFS fix
+is updated so the game SKSE starts gets them, and instances with the earlier
+fix are offered the update. Picking ModSync's launch tool by hand in Steam
+while a switch to it was queued now shows as On without restarting ModSync.
+The Steam Deck pass (#74) is done. Still to do before 2.0.0: Steam Frame
+documentation (#73).
+
 ### Fixed
 
 - On ARM64 (the Steam Frame), SKSE now starts the game with your mods.

@@ -1,3 +1,3 @@
 """ModSync — set up Skyrim SE for modding on Steam Deck and Linux, and keep it working."""
 
-__version__ = "2.0.0rc1"
+__version__ = "2.0.0rc2"
