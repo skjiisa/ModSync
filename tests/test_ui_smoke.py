@@ -445,6 +445,21 @@ class SteamLaunchTests(UiTestCase):
             self.assertTrue(window.pages["home"].play.isEnabled())
             self.assertIsNone(window.steam_launch.decision)
 
+    def test_superseded_usvfs_fix_is_offered_as_an_update(self):
+        from modsync.mo2 import usvfs
+
+        State(instance_path=str(self.tmp)).save()
+        outdated = usvfs.Status("outdated", "older ARM64 fix", can_apply=True)
+        with patch.object(usvfs, "is_arm64", return_value=True), \
+                patch.object(ModSyncService, "usvfs_status", lambda self: outdated):
+            window = self._window()
+            mods = window.pages["mods"]
+            self.settle()
+            self.assertTrue(mods.usvfs_apply.isVisibleTo(mods))
+            self.assertEqual(mods.usvfs_apply.text(), "Update ARM64 fix")
+            self.assertFalse(mods.usvfs_restore.isVisibleTo(mods))
+            self.assertIn((mods.usvfs_apply, "MO2's ARM64 fix needs an update for SKSE to load mods."), mods.repairs)
+
     def test_auto_decision_env_is_a_testing_aid(self):
         from PySide6.QtTest import QTest
 

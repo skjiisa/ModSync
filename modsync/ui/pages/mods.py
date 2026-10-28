@@ -55,6 +55,12 @@ def scan_instances() -> list[str]:
     return [str(p) for p in found]
 
 
+_USVFS_APPLY = ("Download the verified USVFS fix for MO2 2.5.2, about 13 MB, and back up the originals. "
+                "Close MO2, Skyrim and anything MO2 started first.")
+_USVFS_UPDATE = ("Download the newer verified USVFS fix, about 13 MB, so games started by SKSE get your "
+                 "mods. Close MO2, Skyrim and anything MO2 started first.")
+
+
 class _LineEmitter(QObject):
     """Marshals installer output lines from a worker thread to the UI thread."""
 
@@ -322,10 +328,9 @@ class ModsPage(Page):
         self.runtime_tile.clicked.connect(self._install_runtime)
         self.runtime_tile.setVisible(False)
         right.addWidget(self.runtime_tile)
-        self.usvfs_apply = Tile("Apply ARM64 fix", "Download the verified USVFS fix for MO2 2.5.2, about 13 MB, "
-                                "and back up the originals. Close MO2, Skyrim and anything MO2 started first.",
-                                "chip")
+        self.usvfs_apply = Tile("Apply ARM64 fix", _USVFS_APPLY, "chip")
         self.usvfs_apply.clicked.connect(lambda: self._usvfs_change(False))
+        self._usvfs_reason = "MO2 needs the ARM64 fix to start games."
         self.usvfs_restore = Tile("Restore original USVFS", "Put the backed-up files back. Games started "
                                   "through MO2 will need the fix again on ARM64.", "undo")
         self.usvfs_restore.clicked.connect(lambda: self._usvfs_change(True))
@@ -346,7 +351,7 @@ class ModsPage(Page):
         if self.open_mo2 is None:
             return []
         actions = [(self.runtime_tile, "MO2 needs a newer Visual C++ runtime."),
-                   (self.usvfs_apply, "MO2 needs the ARM64 fix to start games.")]
+                   (self.usvfs_apply, self._usvfs_reason)]
         return [(tile, reason) for tile, reason in actions if not tile.isHidden()]
 
     def preferred_focus(self):
@@ -434,6 +439,14 @@ class ModsPage(Page):
         self.usvfs_note.setVisible(relevant)
         self.usvfs_note.setText(result.message)
         theme.role(self.usvfs_note, "note" if result.state in ("patched", "not-needed") else "warning")
+        if result.state == "outdated":
+            self.usvfs_apply.setText("Update ARM64 fix")
+            self.usvfs_apply.set_description(_USVFS_UPDATE)
+            self._usvfs_reason = "MO2's ARM64 fix needs an update for SKSE to load mods."
+        else:
+            self.usvfs_apply.setText("Apply ARM64 fix")
+            self.usvfs_apply.set_description(_USVFS_APPLY)
+            self._usvfs_reason = "MO2 needs the ARM64 fix to start games."
         self.usvfs_apply.setVisible(relevant and result.can_apply)
         self.usvfs_restore.setVisible(relevant and result.can_restore)
         self._update_enabled()

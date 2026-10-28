@@ -8,6 +8,15 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- On ARM64 (the Steam Frame), SKSE now starts the game with your mods.
+  Proton's ARM64 builds of Windows' system DLLs start a process without
+  running the code MO2's virtual file system hooks, so when MO2 ran SKSE's
+  loader, the game the loader started saw only the real Data folder. The
+  ARM64 fix is now USVFS `v0.5.6.1-woa.2`, which also hooks `CreateProcessA`
+  and `CreateProcessW`. Instances with the earlier fix, including MO2
+  installed by MO2-LINT, show **Update ARM64 fix**. The update keeps
+  existing backups of the original files and never saves the earlier fix as
+  one.
 - Picking "ModSync (Skyrim Special Edition)" yourself under Compatibility
   while a switch to it was queued now shows the Steam launch as On in the
   open window. Before, it stayed "Pending" until ModSync was restarted, and
