@@ -17,6 +17,11 @@ All notable changes to ModSync are documented here. The format follows
   installed by MO2-LINT, show **Update ARM64 fix**. The update keeps
   existing backups of the original files and never saves the earlier fix as
   one.
+- Picking "ModSync (Skyrim Special Edition)" yourself under Compatibility
+  while a switch to it was queued now shows the Steam launch as On in the
+  open window. Before, it stayed "Pending" until ModSync was restarted, and
+  the queued switch could be applied again the next time Steam closed,
+  undoing any choice made in between. "Check again" on Home also re-reads it.
 
 ## [2.0.0-rc1] - 2026-10-18
 

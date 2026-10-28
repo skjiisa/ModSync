@@ -364,6 +364,9 @@ class HomePage(Page):
         mods = self.host.pages.get("mods")
         if mods is not None:
             mods.recheck()
+        system = self.host.pages.get("system")
+        if system is not None:
+            system.refresh_hook()
 
     def update_enabled(self, *_args) -> None:
         busy = self.host.busy
