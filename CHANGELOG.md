@@ -6,6 +6,14 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Picking "ModSync (Skyrim Special Edition)" yourself under Compatibility
+  while a switch to it was queued now shows the Steam launch as On in the
+  open window. Before, it stayed "Pending" until ModSync was restarted, and
+  the queued switch could be applied again the next time Steam closed,
+  undoing any choice made in between. "Check again" on Home also re-reads it.
+
 ## [2.0.0-rc1] - 2026-10-18
 
 Joining a vault now copies the other machine exactly instead of merging both

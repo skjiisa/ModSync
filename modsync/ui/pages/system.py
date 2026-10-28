@@ -90,7 +90,7 @@ class SystemPage(Page):
         # Bring an installed hook up to date first (an old name keeps Steam
         # Cloud from syncing saves), then read its status.
         worker.run_async(launchhook.upgrade, on_done=self._after_hook_upgrade,
-                         on_failed=lambda _: self._refresh_hook())
+                         on_failed=lambda _: self.refresh_hook())
         self.firewall: firewall.Check | None = None
         self._refresh_firewall()
         host.busyChanged.connect(self._on_busy)
@@ -233,20 +233,20 @@ class SystemPage(Page):
         self._hook_toggling = False
         self._update_hook_enabled()
         self.host.notify(message, "ok")
-        self._refresh_hook()
+        self.refresh_hook()
 
     def _on_hook_failed(self, message: str) -> None:
         self._hook_toggling = False
         self._update_hook_enabled()
         self.host.notify(f"⚠ {message}")
-        self._refresh_hook()
+        self.refresh_hook()
 
     def _after_hook_upgrade(self, message: object) -> None:
         if message:
             self.host.notify(str(message), "ok")
-        self._refresh_hook()
+        self.refresh_hook()
 
-    def _refresh_hook(self) -> None:
+    def refresh_hook(self) -> None:
         worker.run_async(launchhook.status, on_done=self.on_hook_status,
                          on_failed=lambda _: self.hook_tile.set_badge("unknown", "off"))
 
@@ -284,12 +284,16 @@ class SystemPage(Page):
     def poll(self) -> None:
         self._refresh_bg()
         if self.hook is not None and self.hook.pending is not None:
-            worker.run_async(launchhook.apply_pending, on_done=self._on_hook_applied, on_failed=lambda _: None)
+            worker.run_async(launchhook.apply_pending, on_done=self._on_hook_applied,
+                             on_failed=lambda _: self.refresh_hook())
 
     def _on_hook_applied(self, message: object) -> None:
         if message:
             self.host.notify(str(message), "ok")
-            self._refresh_hook()
+        # Also while Steam still runs: the user may have picked the hook by hand
+        # under Compatibility, and status() then drops the queued switch instead
+        # of leaving it to undo a later choice when Steam closes.
+        self.refresh_hook()
 
     # --- background service ---
     def _toggle_bg(self) -> None:

@@ -100,6 +100,24 @@ class HomeSetupTests(UiTestCase):
         settings._hook_toggling = False
         window.top_overlay.cancel()
 
+    def test_a_queued_switch_picked_by_hand_shows_on_without_restarting(self):
+        # Steam still running, so apply_pending does nothing; the user picks the
+        # hook under Compatibility and status() drops the queue.
+        window = self.window()
+        settings, home = window.pages["system"], window.pages["home"]
+        off = settings.hook
+        on = replace(off, installed=True, selected=True, underlying_exists=True)
+        pending = replace(off, installed=True, pending=launchhook.Pending("select", SKYRIM_SE.appid, None))
+        for refresh in (settings.poll, home.recheck):
+            settings.on_hook_status(pending)
+            self.assertEqual(home.steam_options.badge.text(), "Pending")
+            with patch.object(launchhook, "apply_pending", return_value=None), \
+                    patch.object(launchhook, "status", return_value=on):
+                refresh()
+                self.settle()
+            self.assertEqual(home.steam_options.badge.text(), "On")
+            self.assertIsNone(settings.hook.pending)
+
     def test_copy_waits_for_source_metadata_and_then_uses_its_version_after_reopening(self):
         from tests.test_service_instance import FakeManager
         from modsync.pairing_code import PairingCode
