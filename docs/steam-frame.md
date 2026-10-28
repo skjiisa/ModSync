@@ -27,25 +27,35 @@ tap. A controller, a keyboard or a mouse works too.
 MO2-LINT's ARM64 build, which fetches the `cabextract` and 7-Zip that SteamOS
 lacks. You can't close Steam on the Frame, so ModSync doesn't ask you to:
 MO2-LINT installs with Steam running. Reboot when it finishes, so Steam's Play
-button picks up the new instance.
+button picks up the new instance. The new instance then needs the update to the
+ARM64 fix described below.
 
 An MO2 2.5.2 instance you already have works too. Choose **Use an existing
 installation…** on Home, or run `modsync mo2 use <folder>`.
 
 ## The ARM64 fix for MO2
 
-Without a fix, every program MO2 starts on the Frame, Skyrim included, fails
-before it opens. [USVFS on ARM64](usvfs-arm64.md) explains why and what
+MO2's virtual file system, USVFS, has two problems on the Frame. Without any
+fix, every program MO2 starts, Skyrim included, fails before it opens. With
+only the first fix, Skyrim started through SKSE runs without your mods, even
+though MO2 lists them. [USVFS on ARM64](usvfs-arm64.md) explains both and what
 ModSync installs.
 
-An instance from **Install Mod Organizer 2** already has the fix, and ModSync
-shows it as installed. Other instances need it once: ones installed before
-MO2-LINT 7.0.3, or from the official MO2 archive. For those, Home suggests
-**Apply ARM64 fix** as the next step. It's also in the Mod Organizer 2 sheet,
-which opens from the Mod Organizer 2 row on Home. Close MO2, Skyrim and
-anything started from MO2 first. ModSync checks and refuses while they run.
-The download is about 13 MB, and **Restore original USVFS** in the same sheet
-undoes it.
+Every instance needs ModSync's fix once:
+
+- An instance from **Install Mod Organizer 2**, or any MO2-LINT 7.0.3 or newer,
+  comes with the first fix only. Home shows **Update ARM64 fix**.
+- Instances installed before MO2-LINT 7.0.3, or from the official MO2 archive,
+  have neither. Home shows **Apply ARM64 fix**.
+
+Home suggests it as the next step, and the Mod Organizer 2 row says "Needs a
+fix" until it's done. It's also in the Mod Organizer 2 sheet, which opens from
+that row. Close MO2, Skyrim and anything started from MO2 first. ModSync checks
+and refuses while they run. The download is about 13 MB.
+
+**Restore original USVFS** in the same sheet puts MO2's original files back.
+An instance that came with the first fix never had them, so it has nothing to
+restore.
 
 ## Play
 
@@ -74,7 +84,8 @@ Steam; on the Frame, reboot instead.
 
 For the Play button there's a second way that needs no reboot. In Steam, open
 Skyrim's Properties, then Compatibility, and pick **ModSync (Skyrim Special
-Edition)**. ModSync notices and drops the queued change.
+Edition)**. ModSync notices, shows the Play hook as On and drops the queued
+change. **Check again** on Home checks right away.
 
 ## Troubleshooting
 
@@ -100,9 +111,13 @@ the hook outside the sandbox.
 
 ## Known limits
 
-- The USVFS fix ModSync installs is a backport. The upstream fix,
-  [usvfs#93](https://github.com/ModOrganizer2/usvfs/pull/93), isn't in an MO2
-  release yet.
+- The USVFS fix ModSync installs is its own build. The first fix is a
+  backport of [usvfs#93](https://github.com/ModOrganizer2/usvfs/pull/93),
+  which isn't in an MO2 release yet. The second exists only in ModSync's
+  [USVFS fork](https://github.com/skjiisa/usvfs).
+- A program MO2 starts passes your mods on to programs it starts with
+  `CreateProcess`, which covers SKSE's loader. A tool that starts the game
+  another way, such as `ShellExecute`, starts it without your mods.
 - Settings that need Steam closed need a reboot instead, as described above.
 - Two actions refuse while Steam runs and aren't queued for a reboot, so they
   can't be done from ModSync on the Frame: **Unpin** (letting Steam update a
