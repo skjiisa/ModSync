@@ -6,6 +6,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A Steam Frame page in the docs (`docs/steam-frame.md`): which download to
+  use, installing MO2, the ARM64 fix, playing, rebooting where other machines
+  restart Steam, troubleshooting and known limits. The README links it.
+
 ## [2.0.0-rc2] - 2026-10-28
 
 Two fixes from trying 2.0.0-rc1 on a Steam Frame and a Steam Deck. On the

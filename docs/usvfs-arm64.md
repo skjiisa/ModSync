@@ -45,9 +45,12 @@ of `CreateProcessInternalA`, `WinExec` and `ShellExecute` aren't covered.
 ## Apply or restore the fix
 
 Choose the MO2 instance in ModSync. Close MO2, Skyrim, and all programs started
-by MO2. On an ARM64 machine, **Apply ARM64 fix** appears in the dashboard's MO2
-card and in the Steam launch hub when ModSync recognizes the original files,
-and **Update ARM64 fix** when it recognizes woa.1. The download is about 13 MB. This is an explicit action, and the fix remains
+by MO2. On an ARM64 machine, Home suggests **Apply ARM64 fix** as the next
+step when ModSync recognizes the original files, and **Update ARM64 fix** when
+it recognizes woa.1. It does this also when Steam's Play button opened ModSync.
+Both are also in the Mod Organizer 2 sheet, opened from the Mod Organizer 2 row
+on Home.
+The download is about 13 MB. This is an explicit action, and the fix remains
 installed for launches through Steam as well as ModSync.
 
 Before it changes anything, ModSync checks on the host whether any of your

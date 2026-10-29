@@ -15,6 +15,7 @@ Features include:
 ## Install
 
 Download the `.flatpak` from the [releases tab](https://github.com/skjiisa/ModSync/releases).
+Use the `x86_64` download for Steam Deck and PC, and `aarch64` for Steam Frame.
 
 SteamOS:
 
@@ -23,7 +24,7 @@ SteamOS:
 Other:
 
 ```bash
-flatpak install --user ~/Downloads/ModSync-*-x86_64.flatpak
+flatpak install --user ~/Downloads/ModSync-*-x86_64.flatpak   # or -aarch64 on ARM
 flatpak run io.github.skjiisa.ModSync
 ```
 
@@ -72,6 +73,13 @@ Mod list syncing uses [Syncthing](https://github.com/syncthing/syncthing) under 
 You can Launch Skyrim or Mod Organizer 2 through Proton with ModSync directly.
 If you want to have ModSync open when launching the game through Steam, click "Open ModSync before Skyrim", that way your mods can always stay in sync if you change them frequently.
  - If using this setting, restart steam after enabling it
+
+## Steam Frame
+
+ModSync works on the Steam Frame using the aarch64 build.
+It includes an ARM64 fix for Mod Organizer 2.
+Reboot where other machines restart Steam.
+See [the Steam Frame page](docs/steam-frame.md) for setup and known limits.
 
 ## Command line
 
