@@ -160,8 +160,9 @@ jobs:
             echo
             echo "## Changes"
             echo
-            # The CHANGELOG section for this version, when there is one.
-            python3 scripts/changelog_section.py "${GITHUB_REF_NAME#v}" || echo "See CHANGELOG.md."
+            # The CHANGELOG section for this version, when there is one: its
+            # intro, with the detailed lists collapsed.
+            python3 scripts/changelog_section.py --collapse "${GITHUB_REF_NAME#v}" || echo "See CHANGELOG.md."
           } > notes.md
           cat notes.md
       - name: Create the GitHub release
