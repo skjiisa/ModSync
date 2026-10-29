@@ -8,8 +8,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [2.0.0] - 2026-10-28
 
-- TODO: high-level bullets (shown on the release page; everything from the
-  first `###` heading down is collapsed)
+- Full app redesign!
+  - SteamOS-inspired design with controller support
+  - Easy checklist for getting up and running
+  - New linking experience for syncing
+- Steam Frame support (`aarch64` build)
+  - Including custom-patched virtual file system for Mod Organizer 2 support on ARM64
 
 ### Since 1.0.0
 
