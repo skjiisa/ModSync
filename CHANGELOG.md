@@ -6,6 +6,21 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-28
+
+- Full app redesign!
+  - SteamOS-inspired design with controller support
+  - Easy checklist for getting up and running
+  - New linking experience for syncing
+- Steam Frame support (`aarch64` build)
+  - Including custom-patched virtual file system for Mod Organizer 2 support on ARM64
+
+### Since 1.0.0
+
+Everything in [1.1.0-beta1](https://github.com/skjiisa/ModSync/releases/tag/v1.1.0-beta1), [1.1.0-beta2](https://github.com/skjiisa/ModSync/releases/tag/v1.1.0-beta2),
+[2.0.0-rc1](https://github.com/skjiisa/ModSync/releases/tag/v2.0.0-rc1) and [2.0.0-rc2](https://github.com/skjiisa/ModSync/releases/tag/v2.0.0-rc2), plus the changes
+below.
+
 ### Added
 
 - A Steam Frame page in the docs (`docs/steam-frame.md`): which download to

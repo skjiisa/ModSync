@@ -216,7 +216,7 @@ wheels = [
 
 [[package]]
 name = "modsync"
-version = "2.0.0rc2"
+version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
