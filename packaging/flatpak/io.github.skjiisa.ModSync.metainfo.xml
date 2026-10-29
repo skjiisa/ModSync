@@ -34,6 +34,12 @@
   <url type="homepage">https://github.com/skjiisa/ModSync</url>
   <url type="bugtracker">https://github.com/skjiisa/ModSync/issues</url>
   <releases>
+    <release version="2.0.0" date="2026-10-28" type="stable">
+      <url>https://github.com/skjiisa/ModSync/releases/tag/v2.0.0</url>
+      <description>
+        <p>Joining another machine now copies its mods exactly instead of merging, and sync can be paused and its conflicts reviewed. The window is redesigned for a controller on the Steam Deck. ModSync now runs on the Steam Frame, with a fixed USVFS for MO2 on ARM64.</p>
+      </description>
+    </release>
     <release version="2.0.0~rc2" date="2026-10-28" type="development">
       <url>https://github.com/skjiisa/ModSync/releases/tag/v2.0.0-rc2</url>
       <description>

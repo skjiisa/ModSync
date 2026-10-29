@@ -6,6 +6,17 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-28
+
+- TODO: high-level bullets (shown on the release page; everything from the
+  first `###` heading down is collapsed)
+
+### Since 1.0.0
+
+Everything in [1.1.0-beta1](https://github.com/skjiisa/ModSync/releases/tag/v1.1.0-beta1), [1.1.0-beta2](https://github.com/skjiisa/ModSync/releases/tag/v1.1.0-beta2),
+[2.0.0-rc1](https://github.com/skjiisa/ModSync/releases/tag/v2.0.0-rc1) and [2.0.0-rc2](https://github.com/skjiisa/ModSync/releases/tag/v2.0.0-rc2), plus the changes
+below.
+
 ### Added
 
 - A Steam Frame page in the docs (`docs/steam-frame.md`): which download to
