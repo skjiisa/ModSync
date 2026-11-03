@@ -854,7 +854,8 @@ def _dfu_install(args: list[str]) -> int:
             last["line"] = line
 
     try:
-        result = dfu.install(dest, dagger, cache_dir=config.data_dir() / "dfu", progress=progress)
+        result = dfu.install(dest, dagger, cache_dir=config.data_dir() / "dfu", progress=progress,
+                             resolution=dfu.display_resolution())
     except dfu.DfuError as exc:
         print(f"\n{exc}" if last["line"] else str(exc))
         return 1
@@ -866,6 +867,11 @@ def _dfu_install(args: list[str]) -> int:
     else:
         print(f"Daggerfall Unity in {result.install.path} is already installed; pointed it at Steam's data again.")
     print(f"  Daggerfall data: {result.dagger}")
+    if result.fresh:
+        width = dfu.read_setting(result.install.settings_ini, "Video", "ResolutionWidth")
+        height = dfu.read_setting(result.install.settings_ini, "Video", "ResolutionHeight")
+        shown = f"{width}x{height}" if width and height else "DFU's default (1920x1080)"
+        print(f"  Resolution:      {shown}; change it under Advanced on DFU's startup screen")
     print(f"  Mods go in:      {result.install.mods_dir}")
     try:
         followed = dfu.follow_install(result.install)

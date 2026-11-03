@@ -26,14 +26,16 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import stat
+import subprocess
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from modsync import launchhook, platforms
+from modsync import background, launchhook, platforms
 from modsync.downgrade import engine
 from modsync.games import DAGGERFALL
 from modsync.steam import libraries as libs
@@ -162,51 +164,80 @@ def is_running() -> bool:
     return shortcuts.process_running(EXECUTABLE[:15])
 
 
-def read_daggerfall_path(ini: Path) -> str | None:
+def read_setting(ini: Path, section: str, key: str) -> str | None:
     try:
         lines = ini.read_text(encoding="utf-8-sig").splitlines()
     except OSError:
         return None
-    section = ""
+    current = ""
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
-            section = stripped[1:-1].strip()
-        elif section == "Daggerfall" and "=" in stripped:
-            key, _, value = stripped.partition("=")
-            if key.strip() == "MyDaggerfallPath":
+            current = stripped[1:-1].strip()
+        elif current == section and "=" in stripped:
+            name, _, value = stripped.partition("=")
+            if name.strip() == key:
                 return value.strip() or None
     return None
 
 
-def write_daggerfall_path(ini: Path, dagger: Path) -> None:
-    """Set ``[Daggerfall] MyDaggerfallPath`` in ``ini``, leaving every other
-    line as it is. DFU writes the file in ``Key = Value`` form."""
+def write_settings(ini: Path, section: str, values: dict[str, object]) -> None:
+    """Set ``values`` under ``[section]`` in ``ini``, leaving every other line
+    as it is. DFU writes the file in ``Key = Value`` form."""
     try:
         lines = ini.read_text(encoding="utf-8-sig").splitlines()
     except FileNotFoundError:
         lines = []
-    entry = f"MyDaggerfallPath = {dagger}"
-    section = ""
-    header = None
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            section = stripped[1:-1].strip()
-            if section == "Daggerfall":
-                header = i
-        elif section == "Daggerfall" and stripped.partition("=")[0].strip() == "MyDaggerfallPath":
-            lines[i] = entry
-            break
-    else:
-        if header is None:
-            lines[:0] = ["[Daggerfall]", entry, ""] if lines else ["[Daggerfall]", entry]
+    for key, value in values.items():
+        entry = f"{key} = {value}"
+        current = ""
+        header = None
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                current = stripped[1:-1].strip()
+                if current == section:
+                    header = i
+            elif current == section and stripped.partition("=")[0].strip() == key:
+                lines[i] = entry
+                break
         else:
-            lines.insert(header + 1, entry)
+            if header is not None:
+                lines.insert(header + 1, entry)
+            else:
+                lines += ["", f"[{section}]", entry] if lines else [f"[{section}]", entry]
     ini.parent.mkdir(parents=True, exist_ok=True)
     tmp = ini.with_name(f".{ini.name}.{os.getpid()}.tmp")
     tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
     os.replace(tmp, ini)
+
+
+def read_daggerfall_path(ini: Path) -> str | None:
+    return read_setting(ini, "Daggerfall", "MyDaggerfallPath")
+
+
+def write_daggerfall_path(ini: Path, dagger: Path) -> None:
+    write_settings(ini, "Daggerfall", {"MyDaggerfallPath": dagger})
+
+
+_XRANDR_OUTPUT = re.compile(r"^\S+ connected (primary )?(\d+)x(\d+)\+", re.MULTILINE)
+
+
+def display_resolution() -> tuple[int, int] | None:
+    """The primary display's current mode (the first display's when none is
+    primary), which DFU's own first-run resolution step would offer. None
+    when ``xrandr`` can't tell."""
+    try:
+        result = background.run_host(["xrandr", "--current"], timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    outputs = [(bool(m[1]), int(m[2]), int(m[3])) for m in _XRANDR_OUTPUT.finditer(result.stdout)]
+    if not outputs:
+        return None
+    _, width, height = next((o for o in outputs if o[0]), outputs[0])
+    return width, height
 
 
 def configure(inst: Install, dagger: Path) -> None:
@@ -261,11 +292,17 @@ def install(
     *,
     cache_dir: Path,
     progress: engine.ProgressFn | None = None,
+    resolution: tuple[int, int] | None = None,
 ) -> Installed:
     """Install DFU into ``dest`` and point it at ``dagger``.
 
     ``dest`` must be missing or empty, or hold a DFU that ModSync installed at
-    this version, which is only re-pointed (mods, saves and settings stay)."""
+    this version, which is only re-pointed (mods, saves and settings stay).
+
+    A fresh install also gets ``resolution``, normally the display's. With
+    the data path already valid, DFU skips the first-run step that would
+    have asked, and falls back to 1920x1080, which a screen of another shape
+    shows stretched."""
     dest = Path(dest).expanduser().absolute()
     problems = data_problems(dagger)
     if problems:
@@ -301,7 +338,10 @@ def install(
         raise
     inst = Install(dest)
     configure(inst, dagger)
-    log.info("installed Daggerfall Unity %s into %s", DFU_VERSION, dest)
+    if resolution:
+        width, height = resolution
+        write_settings(inst.settings_ini, "Video", {"ResolutionWidth": width, "ResolutionHeight": height})
+    log.info("installed Daggerfall Unity %s into %s (resolution %s)", DFU_VERSION, dest, resolution or "DFU's default")
     return Installed(inst, dagger, fresh=True)
 
 

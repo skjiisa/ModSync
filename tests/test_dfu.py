@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -130,7 +131,17 @@ class SettingsIni(unittest.TestCase):
         self.assertEqual(self.ini.read_text(), "[Daggerfall]\nMyDaggerfallPath = /d\nMyDaggerfallUnitySavePath = \n")
         self.ini.write_text("[GUI]\nShowOptionsAtStart = True\n")
         dfu.write_daggerfall_path(self.ini, Path("/d"))
-        self.assertEqual(self.ini.read_text(), "[Daggerfall]\nMyDaggerfallPath = /d\n\n[GUI]\nShowOptionsAtStart = True\n")
+        self.assertEqual(self.ini.read_text(), "[GUI]\nShowOptionsAtStart = True\n\n[Daggerfall]\nMyDaggerfallPath = /d\n")
+
+    def test_several_values_in_another_section(self):
+        dfu.write_daggerfall_path(self.ini, Path("/d"))
+        dfu.write_settings(self.ini, "Video", {"ResolutionWidth": 3440, "ResolutionHeight": 1440})
+        dfu.write_settings(self.ini, "Video", {"ResolutionHeight": 1600})
+        self.assertEqual(
+            self.ini.read_text(),
+            "[Daggerfall]\nMyDaggerfallPath = /d\n\n[Video]\nResolutionHeight = 1600\nResolutionWidth = 3440\n",
+        )
+        self.assertEqual(dfu.read_setting(self.ini, "Video", "ResolutionWidth"), "3440")
 
     def test_a_byte_order_mark_does_not_hide_the_section(self):
         self.ini.parent.mkdir(parents=True)
@@ -144,6 +155,45 @@ class SettingsIni(unittest.TestCase):
         self.ini.write_text("[Daggerfall]\nMyDaggerfallPath = \n")
         self.assertIsNone(dfu.read_daggerfall_path(self.ini))
         self.assertIsNone(dfu.read_daggerfall_path(self.tmp / "missing.ini"))
+
+
+class DisplayResolution(unittest.TestCase):
+    XRANDR = (
+        "Screen 0: minimum 16 x 16, current 5360 x 1543, maximum 32767 x 32767\n"
+        "HDMI-A-1 connected 1920x1080+0+0 (normal left inverted right x axis y axis) 479mm x 260mm\n"
+        "   1920x1080     99.90*+\n"
+        "DP-1 connected primary 3440x1440+1920+103 (normal left inverted right x axis y axis) 800mm x 337mm\n"
+        "   3440x1440    164.87*+\n"
+        "DP-2 disconnected (normal left inverted right x axis y axis)\n"
+    )
+
+    def _with(self, stdout, returncode=0):
+        done = subprocess.CompletedProcess(["xrandr"], returncode, stdout, "")
+        return patch.object(dfu.background, "run_host", lambda cmd, **kw: done)
+
+    def test_the_primary_display_wins(self):
+        with self._with(self.XRANDR):
+            self.assertEqual(dfu.display_resolution(), (3440, 1440))
+
+    def test_without_a_primary_the_first_connected_display(self):
+        with self._with(self.XRANDR.replace(" primary", "")):
+            self.assertEqual(dfu.display_resolution(), (1920, 1080))
+
+    def test_a_rotated_deck_screen_reads_as_landscape(self):
+        with self._with("eDP connected primary 1280x800+0+0 right (normal left inverted right x axis y axis) 0mm x 0mm\n"):
+            self.assertEqual(dfu.display_resolution(), (1280, 800))
+
+    def test_unknown_when_xrandr_fails_or_is_missing(self):
+        with self._with("", returncode=1):
+            self.assertIsNone(dfu.display_resolution())
+        with self._with("Screen 0: minimum 16 x 16\n"):
+            self.assertIsNone(dfu.display_resolution())
+
+        def missing(cmd, **kw):
+            raise FileNotFoundError("xrandr")
+
+        with patch.object(dfu.background, "run_host", missing):
+            self.assertIsNone(dfu.display_resolution())
 
 
 class InstallDfu(unittest.TestCase):
@@ -189,13 +239,19 @@ class InstallDfu(unittest.TestCase):
         self.assertTrue(inst.mods_dir.is_dir())
         self.assertEqual([p.name for p in dest.parent.iterdir()], ["Daggerfall Unity"])  # no temp dir left
 
+    def test_a_fresh_install_gets_the_displays_resolution(self):
+        inst = dfu.install(self.tmp / "dfu", self.dagger, cache_dir=self.cache, resolution=(3440, 1440)).install
+        self.assertEqual(dfu.read_setting(inst.settings_ini, "Video", "ResolutionWidth"), "3440")
+        self.assertEqual(dfu.read_setting(inst.settings_ini, "Video", "ResolutionHeight"), "1440")
+        self.assertNotIn("Fullscreen", inst.settings_ini.read_text())  # DFU's own default stays
+
     def test_installing_again_only_repoints_and_keeps_the_users_files(self):
         dest = self.tmp / "dfu"
         inst = self._install(dest).install
         (inst.mods_dir / "a.dfmod").write_bytes(b"mod")
         inst.settings_ini.write_text("[Daggerfall]\nMyDaggerfallPath = /old\n\n[Video]\nFullscreen = True\n")
         moved = _dagger(self.tmp / "sdcard")
-        result = dfu.install(dest, moved, cache_dir=self.cache)
+        result = dfu.install(dest, moved, cache_dir=self.cache, resolution=(1280, 800))
         self.assertFalse(result.fresh)
         self.assertEqual(self.downloads, 1)
         self.assertEqual((inst.mods_dir / "a.dfmod").read_bytes(), b"mod")
@@ -300,6 +356,9 @@ class Cli(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
+        p = patch.object(dfu, "display_resolution", lambda: (1280, 800))  # never this machine's xrandr
+        p.start()
+        self.addCleanup(p.stop)
 
     def _run(self, *args):
         out = io.StringIO()
@@ -317,7 +376,7 @@ class Cli(unittest.TestCase):
         dagger = _dagger(self.tmp / "steam")
         dest = self.tmp / "dfu"
 
-        def fake_install(d, data, *, cache_dir, progress=None):
+        def fake_install(d, data, *, cache_dir, progress=None, resolution=None):
             inst = dfu.Install(Path(d))
             inst.executable.parent.mkdir(parents=True)
             inst.executable.touch()
@@ -338,7 +397,7 @@ class Cli(unittest.TestCase):
         self.assertIn(f"Daggerfall Unity:     {dest}", out)
         self.assertIn(f"Data:               {dagger}\n", out)
 
-    def _fake_install(self, d, data, *, cache_dir, progress=None):
+    def _fake_install(self, d, data, *, cache_dir, progress=None, resolution=None):
         inst = dfu.Install(Path(d))
         inst.executable.parent.mkdir(parents=True, exist_ok=True)
         inst.executable.touch()

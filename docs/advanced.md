@@ -522,8 +522,13 @@ ModSync adds two things to the install:
 
 - `Portable.txt`, so DFU keeps its settings, saves and mod load order in
   `PortableAppdata/` inside the install instead of `~/.config/unity3d`.
-- One setting in `PortableAppdata/settings.ini`: `MyDaggerfallPath`, which
-  points at Steam's `DF/DAGGER` folder. DFU fills in everything else.
+- Two settings in `PortableAppdata/settings.ini`. `MyDaggerfallPath` points
+  at Steam's `DF/DAGGER` folder. The resolution is set to the primary
+  display's, as reported by `xrandr`. DFU fills in everything else.
+  - DFU's own first run asks for a resolution, but only while it still needs
+    the data path, so it skips that step here. Without this, it falls back to
+    1920×1080, which looks stretched on a screen of another shape.
+  - To change the resolution later, use Advanced on DFU's startup screen.
 
 DFU's startup screen still opens. That's where the mod list and DFU's own
 settings are edited. Mods go in
