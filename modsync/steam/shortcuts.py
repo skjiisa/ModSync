@@ -199,14 +199,20 @@ def modsync_target(flatpak_id: str | None = MODSYNC_FLATPAK_ID) -> tuple[str, st
 
 def steam_is_running() -> bool:
     """Best-effort (Linux) check: editing shortcuts.vdf while Steam is running is
-    unsafe because Steam rewrites the file from memory when it exits.
+    unsafe because Steam rewrites the file from memory when it exits."""
+    return process_running("steam")
+
+
+def process_running(comm: str) -> bool:
+    """Whether a host process named ``comm`` (as ``/proc/<pid>/comm`` has it,
+    cut to 15 characters) is running.
 
     A Flatpak has its own PID namespace, so ``/proc`` shows nothing of the host
     there; ask the host through the Flatpak portal instead."""
     if os.environ.get("FLATPAK_ID") or Path("/.flatpak-info").exists():
         try:
             result = subprocess.run(
-                ["flatpak-spawn", "--host", "pgrep", "-x", "steam"],
+                ["flatpak-spawn", "--host", "pgrep", "-x", comm],
                 capture_output=True,
                 timeout=10,
                 check=False,
@@ -222,7 +228,7 @@ def steam_is_running() -> bool:
         if not entry.name.isdigit():
             continue
         try:
-            if (entry / "comm").read_text().strip() == "steam":
+            if (entry / "comm").read_text().strip() == comm:
                 return True
         except OSError:
             continue
@@ -256,6 +262,61 @@ def _save(vdf_path: Path, root_obj: dict) -> None:
     dump(vdf_path, root_obj)
 
 
+def add_to_steam(
+    app_name: str,
+    *,
+    exe: str,
+    start_dir: str,
+    launch_options: str = "",
+    icon: str = "",
+    create_missing: bool = True,
+) -> list[Path]:
+    """Add/update a non-Steam shortcut named ``app_name`` for every Steam user
+    on this machine. Returns the shortcuts.vdf paths written. Steam must be
+    restarted to pick the shortcut up."""
+    written: list[Path] = []
+    for vdf_path in _user_shortcut_files():
+        if not vdf_path.exists() and not create_missing:
+            continue
+        root_obj = load(vdf_path) if vdf_path.exists() else {"shortcuts": {}}
+        add_or_update(
+            root_obj,
+            app_name=app_name,
+            exe=exe,
+            start_dir=start_dir,
+            launch_options=launch_options,
+            icon=icon,
+        )
+        _save(vdf_path, root_obj)
+        written.append(vdf_path)
+    return written
+
+
+def remove_from_steam(app_name: str) -> list[Path]:
+    """Remove the ``app_name`` shortcut from every Steam user's shortcuts.vdf.
+    Returns the paths that actually had one. Steam must be restarted to notice."""
+    written: list[Path] = []
+    for vdf_path in _user_shortcut_files():
+        if not vdf_path.exists():
+            continue
+        root_obj = load(vdf_path)
+        if remove(root_obj, app_name=app_name):
+            _save(vdf_path, root_obj)
+            written.append(vdf_path)
+    return written
+
+
+def has_shortcut(app_name: str) -> bool:
+    """Whether any Steam user here has a shortcut named ``app_name``."""
+    for vdf_path in _user_shortcut_files():
+        try:
+            if vdf_path.exists() and _find_entry(load(vdf_path), app_name) is not None:
+                return True
+        except (OSError, VdfError):
+            continue
+    return False
+
+
 def add_modsync_to_steam(
     flatpak_id: str | None = MODSYNC_FLATPAK_ID,
     *,
@@ -265,32 +326,12 @@ def add_modsync_to_steam(
     machine. Returns the shortcuts.vdf paths written. Steam must be restarted to
     pick the shortcut up."""
     exe, start_dir, opts = modsync_target(flatpak_id)
-    written: list[Path] = []
-    for vdf_path in _user_shortcut_files():
-        if not vdf_path.exists() and not create_missing:
-            continue
-        root_obj = load(vdf_path) if vdf_path.exists() else {"shortcuts": {}}
-        add_or_update(
-            root_obj,
-            app_name=MODSYNC_APP_NAME,
-            exe=exe,
-            start_dir=start_dir,
-            launch_options=opts,
-        )
-        _save(vdf_path, root_obj)
-        written.append(vdf_path)
-    return written
+    return add_to_steam(
+        MODSYNC_APP_NAME, exe=exe, start_dir=start_dir, launch_options=opts, create_missing=create_missing,
+    )
 
 
 def remove_modsync_from_steam() -> list[Path]:
     """Remove the "ModSync" shortcut from every Steam user's shortcuts.vdf.
     Returns the paths that actually had one. Steam must be restarted to notice."""
-    written: list[Path] = []
-    for vdf_path in _user_shortcut_files():
-        if not vdf_path.exists():
-            continue
-        root_obj = load(vdf_path)
-        if remove(root_obj, app_name=MODSYNC_APP_NAME):
-            _save(vdf_path, root_obj)
-            written.append(vdf_path)
-    return written
+    return remove_from_steam(MODSYNC_APP_NAME)

@@ -758,6 +758,159 @@ def steam(args: list[str]) -> int:
     return 2
 
 
+def dfu(args: list[str]) -> int:
+    """Daggerfall Unity, set up from the Steam copy of Daggerfall."""
+    sub = args[0] if args else ""
+    rest = args[1:]
+    if sub == "status":
+        return _dfu_status()
+    if sub == "install":
+        return _dfu_install(rest)
+    if sub == "shortcut":
+        return _dfu_shortcut(rest)
+    print(
+        "usage:\n"
+        "  modsync dfu status                   Steam's Daggerfall data and the Daggerfall Unity install\n"
+        "  modsync dfu install [<dest-dir>]     install Daggerfall Unity using Steam's Daggerfall data\n"
+        "        (run it again to follow Daggerfall to another Steam library)\n"
+        "  modsync dfu shortcut [--remove]      add Daggerfall Unity to Steam as a non-Steam game"
+    )
+    return 2
+
+
+def _dfu_install_in_use():
+    from modsync import dfu
+    from modsync.state import State
+
+    return dfu.find_install(State.load().dfu_path) or dfu.find_install(dfu.default_install_dir())
+
+
+def _dfu_status() -> int:
+    from pathlib import Path
+
+    from modsync import dfu
+
+    dagger = dfu.steam_daggerfall()
+    problems = dfu.data_problems(dagger)
+    print(f"Daggerfall (Steam):   {dagger or 'not installed'}")
+    for problem in problems:
+        print(f"  ! {problem}")
+    inst = _dfu_install_in_use()
+    if inst is None:
+        print("Daggerfall Unity:     not installed ('modsync dfu install')")
+        return 1
+    print(f"Daggerfall Unity:     {inst.path} ({inst.version or 'version unknown'})")
+    configured = inst.daggerfall_path()
+    if configured is None:
+        print("  Data:               not set (DFU asks for it at startup)")
+    elif dagger is not None and Path(configured) == dagger:
+        print(f"  Data:               {configured}")
+    else:
+        print(f"  Data:               {configured}")
+        if dagger is not None:
+            print("  ! That isn't where Steam has Daggerfall now; 'modsync dfu install' points it there.")
+    if not inst.portable:
+        print("  ! Portable.txt is missing, so DFU keeps its data in ~/.config/unity3d.")
+    mods = sorted(inst.mods_dir.rglob("*.dfmod")) if inst.mods_dir.is_dir() else []
+    print(f"  Mods:               {len(mods)} in {inst.mods_dir}")
+    print(f"Steam shortcut:       {'yes' if dfu.has_shortcut() else 'no'}")
+    return 0 if not problems and configured else 1
+
+
+def _dfu_install(args: list[str]) -> int:
+    import platform
+    from pathlib import Path
+
+    from modsync import config, dfu
+    from modsync.downgrade import engine
+    from modsync.state import State
+
+    if len(args) > 1:
+        print("usage: modsync dfu install [<dest-dir>]")
+        return 2
+    dagger = dfu.steam_daggerfall()
+    problems = dfu.data_problems(dagger)
+    if problems:
+        for problem in problems:
+            print(problem)
+        print("Install The Elder Scrolls II: Daggerfall in Steam, then run this again.")
+        return 1
+    previous = State.load().dfu_path
+    dest = Path(args[0]) if args else Path(previous or dfu.default_install_dir())
+    if platform.machine().lower() not in {"x86_64", "amd64"}:
+        print(f"Note: Daggerfall Unity only has an x86_64 build; on {platform.machine()} it's untested.")
+
+    last = {"line": ""}
+
+    def progress(p: engine.Progress) -> None:
+        if p.stage == "download" and p.total:
+            line = f"  [{p.stage}] {p.message}: {p.done / 1e6:,.1f}/{p.total / 1e6:,.1f} MB"
+        elif p.total:
+            line = f"  [{p.stage}] {p.message} ({p.done}/{p.total})"
+        else:
+            line = f"  [{p.stage}] {p.message}"
+        if line != last["line"]:
+            sys.stdout.write("\r" + line[:118].ljust(118))
+            sys.stdout.flush()
+            last["line"] = line
+
+    try:
+        result = dfu.install(dest, dagger, cache_dir=config.data_dir() / "dfu", progress=progress)
+    except dfu.DfuError as exc:
+        print(f"\n{exc}" if last["line"] else str(exc))
+        return 1
+    if last["line"]:
+        print()
+    State.update(dfu_path=str(result.install.path))
+    if result.fresh:
+        print(f"Installed Daggerfall Unity {dfu.DFU_VERSION} into {result.install.path}")
+    else:
+        print(f"Daggerfall Unity in {result.install.path} is already installed; pointed it at Steam's data again.")
+    print(f"  Daggerfall data: {result.dagger}")
+    print(f"  Mods go in:      {result.install.mods_dir}")
+    print(f"  Start it with:   {result.install.executable}")
+    if not dfu.has_shortcut():
+        print("Run 'modsync dfu shortcut' (with Steam closed) to add it to your Steam library.")
+    elif previous and Path(previous) != result.install.path:
+        print(f"Steam's '{dfu.SHORTCUT_NAME}' may still start {previous}; run 'modsync dfu shortcut'")
+        print("(with Steam closed) to point it here.")
+    return 0
+
+
+def _dfu_shortcut(args: list[str]) -> int:
+    from modsync import dfu
+    from modsync.steam import shortcuts
+
+    if args not in ([], ["--remove"]):
+        print("usage: modsync dfu shortcut [--remove]")
+        return 2
+    if shortcuts.steam_is_running():
+        print("Close Steam first — it rewrites shortcuts.vdf from memory on exit,")
+        print("which would discard the change. Then run this again.")
+        return 1
+    if args:
+        paths = dfu.remove_shortcut()
+        if not paths:
+            print(f"No '{dfu.SHORTCUT_NAME}' shortcut found; nothing to remove.")
+            return 0
+        for p in paths:
+            print(f"  ✓ removed '{dfu.SHORTCUT_NAME}' from {p}")
+        print("\nRestart Steam and it disappears from your library.")
+        return 0
+    inst = _dfu_install_in_use()
+    if inst is None:
+        print("Daggerfall Unity isn't installed yet; run 'modsync dfu install' first.")
+        return 1
+    paths = dfu.add_shortcut(inst)
+    if not paths:
+        print("No Steam users found — make sure Steam is installed and has been run at least once on this machine.")
+        return 1
+    for p in paths:
+        print(f"  ✓ added/updated '{dfu.SHORTCUT_NAME}' in {p}")
+    print("\nRestart Steam, then find Daggerfall Unity in your library (it appears as a non-Steam game).")
+    return 0
+
+
 def launch(args: list[str]) -> int:
     """Open ModSync when the game is launched from Steam (the launch hook)."""
     from modsync import launchhook

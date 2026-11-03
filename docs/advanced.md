@@ -148,6 +148,7 @@ modsync service install [--linger] | status | uninstall
 modsync firewall status | allow | remove   # ModSync's ports in ufw or firewalld
 modsync steam shortcut [--remove]   # add ModSync as a non-Steam game, or remove it
 modsync launch status | enable [--through <tool>] | disable
+modsync dfu status | install [<dest>] | shortcut [--remove]   # Daggerfall Unity, see below
 ```
 
 ## Game version records
@@ -498,6 +499,43 @@ without a controller in hand.
 
 `modsync launch enable --through <tool>` chains to a named compatibility tool
 instead of the detected one.
+
+## Daggerfall Unity
+
+ModSync can set up [Daggerfall Unity](https://www.dfworkshop.net/) (DFU)
+from the free Steam copy of *The Elder Scrolls II: Daggerfall*. This is
+separate from the Skyrim setup and uses none of the MO2 tools. So far it is
+command line only. Syncing DFU's mods and saves, and the app screens, are
+tracked in #111.
+
+1. Install *The Elder Scrolls II: Daggerfall* in Steam.
+2. `modsync dfu install` downloads the official DFU 1.1.1 Linux build,
+   checks it against a pinned checksum, and unpacks it unmodified into
+   `~/Games/Daggerfall Unity`. To use another folder, pass it as an argument;
+   the folder must be new or empty.
+3. `modsync dfu shortcut`, with Steam closed, adds "Daggerfall Unity" to the
+   Steam library as a non-Steam game, so it starts from Gaming Mode.
+
+ModSync adds two things to the install:
+
+- `Portable.txt`, so DFU keeps its settings, saves and mod load order in
+  `PortableAppdata/` inside the install instead of `~/.config/unity3d`.
+- One setting in `PortableAppdata/settings.ini`: `MyDaggerfallPath`, which
+  points at Steam's `DF/DAGGER` folder. DFU fills in everything else.
+
+DFU's startup screen still opens. That's where the mod list and DFU's own
+settings are edited. Mods go in
+`DaggerfallUnity_Data/StreamingAssets/Mods`. Use the Linux build of a mod
+where one is offered, because mods are built separately for each system.
+
+If Daggerfall moves to another Steam library, run `modsync dfu install`
+again. It only rewrites `MyDaggerfallPath`, and leaves mods, saves and
+other settings alone. `modsync dfu status` shows where everything is and
+whether DFU still points at Steam's copy.
+
+DFU only has an x86_64 build. On the Steam Frame it would have to run under
+emulation, which is untested (#110). DFU's developers don't support builds or setups from third parties,
+so report problems with a ModSync-installed DFU to ModSync.
 
 ## Background service
 

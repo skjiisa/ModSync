@@ -44,6 +44,10 @@ usage:
   modsync launch status | enable | disable
                                          open ModSync when Skyrim is launched from Steam
 
+  modsync dfu status                     Steam's Daggerfall data and the Daggerfall Unity install
+  modsync dfu install [<dest-dir>]       install Daggerfall Unity using Steam's Daggerfall data
+  modsync dfu shortcut [--remove]        add Daggerfall Unity to Steam as a non-Steam game
+
 sync create and join run headless and keep Syncthing alive until Ctrl-C.
 logs: ~/.local/state/modsync/modsync.log (MODSYNC_LOG_LEVEL=DEBUG for more).
 """
@@ -101,6 +105,11 @@ def main(argv: list[str] | None = None) -> int:
         from modsync.cli import service
 
         return service(argv[1:])
+
+    if cmd == "dfu":
+        from modsync.cli import dfu
+
+        return dfu(argv[1:])
 
     if cmd == "steam":
         from modsync.cli import steam
