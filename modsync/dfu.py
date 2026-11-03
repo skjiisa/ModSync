@@ -16,7 +16,9 @@ patches it). Two files make it ours to manage:
   startup screen (``ShowOptionsAtStart``) is left on: that's where the mod list
   and DFU's settings are edited.
 
-Mods go in ``DaggerfallUnity_Data/StreamingAssets/Mods``.
+Mods go in ``DaggerfallUnity_Data/StreamingAssets/Mods``. Steam's own Play
+button on Daggerfall can start it, through the launch hook
+(:mod:`modsync.launchhook`).
 """
 
 from __future__ import annotations
@@ -31,14 +33,15 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from modsync import platforms
+from modsync import launchhook, platforms
 from modsync.downgrade import engine
+from modsync.games import DAGGERFALL
 from modsync.steam import libraries as libs
 from modsync.steam import shortcuts
 
 log = logging.getLogger(__name__)
 
-DAGGERFALL_APPID = 1812390  # The Elder Scrolls II: Daggerfall (free on Steam)
+DAGGERFALL_APPID = DAGGERFALL.appid  # The Elder Scrolls II: Daggerfall (free on Steam)
 
 DFU_VERSION = "1.1.1"
 # v1.1.1-cve-2025 repackaged the Windows and macOS players for Unity's 2025
@@ -50,7 +53,6 @@ DFU_URL = (
 DFU_SHA256 = "be3c476ae92972f42448757719266ad82c04868eb7b6f3a3c90fcfcf1490849a"
 
 EXECUTABLE = "DaggerfallUnity.x86_64"
-SHORTCUT_NAME = "Daggerfall Unity"
 RECORD_NAME = "modsync-dfu.json"  # which DFU version ModSync put here
 
 # DFU's DFValidator: what makes a folder a usable ARENA2.
@@ -130,10 +132,6 @@ class Install:
     @property
     def mods_dir(self) -> Path:
         return self.path / "DaggerfallUnity_Data" / "StreamingAssets" / "Mods"
-
-    @property
-    def icon(self) -> Path:
-        return self.path / "DaggerfallUnity_Data" / "Resources" / "UnityPlayer.png"
 
     @property
     def portable(self) -> bool:
@@ -307,21 +305,26 @@ def install(
     return Installed(inst, dagger, fresh=True)
 
 
-# --- Steam ------------------------------------------------------------------------
+# --- Steam's Play button -----------------------------------------------------------
 
 
-def add_shortcut(inst: Install) -> list[Path]:
-    """A "Daggerfall Unity" non-Steam game that runs DFU natively. Steam must
-    be closed, and restarted afterwards to show it."""
-    icon = str(inst.icon) if inst.icon.exists() else ""
-    return shortcuts.add_to_steam(
-        SHORTCUT_NAME, exe=f'"{inst.executable}"', start_dir=f'"{inst.path}"', icon=icon,
-    )
+def hook_status() -> launchhook.LaunchHookStatus:
+    return launchhook.status(DAGGERFALL_APPID)
 
 
-def remove_shortcut() -> list[Path]:
-    return shortcuts.remove_from_steam(SHORTCUT_NAME)
+def enable_hook(inst: Install) -> str:
+    """Make Steam's Play button on Daggerfall start ``inst`` instead of the
+    original game. Queued until Steam closes when it's running."""
+    return launchhook.enable(DAGGERFALL_APPID, native=inst.executable)
 
 
-def has_shortcut() -> bool:
-    return shortcuts.has_shortcut(SHORTCUT_NAME)
+def disable_hook() -> str:
+    return launchhook.disable(DAGGERFALL_APPID)
+
+
+def follow_install(inst: Install) -> str | None:
+    """Point an enabled hook at ``inst`` when it runs another copy."""
+    st = hook_status()
+    if not st.installed or st.native == str(inst.executable):
+        return None
+    return enable_hook(inst)

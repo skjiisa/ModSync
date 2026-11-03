@@ -46,7 +46,7 @@ usage:
 
   modsync dfu status                     Steam's Daggerfall data and the Daggerfall Unity install
   modsync dfu install [<dest-dir>]       install Daggerfall Unity using Steam's Daggerfall data
-  modsync dfu shortcut [--remove]        add Daggerfall Unity to Steam as a non-Steam game
+  modsync dfu hook enable | disable      make Steam's Play button on Daggerfall start Daggerfall Unity
 
 sync create and join run headless and keep Syncthing alive until Ctrl-C.
 logs: ~/.local/state/modsync/modsync.log (MODSYNC_LOG_LEVEL=DEBUG for more).

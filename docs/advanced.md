@@ -148,7 +148,7 @@ modsync service install [--linger] | status | uninstall
 modsync firewall status | allow | remove   # ModSync's ports in ufw or firewalld
 modsync steam shortcut [--remove]   # add ModSync as a non-Steam game, or remove it
 modsync launch status | enable [--through <tool>] | disable
-modsync dfu status | install [<dest>] | shortcut [--remove]   # Daggerfall Unity, see below
+modsync dfu status | install [<dest>] | hook enable | disable   # Daggerfall Unity, see below
 ```
 
 ## Game version records
@@ -513,8 +513,10 @@ tracked in #111.
    checks it against a pinned checksum, and unpacks it unmodified into
    `~/Games/Daggerfall Unity`. To use another folder, pass it as an argument;
    the folder must be new or empty.
-3. `modsync dfu shortcut`, with Steam closed, adds "Daggerfall Unity" to the
-   Steam library as a non-Steam game, so it starts from Gaming Mode.
+3. `modsync dfu hook enable` makes Steam's own Play button on Daggerfall
+   start Daggerfall Unity, also in Gaming Mode. It uses the same launch hook
+   as Skyrim (see "How the launch hook works"), but opens no ModSync window
+   first. When Steam is running, the switch waits until Steam closes.
 
 ModSync adds two things to the install:
 
@@ -528,10 +530,16 @@ settings are edited. Mods go in
 `DaggerfallUnity_Data/StreamingAssets/Mods`. Use the Linux build of a mod
 where one is offered, because mods are built separately for each system.
 
+To play the original Daggerfall in DOSBox, put
+`MODSYNC_ORIGINAL_GAME=1 %command%` in its launch options under Properties,
+or run `modsync dfu hook disable`. If Daggerfall Unity's folder is gone, Play
+starts the original too.
+
 If Daggerfall moves to another Steam library, run `modsync dfu install`
 again. It only rewrites `MyDaggerfallPath`, and leaves mods, saves and
-other settings alone. `modsync dfu status` shows where everything is and
-whether DFU still points at Steam's copy.
+other settings alone. An install into another folder moves the Play
+button with it. `modsync dfu status` shows where everything is, whether DFU
+still points at Steam's copy, and what Play does.
 
 DFU only has an x86_64 build. On the Steam Frame it would have to run under
 emulation, which is untested (#110). DFU's developers don't support builds or setups from third parties,

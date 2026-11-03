@@ -13,9 +13,10 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from modsync import cli, dfu
+from modsync import cli, dfu, launchhook
+from modsync.games import DAGGERFALL
 from modsync.state import State
-from modsync.steam import shortcuts, vdf
+from modsync.steam import vdf
 
 _ZIP_FILES = {
     "DaggerfallUnity.x86_64": (b"#!/bin/sh\n", 0o755),
@@ -47,6 +48,10 @@ def _dagger(root: Path, *, textures: int = 472, skip: tuple[str, ...] = (), aren
         if name not in skip:
             (folder / name).touch()
     return dagger
+
+
+def _hook_off():
+    return launchhook.LaunchHookStatus(DAGGERFALL, False, None, False, None, None, False, None, False, True)
 
 
 class _Plat:
@@ -270,27 +275,25 @@ class InstallDfu(unittest.TestCase):
                 self._install(dest)
 
 
-class Shortcut(unittest.TestCase):
-    def test_add_find_and_remove(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            steam = Path(tmp)
-            cfg = steam / "userdata" / "111" / "config"
-            cfg.mkdir(parents=True)
-            inst = dfu.Install(steam / "Games" / "Daggerfall Unity")
-            inst.icon.parent.mkdir(parents=True)
-            inst.icon.touch()
-            with patch.object(shortcuts.platforms, "current", lambda: _Plat(steam)):
-                self.assertFalse(dfu.has_shortcut())
-                self.assertEqual(dfu.add_shortcut(inst), [cfg / "shortcuts.vdf"])
-                self.assertTrue(dfu.has_shortcut())
-                entry = shortcuts.load(cfg / "shortcuts.vdf")["shortcuts"]["0"]
-                self.assertEqual(entry["AppName"], "Daggerfall Unity")
-                self.assertEqual(entry["Exe"], f'"{inst.executable}"')
-                self.assertEqual(entry["StartDir"], f'"{inst.path}"')
-                self.assertEqual(entry["icon"], str(inst.icon))
-                self.assertEqual(entry["LaunchOptions"], "")
-                self.assertEqual(dfu.remove_shortcut(), [cfg / "shortcuts.vdf"])
-                self.assertFalse(dfu.has_shortcut())
+class FollowInstall(unittest.TestCase):
+    def test_an_enabled_hook_follows_a_moved_install(self):
+        inst = dfu.Install(Path("/games/new"))
+        on = launchhook.LaunchHookStatus(DAGGERFALL, True, "modsync_1812390_proton", True, None, None, True,
+                                         None, False, True, native="/games/old/DaggerfallUnity.x86_64")
+        with patch.object(dfu, "hook_status", lambda: on), patch.object(dfu.launchhook, "enable") as enable:
+            enable.return_value = "Launch hook refreshed."
+            self.assertEqual(dfu.follow_install(inst), "Launch hook refreshed.")
+        enable.assert_called_once_with(dfu.DAGGERFALL_APPID, native=inst.executable)
+
+    def test_nothing_to_do_when_off_or_already_there(self):
+        inst = dfu.Install(Path("/games/dfu"))
+        off = launchhook.LaunchHookStatus(DAGGERFALL, False, None, False, None, None, False, None, False, True)
+        same = launchhook.LaunchHookStatus(DAGGERFALL, True, "modsync_1812390_proton", True, None, None, True,
+                                           None, False, True, native=str(inst.executable))
+        for st in (off, same):
+            with patch.object(dfu, "hook_status", lambda st=st: st), patch.object(dfu.launchhook, "enable") as enable:
+                self.assertIsNone(dfu.follow_install(inst))
+            enable.assert_not_called()
 
 
 class Cli(unittest.TestCase):
@@ -310,7 +313,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Install The Elder Scrolls II: Daggerfall in Steam", out)
 
-    def test_install_remembers_the_folder_for_status_and_shortcut(self):
+    def test_install_remembers_the_folder_for_status_and_hook(self):
         dagger = _dagger(self.tmp / "steam")
         dest = self.tmp / "dfu"
 
@@ -323,13 +326,15 @@ class Cli(unittest.TestCase):
             return dfu.Installed(inst, data, fresh=True)
 
         with patch.object(dfu, "steam_daggerfall", lambda: dagger), patch.object(dfu, "install", fake_install), \
-                patch.object(dfu, "has_shortcut", lambda: False):
+                patch.object(dfu, "hook_status", _hook_off), patch.object(dfu, "follow_install", lambda inst: None):
             code, out = self._run("install", str(dest))
             self.assertEqual(code, 0, out)
             self.assertIn(f"Installed Daggerfall Unity {dfu.DFU_VERSION} into {dest}", out)
             self.assertEqual(State.load().dfu_path, str(dest))
+            self.assertIn("Run 'modsync dfu hook enable'", out)
             code, out = self._run("status")
         self.assertEqual(code, 0, out)
+        self.assertIn("Play in Steam:        Off.", out)
         self.assertIn(f"Daggerfall Unity:     {dest}", out)
         self.assertIn(f"Data:               {dagger}\n", out)
 
@@ -340,39 +345,50 @@ class Cli(unittest.TestCase):
         dfu.write_daggerfall_path(inst.settings_ini, data)
         return dfu.Installed(inst, data, fresh=True)
 
-    def test_moving_the_install_says_to_update_the_shortcut(self):
+    def test_install_reports_the_hook_following_it(self):
         dagger = _dagger(self.tmp / "steam")
-        State.update(dfu_path=str(self.tmp / "old"))
         with patch.object(dfu, "steam_daggerfall", lambda: dagger), patch.object(dfu, "install", self._fake_install), \
-                patch.object(dfu, "has_shortcut", lambda: True):
+                patch.object(dfu, "follow_install", lambda inst: "Launch hook refreshed. Play starts Daggerfall Unity."):
             code, out = self._run("install", str(self.tmp / "new"))
         self.assertEqual(code, 0, out)
-        self.assertIn(f"may still start {self.tmp / 'old'}", out)
+        self.assertIn("Launch hook refreshed.", out)
 
     def test_status_finds_an_install_in_the_default_folder(self):
         State.update(dfu_path="")
         default = self.tmp / "Games" / "Daggerfall Unity"
         self._fake_install(default, _dagger(self.tmp / "steam"), cache_dir=None)
         with patch.object(dfu, "default_install_dir", lambda: default), patch.object(dfu, "steam_daggerfall", lambda: None), \
-                patch.object(dfu, "has_shortcut", lambda: False):
+                patch.object(dfu, "hook_status", _hook_off):
             code, out = self._run("status")
         self.assertIn(f"Daggerfall Unity:     {default}", out)
 
-    def test_shortcut_rejects_unknown_arguments(self):
-        with patch.object(shortcuts, "steam_is_running", lambda: False), patch.object(dfu, "add_shortcut") as add:
-            self.assertEqual(self._run("shortcut", "--remve")[0], 2)
-        add.assert_not_called()
+    def test_hook_rejects_unknown_arguments(self):
+        with patch.object(dfu, "enable_hook") as enable:
+            self.assertEqual(self._run("hook", "--enable")[0], 2)
+            self.assertEqual(self._run("hook", "enable", "now")[0], 2)
+        enable.assert_not_called()
 
-    def test_shortcut_needs_steam_closed_and_an_install(self):
-        with patch.object(shortcuts, "steam_is_running", lambda: True):
-            self.assertEqual(self._run("shortcut")[0], 1)
+    def test_hook_enable_needs_an_install(self):
         State.update(dfu_path="")
-        with patch.object(shortcuts, "steam_is_running", lambda: False), \
-                patch.object(dfu, "default_install_dir", lambda: self.tmp / "nothing"):
-            code, out = self._run("shortcut")
+        with patch.object(dfu, "default_install_dir", lambda: self.tmp / "nothing"), \
+                patch.object(dfu, "enable_hook") as enable:
+            code, out = self._run("hook", "enable")
         self.assertEqual(code, 1)
         self.assertIn("run 'modsync dfu install' first", out)
+        enable.assert_not_called()
 
+    def test_hook_enable_uses_the_install_in_use(self):
+        dest = self.tmp / "dfu"
+        self._fake_install(dest, _dagger(self.tmp / "steam"), cache_dir=None)
+        State.update(dfu_path=str(dest))
+        with patch.object(dfu, "enable_hook", return_value="Launch hook enabled.") as enable:
+            code, out = self._run("hook", "enable")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(enable.call_args.args[0].path, dest)
+        with patch.object(dfu, "disable_hook", side_effect=RuntimeError("Steam was not found")):
+            code, out = self._run("hook", "disable")
+        self.assertEqual(code, 1)
+        self.assertIn("Steam was not found", out)
 
 if __name__ == "__main__":
     unittest.main()

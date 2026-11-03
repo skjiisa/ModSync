@@ -450,6 +450,83 @@ class LegacyName(LaunchHookBase):
         self.assertFalse(self.legacy_dir.exists())
 
 
+class DaggerfallHook(LaunchHookBase):
+    """For Daggerfall, Play runs Daggerfall Unity (a native program) and opens
+    no window; the hook has its own record and queue next to Skyrim's."""
+
+    DF = 1812390
+
+    def setUp(self):
+        super().setUp()
+        self.dfu = self.tmp / "Daggerfall Unity" / "DaggerfallUnity.x86_64"
+        fakesteam._executable(self.dfu, "#!/bin/sh\n")
+        self.df_dir = self.root / "compatibilitytools.d" / "modsync_1812390_proton"
+
+    def df_mapping(self):
+        return SteamConfig.load(self.root / "config/config.vdf").compat_tool_name(self.DF)
+
+    def test_enable_runs_daggerfall_unity_and_disable_restores_the_default(self):
+        msg = launchhook.enable(self.DF, native=self.dfu)
+        self.assertIn("starts Daggerfall Unity", msg)
+        self.assertEqual(self.df_mapping(), "modsync_1812390_proton")
+        script = (self.df_dir / "proton").read_text()
+        self.assertIn(f"native='{self.dfu}'", script)
+        self.assertIn('appid="1812390"', script)
+        self.assertIn('"display_name" "ModSync (The Elder Scrolls II: Daggerfall)"',
+                      (self.df_dir / "compatibilitytool.vdf").read_text())
+        record = launchhook.Record.load(self.DF)
+        self.assertEqual(record.native, str(self.dfu))
+        self.assertTrue(launchhook.Record.path(self.DF).name.endswith("-1812390.json"))
+        self.assertIsNone(launchhook.Record.load())  # Skyrim's record is a separate file
+        st = launchhook.status(self.DF)
+        self.assertTrue(st.enabled)
+        self.assertEqual(st.summary(), "On. Steam's Play button on The Elder Scrolls II: Daggerfall starts Daggerfall Unity.")
+        self.assertIn("Steam's default", launchhook.disable(self.DF))
+        self.assertIsNone(self.df_mapping())
+        self.assertFalse(self.df_dir.exists())
+        self.assertIsNone(launchhook.Record.load(self.DF))
+
+    def test_skyrims_script_runs_no_native_program(self):
+        launchhook.enable()
+        self.assertIn("native=''", (self.tool_dir / "proton").read_text())
+
+    def test_both_hooks_live_side_by_side(self):
+        launchhook.enable()
+        launchhook.enable(self.DF, native=self.dfu)
+        launchhook.disable(self.DF)
+        self.assertTrue(launchhook.status().enabled)
+        self.assertEqual(launchhook.Record.load().native, "")
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
+
+    def test_queued_switches_for_both_games_apply_together(self):
+        self.steam_running = True
+        self.assertIn("queued", launchhook.enable())
+        self.assertIn("queued", launchhook.enable(self.DF, native=self.dfu))
+        self.assertEqual({p.appid for p in launchhook.Pending.load_all()}, {489830, self.DF})
+        self.assertIsNone(launchhook.apply_pending())
+        self.steam_running = False
+        out = launchhook.apply_pending()
+        self.assertIn("Play now opens ModSync first", out)
+        self.assertIn("Play on The Elder Scrolls II: Daggerfall now starts Daggerfall Unity", out)
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
+        self.assertEqual(self.df_mapping(), "modsync_1812390_proton")
+        self.assertEqual(launchhook.Pending.load_all(), [])
+
+    def test_missing_program_is_reported(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        self.dfu.unlink()
+        self.assertIn("is missing, so Play starts the original", launchhook.status(self.DF).summary())
+
+    def test_refresh_keeps_the_native_program(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        record = launchhook.Record.load(self.DF)
+        record.template_version = 1
+        record.save()
+        self.assertTrue(launchhook.refresh_if_outdated(self.DF))
+        self.assertIn(f"native='{self.dfu}'", (self.df_dir / "proton").read_text())
+        self.assertEqual(launchhook.Record.load(self.DF).native, str(self.dfu))
+
+
 class HandoffTests(unittest.TestCase):
     def test_fields_end_in_nul_and_keep_spaces_and_unicode(self):
         from modsync.mo2.launch import LaunchPlan
