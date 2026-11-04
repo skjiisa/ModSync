@@ -2,6 +2,7 @@
 that share one library, as Syncthing would leave it, never get a save mixed
 from two."""
 
+import contextlib
 import json
 import os
 import shutil
@@ -226,7 +227,7 @@ class TwoMachines(unittest.TestCase):
         self.round()
         names = {p.name for p in self.a.iterdir()}
         self.assertTrue({n for n in names if not n.startswith("SAVE")}
-                        <= {dfu_saves.mapping_path(self.a, self.library).name, ".modsync-saves.lock"})
+                        <= {dfu_saves.mapping_path(self.a, self.library).name, ".modsync-saves.lock", dfu_saves.OWNER})
         self.assertNotIn("SAVE1", slots(self.b))
         self.assertFalse((self.b / "SAVE0" / dfu_saves.MANIFEST).exists())
 
@@ -235,7 +236,7 @@ class TwoMachines(unittest.TestCase):
         self.sync(self.a)
         key = dfu_saves.Info("Ellte", "Ellte 1", 0).key
         (version,) = version_dirs(self.library / key)
-        self.assertEqual(version.name, f"{100:020d}-{self.machines[self.a].id}")
+        self.assertEqual(version.name, f"{100:020d}-{self.machines[self.a].id}-00000001")
         self.assertEqual(ident(version)["vv"], {self.machines[self.a].id: 1})
         manifest = json.loads((version / dfu_saves.MANIFEST).read_text())
         self.assertEqual(manifest["character"], "Ellte")
@@ -283,8 +284,8 @@ class TwoMachines(unittest.TestCase):
         key = dfu_saves.Info("Ellte", "Ellte 1", 0).key
         newest = version_dirs(self.library / key)[-1]
         # B found it whole once (cached), then a file went missing before B used it.
-        original = dfu_saves.available
-        with patch.object(dfu_saves, "available", lambda r, v=None: (original(r, v),
+        original = dfu_saves._available
+        with patch.object(dfu_saves, "_available", lambda r, v: (original(r, v),
                           (newest / "FactionData.txt").write_text("damaged"))[0]):
             report = self.sync(self.b)
         self.assertEqual(report.placed, [])
@@ -514,6 +515,96 @@ class TwoMachines(unittest.TestCase):
         self.sync(self.b)
         self.assertFalse(any("Ellte" in label for label in slots(self.b).values()))
 
+    # --- from GPT-6.1 Sol's fourth pass ---
+
+    def test_a_settled_conflict_stays_settled_when_the_clock_goes_back(self):
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 100, "A's")
+        make_save(self.b, "SAVE0", "Ellte", "QuickSave", 90, "B's, made separately")
+        self.round()
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 80, "A played on, clock behind")
+        for _ in range(2):
+            self.round()
+        for saves in (self.a, self.b):
+            self.assertEqual((saves / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt A played on, clock behind")
+
+    def _placement_cut_short(self, exchange: bool):
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 100, "v100")
+        self.round()
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 200, "v200")
+        self.sync(self.a)
+        saves_made = []
+        original = dfu_saves._Mapping.save
+
+        def save(mapping):
+            saves_made.append(1)
+            if any(e.get("pending") for e in mapping.slots.values()) or len(saves_made) == 1:
+                return original(mapping)
+            raise KeyboardInterrupt  # swapped in, never noted as done
+
+        patches = [patch.object(dfu_saves._Mapping, "save", save)]
+        if not exchange:
+            patches.append(patch.object(dfu_saves, "_exchange", lambda a, b: False))
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            with self.assertRaises(KeyboardInterrupt):
+                self.sync(self.b)
+        self.assertEqual((self.b / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt v200")
+        make_save(self.b, "SAVE0", "Ellte", "QuickSave", 150, "B played on from 200")  # before any sync
+        self.round()
+        for saves in (self.a, self.b):
+            self.assertEqual((saves / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt B played on from 200")
+
+    def test_a_placement_cut_short_then_played_keeps_what_was_placed(self):
+        self._placement_cut_short(exchange=True)
+
+    def test_a_two_step_placement_cut_short_then_played_keeps_what_was_placed(self):
+        self._placement_cut_short(exchange=False)
+
+    def test_a_save_written_again_with_the_same_time_is_a_new_version(self):
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "first")
+        self.round()
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "again, same time")
+        os.utime(self.a / "SAVE0" / "SaveData.txt", (1_800_000_000, 1_800_000_000))
+        self.round()
+        self.assertEqual((self.b / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt again, same time")
+        key = dfu_saves.Info("Ellte", "Ellte 1", 0).key
+        self.assertEqual(len(list((self.library / key).glob("*.id"))), 2)
+
+    def test_one_library_per_saves_folder(self):
+        other = self.tmp / "other-library"
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
+        self.sync(self.a)
+        report = dfu_saves.sync(self.a, other, dfu_saves.Machine(self.tmp / "C.json"))
+        self.assertIn("already sync through another ModSync", report.skipped)
+        self.assertFalse(other.exists() and any(other.iterdir()))
+        shutil.rmtree(self.library)  # that ModSync and its library are gone
+        self.assertEqual(dfu_saves.sync(self.a, other, dfu_saves.Machine(self.tmp / "C.json")).skipped, "")
+
+    def test_deleting_one_of_two_copies_keeps_the_other(self):
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
+        self.round()
+        shutil.copytree(self.a / "SAVE0", self.a / "SAVE1")
+        self.round()
+        shutil.rmtree(self.a / "SAVE1")
+        report = self.sync(self.a)
+        self.assertEqual(report.deleted, [])
+        self.round()
+        for saves in (self.a, self.b):
+            self.assertIn("Ellte: Ellte 1 @ 100", slots(saves).values())
+
+    def test_this_machines_unpublished_versions_are_cleaned_up(self):
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
+        self.sync(self.a)
+        key = dfu_saves.Info("Ellte", "Ellte 1", 0).key
+        mine = self.library / key / f"{50:020d}-{self.machines[self.a].id}-00000099"
+        theirs = self.library / key / f"{50:020d}-{self.machines[self.b].id}-00000099"
+        mine.mkdir()
+        theirs.mkdir()  # its .id may still be on the way
+        self.sync(self.a)
+        self.assertFalse(mine.exists())
+        self.assertTrue(theirs.exists())
+
     def test_ticks_match_dfus_clock(self):
         from datetime import datetime
 
@@ -567,7 +658,7 @@ class SyncSaves(unittest.TestCase):
         mapping = json.loads(dfu_saves.mapping_path(self.inst.data_dir / "Saves", dfu.saves_library()).read_text())
         self.assertNotIn("machine", mapping)
         (version,) = version_dirs(next(dfu.saves_library().iterdir()))
-        self.assertTrue(version.name.endswith("-" + machine))
+        self.assertEqual(version.name.split("-")[1], machine)
         self.assertTrue((self.inst.path / dfu.SAVES_MARKER).exists())  # the Play hook syncs around DFU now
 
     def test_a_custom_save_folder_that_doesnt_exist_is_ignored_like_dfu_does(self):

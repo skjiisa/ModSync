@@ -53,7 +53,8 @@ if [[ -n "$native" && "$verb" == "waitforexitandrun" ]]; then
             # (DFU inherits it): any other sync gives way meanwhile, and one under
             # way is waited for, so nothing copies saves while DFU writes them.
             if command -v flock >/dev/null 2>&1 && exec {play_lock}>>"${native%/*}/.modsync-playing"; then
-                flock -x -w 60 "$play_lock" || log "WARNING: another saves sync is taking long; starting anyway"
+                # A sync holds it for one change at a time, so this is a moment, unless one hangs.
+                flock -x -w 600 "$play_lock" || log "WARNING: a saves sync seems stuck; starting anyway"
             fi
             sync_saves() {
                 env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT timeout 60 "${saves[@]}" dfu saves --quiet --playing \
