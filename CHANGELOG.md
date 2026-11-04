@@ -6,6 +6,15 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.1.0-beta1] - 2026-11-04
+
+Daggerfall Unity joins Skyrim. ModSync installs it from Steam's free
+*The Elder Scrolls II: Daggerfall*, starts it from Steam's Play button, and
+syncs its mods and saves between machines. Pairing now covers the whole
+machine, and machines paired through a third one sync with each other.
+Daggerfall Unity was tested on the desktop; the Steam Deck (#109) and Steam
+Frame (#110) are still to be tested.
+
 ### Added
 
 - Daggerfall Unity, set up from Steam's free *The Elder Scrolls II:
