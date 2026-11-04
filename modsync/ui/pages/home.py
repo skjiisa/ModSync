@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QProgressBar, QVBoxLayout
 
-from modsync import dfu, launchhook
+from modsync import launchhook
 from modsync.games import SKYRIM_SE
 from modsync.service import GameStatus, SyncStatus
-from modsync.ui import worker
 from modsync.ui.input import Action
 from modsync.ui.pages import Page
 from modsync.ui.widgets import HeroTile, StatusRow, Tile, label
@@ -70,15 +69,6 @@ class HomePage(Page):
         self.steam_options.clicked.connect(lambda: host.pages["system"].open_steam_settings())
         self.steam_options.setVisible(steam is None)
         left.addWidget(self.steam_options)
-        # Other games: shown where Steam has Daggerfall or DFU is installed.
-        self.dfu_row = StatusRow("Daggerfall Unity", "gamepad")
-        self.dfu_row.clicked.connect(lambda: host.go("daggerfall"))
-        self.dfu_row.hide()
-        left.addSpacing(12)
-        left.addWidget(self.dfu_row)
-        self._dfu_polls = 0
-        if steam is None:
-            self.refresh_dfu()
         self.copy_setup = Tile("Copy setup from another machine…", "", "devices", size="compact", chevron=True)
         self.copy_setup.clicked.connect(lambda: host.start_setup(copy_from_machine=True))
         self.copy_setup.setVisible(not state.has_instance and steam is None)
@@ -160,29 +150,15 @@ class HomePage(Page):
         host.busyChanged.connect(self.update_enabled)
         self.update_enabled()
 
-    def refresh_dfu(self) -> None:
-        """Read Daggerfall Unity's state again (off the UI thread), for its line."""
-        if self.host.steam_launch is None:
-            worker.run_async(dfu.overview, hook=False, on_done=self._show_dfu, on_failed=lambda _e: None)
-
-    def poll(self) -> None:
-        # Now and then, so Daggerfall installed through Steam meanwhile gets its line.
-        self._dfu_polls += 1
-        if self._dfu_polls % 8 == 0:
-            self.refresh_dfu()
-
-    def _show_dfu(self, ov: dfu.Overview) -> None:
-        if not ov.relevant:
-            self.dfu_row.hide()
-            return
-        if ov.install is None:
-            self.dfu_row.set_state("Not installed", "off", "Set it up from Steam's Daggerfall.")
-        elif ov.problems or ov.version_problem or ov.stale_path:
-            self.dfu_row.set_state("Needs a look", "warn", ov.version_problem or "Its Daggerfall data needs attention.")
-        else:
-            synced = [what for what, state in (("mods", ov.mods), ("saves", ov.saves)) if state == "on"]
-            self.dfu_row.set_state("Ready", "ok", f"Syncing {' and '.join(synced)}." if synced else "")
-        self.dfu_row.show()
+    def summary(self) -> tuple[str, str, str]:
+        """How Skyrim stands, as the game picker shows it: value word, tone, detail."""
+        if not self.service.state.has_instance:
+            return "Not set up", "off", TAGLINE
+        if self._recommendation and not self._optional:
+            return "Needs a fix", "warn", self._recommendation.removesuffix("…")
+        if self._checked is None:
+            return "Checking", "off", ""
+        return "Ready", "ok", self.mo2_row.description
 
     def preferred_focus(self):
         if self.install_mo2 is not None:
@@ -289,7 +265,7 @@ class HomePage(Page):
         if isinstance(self.play, HeroTile):
             self.play.set_role("normal" if title and not optional else "primary")
         self.play.set_description(risk or self._play_description)
-        if (self.host._current == "home" and self.host.scope() is self.host.chrome
+        if (self.host.page is self and self.host.scope() is self.host.chrome
                 and self.host.router.mode != "mouse"):
             if title and not optional and not was_recommended and self.host.focusWidget() is self.play and self.host.untouched:
                 self.next_step.setFocus()

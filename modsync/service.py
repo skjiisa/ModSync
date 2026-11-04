@@ -428,7 +428,8 @@ class ModSyncService:
         # Everything about MO2 and its vault goes; the other games stay set up.
         keep = self.reload_state()
         self.state = State(dfu_path=keep.dfu_path, game_folders=keep.game_folders,
-                           declined_folders=keep.declined_folders, paired=keep.paired)
+                           declined_folders=keep.declined_folders, paired=keep.paired,
+                           home_game=keep.home_game)
         self.state.save()
 
     # --- vaults ---

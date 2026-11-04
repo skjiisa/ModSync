@@ -1,5 +1,6 @@
 """Daggerfall Unity: set it up from Steam's Daggerfall, start it, and sync its
-mods and saves (see modsync.dfu). Opens as a sheet from Home.
+mods and saves (see modsync.dfu). Home shows it once Daggerfall is chosen in
+the game switcher at the top.
 
 The rows say how each part stands and change it when pressed: Steam's Play
 button switches between Daggerfall Unity and the original game, and the two
@@ -9,6 +10,7 @@ action installs Daggerfall Unity until it is installed, then plays it.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QUrl, Signal
@@ -17,6 +19,7 @@ from PySide6.QtWidgets import QProgressBar
 
 from modsync import dfu
 from modsync.ui import worker
+from modsync.ui.input import Action
 from modsync.ui.pages import Page
 from modsync.ui.widgets import HeroTile, StatusRow, Tile, label
 
@@ -56,6 +59,7 @@ class DaggerfallPage(Page):
         self.overview: dfu.Overview | None = None
         self._working = False
         self._focus_on_load = False
+        self._shown_at = 0.0
         self.head = self.header("Daggerfall Unity", "Set up from your Steam copy of The Elder Scrolls II: Daggerfall.")
         self.note = label("", "warning")
         self.note.hide()
@@ -103,6 +107,7 @@ class DaggerfallPage(Page):
         super().showEvent(event)
         if not self._working:
             self._focus_on_load = True
+            self._shown_at = time.monotonic()
             self.refresh()
 
     # --- reading ---
@@ -113,15 +118,29 @@ class DaggerfallPage(Page):
         if not self._working and self.isVisible():
             self.refresh()
 
-    def hideEvent(self, event) -> None:  # noqa: N802
-        """Closing the sheet: Home's line shows what changed here."""
-        super().hideEvent(event)
-        home = self.host.pages.get("home")
-        if home is not None and hasattr(home, "refresh_dfu"):
-            home.refresh_dfu()
+    def hints(self):
+        return [([Action.ALT], "Check again")]
+
+    def handle_action(self, action: Action) -> bool:
+        if action == Action.ALT:
+            if not self._working:
+                self.refresh()
+            return True
+        return False
+
+    @staticmethod
+    def summary(ov: dfu.Overview) -> tuple[str, str, str]:
+        """How Daggerfall Unity stands, as the game picker shows it: value word, tone, detail."""
+        if ov.install is None:
+            return "Not installed", "off", "Set it up from Steam's Daggerfall."
+        if ov.problems or ov.version_problem or ov.stale_path:
+            return "Needs a look", "warn", ov.version_problem or "Its Daggerfall data needs attention."
+        synced = [what for what, state in (("mods", ov.mods), ("saves", ov.saves)) if state == "on"]
+        return "Ready", "ok", f"Syncing {' and '.join(synced)}." if synced else ""
 
     def _show(self, ov: dfu.Overview) -> None:
         self.overview = ov
+        self.host.dfu_checked(ov)
         if ov.dagger is None:
             self.data_row.set_state("Not installed", "warn", "Install The Elder Scrolls II: Daggerfall in Steam (free).")
         elif ov.problems:
@@ -163,7 +182,11 @@ class DaggerfallPage(Page):
             # Shown before this was read: the blue action wasn't there to take focus.
             self._focus_on_load = False
             focused = self.focusWidget()
-            if focused is None or focused is self.data_row:
+            # Only while nothing was pressed since this was shown, and nothing covers it:
+            # a press in flight must land where it aimed.
+            settled = (self.host.router.last_input < self._shown_at and self.host.page is self
+                       and self.host.scope() is self.host.chrome)
+            if settled and (focused is None or focused is self.data_row):
                 target = self.preferred_focus()
                 if target is not None and target.isVisible():
                     target.setFocus()

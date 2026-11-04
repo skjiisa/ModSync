@@ -212,6 +212,14 @@ class InputRouter(QObject):
         or other controller Steam can turn into keys, or one SDL reads."""
         return self._pad_seen or bool(self.controller_names) or self.family != "keyboard"
 
+    def pad_sends(self, action: Action) -> bool:
+        """Whether the controller's button for ``action`` reaches ModSync. On
+        a Deck that SDL doesn't read, Steam's desktop configuration opens its
+        on-screen keyboard for X and sends no key."""
+        if action == Action.AUX:
+            return self._pad_seen or bool(self.controller_names) or self.family != "deck"
+        return True
+
     @property
     def glyph_style(self) -> str:
         """The style of single-glyph prompts (a lit row's legend, the bumpers

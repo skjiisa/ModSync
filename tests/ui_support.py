@@ -21,7 +21,7 @@ try:
 except ImportError:  # pragma: no cover - GUI extra not installed
     QApplication = None
 
-from modsync import background, gameversion, launchhook
+from modsync import background, dfu, gameversion, launchhook
 from modsync.firewall import Check
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import usvfs
@@ -89,6 +89,10 @@ class UiTestCase(unittest.TestCase):
             patch.object(launchhook, "upgrade", lambda appid=SKYRIM_SE.appid: None),
             patch("modsync.ui.pages.system.firewall.check", return_value=Check(None, True, "")),
             patch("modsync.ui.pages.mods.scan_instances", return_value=[]),
+            # No Daggerfall on the test machine, so Home has only Skyrim to
+            # show, unless a test says otherwise.
+            patch.object(dfu, "overview", lambda hook=True: dfu.Overview(
+                None, ["Steam hasn't installed it."], None, None, None, "off", "off", None)),
             # Don't read this machine's controllers: a plain keyboard unless a
             # test says otherwise.
             patch("modsync.ui.steaminput.family", return_value="keyboard"),

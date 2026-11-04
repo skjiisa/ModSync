@@ -6,6 +6,7 @@ keep focus to themselves while open and close with B (Escape), and every one
 of them works with a mouse too.
 
 * ``ConfirmSheet``: a question with a few choices.
+* ``GameSheet``: which game Home shows.
 * ``DetailsSheet``: read-only text, such as technical details.
 * ``KeyboardSheet``: text entry with an on-screen keyboard and a Paste key.
 * ``PinSheet``: six digit wheels for a pairing PIN, plus an address when needed.
@@ -268,6 +269,55 @@ class ConfirmSheet(Overlay):
         tile = self.tiles.get(self._default) if self._default else None
         if tile is not None:
             tile.setFocus(Qt.FocusReason.OtherFocusReason)
+        else:
+            super().focus_default()
+
+
+GameChoice = tuple[str, str, str, str, str]  # key, name, value word, tone, detail
+
+
+class GameSheet(Overlay):
+    """Which game Home shows. One row per game with how it stands, the one
+    shown now checked. Focus starts on another game: opening this means
+    switching, so X then A is enough."""
+
+    def __init__(self, host, games: list[GameChoice], current: str,
+                 on_choice: Callable[[str], None]) -> None:
+        super().__init__(host, "Switch game", width=640)
+        self._on_choice = on_choice
+        self._current = current
+        self.body.addSpacing(2)
+        self.rows: dict[str, Tile] = {}
+        rows = QVBoxLayout()
+        rows.setSpacing(8)
+        for key, name, value, tone, detail in games:
+            row = Tile(name, detail, None, status=True)
+            row.set_badge(value, tone)
+            row.end.check = key == current
+            row.clicked.connect(lambda _checked=False, k=key: self.choose(k))
+            self.rows[key] = row
+            rows.addWidget(row)
+        self.body.addLayout(rows)
+
+    def accept_hint(self) -> str:
+        focus = self.host.focusWidget()
+        for key, row in self.rows.items():
+            if focus is row:
+                return "Stay" if key == self._current else "Switch"
+        return "Select"
+
+    def choose(self, key: str) -> None:
+        if self._done:
+            return
+        self.dismiss()
+        if key != self._current:
+            self._on_choice(key)
+
+    def focus_default(self) -> None:
+        others = [row for key, row in self.rows.items() if key != self._current and row.isEnabled()]
+        target = others[0] if others else self.rows.get(self._current)
+        if target is not None:
+            target.setFocus(Qt.FocusReason.OtherFocusReason)
         else:
             super().focus_default()
 

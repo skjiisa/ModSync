@@ -29,7 +29,8 @@ except ImportError:  # pragma: no cover - not on Windows
 from modsync import config
 
 _FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "awaiting_vault_version",
-           "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside", "dfu_path", "game_folders", "declined_folders", "paired")
+           "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside", "dfu_path", "game_folders", "declined_folders", "paired",
+           "home_game")
 
 
 @dataclass
@@ -68,6 +69,8 @@ class State:
     # Paired with another machine (pairing is machine-wide), so Syncthing keeps
     # running to take up the folders it offers, even before anything syncs here.
     paired: bool = False
+    # The game the app's Home shows ("" for Skyrim), so it opens where it was left.
+    home_game: str = ""
 
     @staticmethod
     def path() -> Path:
