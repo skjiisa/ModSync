@@ -56,6 +56,11 @@ def example_conflicts(root: Path) -> list:
     return conflicts.find(root)
 
 
+def _update_state(self, **changes):
+    self.state = replace(self.state, **changes)
+    return self.state
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("scratch/ui-review"))
@@ -85,6 +90,8 @@ def main():
     patches = [
         patch("modsync.ui.steaminput.family", lambda *a, **k: family["value"]),
         patch.object(State, "load", return_value=State()),
+        # Nothing is written: choosing a game changes only the window's copy.
+        patch.object(ModSyncService, "update_state", _update_state),
         patch.object(ModSyncService, "game_status", return_value=game),
         patch.object(ModSyncService, "game_version_check", return_value=check),
         patch.object(ModSyncService, "status", return_value=SyncStatus(
@@ -184,17 +191,27 @@ def main():
                 None, False, True, native=str(dfu_install.executable) if hook_on else None)
             inst = replace(dfu_install) if installed else None
             return dfu.Overview(dagger, [], inst, str(dagger) if installed else None, status,
-                                "on" if installed else "off", "on" if installed else "off", None)
+                                "on" if installed else "off", "on" if installed else "off", None,
+                                "1.1.1" if installed else None)
 
         for installed, name in ((False, "daggerfall-install"), (True, "daggerfall")):
             with patch("modsync.dfu.overview", lambda hook=True, i=installed: dfu_overview(i)), \
                     patch.object(dfu.Install, "version", property(lambda self: "1.1.1")):
                 dw = window_for(State(**configured), mode="gamepad")
+                router._pad_seen = True  # Gaming Mode: SDL reads the Deck, so X arrives
+                router.controllersChanged.emit()
                 if installed:
+                    dw.pages["home"].on_game_checked(ready, gameversion.VersionCheck(ready.installed, ready.expected))
                     capture(dw, "home-dfu")
-                dw.go("daggerfall")
+                    dw.open_game_picker()
+                    capture(dw, "game-switch")
+                    dw.top_overlay.choose("daggerfall")
+                else:
+                    dw.go("daggerfall")
                 capture(dw, name)
                 dw.close()
+                router._pad_seen = False
+                router.controllersChanged.emit()
         w.activateWindow()
         waiting = replace(game, expected=None, awaiting_vault_version=True)
         with patch.object(ModSyncService, "game_status", return_value=waiting):

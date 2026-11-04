@@ -1,11 +1,15 @@
-"""The Daggerfall Unity sheet and its line on Home, with modsync.dfu faked."""
+"""Daggerfall Unity as a game Home can show, and the switcher that picks it,
+with modsync.dfu faked."""
 
 from pathlib import Path
 from unittest.mock import patch
 
 from modsync import dfu, launchhook
-from modsync.games import DAGGERFALL
-from modsync.ui.overlays import PageSheet
+from modsync.games import DAGGERFALL, SKYRIM_SE
+from modsync.state import State
+from modsync.ui.input import Action, InputRouter
+from modsync.ui.overlays import GameSheet
+from modsync.ui.widgets import HintButton
 from tests.ui_support import UiTestCase
 
 
@@ -22,7 +26,7 @@ def overview(*, steam=True, installed=False, hook_on=False, mods="off", saves="o
 
 class DaggerfallUiTests(UiTestCase):
     def open_sheet(self, ov):
-        """The sheet, with ``ov`` as what's set up for the rest of the test."""
+        """Home showing Daggerfall, with ``ov`` as what's set up for the rest of the test."""
         p = patch.object(dfu, "overview", lambda hook=True: ov)
         p.start()
         self.addCleanup(p.stop)
@@ -31,24 +35,118 @@ class DaggerfallUiTests(UiTestCase):
         self.settle(3)
         return window, window.pages["daggerfall"]
 
-    def test_home_shows_the_line_only_where_daggerfall_is_there(self):
+    def test_the_switcher_shows_only_where_daggerfall_is_there(self):
         for ov, shown in ((overview(steam=False), False), (overview(), True)):
             with self.subTest(shown=shown), patch.object(dfu, "overview", lambda hook=True, ov=ov: ov):
                 window = self.window()
                 self.settle(3)
-                home = window.pages["home"]
-                self.assertEqual(home.dfu_row.isVisibleTo(home), shown)
+                self.assertEqual(window.topbar.game_switch.isVisibleTo(window), shown)
+                self.assertEqual("Switch game" in window.hintbar.texts, shown)
+                if shown:
+                    self.assertEqual(window.topbar.game_switch.text(), "Skyrim")
                 window.close()
 
-    def test_the_home_line_opens_the_sheet(self):
+    def test_x_opens_the_picker_and_a_shows_daggerfall_on_home(self):
         with patch.object(dfu, "overview", lambda hook=True: overview(installed=True, mods="on")):
             window = self.window()
             self.settle(3)
-            home = window.pages["home"]
-            self.assertIn("Syncing mods", home.dfu_row.description)
-            home.dfu_row.click()
+            InputRouter.instance().dispatch(Action.AUX)
+            self.settle(2)
+            sheet = window.top_overlay
+            self.assertIsInstance(sheet, GameSheet)
+            self.assertEqual(list(sheet.rows), ["skyrim", "daggerfall"])
+            self.assertEqual(sheet.rows["skyrim"].title.text(), SKYRIM_SE.name)
+            self.assertTrue(sheet.rows["skyrim"].end.check)
+            daggerfall = sheet.rows["daggerfall"]
+            self.assertEqual(daggerfall.badge.text(), "Ready")
+            self.assertIn("Syncing mods", daggerfall.description)
+            # Opening it means switching: focus waits on the other game.
+            self.assertIs(window.focusWidget(), daggerfall)
+            self.assertIn("Switch", window.hintbar.texts)
+            InputRouter.instance().dispatch(Action.ACCEPT)
             self.settle(3)
-        self.assertTrue(any(isinstance(o, PageSheet) and o.page is window.pages["daggerfall"] for o in window.overlays))
+        self.assertFalse(window.overlays)
+        self.assertEqual(window._current, "home")
+        self.assertIs(window.page, window.pages["daggerfall"])
+        self.assertTrue(window.tabs["home"].isChecked())
+        self.assertEqual(window.topbar.game_switch.text(), "Daggerfall Unity")
+        self.assertTrue(window.pages["daggerfall"].isAncestorOf(window.focusWidget()))
+        self.assertEqual(State.load().home_game, "daggerfall")
+
+    def test_home_opens_on_the_game_last_shown(self):
+        State.update(home_game="daggerfall")
+        with patch.object(dfu, "overview", lambda hook=True: overview(installed=True)):
+            window = self.window()
+            self.settle(3)
+            self.assertIs(window.page, window.pages["daggerfall"])
+            window.switch_game("skyrim")
+            self.settle(3)
+        self.assertIs(window.page, window.pages["home"])
+        self.assertEqual(State.load().home_game, "")
+
+    def test_daggerfall_going_away_gives_home_back_to_skyrim(self):
+        window, _page = self.open_sheet(overview(installed=True))
+        self.assertIs(window.page, window.pages["daggerfall"])
+        window.dfu_checked(overview(steam=False))
+        self.settle(2)
+        self.assertIs(window.page, window.pages["home"])
+        self.assertFalse(window.topbar.game_switch.isVisibleTo(window))
+        self.assertEqual(State.load().home_game, "")  # next time opens on Skyrim, no swap
+
+    def test_finishing_skyrims_setup_ends_on_skyrims_home(self):
+        window, _page = self.open_sheet(overview(installed=True))
+        window.start_setup()
+        self.settle()
+        window.finish_setup()
+        self.settle(3)
+        self.assertIs(window.page, window.pages["home"])
+        self.assertEqual(window.topbar.game_switch.text(), "Skyrim")
+        self.assertEqual(State.load().home_game, "")
+
+    def test_a_deck_that_sdl_doesnt_read_is_promised_only_the_x_key(self):
+        """Steam's desktop configuration turns a Deck's X into its keyboard."""
+        with patch("modsync.ui.steaminput.family", return_value="deck"), \
+                patch.object(dfu, "overview", lambda hook=True: overview()):
+            window = self.window()
+            self.settle(3)
+            router = InputRouter.instance()
+            self.assertFalse(router.pad_sends(Action.AUX))
+            self.assertFalse(window.topbar.game_glyph.isVisibleTo(window))
+            hint = next(b for b in window.hintbar.findChildren(HintButton) if b.text() == "Switch game")
+            self.assertEqual([kind for kind, *_ in hint._parts()], ["key"])
+            router.pad_button("x", True)  # SDL reads the Deck after all: X arrives
+            router.pad_button("x", False)
+            self.settle()
+            self.assertTrue(router.pad_sends(Action.AUX))
+            self.assertTrue(window.topbar.game_glyph.isVisibleTo(window))
+
+    def test_steams_skyrim_launch_shows_only_skyrim(self):
+        State.update(home_game="daggerfall")
+        with patch.object(dfu, "overview", lambda hook=True: overview(installed=True)):
+            window = self.window(steam=launchhook.SteamLaunch(SKYRIM_SE))
+            self.settle(3)
+            InputRouter.instance().dispatch(Action.AUX)
+            self.settle(2)
+        self.assertIs(window.page, window.pages["home"])
+        self.assertFalse(window.overlays)
+        self.assertFalse(window.topbar.game_switch.isVisibleTo(window))
+
+    def test_left_from_the_first_tab_reaches_the_switcher(self):
+        with patch.object(dfu, "overview", lambda hook=True: overview()):
+            window = self.window()
+            self.settle(3)
+            router = InputRouter.instance()
+            window.tabs["home"].setFocus()
+            router.dispatch(Action.LEFT)
+            self.settle()
+            self.assertIs(window.focusWidget(), window.topbar.game_switch)
+            router.dispatch(Action.RIGHT)
+            self.settle()
+            self.assertIs(window.focusWidget(), window.tabs["home"])
+            window.topbar.game_switch.setFocus()
+            router.dispatch(Action.ACCEPT)
+            self.settle(2)
+            self.assertIsInstance(window.top_overlay, GameSheet)
 
     def test_before_install_the_blue_action_installs(self):
         window, page = self.open_sheet(overview())
@@ -173,16 +271,17 @@ class DaggerfallReviewTests(UiTestCase):
             self.settle(4)
         self.assertIn("Permission denied", window.messages[-1])
 
-    def test_home_shows_what_changed_once_the_sheet_closes(self):
+    def test_the_picker_says_what_changed_on_daggerfalls_home(self):
         self.ov = overview()
         window = self.window()
-        self.settle(3)
-        home = window.pages["home"]
-        self.assertEqual(home.dfu_row.badge.text(), "Not installed")
         window.go("daggerfall")
         self.settle(3)
         self.ov = overview(installed=True, saves="on")
-        window.top_overlay.cancel()
-        self.settle(4)
-        self.assertEqual(home.dfu_row.badge.text(), "Ready")
-        self.assertIn("saves", home.dfu_row.description)
+        window.pages["daggerfall"].handle_action(Action.ALT)  # Y: check again
+        self.settle(3)
+        window.open_game_picker()
+        self.settle()
+        row = window.top_overlay.rows["daggerfall"]
+        self.assertEqual(row.badge.text(), "Ready")
+        self.assertIn("saves", row.description)
+        self.assertTrue(row.end.check)

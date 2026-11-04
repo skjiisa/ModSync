@@ -227,6 +227,7 @@ class TileEnd(QWidget):
         super().__init__(tile)
         self.tile = tile
         self.chevron = False
+        self.check = False  # the current choice in a picker
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
@@ -249,7 +250,11 @@ class TileEnd(QWidget):
             icons.paint_glyph(p, "accept", rect, glyph_style(), theme.font(11),
                               on="accent" if tile.property("tileRole") == "primary" else "focus")
             return
-        if self.chevron:
+        if self.check:
+            fg = theme.color("text" if tile.isEnabled() else "disabled")
+            icons.paint_icon(p, "check", QRectF(self.width() - 22, (self.height() - 22) / 2, 22, 22), fg,
+                             weight=2.2)
+        elif self.chevron:
             fg = theme.color("on_accent" if tile.property("tileRole") == "primary" else "muted")
             if not tile.isEnabled():
                 fg = theme.color("disabled")
@@ -879,6 +884,73 @@ class TabButton(QAbstractButton):
             p.drawEllipse(QPointF(r.right() - 18, r.center().y()), 4, 4)
 
 
+class GameSwitch(QAbstractButton):
+    """The game Home shows, in the top bar: pressing it opens the game picker.
+    A Row Slate control with a downward chevron, so it reads as something to
+    choose from rather than as another section tab."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setProperty("ownFocus", True)
+        self._widest = 0.0
+
+    def setText(self, text: str) -> None:  # noqa: N802 (Qt API)
+        super().setText(text)
+        self.updateGeometry()
+        self.update()
+
+    def fit(self, names: list[str]) -> None:
+        """As wide as the longest of these names, so switching games never
+        moves the section tabs."""
+        fm = QFontMetricsF(theme.font(12.5, QFont.Weight.DemiBold))
+        self._widest = max((fm.horizontalAdvance(name) for name in names), default=0.0)
+        self.updateGeometry()
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        fm = QFontMetricsF(theme.font(12.5, QFont.Weight.DemiBold))
+        text = max(fm.horizontalAdvance(self.text()), self._widest)
+        return QSize(int(text + 16 + 8 + 18 + 12), 40)
+
+    def focusInEvent(self, event) -> None:  # noqa: N802
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802
+        super().focusOutEvent(event)
+        self.update()
+
+    def sync_lit(self) -> None:
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0, 2, 0, -2)
+        lit = shows_focus(self)
+        down = self.isDown()
+        if lit:
+            fill = theme.color("focus_pressed" if down else "focus")
+        else:
+            fill = theme.color("sunken" if down else ("raised" if self.underMouse() else "surface"))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(fill)
+        p.drawRoundedRect(r, RADIUS, RADIUS)
+        p.setPen(theme.color("on_focus" if lit else "text"))
+        p.setFont(theme.font(12.5, QFont.Weight.DemiBold))
+        p.drawText(r.adjusted(16, 0, -38, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self.text())
+        # The row chevron turned to point down: a list opens from here.
+        side = 18.0
+        p.save()
+        p.translate(r.right() - 12 - side / 2, r.center().y())
+        p.rotate(90)
+        icons.paint_icon(p, "chevron", QRectF(-side / 2, -side / 2, side, side),
+                         theme.color("on_focus_dim" if lit else "muted"), weight=2.0)
+        p.restore()
+
+
 class GlyphLabel(QWidget):
     """A controller button glyph that follows the input device in use."""
 
@@ -969,6 +1041,8 @@ class HintButton(QAbstractButton):
             style = self.router.pad_style
             glyphs: list[str] = []
             for action in self.actions:
+                if not self.router.pad_sends(action):
+                    continue  # no button sends it here: the key cap alone
                 if ACTION_GLYPH[action] not in glyphs:
                     glyphs.append(ACTION_GLYPH[action])
             parts += [("pad", g, icons.glyph_width(g, style, 26, font)) for g in glyphs]

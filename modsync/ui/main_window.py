@@ -1,8 +1,10 @@
 """The one ModSync window, built like a console app.
 
 Home, Sync and Settings are switched with the bumpers or Q/E. Home holds
-setup, repairs and launch actions. Game and MO2 maintenance open as sheets
-without leaving Home. The setup wizard takes over the middle when it runs.
+setup, repairs and launch actions for one game at a time: the game switcher
+beside the wordmark (or X) picks which, once there is more than Skyrim to
+show. Game and MO2 maintenance open as sheets without leaving Home. The setup
+wizard takes over the middle when it runs.
 
 The same window serves Steam's launch hook. Given a ``SteamLaunch``, Steam is
 waiting on it: Play and Open MO2 prepare the same launch as ever and hand it to
@@ -30,11 +32,12 @@ from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from modsync import __version__, launchhook
+from modsync import __version__, dfu, launchhook
+from modsync.games import SKYRIM_SE
 from modsync.service import ModSyncService
 from modsync.ui import nav, theme, worker
 from modsync.ui.input import Action, DIRECTIONS, InputRouter
-from modsync.ui.overlays import ConfirmSheet, Overlay, PageSheet
+from modsync.ui.overlays import ConfirmSheet, GameSheet, Overlay, PageSheet
 from modsync.ui.pages import Page
 from modsync.ui.pages.daggerfall import DaggerfallPage
 from modsync.ui.pages.game import GamePage
@@ -44,7 +47,8 @@ from modsync.ui.pages.setup import SetupFlow
 from modsync.ui.pages.sync import SyncPage
 from modsync.ui.pages.system import SystemPage
 from modsync.ui.widgets import (
-    Backdrop, FocusHalo, GlyphLabel, HintBar, Icon, TabButton, Toasts, discard, label, pill, restyle_rows,
+    Backdrop, FocusHalo, GameSwitch, GlyphLabel, HintBar, Icon, TabButton, Toasts, discard, label, pill,
+    restyle_rows,
     sync_lit,
 )
 
@@ -60,6 +64,10 @@ APP_ID = "io.github.skjiisa.ModSync"
 
 PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage, DaggerfallPage)
 TAB_KEYS = ("home", "sync", "system")
+# The games Home can show: key, the page that is their Home, name in the switcher.
+GAMES = (("skyrim", "home", "Skyrim"), ("daggerfall", "daggerfall", "Daggerfall Unity"))
+GAME_PAGES = {key: page for key, page, _name in GAMES}
+_GAME_POLLS = 8  # how many polls apart Daggerfall is looked for while Home shows Skyrim
 
 
 def alive(w: QWidget | None) -> bool:
@@ -93,6 +101,20 @@ class TopBar(QWidget):
         h.addWidget(app_mark(32))
         h.addWidget(label("ModSync", "heading", wrap=False))
         h.addSpacing(24)
+        # Which game Home shows, once there is a choice: X, or choose it. Set
+        # apart from the section tabs: it changes what Home shows, not where you are.
+        game = QWidget()
+        g = QHBoxLayout(game)
+        g.setContentsMargins(0, 0, 18, 0)
+        g.setSpacing(10)
+        self.game_glyph = GlyphLabel("aux", window.router)
+        g.addWidget(self.game_glyph)
+        self.game_switch = GameSwitch()
+        self.game_switch.clicked.connect(window.open_game_picker)
+        self.game_switch.fit([name for _key, _page, name in GAMES])
+        g.addWidget(self.game_switch)
+        self.game_box = game
+        h.addWidget(game)
         self.lb = GlyphLabel("prev_tab", window.router)
         h.addWidget(self.lb)
         self.tabs_row = QHBoxLayout()
@@ -107,8 +129,10 @@ class TopBar(QWidget):
         self.clock = label("", "secondary", wrap=False)
         h.addWidget(self.clock)
         self._tabs_on = True
+        self._game = ""
         self.router = window.router
         window.router.modeChanged.connect(self._update_glyphs)
+        window.router.controllersChanged.connect(self._update_glyphs)
         self._update_glyphs()
         self._tick()
         timer = QTimer(self)
@@ -129,10 +153,19 @@ class TopBar(QWidget):
         self._tabs_on = on
         self._update_glyphs()
 
+    def set_game(self, name: str) -> None:
+        """Show the switcher with this game's name, or hide it ("")."""
+        self._game = name
+        self.game_switch.setText(name)
+        self._update_glyphs()
+
     def _update_glyphs(self, *_args) -> None:
         show = self._tabs_on and self.router.mode != "mouse"
         self.lb.setVisible(show)
         self.rb.setVisible(show)
+        switch = self._tabs_on and bool(self._game)
+        self.game_box.setVisible(switch)
+        self.game_glyph.setVisible(switch and show and self.router.pad_sends(Action.AUX))
 
 
 class MainWindow(QMainWindow):
@@ -162,6 +195,11 @@ class MainWindow(QMainWindow):
         self._busy: set[str] = set()
         self._rebuild_pending = False
         self._current = "home"
+        # Steam's Play button opened this for Skyrim: only Skyrim is shown.
+        saved = self.service.state.home_game
+        self.game = saved if steam_launch is None and saved in GAME_PAGES else "skyrim"
+        self.dfu_overview: dfu.Overview | None = None
+        self._game_polls = 0
         self._call.connect(lambda fn: fn())
 
         self.shell = Backdrop()
@@ -185,6 +223,8 @@ class MainWindow(QMainWindow):
         self._timer.timeout.connect(self.poll)
         self._build_pages()
         self._timer.start(_POLL_MS)
+        self._update_game_switch()
+        self._look_for_games()
 
         app = QApplication.instance()
         app.focusChanged.connect(self._on_focus_changed)
@@ -236,10 +276,18 @@ class MainWindow(QMainWindow):
 
     @property
     def page(self) -> Page:
-        return self.pages[self._current]
+        return self.pages[self._page_key(self._current)]
+
+    def _page_key(self, key: str) -> str:
+        """The page a section shows: Home is the chosen game's."""
+        return GAME_PAGES[self.game] if key == "home" else key
 
     def go(self, key: str, *, focus: bool = True) -> None:
         if key not in self.pages or self.setup is not None:
+            return
+        game = next((g for g, page in GAME_PAGES.items() if page == key and page != "home"), None)
+        if game is not None:
+            self.switch_game(game, focus=focus)
             return
         if key not in self.tabs:
             if self.busy:
@@ -255,7 +303,7 @@ class MainWindow(QMainWindow):
         self._current = key
         for k, tab in self.tabs.items():
             tab.setChecked(k == key)
-        page = self.pages[key]
+        page = self.pages[self._page_key(key)]
         if self.stack.currentWidget() is not page:
             self.stack.setCurrentWidget(page)
             keys = list(self.tabs)
@@ -278,6 +326,77 @@ class MainWindow(QMainWindow):
         anim.setStartValue(end + QPoint(48 if direction > 0 else -48, 0))
         anim.setEndValue(end)
         anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+
+    # --- games ---
+    @property
+    def switchable(self) -> bool:
+        """More than Skyrim to show: Steam has Daggerfall, or DFU is installed
+        (or Home shows Daggerfall already, before that has been read)."""
+        if self.steam_launch is not None:
+            return False
+        ov = self.dfu_overview
+        return ov.relevant if ov is not None else self.game != "skyrim"
+
+    def _update_game_switch(self) -> None:
+        if not self.switchable and self.game != "skyrim":
+            # Daggerfall went away (uninstalled from Steam, say): Home is Skyrim's again.
+            self._show_skyrim()
+            if self._current == "home" and self.setup is None:
+                self.stack.setCurrentWidget(self.page)
+                if not self.overlays:
+                    self.page.focus_default()
+        name = dict((key, name) for key, _page, name in GAMES)[self.game]
+        self.topbar.set_game(name if self.switchable else "")
+        self.refresh_hints()
+
+    def _show_skyrim(self) -> None:
+        """Make Home Skyrim's without going there, and remember it."""
+        if self.game != "skyrim":
+            self.game = "skyrim"
+            self.topbar.set_game("Skyrim" if self.switchable else "")
+            worker.run_async(self.service.update_state, home_game="", on_failed=lambda _e: None)
+
+    def _look_for_games(self) -> None:
+        """Read whether Daggerfall is here, off the UI thread (it reads Steam's libraries)."""
+        if self.steam_launch is None:
+            worker.run_async(dfu.overview, hook=False, on_done=self.dfu_checked, on_failed=lambda _e: None)
+
+    def dfu_checked(self, ov: dfu.Overview) -> None:
+        """Daggerfall Unity was read (here, or by its page): the switcher follows."""
+        if not shiboken6.isValid(self):
+            return
+        self.dfu_overview = ov
+        self._update_game_switch()
+
+    def game_choices(self) -> list[tuple[str, str, str, str, str]]:
+        """Each game the picker offers, with how it stands."""
+        choices = [("skyrim", SKYRIM_SE.name, *self.pages["home"].summary())]
+        if self.dfu_overview is not None and self.dfu_overview.relevant:
+            choices.append(("daggerfall", "Daggerfall Unity", *DaggerfallPage.summary(self.dfu_overview)))
+        return choices
+
+    def open_game_picker(self) -> None:
+        if not self.switchable or self.setup is not None or self.overlays:
+            return
+        GameSheet(self, self.game_choices(), self.game, lambda key: self.switch_game(key)).open()
+
+    def switch_game(self, game: str, *, focus: bool = True) -> None:
+        """Show ``game`` on Home and go there. Remembered for next time."""
+        if game not in GAME_PAGES or self.setup is not None or self.overlays:
+            return
+        if game != "skyrim" and self.steam_launch is not None:
+            return
+        order = list(GAME_PAGES)
+        step = order.index(game) - order.index(self.game)
+        if game != self.game:
+            self.game = game
+            self.topbar.set_game(dict((key, name) for key, _page, name in GAMES)[game])
+            worker.run_async(self.service.update_state, home_game="" if game == "skyrim" else game,
+                             on_failed=lambda _e: None)
+        was_home = self._current == "home"
+        self.go("home", focus=focus and self.router.mode != "mouse")
+        if was_home:
+            self._slide(self.page, step)
 
     def cycle(self, step: int) -> None:
         keys = list(self.tabs)
@@ -304,7 +423,7 @@ class MainWindow(QMainWindow):
         self._build_pages()
         self._timer.start(_POLL_MS)
         self._current = current if current in self.pages else "home"
-        self.stack.setCurrentWidget(self.pages[self._current])
+        self.stack.setCurrentWidget(self.page)
         self.go(self._current)
 
     # --- setup wizard ---
@@ -330,6 +449,7 @@ class MainWindow(QMainWindow):
         discard(setup)
         self.topbar.set_tabs_visible(True)
         self._current = "home"
+        self._show_skyrim()  # the wizard set up Skyrim: end on its Play
         self.rebuild()
 
     # --- host services for pages ---------------------------------------------------
@@ -542,6 +662,10 @@ class MainWindow(QMainWindow):
     def poll(self) -> None:
         for page in self.pages.values():
             page.poll()
+        # Now and then, so Daggerfall installed through Steam meanwhile can be switched to.
+        self._game_polls += 1
+        if self._game_polls % _GAME_POLLS == 0 and self.game != "daggerfall":
+            self._look_for_games()
         for message in self.service.launcher.poll():
             self.notify(f"⚠ {message}")
         self._apply_busy()  # a game started from here may have exited
@@ -608,6 +732,13 @@ class MainWindow(QMainWindow):
                 self.focus_scope_default()
                 return True
             direction = action.value
+            switch = self.topbar.game_switch
+            if focus is switch:
+                if action == Action.DOWN:
+                    self.page.focus_default()
+                elif action == Action.RIGHT:
+                    self.tabs[self._current].setFocus(Qt.FocusReason.OtherFocusReason)
+                return True
             if isinstance(focus, TabButton):
                 if action == Action.DOWN:
                     self.page.focus_default()
@@ -618,9 +749,11 @@ class MainWindow(QMainWindow):
                     if 0 <= i < len(keys):
                         self.tabs[keys[i]].setFocus(Qt.FocusReason.OtherFocusReason)
                         self.go(keys[i], focus=False)
+                    elif i < 0 and switch.isVisible():
+                        switch.setFocus(Qt.FocusReason.OtherFocusReason)  # past the first tab: the game
                 return True
             target = nav.neighbour(scope, focus, direction)
-            if isinstance(target, TabButton) and not isinstance(focus, TabButton):
+            if isinstance(target, (TabButton, GameSwitch)) and not isinstance(focus, TabButton):
                 self.tabs[self._current].setFocus(Qt.FocusReason.OtherFocusReason)
                 return True
             if target is not None:
@@ -653,6 +786,9 @@ class MainWindow(QMainWindow):
         if action in (Action.PREV_TAB, Action.NEXT_TAB):
             self.cycle(-1 if action == Action.PREV_TAB else 1)
             return True
+        if action == Action.AUX:
+            self.open_game_picker()
+            return True
         if action == Action.MENU:
             self.go("home")
             return True
@@ -671,6 +807,8 @@ class MainWindow(QMainWindow):
             hints = self.setup.hints()
         else:
             hints = [*self.page.hints(), ([Action.ACCEPT], "Select")]
+            if self._current == "home" and self.switchable:
+                hints.insert(0, ([Action.AUX], "Switch game"))
             hints.append(([Action.BACK], "Home" if self._current != "home" else "Quit"))
             hints.append(([Action.PREV_TAB, Action.NEXT_TAB], "Sections"))
         self.hintbar.set_hints(hints)
@@ -691,7 +829,7 @@ class MainWindow(QMainWindow):
         scope = self.scope()
         escaped = scope is not self.chrome and not (new is scope or scope.isAncestorOf(new))
         gone = alive(old) and (not old.isVisible() or not old.isEnabled())
-        bounced = isinstance(new, TabButton) and gone and self.stack.isAncestorOf(old)
+        bounced = isinstance(new, (TabButton, GameSwitch)) and gone and self.stack.isAncestorOf(old)
         if escaped or bounced:
             QTimer.singleShot(0, self, self.focus_scope_default)
         for page in self.pages.values():
