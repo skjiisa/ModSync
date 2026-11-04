@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QProgressBar, QVBoxLayout
 
-from modsync import launchhook
+from modsync import dfu, launchhook
 from modsync.games import SKYRIM_SE
 from modsync.service import GameStatus, SyncStatus
+from modsync.ui import worker
 from modsync.ui.input import Action
 from modsync.ui.pages import Page
 from modsync.ui.widgets import HeroTile, StatusRow, Tile, label
@@ -69,6 +70,14 @@ class HomePage(Page):
         self.steam_options.clicked.connect(lambda: host.pages["system"].open_steam_settings())
         self.steam_options.setVisible(steam is None)
         left.addWidget(self.steam_options)
+        # Other games: shown where Steam has Daggerfall or DFU is installed.
+        self.dfu_row = StatusRow("Daggerfall Unity", "gamepad")
+        self.dfu_row.clicked.connect(lambda: host.go("daggerfall"))
+        self.dfu_row.hide()
+        left.addSpacing(12)
+        left.addWidget(self.dfu_row)
+        if steam is None:
+            worker.run_async(dfu.overview, hook=False, on_done=self._show_dfu, on_failed=lambda _e: None)
         self.copy_setup = Tile("Copy setup from another machine…", "", "devices", size="compact", chevron=True)
         self.copy_setup.clicked.connect(lambda: host.start_setup(copy_from_machine=True))
         self.copy_setup.setVisible(not state.has_instance and steam is None)
@@ -149,6 +158,18 @@ class HomePage(Page):
         host.setupDescribed.connect(self.on_setup_described)
         host.busyChanged.connect(self.update_enabled)
         self.update_enabled()
+
+    def _show_dfu(self, ov: dfu.Overview) -> None:
+        if not ov.relevant:
+            return
+        if ov.install is None:
+            self.dfu_row.set_state("Not installed", "off", "Set it up from Steam's Daggerfall.")
+        elif ov.problems or ov.version_problem or ov.stale_path:
+            self.dfu_row.set_state("Needs a look", "warn", ov.version_problem or "Its Daggerfall data needs attention.")
+        else:
+            synced = [what for what, state in (("mods", ov.mods), ("saves", ov.saves)) if state == "on"]
+            self.dfu_row.set_state("Ready", "ok", f"Syncing {' and '.join(synced)}." if synced else "")
+        self.dfu_row.show()
 
     def preferred_focus(self):
         if self.install_mo2 is not None:

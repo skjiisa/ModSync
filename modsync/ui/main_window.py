@@ -36,6 +36,7 @@ from modsync.ui import nav, theme, worker
 from modsync.ui.input import Action, DIRECTIONS, InputRouter
 from modsync.ui.overlays import ConfirmSheet, Overlay, PageSheet
 from modsync.ui.pages import Page
+from modsync.ui.pages.daggerfall import DaggerfallPage
 from modsync.ui.pages.game import GamePage
 from modsync.ui.pages.home import HomePage
 from modsync.ui.pages.mods import ModsPage
@@ -57,7 +58,7 @@ _POLL_MS = 4000
 
 APP_ID = "io.github.skjiisa.ModSync"
 
-PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage)
+PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage, DaggerfallPage)
 TAB_KEYS = ("home", "sync", "system")
 
 

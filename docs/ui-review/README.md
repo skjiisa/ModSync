@@ -155,3 +155,24 @@ window used with a mouse, keyboard symbols and selection, and validation at
 selected setup, ready, repair and maintenance screenshots. Copy the ones you
 want here and compress them with `optipng`. The installed Flatpak
 is a separate build and does not pick up source edits.
+
+## Daggerfall Unity
+
+Where Steam has *The Elder Scrolls II: Daggerfall*, or Daggerfall Unity is
+already installed, Home gets a line for it below Skyrim's rows. Without
+either, Home is unchanged.
+
+![Home with Daggerfall Unity](home-dfu.png)
+
+Its sheet lists the Steam data, the install, what Steam's Play button starts,
+and mods and saves sync. Each row changes what it shows when pressed. Until
+Daggerfall Unity is installed, the blue action installs it, and the rows that
+need it wait.
+
+![Daggerfall Unity before installing](daggerfall-install.png)
+
+Once installed, the blue action plays it, through Steam when the Play button
+is set to Daggerfall Unity, which also syncs the saves around the game.
+
+![Daggerfall Unity ready](daggerfall.png)
+

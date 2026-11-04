@@ -533,8 +533,10 @@ instead of the detected one.
 
 ModSync can set up [Daggerfall Unity](https://www.dfworkshop.net/) (DFU)
 from the free Steam copy of *The Elder Scrolls II: Daggerfall*. This is
-separate from the Skyrim setup and uses none of the MO2 tools. So far it is
-command line only. The app screens are tracked in #107.
+separate from the Skyrim setup and uses none of the MO2 tools. In the app,
+the Daggerfall Unity line on Home opens a sheet for all of it: installing,
+Steam's Play button, Play, and mods and saves sync. The line appears once
+Steam has Daggerfall. The commands below do the same from a terminal.
 
 1. Install *The Elder Scrolls II: Daggerfall* in Steam.
 2. `modsync dfu install` downloads the official DFU 1.1.1 Linux build,

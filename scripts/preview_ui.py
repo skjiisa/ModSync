@@ -22,9 +22,9 @@ from PySide6.QtCore import QThreadPool
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea
 
-from modsync import gameversion, launchhook
+from modsync import dfu, gameversion, launchhook
 from modsync.firewall import Check, Firewall
-from modsync.games import SKYRIM_SE
+from modsync.games import DAGGERFALL, SKYRIM_SE
 from modsync.mo2 import usvfs
 from modsync.pairing_code import PairingCode
 from modsync.pairing_lan import Announcement
@@ -174,6 +174,28 @@ def main():
         capture(w, "home-working")
         panel._end_file_operation()
         settle()
+        dfu_install = dfu.Install(Path("/home/you/Games/Daggerfall Unity"))
+        dagger = Path("/home/you/.local/share/Steam/steamapps/common/The Elder Scrolls Daggerfall/DF/DAGGER")
+
+        def dfu_overview(installed: bool):
+            hook_on = installed
+            status = launchhook.LaunchHookStatus(
+                DAGGERFALL, hook_on, "modsync_1812390_proton" if hook_on else None, hook_on, None, None, True,
+                None, False, True, native=str(dfu_install.executable) if hook_on else None)
+            inst = replace(dfu_install) if installed else None
+            return dfu.Overview(dagger, [], inst, str(dagger) if installed else None, status,
+                                "on" if installed else "off", "on" if installed else "off", None)
+
+        for installed, name in ((False, "daggerfall-install"), (True, "daggerfall")):
+            with patch("modsync.dfu.overview", lambda hook=True, i=installed: dfu_overview(i)), \
+                    patch.object(dfu.Install, "version", property(lambda self: "1.1.1")):
+                dw = window_for(State(**configured), mode="gamepad")
+                if installed:
+                    capture(dw, "home-dfu")
+                dw.go("daggerfall")
+                capture(dw, name)
+                dw.close()
+        w.activateWindow()
         waiting = replace(game, expected=None, awaiting_vault_version=True)
         with patch.object(ModSyncService, "game_status", return_value=waiting):
             waiting_window = window_for(State(**configured, folder_id="example", awaiting_vault_version=True))
