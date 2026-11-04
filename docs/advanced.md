@@ -309,6 +309,17 @@ Pairing is between machines, not between folders. Machines that have paired,
 by joining the MO2 vault, with the LAN PIN or with a code, share every folder
 ModSync syncs on either one. A vault created later is shared with them too.
 
+Each paired machine also passes on the machines it shares folders with
+(Syncthing calls it an introducer). When a Steam Deck and a laptop have both
+paired with the desktop, the desktop tells each about the other the next time
+they connect to it. After that, the Deck and the laptop sync with each other
+directly, even with the desktop off. The desktop passes them on through a
+folder it syncs with both, and once they know each other they share every
+folder, including a game's folder the desktop doesn't sync. Machines paired with an older
+ModSync get this the next time ModSync runs on them, and the shared machine
+has to be online once afterwards. If it never will be, "Add a machine by
+code…" on one of the others, with the other's code, pairs them directly.
+
 Games other than Skyrim sync through their own folders, each with a fixed
 Syncthing id (`modsync-<name>`). When a paired machine starts syncing one,
 the others are offered it. Each takes it up as soon as that game is set up

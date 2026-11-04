@@ -268,6 +268,17 @@ def _finish_stop(spec: FolderSpec) -> None:
 
 def share_with(client: SyncthingClient, device_id: str) -> list[str]:
     """Add a newly paired machine to every game folder synced here."""
+    return _share_with_all(client, [device_id])
+
+
+def share_with_peers(client: SyncthingClient) -> list[str]:
+    """Add every paired machine to every game folder synced here. A machine
+    another one introduced arrives without being paired here, so nothing
+    else shares the folders with it. Returns the keys changed."""
+    return _share_with_all(client, peers(client))
+
+
+def _share_with_all(client: SyncthingClient, device_ids: list[str]) -> list[str]:
     added = []
     st = State.load()
     for key in st.game_folders:
@@ -279,9 +290,9 @@ def share_with(client: SyncthingClient, device_id: str) -> list[str]:
         except Exception:
             continue  # not in Syncthing (removed by hand): take_offers or share puts it back
         ids = [d["deviceID"] for d in folder.get("devices", [])]
-        if device_id in ids:
+        if set(device_ids) <= set(ids):
             continue
-        folder["devices"] = device_entries([*ids, device_id])
+        folder["devices"] = device_entries([*ids, *device_ids])
         client.put_folder(folder)
         added.append(key)
     return added
