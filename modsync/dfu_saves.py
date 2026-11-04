@@ -475,15 +475,17 @@ def _old(slot: Path) -> Path:
     return slot.with_name(f".modsync-old-{slot.name}")
 
 
-def _settle_placement(saves: Path, slot: str, entry: dict) -> dict | None:
+def _settle_placement(saves: Path, slot: str, entry: dict) -> tuple[dict | None, list[Path]]:
     """Finish or undo a placement a sync was cut short in. ``pending`` is
     written only once the copy beside the slot (``.modsync-incoming-``) is
     whole and checked, so from what the slot and its copies hold now the
     swap can be told apart: that copy still there with the new files, not
     swapped; there with other files, swapped in one step (it holds the old
     ones); gone, moved into place. Returns the slot's entry as it now stands
-    (None: the slot holds nothing of ours)."""
-    pending = entry.pop("pending")
+    (None: the slot holds nothing of ours), and the copies to remove once
+    that is saved: removed first, a recovery cut short could no longer tell."""
+    pending = entry["pending"]
+    entry = {k: v for k, v in entry.items() if k != "pending"}
     target, incoming, old = saves / slot, _incoming(saves / slot), _old(saves / slot)
     if old.exists() and not target.exists():
         os.rename(old, target)  # cut short between the two renames of a two-step swap: undo it
@@ -492,15 +494,14 @@ def _settle_placement(saves: Path, slot: str, entry: dict) -> dict | None:
         swapped = content(incoming) != pending["digest"]
     else:
         swapped = target.exists()
-    shutil.rmtree(incoming, ignore_errors=True)
-    shutil.rmtree(old, ignore_errors=True)
+    leftovers = [incoming, old]
     if not swapped:
-        return entry if entry.get("version") else None
+        return (entry if entry.get("version") else None), leftovers
     # It holds the placed version, or (if DFU saved since) one made from it:
     # "" as fingerprint has the next step look at it as a change made here.
     still = content(target) == pending["digest"]
-    return {"key": entry["key"], "version": pending["version"], "vv": _vv(pending["vv"]),
-            "fingerprint": fingerprint(target) if still else ""}
+    return ({**_carried(entry), "key": entry["key"], "version": pending["version"], "vv": _vv(pending["vv"]),
+             "fingerprint": fingerprint(target) if still else ""}, leftovers)
 
 
 def _place(record: Record, target: Path, mapping: _Mapping, slot_entry: dict) -> bool:
@@ -530,11 +531,17 @@ def _place(record: Record, target: Path, mapping: _Mapping, slot_entry: dict) ->
         os.rename(target, old)
         os.rename(incoming, target)
         incoming = old
-    mapping.slots[slot] = {"key": slot_entry["key"], "version": record.name, "vv": settled,
-                           "fingerprint": fingerprint(target)}
+    mapping.slots[slot] = {**_carried(slot_entry), "key": slot_entry["key"], "version": record.name,
+                           "vv": settled, "fingerprint": fingerprint(target)}
     mapping.save()
     shutil.rmtree(incoming, ignore_errors=True)  # the old contents
     return True
+
+
+def _carried(entry: dict | None) -> dict:
+    """What a slot's entry keeps when it gets a new version: for a save with
+    copies in several slots, what deleting the others would delete."""
+    return {k: entry[k] for k in ("covers", "latest") if entry and k in entry}
 
 
 def _remove(slot: Path) -> None:
@@ -560,12 +567,14 @@ def _recover(saves: Path, library: Path, mapping: _Mapping, machine: str) -> Non
     """Finish what an interrupted sync left: placements, removals, and this
     machine's own versions cut short before their ``.id``."""
     for slot in [s for s, e in mapping.slots.items() if e.get("pending")]:
-        entry = _settle_placement(saves, slot, mapping.slots[slot])
+        entry, leftovers = _settle_placement(saves, slot, mapping.slots[slot])
         if entry is None:
             del mapping.slots[slot]
         else:
             mapping.slots[slot] = entry
         mapping.save()
+        for leftover in leftovers:
+            shutil.rmtree(leftover, ignore_errors=True)
     for old in saves.glob(".modsync-old-SAVE*"):
         slot = saves / old.name.removeprefix(".modsync-old-")
         if not slot.exists():
@@ -655,16 +664,18 @@ def sync(saves: Path, library: Path, machine: Machine, *, guard: Guard | None = 
             others = [e for e in mapping.slots.values() if e is not known and e["key"] == known["key"]]
             m = _NAME_RE.match(str(known.get("version", "")))
             latest = max(int(m["time"]) if m else 0, int(known.get("latest", 0)))
+            covers = joined(known["vv"], _vv(known.get("covers")))
             if others:
+                # Kept apart from what those copies hold: it says only what deleting them deletes.
                 for e in others:
-                    e["vv"] = joined(e["vv"], known["vv"])
+                    e["covers"] = joined(_vv(e.get("covers")), covers)
                     e["latest"] = max(int(e.get("latest", 0)), latest)
                 return
-            n = count(known["vv"])
+            n = count(covers)
             when = latest + 1 if latest else ticks()  # just after: any save made since wins over it
             marker = library / known["key"] / f"{_record_name(when, machine.id, n)}.deleted"
             marker.parent.mkdir(parents=True, exist_ok=True)
-            _write_once(marker, {"vv": {**known["vv"], machine.id: n}})
+            _write_once(marker, {"vv": {**covers, machine.id: n}})
             report.deleted.append(known["key"])
 
         local, present = _slots(saves)
@@ -688,14 +699,16 @@ def sync(saves: Path, library: Path, machine: Machine, *, guard: Guard | None = 
                              if not r.deleted and r.digest == content(saves / slot)), None)
                 if twin is not None:  # nothing new: it is that version
                     vv = joined(known["vv"], twin.vv) if same else twin.vv
-                    mapping.slots[slot] = {"key": info.key, "version": twin.name, "fingerprint": fp, "vv": vv}
+                    mapping.slots[slot] = {**_carried(known if same else None), "key": info.key,
+                                           "version": twin.name, "fingerprint": fp, "vv": vv}
                     mapping.save()
                     continue
                 n = count(known["vv"] if same else {})
                 vv = {**(known["vv"] if same else {}), machine.id: n}
                 name = _store(saves / slot, info, machine.id, n, library, vv)
                 mapping.verified.add(f"{info.key}/{name}")
-                mapping.slots[slot] = {"key": info.key, "version": name, "fingerprint": fp, "vv": vv}
+                mapping.slots[slot] = {**_carried(known if same else None), "key": info.key, "version": name,
+                                       "fingerprint": fp, "vv": vv}
                 mapping.save()
                 found.setdefault(info.key, []).append(Record(library / info.key / name, info.real_time,
                                                              machine.id, False, vv, content(saves / slot)))

@@ -251,6 +251,12 @@ def stop(client: SyncthingClient | None, spec: FolderSpec) -> bool:
     if client is None or not _remove(client, spec):
         log.info("stopping %s once Syncthing answers", spec.folder_id)
         return False
+    _finish_stop(spec)
+    return True
+
+
+def _finish_stop(spec: FolderSpec) -> None:
+    """Syncthing has let go of it: forget it here, and let the game tidy up."""
     _forget(spec.key)
     if spec.on_stop is not None:
         try:
@@ -258,7 +264,6 @@ def stop(client: SyncthingClient | None, spec: FolderSpec) -> bool:
         except Exception as exc:
             log.warning("after stopping %s: %s", spec.folder_id, exc)
     log.info("stopped syncing %s", spec.folder_id)
-    return True
 
 
 def share_with(client: SyncthingClient, device_id: str) -> list[str]:
@@ -321,8 +326,7 @@ def refresh(client: SyncthingClient) -> None:
             continue
         if stopping(key, st):
             if _remove(client, spec):
-                _forget(key)
-                log.info("stopped syncing %s", spec.folder_id)
+                _finish_stop(spec)
             continue
         root = spec.path()
         if root is None:

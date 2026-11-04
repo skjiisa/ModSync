@@ -681,6 +681,43 @@ class TwoMachines(unittest.TestCase):
         dfu_saves.release(self.a, self.library / "." / "")  # the same library, written another way
         self.assertEqual(dfu_saves.sync(self.a, other, flatpak).skipped, "")
 
+    # --- from GPT-6.1 Sol's sixth pass ---
+
+    def test_deleting_the_copy_that_got_the_winner_still_brings_it_to_the_other(self):
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 100, "A's")
+        make_save(self.b, "SAVE0", "Ellte", "QuickSave", 90, "B's")
+        shutil.copytree(self.b / "SAVE0", self.b / "SAVE1")
+        self.round()
+        self.sync(self.b)
+        updated = [s for s in ("SAVE0", "SAVE1") if (self.b / s / "SaveData.txt").read_text() == "SaveData.txt A's"]
+        self.assertEqual(len(updated), 1)
+        shutil.rmtree(self.b / updated[0])
+        for _ in range(3):
+            self.round()
+        for saves in (self.a, self.b):
+            self.assertEqual(sorted((saves / s / "SaveData.txt").read_text() for s in slots(saves)), ["SaveData.txt A's"])
+
+    def test_a_recovery_cut_short_can_be_run_again(self):
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 100, "A's")
+        make_save(self.b, "SAVE0", "Ellte", "QuickSave", 90, "B's, made separately")
+        self.sync(self.a)
+        with patch.object(dfu_saves, "_exchange", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            self.sync(self.b)  # copied and noted, never swapped
+        original = dfu_saves._Mapping.save
+        calls = []
+
+        def save(mapping):
+            calls.append(1)
+            raise KeyboardInterrupt  # the recovery's own save never happens
+
+        with patch.object(dfu_saves._Mapping, "save", save), self.assertRaises(KeyboardInterrupt):
+            self.sync(self.b)
+        self.assertEqual((self.b / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt B's, made separately")
+        for _ in range(2):
+            self.round()
+        for saves in (self.a, self.b):
+            self.assertEqual((saves / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt A's")
+
     def test_ticks_match_dfus_clock(self):
         from datetime import datetime
 
@@ -780,6 +817,23 @@ class SyncSaves(unittest.TestCase):
                 pass
 
         self.assertTrue(folders.stop(Client(), dfu.SAVES_FOLDER))
+        self.assertFalse(owner.exists())
+
+    def test_a_stop_finished_later_releases_the_saves_too(self):
+        from modsync.sync import folders
+
+        State.update(game_folders={"dfu-saves": str(dfu.saves_library())})
+        dfu.sync_saves()
+        owner = self.inst.data_dir / "Saves" / dfu_saves.OWNER
+        self.assertFalse(folders.stop(None, dfu.SAVES_FOLDER))  # Syncthing down
+        self.assertTrue(owner.exists())
+
+        class Client:
+            def delete_folder(self, folder_id):
+                pass
+
+        folders.refresh(Client())
+        self.assertEqual(State.load().game_folders, {})
         self.assertFalse(owner.exists())
 
     def test_no_install_no_folder(self):
