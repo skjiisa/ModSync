@@ -343,9 +343,11 @@ def mapping_path(saves: Path, library: Path) -> Path:
 
 
 class _Mapping:
-    """Per slot: ``key``, ``version`` (the record it holds), ``vv`` (all it
-    takes in), ``fingerprint`` (of its files when last noted), and while a
-    placement is under way ``pending``: what it's about to hold."""
+    """Per slot: ``key``, ``version`` (the record it holds) and ``held`` (that
+    record's vector), ``vv`` (all the slot takes in: that, and every record it
+    settled a conflict against; what a version made from it starts from),
+    ``fingerprint`` (of its files when last noted), and while a placement is
+    under way ``pending``: what it's about to hold."""
 
     def __init__(self, path: Path, library: Path) -> None:
         self.path = path
@@ -356,7 +358,8 @@ class _Mapping:
         if isinstance(slots, dict):
             for s, e in slots.items():
                 if isinstance(e, dict) and isinstance(e.get("key"), str) and _SLOT_RE.match(s):
-                    self.slots[s] = {**e, "vv": _vv(e.get("vv"))}
+                    vv = _vv(e.get("vv"))
+                    self.slots[s] = {**e, "vv": vv, "held": _vv(e.get("held")) or vv}
         cache = data.get("records")
         self.cache: dict[str, dict] = {k: v for k, v in cache.items() if isinstance(v, dict)} \
             if isinstance(cache, dict) else {}
@@ -501,6 +504,7 @@ def _settle_placement(saves: Path, slot: str, entry: dict) -> tuple[dict | None,
     # "" as fingerprint has the next step look at it as a change made here.
     still = content(target) == pending["digest"]
     return ({**_carried(entry), "key": entry["key"], "version": pending["version"], "vv": _vv(pending["vv"]),
+             "held": _vv(pending.get("held")) or _vv(pending["vv"]),
              "fingerprint": fingerprint(target) if still else ""}, leftovers)
 
 
@@ -521,7 +525,8 @@ def _place(record: Record, target: Path, mapping: _Mapping, slot_entry: dict) ->
     if not matches(incoming, manifest["files"]):
         shutil.rmtree(incoming, ignore_errors=True)
         return False
-    mapping.slots[slot] = {**slot_entry, "pending": {"version": record.name, "vv": settled, "digest": record.digest}}
+    mapping.slots[slot] = {**slot_entry, "pending": {"version": record.name, "vv": settled, "held": record.vv,
+                                                     "digest": record.digest}}
     mapping.save()
     if not target.exists():
         os.rename(incoming, target)
@@ -532,7 +537,7 @@ def _place(record: Record, target: Path, mapping: _Mapping, slot_entry: dict) ->
         os.rename(incoming, target)
         incoming = old
     mapping.slots[slot] = {**_carried(slot_entry), "key": slot_entry["key"], "version": record.name,
-                           "vv": settled, "fingerprint": fingerprint(target)}
+                           "vv": settled, "held": record.vv, "fingerprint": fingerprint(target)}
     mapping.save()
     shutil.rmtree(incoming, ignore_errors=True)  # the old contents
     return True
@@ -700,7 +705,7 @@ def sync(saves: Path, library: Path, machine: Machine, *, guard: Guard | None = 
                 if twin is not None:  # nothing new: it is that version
                     vv = joined(known["vv"], twin.vv) if same else twin.vv
                     mapping.slots[slot] = {**_carried(known if same else None), "key": info.key,
-                                           "version": twin.name, "fingerprint": fp, "vv": vv}
+                                           "version": twin.name, "fingerprint": fp, "vv": vv, "held": twin.vv}
                     mapping.save()
                     continue
                 n = count(known["vv"] if same else {})
@@ -708,7 +713,7 @@ def sync(saves: Path, library: Path, machine: Machine, *, guard: Guard | None = 
                 name = _store(saves / slot, info, machine.id, n, library, vv)
                 mapping.verified.add(f"{info.key}/{name}")
                 mapping.slots[slot] = {**_carried(known if same else None), "key": info.key, "version": name,
-                                       "fingerprint": fp, "vv": vv}
+                                       "fingerprint": fp, "vv": vv, "held": vv}
                 mapping.save()
                 found.setdefault(info.key, []).append(Record(library / info.key / name, info.real_time,
                                                              machine.id, False, vv, content(saves / slot)))
@@ -731,8 +736,10 @@ def sync(saves: Path, library: Path, machine: Machine, *, guard: Guard | None = 
             held = mapping.slots.get(slot) if slot is not None else None
             # Taking the winner, or holding it, settles every record it beat, too.
             settled = joined(held["vv"] if held else {}, *(t.vv for t in tops))
+            # Whether it has the winner goes by what it holds, never by what it
+            # settled against: one of those may since have been played on and won.
             if held is not None and (best.name == held.get("version") or
-                                     (best.vv != held["vv"] and included(best.vv, held["vv"]))):
+                                     (best.vv != held["held"] and included(best.vv, held["held"]))):
                 if not best.deleted and settled != held["vv"]:
                     held["vv"] = settled  # so what is made from it next beats those too
                     mapping.save()

@@ -718,6 +718,48 @@ class TwoMachines(unittest.TestCase):
         for saves in (self.a, self.b):
             self.assertEqual((saves / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt A's")
 
+    # --- from GPT-6.1 Sol's seventh pass ---
+
+    def test_a_branch_settled_against_can_still_win_later(self):
+        """Two libraries, with Syncthing's delivery in a chosen order."""
+        lib = {self.a: self.tmp / "libA", self.b: self.tmp / "libB"}
+        key = dfu_saves.Info("Ellte", "QuickSave", 0).key
+
+        def sync(saves):
+            return dfu_saves.sync(saves, lib[saves], self.machines[saves])
+
+        def deliver(src, dst, time=None):
+            """Copy records (all, or those of one save time) from one library to the other."""
+            (lib[dst] / key).mkdir(parents=True, exist_ok=True)
+            for entry in (lib[src] / key).iterdir():
+                if time is not None and not entry.name.startswith(f"{time:020d}-"):
+                    continue
+                dest = lib[dst] / key / entry.name
+                if not dest.exists():
+                    (shutil.copytree if entry.is_dir() else shutil.copy2)(entry, dest)
+
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 300, "X")
+        sync(self.a)
+        make_save(self.b, "SAVE0", "Ellte", "QuickSave", 200, "Y")
+        sync(self.b)
+        deliver(self.b, self.a, 200)
+        sync(self.a)  # A keeps X and settles against Y
+        make_save(self.b, "SAVE0", "Ellte", "QuickSave", 250, "Z, B played on from Y")
+        sync(self.b)
+        deliver(self.a, self.b, 300)
+        sync(self.b)  # X wins here too, for now
+        self.assertEqual((self.b / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt X")
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 225, "W, A played on from X, clock behind")
+        sync(self.a)
+        for _ in range(3):
+            deliver(self.a, self.b)
+            deliver(self.b, self.a)
+            sync(self.a)
+            sync(self.b)
+        # W replaces X and Y; of W and Z, made separately, Z is newer. Both machines agree.
+        for saves in (self.a, self.b):
+            self.assertEqual((saves / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt Z, B played on from Y")
+
     def test_ticks_match_dfus_clock(self):
         from datetime import datetime
 
