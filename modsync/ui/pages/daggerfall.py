@@ -6,9 +6,10 @@ The rows say how each part stands and change it when pressed: the install row
 picks another Daggerfall Unity folder, Steam's Play button switches between
 Daggerfall Unity and the original game, and the two sync rows turn mods and
 saves sync on and off on this machine. The blue action gets Daggerfall from
-Steam until Steam has it, then installs Daggerfall Unity, then plays it. Until
-one is set up, "Use an existing installation…" picks a Daggerfall Unity the
-user installed themselves (see ``dfu.adopt``).
+Steam until Steam has it, then installs Daggerfall Unity, then plays it.
+"Use an existing installation…" (once one is in use, "Use another
+installation…") picks a Daggerfall Unity the user installed themselves (see
+``dfu.adopt``), whatever state the one in use is in.
 """
 
 from __future__ import annotations
@@ -111,7 +112,7 @@ class DaggerfallPage(Page):
         self.mods_folder.clicked.connect(self._open_mods_folder)
         self.work = label("", "secondary")
         self.work_bar = QProgressBar()
-        for widget in (self.steam_tile, self.install_tile, self.use_existing, self.play, self.mods_folder,
+        for widget in (self.steam_tile, self.install_tile, self.play, self.mods_folder, self.use_existing,
                        self.work, self.work_bar):
             right.addWidget(widget)
         self.steam_tile.hide()
@@ -213,7 +214,9 @@ class DaggerfallPage(Page):
         self.note.setVisible(bool(notes))
         self.steam_tile.setVisible(inst is None and ov.dagger is None and not self._working)
         self.install_tile.setVisible(inst is None and ov.dagger is not None and not self._working)
-        self.use_existing.setVisible(inst is None and not self._working)
+        # Always there, so another install can be chosen whatever state this one is in.
+        self.use_existing.setVisible(not self._working)
+        self.use_existing.setText("Use another installation…" if inst is not None else "Use an existing installation…")
         self.play.setVisible(inst is not None and not self._working)
         self.mods_folder.setVisible(inst is not None)
         if inst is not None:
@@ -370,7 +373,8 @@ class DaggerfallPage(Page):
                 parts.append(followed)
             return " ".join(parts)
 
-        self._run(dfu.adopt, found.install.path, message="Setting up Daggerfall Unity…", on_done=done)
+        self._run(self.service.use_dfu_install, found.install.path, message="Setting up Daggerfall Unity…",
+                  on_done=done)
 
     def _on_progress(self, p) -> None:
         if p.stage == "download" and p.total:

@@ -953,6 +953,24 @@ class ModSyncService:
                 log.warning("could not tidy %s: %s", spec.folder_id, exc)
         return root
 
+    def use_dfu_install(self, path: Path | str):
+        """Use a Daggerfall Unity installed by hand (see ``dfu.adopt``). Mods
+        sync, if on, moves to it now rather than at the next refresh, so it's
+        in place before the game can start from there. Returns what
+        ``dfu.adopt`` does."""
+        from modsync import dfu
+
+        result = dfu.adopt(path)
+        self.reload_state()
+        if dfu.MODS_FOLDER.key in self.state.game_folders:
+            try:
+                self.ensure_running()
+                self._refresh_game_folders(force=True)
+            except Exception as exc:  # it moves at the next refresh, once DFU is closed
+                log.warning("mods sync didn't move to %s yet: %s", path, exc)
+            self.reload_state()
+        return result
+
     def stop_game_folder(self, key: str) -> bool:
         """Stop syncing one of a game's folders here. Its files stay. Returns
         whether Syncthing let go of it now; otherwise it does the next time

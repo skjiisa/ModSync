@@ -871,6 +871,34 @@ class AdoptExisting(unittest.TestCase):
         self.assertEqual(dfu.current_install().path, self.inst.path)
         self.assertEqual(self.followed, [self.inst.path])
 
+    def test_a_save_whose_slot_is_taken_is_copied_whole_into_a_free_one(self):
+        """Never a mix of two saves: one from an earlier portable run sits in SAVE0 already."""
+        self._unity_data()
+        (self.unity / "Saves" / "SAVE0" / "SaveData.txt").write_text("current data")
+        (self.unity / "Saves" / "SAVE0" / "QuestData.txt").write_text("current quests")
+        (self.unity / "Saves" / "SAVE2").mkdir()
+        (self.unity / "Saves" / "SAVE2" / "SaveInfo.txt").write_text("another")
+        old = self.inst.data_dir / "Saves"
+        (old / "SAVE0").mkdir(parents=True)
+        (old / "SAVE0" / "SaveInfo.txt").write_text("old save")
+        (old / "SAVE0" / "SaveData.txt").write_text("old data")
+        (old / "SAVE1").mkdir()
+        dfu.adopt(self.inst.path)
+
+        def files(slot):
+            return {p.name: p.read_text() for p in (old / slot).iterdir()}
+
+        self.assertEqual(files("SAVE0"), {"SaveInfo.txt": "old save", "SaveData.txt": "old data"})
+        self.assertEqual(files("SAVE1"), {})
+        self.assertEqual(files("SAVE2"), {"SaveInfo.txt": "another"})
+        self.assertEqual(files("SAVE3"), {"SaveInfo.txt": "my save", "SaveData.txt": "current data",
+                                          "QuestData.txt": "current quests"})
+        self.assertEqual(sorted(p.name for p in old.iterdir()), ["SAVE0", "SAVE1", "SAVE2", "SAVE3"])
+        # An attempt that stopped short and is run again copies nothing twice.
+        (self.inst.path / "Portable.txt").unlink()
+        dfu.adopt(self.inst.path)
+        self.assertEqual(sorted(p.name for p in old.iterdir()), ["SAVE0", "SAVE1", "SAVE2", "SAVE3"])
+
     def test_daggerfall_data_it_already_uses_is_kept(self):
         gog = _dagger(self.tmp / "gog")
         dfu.write_daggerfall_path(self.inst.settings_ini, gog)

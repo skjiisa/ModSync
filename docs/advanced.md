@@ -595,8 +595,8 @@ still points at Steam's copy, and what Play does.
 ### A Daggerfall Unity you installed yourself
 
 To keep using a Daggerfall Unity you already have, choose "Use an existing
-installation…" on its Home (or press the Daggerfall Unity row once one is
-in use), and pick the folder with `DaggerfallUnity.x86_64` in it. From a
+installation…" on its Home ("Use another installation…" once one is in
+use), and pick the folder with `DaggerfallUnity.x86_64` in it. From a
 terminal: `modsync dfu use <dir>`. It must be the Linux build, in a folder
 you can write to.
 
@@ -606,15 +606,17 @@ you can write to.
   `~/.config/unity3d/Daggerfall Workshop/Daggerfall Unity` into
   `PortableAppdata/`, and it uses the copies from then on. The originals
   stay where they are, and nothing already in `PortableAppdata/` is
-  replaced. The app asks before doing this.
+  replaced. Each save is copied whole: one whose slot is taken by another
+  save goes into a free slot. The app asks before doing this.
 - **Its Daggerfall data is kept** if DFU accepts it, for example a GOG copy.
   Otherwise it's pointed at Steam's. With neither, DFU asks for the data on
   its startup screen.
 - **Its version** comes from the build itself. The check under "Syncing
   Daggerfall Unity's mods" uses it.
 - **It replaces the one in use, if any.** That one stays on disk as it is.
-  Steam's Play button follows the new one, and so do mods and saves sync:
-  what the other machines have arrives, and nothing is deleted. Saves from
+  Steam's Play button follows the new one, and so do mods and saves sync,
+  straight away unless DFU is running: what the other machines have
+  arrives, and nothing is deleted. Saves from
   both installs end up in the library, each kept apart.
 
 ### Syncing Daggerfall Unity's mods

@@ -431,7 +431,24 @@ class ExistingInstallTests(UiTestCase):
                 self.assertIsNot(page.preferred_focus(), page.use_existing)  # the blue action leads
                 window.close()
         window, page = self.open_sheet(overview(installed=True))
-        self.assertFalse(page.use_existing.isVisibleTo(page))
+        self.assertTrue(page.use_existing.isVisibleTo(page))
+        self.assertEqual(page.use_existing.text(), "Use another installation…")
+
+    def test_another_can_be_chosen_whatever_state_the_one_in_use_is_in(self):
+        """Its data path broken and Steam's copy incomplete: nothing to repair it
+        with, but another install can still be chosen."""
+        ov = dataclasses.replace(overview(installed=True, problems=["ARENA2 is missing WOODS.WLD."]),
+                                 configured="/gone/DF/DAGGER", configured_ok=False)
+        window, page = self.open_sheet(ov)
+        self.assertTrue(ov.stale_path)
+        self.assertFalse(page.install_row.isEnabled())
+        self.assertTrue(page.use_existing.isVisibleTo(page))
+        self.assertTrue(page.use_existing.isEnabled())
+        with patch.object(dfu, "adopt", return_value=(self.found(), None)) as adopt:
+            self.choose(window, page, page.use_existing, self.found())
+            window.top_overlay.tiles["go"].click()
+            self.settle(4)
+        adopt.assert_called_once()
 
     def test_a_portable_one_is_used_straight_away(self):
         window, page = self.open_sheet(overview(steam=False))

@@ -1,8 +1,10 @@
 """The games' folders and machine-wide pairing, against an in-memory Syncthing."""
 
 import copy
+import dataclasses
 import os
 import tempfile
+import time
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -243,6 +245,32 @@ class MovedGameFailures(GameFolderBase):
             self.service._refresh_game_folders(force=True)
         self.assertEqual(self.st.folders["modsync-test-mods"], self.before)
         self.assertNotEqual(State.load().game_folders["test-mods"], str(self.root))
+
+    def test_a_game_that_moved_while_running_follows_once_it_closes(self):
+        running = [True]
+        self.spec = dataclasses.replace(self.spec, in_use=lambda: running[0])
+        self.root = self.tmp / "Elsewhere" / "Mods"
+        self.service._refresh_game_folders(force=True)
+        self.assertEqual(self.st.folders["modsync-test-mods"], self.before)  # nothing copied into it meanwhile
+        self.assertFalse(self.root.exists())
+        running[0] = False
+        self.service._refresh_game_folders(force=True)
+        self.assertEqual(self.st.folders["modsync-test-mods"]["path"], str(self.root))
+
+    def test_using_another_dfu_moves_its_mods_sync_straight_away(self):
+        from modsync import dfu
+
+        self.spec = dataclasses.replace(self.spec, key="dfu-mods")
+        self.service.share_game_folder("dfu-mods")
+        self.service._folders_refreshed_at = time.monotonic()  # refreshed just now: only forcing moves it
+
+        def adopt(path):
+            self.root = Path(path)
+            return "adopted", None
+
+        with patch.object(dfu, "adopt", adopt), patch.object(dfu, "MODS_FOLDER", self.spec):
+            self.assertEqual(self.service.use_dfu_install(self.tmp / "My DFU"), ("adopted", None))
+        self.assertEqual(self.st.folders["modsync-dfu-mods"]["path"], str(self.tmp / "My DFU"))
 
     def test_refresh_runs_at_most_once_a_minute(self):
         calls = []

@@ -30,6 +30,7 @@ DFU ships itself, its ``settings.ini`` and key bindings, and saves stay out.
 
 from __future__ import annotations
 
+import filecmp
 import json
 import logging
 import os
@@ -459,10 +460,57 @@ def examine(path: Path | str) -> Existing:
     return Existing(inst, source if copies else None)
 
 
+_SAVE_SLOT = re.compile(r"SAVE\d+")
+
+
+def _tree(root: Path) -> dict[Path, Path]:
+    return {Path(top, n).relative_to(root): Path(top, n) for top, _dirs, names in os.walk(root) for n in names}
+
+
+def _same_tree(a: Path, b: Path) -> bool:
+    files_a, files_b = _tree(a), _tree(b)
+    return files_a.keys() == files_b.keys() and all(
+        filecmp.cmp(files_a[rel], files_b[rel], shallow=False) for rel in files_a)
+
+
+def _copy_saves(source: Path, dest: Path) -> None:
+    """Copy each save in ``source`` into ``dest`` whole. A save whose slot is
+    taken by another save goes into a free slot, so neither is mixed into the
+    other; one copied already (an earlier attempt) isn't copied again."""
+    dest.mkdir(parents=True, exist_ok=True)
+    # Saves with a free slot first, so a displaced one never takes the slot another needs.
+    for item in sorted(source.iterdir(), key=lambda i: ((dest / i.name).exists(), i.name)):
+        target = dest / item.name
+        if not item.is_dir():
+            if not target.exists():
+                shutil.copy2(item, target)
+            continue
+        if target.exists():
+            if not _SAVE_SLOT.fullmatch(item.name):
+                log.info("kept %s; %s has one already", item, dest)
+                continue
+            slots = [d for d in dest.iterdir() if d.is_dir() and _SAVE_SLOT.fullmatch(d.name)]
+            if any(_same_tree(item, d) for d in slots):
+                continue
+            taken = {d.name for d in dest.iterdir()}
+            target = dest / next(f"SAVE{n}" for n in range(len(taken) + 1) if f"SAVE{n}" not in taken)
+            log.info("%s's slot is taken by another save here; copied it to %s", item, target)
+        staging = Path(tempfile.mkdtemp(dir=dest, prefix=".modsync-copy-"))
+        try:
+            shutil.copytree(item, staging / item.name)
+            (staging / item.name).rename(target)  # whole or not at all
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+
+
 def _copy_missing(source: Path, dest: Path) -> None:
-    """Copy ``source`` into ``dest``, keeping whatever ``dest`` has already."""
+    """Copy ``source`` into ``dest``, keeping whatever ``dest`` has already.
+    Saves are copied whole (see :func:`_copy_saves`)."""
     for entry in _unity_data(source):
-        files = [entry] if entry.is_file() else [Path(top) / n for top, _dirs, names in os.walk(entry) for n in names]
+        if entry.name == "Saves" and entry.is_dir():
+            _copy_saves(entry, dest / "Saves")
+            continue
+        files = [entry] if entry.is_file() else list(_tree(entry).values())
         for src in files:
             target = dest / src.relative_to(source)
             if not target.exists():

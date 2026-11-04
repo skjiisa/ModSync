@@ -960,9 +960,10 @@ def _dfu_status() -> int:
 
 def _dfu_use(path: str) -> int:
     from modsync import dfu
+    from modsync.service import ModSyncService
 
     try:
-        found, followed = dfu.adopt(path)
+        found, followed = ModSyncService().use_dfu_install(path)
     except dfu.DfuError as exc:
         print(exc)
         return 1
