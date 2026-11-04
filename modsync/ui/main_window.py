@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from modsync import __version__, dfu, launchhook
 from modsync.games import SKYRIM_SE
+from modsync.state import State
 from modsync.service import ModSyncService
 from modsync.ui import nav, theme, worker
 from modsync.ui.input import Action, DIRECTIONS, InputRouter
@@ -340,10 +341,12 @@ class MainWindow(QMainWindow):
     def _update_game_switch(self) -> None:
         if not self.switchable and self.game != "skyrim":
             # Daggerfall went away (uninstalled from Steam, say): Home is Skyrim's again.
+            # Focus moves only if it was on Daggerfall's page, which is going.
+            was_inside = alive(self.focusWidget()) and self.pages["daggerfall"].isAncestorOf(self.focusWidget())
             self._show_skyrim()
             if self._current == "home" and self.setup is None:
                 self.stack.setCurrentWidget(self.page)
-                if not self.overlays:
+                if was_inside and not self.overlays:
                     self.page.focus_default()
         name = dict((key, name) for key, _page, name in GAMES)[self.game]
         self.topbar.set_game(name if self.switchable else "")
@@ -354,7 +357,14 @@ class MainWindow(QMainWindow):
         if self.game != "skyrim":
             self.game = "skyrim"
             self.topbar.set_game("Skyrim" if self.switchable else "")
-            worker.run_async(self.service.update_state, home_game="", on_failed=lambda _e: None)
+            self._remember_game("")
+
+    @staticmethod
+    def _remember_game(value: str) -> None:
+        """Write the choice to disk only. Not through ``service.update_state``:
+        its whole snapshot, returned on a worker, could land after a newer
+        change (a forgotten instance) and bring the old setup back."""
+        worker.run_async(State.update, home_game=value, on_failed=lambda _e: None)
 
     def _look_for_games(self) -> None:
         """Read whether Daggerfall is here, off the UI thread (it reads Steam's libraries)."""
@@ -391,8 +401,7 @@ class MainWindow(QMainWindow):
         if game != self.game:
             self.game = game
             self.topbar.set_game(dict((key, name) for key, _page, name in GAMES)[game])
-            worker.run_async(self.service.update_state, home_game="" if game == "skyrim" else game,
-                             on_failed=lambda _e: None)
+            self._remember_game("" if game == "skyrim" else game)
         was_home = self._current == "home"
         self.go("home", focus=focus and self.router.mode != "mouse")
         if was_home:

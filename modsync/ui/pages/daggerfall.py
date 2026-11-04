@@ -10,6 +10,7 @@ action installs Daggerfall Unity until it is installed, then plays it.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QUrl, Signal
@@ -58,6 +59,7 @@ class DaggerfallPage(Page):
         self.overview: dfu.Overview | None = None
         self._working = False
         self._focus_on_load = False
+        self._shown_at = 0.0
         self.head = self.header("Daggerfall Unity", "Set up from your Steam copy of The Elder Scrolls II: Daggerfall.")
         self.note = label("", "warning")
         self.note.hide()
@@ -105,6 +107,7 @@ class DaggerfallPage(Page):
         super().showEvent(event)
         if not self._working:
             self._focus_on_load = True
+            self._shown_at = time.monotonic()
             self.refresh()
 
     # --- reading ---
@@ -179,7 +182,11 @@ class DaggerfallPage(Page):
             # Shown before this was read: the blue action wasn't there to take focus.
             self._focus_on_load = False
             focused = self.focusWidget()
-            if focused is None or focused is self.data_row:
+            # Only while nothing was pressed since this was shown, and nothing covers it:
+            # a press in flight must land where it aimed.
+            settled = (self.host.router.last_input < self._shown_at and self.host.page is self
+                       and self.host.scope() is self.host.chrome)
+            if settled and (focused is None or focused is self.data_row):
                 target = self.preferred_focus()
                 if target is not None and target.isVisible():
                     target.setFocus()

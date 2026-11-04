@@ -56,11 +56,6 @@ def example_conflicts(root: Path) -> list:
     return conflicts.find(root)
 
 
-def _update_state(self, **changes):
-    self.state = replace(self.state, **changes)
-    return self.state
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("scratch/ui-review"))
@@ -90,8 +85,8 @@ def main():
     patches = [
         patch("modsync.ui.steaminput.family", lambda *a, **k: family["value"]),
         patch.object(State, "load", return_value=State()),
-        # Nothing is written: choosing a game changes only the window's copy.
-        patch.object(ModSyncService, "update_state", _update_state),
+        # Nothing is written: choosing a game is remembered nowhere.
+        patch.object(State, "update", lambda **changes: State()),
         patch.object(ModSyncService, "game_status", return_value=game),
         patch.object(ModSyncService, "game_version_check", return_value=check),
         patch.object(ModSyncService, "status", return_value=SyncStatus(

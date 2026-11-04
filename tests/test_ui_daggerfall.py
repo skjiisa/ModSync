@@ -93,6 +93,59 @@ class DaggerfallUiTests(UiTestCase):
         self.assertFalse(window.topbar.game_switch.isVisibleTo(window))
         self.assertEqual(State.load().home_game, "")  # next time opens on Skyrim, no swap
 
+    def test_daggerfall_going_away_leaves_focus_that_is_still_there(self):
+        window, _page = self.open_sheet(overview(installed=True))
+        InputRouter.instance().dispatch(Action.MENU)  # pressed something: the window isn't untouched
+        window.tabs["home"].setFocus()
+        self.settle()
+        window.dfu_checked(overview(steam=False))
+        self.settle(2)
+        self.assertIs(window.page, window.pages["home"])
+        self.assertIs(window.focusWidget(), window.tabs["home"])
+
+    def test_switching_with_a_lands_on_daggerfalls_blue_action(self):
+        with patch.object(dfu, "overview", lambda hook=True: overview(installed=True)):
+            window = self.window()
+            self.settle(3)
+            router = InputRouter.instance()
+            router.dispatch(Action.AUX)
+            self.settle()
+            router.dispatch(Action.ACCEPT)
+            self.settle(3)
+        self.assertIs(window.focusWidget(), window.pages["daggerfall"].play)
+
+    def test_a_late_read_never_takes_focus_from_the_picker(self):
+        window, page = self.open_sheet(overview(installed=True))
+        page._focus_on_load = True  # as if the first read were still on its way
+        page.data_row.setFocus()
+        InputRouter.instance().dispatch(Action.AUX)
+        self.settle()
+        sheet = window.top_overlay
+        self.assertIsInstance(sheet, GameSheet)
+        page._show(overview(installed=True))
+        self.settle()
+        self.assertTrue(sheet.isAncestorOf(window.focusWidget()))
+
+    def test_a_late_read_never_moves_focus_after_a_press(self):
+        window, page = self.open_sheet(overview(installed=True))
+        page._focus_on_load = True
+        page.data_row.setFocus()
+        InputRouter.instance().dispatch(Action.MENU)  # Start: already Home, focus stays
+        page._show(overview(installed=True))
+        self.settle()
+        self.assertIs(window.focusWidget(), page.data_row)
+
+    def test_remembering_the_game_never_replaces_the_setup_in_memory(self):
+        """A snapshot written on a worker could land after a newer change."""
+        window, _page = self.open_sheet(overview(installed=True))
+        state = window.service.state
+        with patch.object(window.service, "update_state") as update_state:
+            window.switch_game("skyrim")
+            self.settle(3)
+        update_state.assert_not_called()
+        self.assertIs(window.service.state, state)
+        self.assertEqual(State.load().home_game, "")
+
     def test_finishing_skyrims_setup_ends_on_skyrims_home(self):
         window, _page = self.open_sheet(overview(installed=True))
         window.start_setup()
