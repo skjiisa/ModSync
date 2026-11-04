@@ -534,11 +534,16 @@ PLAYING_LOCK = ".modsync-playing"  # in the install: held by Steam's Play hook w
 
 
 @contextmanager
-def _not_playing(inst: Install, playing: bool):
-    """While Steam's Play hook has DFU starting or running it holds this lock;
-    any other sync then gives way (yields a reason). The hook's own syncs,
-    just before and after DFU, say ``playing``. Held shared for the sync, so
-    the hook waits for one under way before starting DFU."""
+def _free_to_sync(inst: Install, playing: bool):
+    """Entered around each change the saves sync makes: yields why it must
+    stop ("" when it needn't). While Steam's Play hook has DFU starting or
+    running, it holds :data:`PLAYING_LOCK`; otherwise this holds it shared,
+    so the hook waits for the one change under way, never a whole sync,
+    before it starts DFU. The hook's own syncs, just before and after DFU,
+    say ``playing``."""
+    if is_running():
+        yield "Daggerfall Unity is running; its saves sync once it closes."
+        return
     if playing or fcntl is None:
         yield ""
         return
@@ -570,15 +575,8 @@ def sync_saves(*, force: bool = False, playing: bool = False) -> "dfu_saves.Repo
         report.skipped = "Saves don't sync on this machine."
         return report
     (inst.path / SAVES_MARKER).touch()
-    with _not_playing(inst, playing) as reason:
-        if reason:
-            report.skipped = reason
-            return report
-
-        def busy() -> str:  # asked again once the saves are locked: DFU may have started meanwhile
-            return "Daggerfall Unity is running; its saves sync once it closes." if is_running() else ""
-
-        return dfu_saves.sync(saves_dir(inst), saves_library(), _machine(), busy=busy)
+    return dfu_saves.sync(saves_dir(inst), saves_library(), _machine(),
+                          guard=lambda: _free_to_sync(inst, playing))
 
 
 SAVES_FOLDER = FolderSpec(

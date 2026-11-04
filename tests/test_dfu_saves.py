@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -42,15 +43,23 @@ def slots(saves: Path) -> dict[str, str]:
     return out
 
 
-def _with_verified(verified):
-    """_Mapping.__init__ that starts from ``verified`` (versions once found whole)."""
-    original = dfu_saves._Mapping.__init__
+def version_dirs(key_dir: Path) -> list[Path]:
+    """A save's versions whose files are in the library, oldest first."""
+    return sorted(p for p in key_dir.iterdir() if p.is_dir())
 
-    def init(self, path, library):
-        original(self, path, library)
-        self.verified.update(verified)
 
-    return init
+def ident(version: Path) -> dict:
+    return json.loads(version.with_name(version.name + ".id").read_text())
+
+
+@contextmanager
+def _reason(text):
+    yield text
+
+
+def busy_guard(fn):
+    """A sync guard from a function giving the reason (or "")."""
+    return lambda: _reason(fn())
 
 
 class TwoMachines(unittest.TestCase):
@@ -94,10 +103,9 @@ class TwoMachines(unittest.TestCase):
             self.assertEqual(slots(saves), {slot: "Ellte: QuickSave @ 400"})
             self.assertEqual((saves / slot / "SaveData.txt").read_text(), "SaveData.txt B's newer quicksave")
         key = dfu_saves.Info("Ellte", "QuickSave", 0).key
-        versions = sorted(p.name for p in (self.library / key).iterdir())
+        versions = version_dirs(self.library / key)
         self.assertEqual(len(versions), 2)  # A's older one can still be had
-        older = self.library / key / versions[0]
-        self.assertEqual((older / "SaveData.txt").read_text(), "SaveData.txt A's quicksave")
+        self.assertEqual((versions[0] / "SaveData.txt").read_text(), "SaveData.txt A's quicksave")
 
     def test_an_update_on_one_machine_replaces_the_copy_on_the_other(self):
         make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
@@ -191,7 +199,7 @@ class TwoMachines(unittest.TestCase):
         make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
         self.sync(self.a)
         key = dfu_saves.Info("Ellte", "Ellte 1", 0).key
-        version = next((self.library / key).iterdir())
+        (version,) = version_dirs(self.library / key)
         data = (version / "SaveData.txt").read_text()
         (version / "SaveData.txt").write_text(data[:3])  # half of it so far
         self.sync(self.b)
@@ -205,8 +213,10 @@ class TwoMachines(unittest.TestCase):
             make_save(self.a, "SAVE0", "Ellte", "AutoSave", t, f"v{t}")
             self.sync(self.a)
         key = dfu_saves.Info("Ellte", "AutoSave", 0).key
-        kept = sorted(int(p.name.split("-")[0]) for p in (self.library / key).iterdir())
+        kept = [int(p.name.split("-")[0]) for p in version_dirs(self.library / key)]
         self.assertEqual(kept, [30, 40, 50, 60])  # the one in use and the three before it
+        ids = sorted(p.name for p in (self.library / key).glob("*.id"))
+        self.assertEqual(len(ids), 6)  # every version is still known
         mapping = json.loads(dfu_saves.mapping_path(self.a, self.library).read_text())
         self.assertTrue(all((self.library / v).is_dir() for v in mapping["verified"]))
 
@@ -224,11 +234,12 @@ class TwoMachines(unittest.TestCase):
         make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
         self.sync(self.a)
         key = dfu_saves.Info("Ellte", "Ellte 1", 0).key
-        (version,) = (self.library / key).iterdir()
+        (version,) = version_dirs(self.library / key)
         self.assertEqual(version.name, f"{100:020d}-{self.machines[self.a].id}")
+        self.assertEqual(ident(version)["vv"], {self.machines[self.a].id: 1})
         manifest = json.loads((version / dfu_saves.MANIFEST).read_text())
         self.assertEqual(manifest["character"], "Ellte")
-        self.assertEqual(manifest["vv"], {self.machines[self.a].id: 1})
+        self.assertEqual(ident(version)["digest"], dfu_saves.digest(manifest["files"]))
         self.assertEqual(set(manifest["files"]), {"SaveInfo.txt", "SaveData.txt", "QuestData.txt", "FactionData.txt"})
         self.assertFalse(any(p.name.startswith(".incoming") for p in self.library.iterdir()))
 
@@ -252,7 +263,7 @@ class TwoMachines(unittest.TestCase):
         for t in (100, 200, 300):
             make_save(self.a, "SAVE0", "Ellte", "AutoSave", t, f"v{t}")
             self.sync(self.a)
-        versions = sorted((self.library / key).iterdir())
+        versions = version_dirs(self.library / key)
         # Another machine pruned 200 and 300; Syncthing has removed part of 100 so far.
         shutil.rmtree(versions[1])
         shutil.rmtree(versions[2])
@@ -270,11 +281,11 @@ class TwoMachines(unittest.TestCase):
         make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 200, "v2")
         self.sync(self.a)
         key = dfu_saves.Info("Ellte", "Ellte 1", 0).key
-        newest = sorted((self.library / key).iterdir())[-1]
+        newest = version_dirs(self.library / key)[-1]
         # B found it whole once (cached), then a file went missing before B used it.
-        dfu_saves.records(self.library / key, verified := {})
-        (newest / "FactionData.txt").write_text("damaged")
-        with patch.object(dfu_saves._Mapping, "__init__", _with_verified(verified)):
+        original = dfu_saves.available
+        with patch.object(dfu_saves, "available", lambda r, v=None: (original(r, v),
+                          (newest / "FactionData.txt").write_text("damaged"))[0]):
             report = self.sync(self.b)
         self.assertEqual(report.placed, [])
         self.assertEqual((self.b / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt v1")
@@ -295,7 +306,7 @@ class TwoMachines(unittest.TestCase):
 
     def test_nothing_is_done_once_dfu_turns_out_to_be_running(self):
         make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
-        report = self.sync(self.a, busy=lambda: "DFU is running")
+        report = self.sync(self.a, guard=busy_guard(lambda: "DFU is running"))
         self.assertEqual(report.skipped, "DFU is running")
         self.assertEqual(list(self.library.glob("*/*")), [])
 
@@ -408,7 +419,7 @@ class TwoMachines(unittest.TestCase):
             calls.append(1)
             return "DFU started" if len(calls) > 2 else ""  # after the lock and one slot
 
-        report = self.sync(self.a, busy=busy)
+        report = self.sync(self.a, guard=busy_guard(busy))
         self.assertEqual(report.stored, ["Ellte: Ellte 1"])
         self.assertEqual(report.skipped, "DFU started")
 
@@ -421,8 +432,87 @@ class TwoMachines(unittest.TestCase):
         make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 200, "v2")
         self.sync(self.a)
         key = dfu_saves.Info("Ellte", "Ellte 1", 0).key
-        newest = sorted((self.library / key).iterdir())[-1]
-        self.assertEqual(json.loads((newest / dfu_saves.MANIFEST).read_text())["vv"], {machine.id: 2})
+        newest = version_dirs(self.library / key)[-1]
+        self.assertEqual(ident(newest)["vv"], {machine.id: 2})
+
+    # --- from GPT-6.1 Sol's third pass ---
+
+    def test_a_pruned_winner_is_never_beaten_by_the_save_it_beat(self):
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 100, "A's")
+        make_save(self.b, "SAVE0", "Ellte", "QuickSave", 90, "B's, made separately")
+        self.round()
+        self.assertEqual((self.b / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt A's")
+        key = dfu_saves.Info("Ellte", "QuickSave", 0).key
+        winner_files = next(p for p in version_dirs(self.library / key) if p.name.startswith(f"{100:020d}"))
+        shutil.rmtree(winner_files)  # pruned elsewhere; what replaced it hasn't arrived here yet
+        self.sync(self.b)
+        self.assertEqual((self.b / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt A's")
+
+    def test_a_lost_mapping_with_the_old_version_pruned_still_publishes_nothing(self):
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 1000, "v1000")
+        self.round()  # B holds 1000 and goes offline
+        for t in (2000, 3000, 4000, 5000, 900):
+            make_save(self.a, "SAVE0", "Ellte", "QuickSave", t, f"v{t}")
+            self.sync(self.a)
+        key = dfu_saves.Info("Ellte", "QuickSave", 0).key
+        self.assertFalse((self.library / key / f"{1000:020d}-{self.machines[self.a].id}").is_dir())  # pruned
+        dfu_saves.mapping_path(self.b, self.library).unlink()
+        before = {p.name for p in (self.library / key).iterdir()}
+        self.sync(self.b)
+        self.sync(self.a)
+        self.assertEqual({p.name for p in (self.library / key).iterdir()} - before, set())
+        for saves in (self.a, self.b):
+            self.assertEqual((saves / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt v900")
+
+    def test_two_processes_never_hand_out_the_same_count(self):
+        path = self.tmp / "machine.json"
+        app, service = dfu_saves.Machine(path), dfu_saves.Machine(path)
+        self.assertEqual((app.next(), service.next(), app.next()), (1, 2, 3))
+        self.assertEqual(service.next(seen=10), 11)
+
+    def test_a_count_is_past_what_the_slot_held(self):
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
+        self.sync(self.a)
+        machine = self.machines[self.a]
+        mapping = dfu_saves.mapping_path(self.a, self.library)
+        data = json.loads(mapping.read_text())
+        data["slots"]["SAVE0"]["vv"] = {machine.id: 7}  # it held a version this file never heard of
+        mapping.write_text(json.dumps(data))
+        machine.path.unlink()
+        self.machines[self.a] = dfu_saves.Machine(machine.path)
+        self.machines[self.a].id = machine.id
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 200, "v2")
+        self.sync(self.a)
+        key = dfu_saves.Info("Ellte", "Ellte 1", 0).key
+        self.assertEqual(ident(version_dirs(self.library / key)[-1])["vv"], {machine.id: 8})
+
+    def test_equal_vectors_still_settle_on_one_version(self):
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "A")
+        make_save(self.b, "SAVE0", "Ellte", "Ellte 1", 200, "B")
+        same = {"0000aaaa": 5}
+        for m in self.machines.values():
+            m.id = "0000aaaa"  # a machine file copied to another machine, say
+        with patch.object(dfu_saves.Machine, "next", lambda self, seen=0: 5):
+            self.sync(self.a)
+            self.sync(self.b)
+        key = dfu_saves.Info("Ellte", "Ellte 1", 0).key
+        self.assertEqual([ident(v)["vv"] for v in version_dirs(self.library / key)], [same, same])
+        self.round()
+        self.assertEqual((self.a / "SAVE0" / "SaveData.txt").read_text(), (self.b / "SAVE0" / "SaveData.txt").read_text())
+
+    def test_reusing_a_slot_records_the_deletion_first(self):
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "Ellte")
+        make_save(self.b, "SAVE0", "Bjorn", "Bjorn 1", 110, "Bjorn")
+        self.round()
+        bjorn_slot = next(s for s, label in slots(self.a).items() if label.startswith("Bjorn"))
+        shutil.rmtree(self.a / "SAVE0")
+        shutil.copytree(self.a / bjorn_slot, self.a / "SAVE0")  # SAVE0 now holds a copy of Bjorn's
+        with patch.object(dfu_saves._Mapping, "save", side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            self.sync(self.a)  # cut short before the slot's new entry
+        self.sync(self.a)
+        self.sync(self.b)
+        self.assertFalse(any("Ellte" in label for label in slots(self.b).values()))
 
     def test_ticks_match_dfus_clock(self):
         from datetime import datetime
@@ -476,7 +566,7 @@ class SyncSaves(unittest.TestCase):
         self.assertRegex(machine, r"^[0-9a-f]{8}$")
         mapping = json.loads(dfu_saves.mapping_path(self.inst.data_dir / "Saves", dfu.saves_library()).read_text())
         self.assertNotIn("machine", mapping)
-        (version,) = next(dfu.saves_library().iterdir()).iterdir()
+        (version,) = version_dirs(next(dfu.saves_library().iterdir()))
         self.assertTrue(version.name.endswith("-" + machine))
         self.assertTrue((self.inst.path / dfu.SAVES_MARKER).exists())  # the Play hook syncs around DFU now
 
@@ -492,6 +582,23 @@ class SyncSaves(unittest.TestCase):
             fcntl.flock(lock, fcntl.LOCK_EX)  # what the hook holds around DFU
             self.assertIn("starting or running", dfu.sync_saves().skipped)
             self.assertEqual(dfu.sync_saves(playing=True).stored, ["Ellte: Ellte 1"])  # the hook's own
+
+    def test_the_guard_holds_the_play_lock_only_for_one_change(self):
+        import fcntl
+
+        def can_take_it_exclusively() -> bool:
+            with open(self.inst.path / dfu.PLAYING_LOCK, "a") as other:
+                try:
+                    fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return False
+                fcntl.flock(other, fcntl.LOCK_UN)
+                return True
+
+        with dfu._free_to_sync(self.inst, playing=False) as reason:
+            self.assertEqual(reason, "")
+            self.assertFalse(can_take_it_exclusively())  # the hook waits for this change
+        self.assertTrue(can_take_it_exclusively())  # and only this one
 
     def test_no_install_no_folder(self):
         State.update(dfu_path="")
