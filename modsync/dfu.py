@@ -511,23 +511,13 @@ def saves_dir(inst: Install) -> Path:
 SAVES_MARKER = ".modsync-saves"  # in the install: the Play hook syncs saves around DFU
 
 
-def _machine_id() -> str:
-    """This machine's name in the save versions it writes. Kept with ModSync,
-    not with the saves, so a DFU install copied to another machine can't
-    bring it along."""
+def _machine() -> "dfu_saves.Machine":
+    """This machine in the save versions it writes. Kept with ModSync, not
+    with the saves, so a DFU install copied to another machine can't bring
+    it along."""
     from modsync import config, dfu_saves
 
-    path = config.data_dir() / "dfu-saves-machine"
-    try:
-        value = path.read_text(encoding="utf-8").strip()
-        if dfu_saves.valid_machine_id(value):
-            return value
-    except OSError:
-        pass
-    value = dfu_saves.new_machine_id()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(value + "\n", encoding="utf-8")
-    return value
+    return dfu_saves.Machine(config.data_dir() / "dfu-saves-machine.json")
 
 
 def saves_library() -> Path:
@@ -588,7 +578,7 @@ def sync_saves(*, force: bool = False, playing: bool = False) -> "dfu_saves.Repo
         def busy() -> str:  # asked again once the saves are locked: DFU may have started meanwhile
             return "Daggerfall Unity is running; its saves sync once it closes." if is_running() else ""
 
-        return dfu_saves.sync(saves_dir(inst), saves_library(), _machine_id(), busy=busy)
+        return dfu_saves.sync(saves_dir(inst), saves_library(), _machine(), busy=busy)
 
 
 SAVES_FOLDER = FolderSpec(

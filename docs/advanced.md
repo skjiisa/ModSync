@@ -633,21 +633,26 @@ So the folder that syncs is a library ModSync keeps beside DFU's, at
   time and the machine that made it. It's written once and never changed,
   so Syncthing never has two versions of one file to choose between. Its
   manifest lists its files, so a version still arriving is never used. Each
-  version is checked again just before it goes into a slot.
-- Each version also records the versions it was made from. A save you
-  continued always replaces the one it came from, even when the clocks
-  disagree. DFU's times are local time, so a different time zone or the end
-  of summer time would otherwise let older progress win. Only saves made
-  separately on two machines (each played on before they met) are decided by
-  DFU's clock. The other one stays in the library.
+  version is checked again as it goes into a slot.
+- Each version carries a version vector: for each machine, how many changes
+  to the save it includes. A version made from another therefore includes
+  everything the other does, however long ago and whatever has been pruned
+  since, so a save you continued always replaces the one it came from, even
+  when the clocks disagree. DFU's times are local time, so a different time
+  zone or the end of summer time would otherwise let older progress win.
+  Only saves made separately on two machines (each played on before they
+  met) are decided by DFU's clock. The other one stays in the library.
 - Whenever DFU is closed, ModSync copies new and changed saves into the
-  library. It then puts each save's winning version into a slot here: it
-  replaces an older copy in one step, or takes a free number for a save new
-  here. A slot never goes back to a version it was made from. Slot numbers
+  library. A local save whose files match a version already there counts as
+  that version, so nothing is published twice. ModSync then puts each save's
+  winning version into a slot here. It replaces an older copy, in one step
+  where the filesystem allows, or takes a free number for a save new here.
+  A slot is never moved back to a version it already includes. Slot numbers
   stay each machine's own, which is all DFU needs.
 - The winning version and the three newest others of each save are kept.
-- A save deleted in DFU is deleted on the other machines too, unless a
-  machine saved it again since.
+- A save deleted in DFU is deleted on the other machines too, unless one of
+  them made it again separately, later by DFU's clock. Deletions are kept
+  in the library for good, a few bytes each.
 
 Play in Steam brings in the newest saves just before DFU starts, and stores
 the new ones right after it exits. While DFU runs, any other sync of its
