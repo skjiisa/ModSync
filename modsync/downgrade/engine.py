@@ -151,6 +151,27 @@ def sha1_of(path: Path) -> str:
     return h.hexdigest()
 
 
+def sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(_CHUNK), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def fetch_verified(url: str, dest: Path, sha256: str, label: str, progress: ProgressFn | None) -> Path:
+    """``dest``, downloaded from ``url`` unless a copy with this SHA-256 is
+    already there. A download that doesn't match is deleted."""
+    if dest.exists() and sha256_of(dest) == sha256:
+        return dest
+    dest.unlink(missing_ok=True)
+    _download(url, dest, progress, label)
+    if sha256_of(dest) != sha256:
+        dest.unlink(missing_ok=True)
+        raise DowngradeError(f"{label} download didn't match its checksum; deleted it, please retry")
+    return dest
+
+
 def preflight(plan: Plan) -> None:
     _check_backups(plan.game_dir, work_dir_for(plan.game_dir))
     exe = plan.game_dir / plan.exe_name

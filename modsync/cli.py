@@ -758,6 +758,159 @@ def steam(args: list[str]) -> int:
     return 2
 
 
+def dfu(args: list[str]) -> int:
+    """Daggerfall Unity, set up from the Steam copy of Daggerfall."""
+    sub = args[0] if args else ""
+    rest = args[1:]
+    if sub == "status":
+        return _dfu_status()
+    if sub == "install":
+        return _dfu_install(rest)
+    if sub == "hook":
+        return _dfu_hook(rest)
+    print(
+        "usage:\n"
+        "  modsync dfu status                   Steam's Daggerfall data and the Daggerfall Unity install\n"
+        "  modsync dfu install [<dest-dir>]     install Daggerfall Unity using Steam's Daggerfall data\n"
+        "        (run it again to follow Daggerfall to another Steam library)\n"
+        "  modsync dfu hook enable | disable    make Steam's Play button on Daggerfall start Daggerfall Unity"
+    )
+    return 2
+
+
+def _dfu_install_in_use():
+    from modsync import dfu
+    from modsync.state import State
+
+    return dfu.find_install(State.load().dfu_path) or dfu.find_install(dfu.default_install_dir())
+
+
+def _dfu_status() -> int:
+    from pathlib import Path
+
+    from modsync import dfu
+
+    dagger = dfu.steam_daggerfall()
+    problems = dfu.data_problems(dagger)
+    print(f"Daggerfall (Steam):   {dagger or 'not installed'}")
+    for problem in problems:
+        print(f"  ! {problem}")
+    inst = _dfu_install_in_use()
+    if inst is None:
+        print("Daggerfall Unity:     not installed ('modsync dfu install')")
+        return 1
+    print(f"Daggerfall Unity:     {inst.path} ({inst.version or 'version unknown'})")
+    configured = inst.daggerfall_path()
+    if configured is None:
+        print("  Data:               not set (DFU asks for it at startup)")
+    elif dagger is not None and Path(configured) == dagger:
+        print(f"  Data:               {configured}")
+    else:
+        print(f"  Data:               {configured}")
+        if dagger is not None:
+            print("  ! That isn't where Steam has Daggerfall now; 'modsync dfu install' points it there.")
+    if not inst.portable:
+        print("  ! Portable.txt is missing, so DFU keeps its data in ~/.config/unity3d.")
+    mods = sorted(inst.mods_dir.rglob("*.dfmod")) if inst.mods_dir.is_dir() else []
+    print(f"  Mods:               {len(mods)} in {inst.mods_dir}")
+    print(f"Play in Steam:        {dfu.hook_status().summary()}")
+    return 0 if not problems and configured else 1
+
+
+def _dfu_install(args: list[str]) -> int:
+    import platform
+    from pathlib import Path
+
+    from modsync import config, dfu
+    from modsync.downgrade import engine
+    from modsync.state import State
+
+    if len(args) > 1:
+        print("usage: modsync dfu install [<dest-dir>]")
+        return 2
+    dagger = dfu.steam_daggerfall()
+    problems = dfu.data_problems(dagger)
+    if problems:
+        for problem in problems:
+            print(problem)
+        print("Install The Elder Scrolls II: Daggerfall in Steam, then run this again.")
+        return 1
+    dest = Path(args[0]) if args else Path(State.load().dfu_path or dfu.default_install_dir())
+    if platform.machine().lower() not in {"x86_64", "amd64"}:
+        print(f"Note: Daggerfall Unity only has an x86_64 build; on {platform.machine()} it's untested.")
+
+    last = {"line": ""}
+
+    def progress(p: engine.Progress) -> None:
+        if p.stage == "download" and p.total:
+            line = f"  [{p.stage}] {p.message}: {p.done / 1e6:,.1f}/{p.total / 1e6:,.1f} MB"
+        elif p.total:
+            line = f"  [{p.stage}] {p.message} ({p.done}/{p.total})"
+        else:
+            line = f"  [{p.stage}] {p.message}"
+        if line != last["line"]:
+            sys.stdout.write("\r" + line[:118].ljust(118))
+            sys.stdout.flush()
+            last["line"] = line
+
+    try:
+        result = dfu.install(dest, dagger, cache_dir=config.data_dir() / "dfu", progress=progress,
+                             resolution=dfu.display_resolution())
+    except dfu.DfuError as exc:
+        print(f"\n{exc}" if last["line"] else str(exc))
+        return 1
+    if last["line"]:
+        print()
+    State.update(dfu_path=str(result.install.path))
+    if result.fresh:
+        print(f"Installed Daggerfall Unity {dfu.DFU_VERSION} into {result.install.path}")
+    else:
+        print(f"Daggerfall Unity in {result.install.path} is already installed; pointed it at Steam's data again.")
+    print(f"  Daggerfall data: {result.dagger}")
+    if result.fresh:
+        width = dfu.read_setting(result.install.settings_ini, "Video", "ResolutionWidth")
+        height = dfu.read_setting(result.install.settings_ini, "Video", "ResolutionHeight")
+        shown = f"{width}x{height}" if width and height else "DFU's default (1920x1080)"
+        print(f"  Resolution:      {shown}; change it under Advanced on DFU's startup screen")
+    print(f"  Mods go in:      {result.install.mods_dir}")
+    try:
+        followed = dfu.follow_install(result.install)
+    except RuntimeError as exc:
+        print(f"Steam's Play button still starts the old copy: {exc}")
+        return 1
+    if followed:
+        print(followed)
+    elif not dfu.hook_status().installed:
+        print("Run 'modsync dfu hook enable' so Steam's Play button on Daggerfall starts it.")
+    return 0
+
+
+def _dfu_hook(args: list[str]) -> int:
+    from modsync import dfu
+
+    sub = args[0] if len(args) == 1 else ""
+    if sub == "enable":
+        inst = _dfu_install_in_use()
+        if inst is None:
+            print("Daggerfall Unity isn't installed yet; run 'modsync dfu install' first.")
+            return 1
+        action = lambda: dfu.enable_hook(inst)  # noqa: E731
+    elif sub == "disable":
+        action = dfu.disable_hook
+    elif sub == "status" or not args:
+        print(dfu.hook_status().summary())
+        return 0
+    else:
+        print("usage: modsync dfu hook [status] | enable | disable")
+        return 2
+    try:
+        print(action())
+    except RuntimeError as exc:
+        print(f"Cannot change Steam's Play button for Daggerfall: {exc}")
+        return 1
+    return 0
+
+
 def launch(args: list[str]) -> int:
     """Open ModSync when the game is launched from Steam (the launch hook)."""
     from modsync import launchhook

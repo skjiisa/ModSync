@@ -26,6 +26,11 @@ Steam's own choice is recorded before it is changed and written back on
 disable. ``config.vdf`` can only be edited while Steam is closed, so with Steam
 running the change is queued and applied by the app or the background service
 the moment Steam exits — the same mechanism the appmanifest pin uses.
+
+For Daggerfall the hook runs a *native* program instead: Play starts Daggerfall
+Unity (see :mod:`modsync.dfu`) in place of the original game in DOSBox, and
+opens no window. When Daggerfall Unity is missing, or the game's launch
+options set ``MODSYNC_ORIGINAL_GAME=1``, the launch goes on to Proton as usual.
 """
 
 from __future__ import annotations
@@ -45,7 +50,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from modsync import __version__, config, platforms, steamos
-from modsync.games import GAMES, SKYRIM_SE, Game
+from modsync.games import DAGGERFALL, GAMES, SKYRIM_SE, Game
 from modsync.steam import compattools, shortcuts
 from modsync.steam import libraries as libs
 from modsync.steam.compattools import CompatTool
@@ -56,7 +61,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-TEMPLATE_VERSION = 2  # 2: runs the MO2 launch the window hands back
+TEMPLATE_VERSION = 3  # 2: runs the MO2 launch the window hands back; 3: a native program in place of the game
 TEMPLATE_DIR = Path(__file__).parent / "steam" / "launchhook_template"
 MARKER = ".modsync-launch-hook"  # only directories carrying this are ever removed
 
@@ -75,6 +80,20 @@ HANDOFF_TAG = "modsync-handoff-1"
 # while Steam still reports success. Hooks before this were named
 # modsync_<appid>_hub; upgrade() moves them over.
 _TOOL_ID_RE = re.compile(r"^modsync_(\d+)_(?:proton|hub)$")
+
+
+# The games a hook can be installed for.
+HOOK_GAMES: dict[int, Game] = {**GAMES, DAGGERFALL.appid: DAGGERFALL}
+
+
+def hook_game(appid: int) -> Game:
+    return HOOK_GAMES.get(appid, SKYRIM_SE)
+
+
+def _config_file(stem: str, appid: int) -> Path:
+    """Skyrim's files keep the names they had when it was the only game."""
+    suffix = "" if appid == SKYRIM_SE.appid else f"-{appid}"
+    return config.config_dir() / f"{stem}{suffix}.json"
 
 
 def tool_id(appid: int) -> str:
@@ -123,27 +142,28 @@ class Record:
     command: list[str] = field(default_factory=list)
     template_version: int = TEMPLATE_VERSION
     enabled_at: str = ""
+    native: str = ""  # a native program Play runs in place of the game (Daggerfall Unity)
 
     @staticmethod
-    def path() -> Path:
-        return config.config_dir() / "launch-hook.json"
+    def path(appid: int = SKYRIM_SE.appid) -> Path:
+        return _config_file("launch-hook", appid)
 
     @classmethod
-    def load(cls) -> "Record | None":
+    def load(cls, appid: int = SKYRIM_SE.appid) -> "Record | None":
         try:
-            data = json.loads(cls.path().read_text(encoding="utf-8"))
+            data = json.loads(cls.path(appid).read_text(encoding="utf-8"))
             return cls(**{k: data[k] for k in cls.__dataclass_fields__ if k in data})
         except (OSError, ValueError, TypeError):
             return None
 
     def save(self) -> None:
-        p = self.path()
+        p = self.path(self.appid)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(asdict(self), indent=2) + "\n", encoding="utf-8")
 
     @classmethod
-    def remove(cls) -> None:
-        cls.path().unlink(missing_ok=True)
+    def remove(cls, appid: int = SKYRIM_SE.appid) -> None:
+        cls.path(appid).unlink(missing_ok=True)
 
     @classmethod
     def from_marker(cls, tool_dir: Path) -> "Record | None":
@@ -168,9 +188,9 @@ class Record:
         )
 
 
-def load_record(tool_dir: Path | None) -> "Record | None":
+def load_record(tool_dir: Path | None, appid: int = SKYRIM_SE.appid) -> "Record | None":
     """ModSync's own record, else the copy inside the tool directory."""
-    record = Record.load()
+    record = Record.load(appid)
     if record is None and tool_dir is not None:
         record = Record.from_marker(tool_dir)
     return record
@@ -187,27 +207,31 @@ class Pending:
     requested_at: str = ""
 
     @staticmethod
-    def path() -> Path:
-        return config.config_dir() / "pending-launch.json"
+    def path(appid: int = SKYRIM_SE.appid) -> Path:
+        return _config_file("pending-launch", appid)
 
     @classmethod
-    def load(cls) -> "Pending | None":
+    def load(cls, appid: int = SKYRIM_SE.appid) -> "Pending | None":
         try:
-            data = json.loads(cls.path().read_text(encoding="utf-8"))
+            data = json.loads(cls.path(appid).read_text(encoding="utf-8"))
             return cls(**{k: data[k] for k in cls.__dataclass_fields__ if k in data})
         except (OSError, ValueError, TypeError):
             return None
 
+    @classmethod
+    def load_all(cls) -> "list[Pending]":
+        return [p for appid in HOOK_GAMES if (p := cls.load(appid)) is not None]
+
     def save(self) -> None:
-        p = self.path()
+        p = self.path(self.appid)
         p.parent.mkdir(parents=True, exist_ok=True)
         if not self.requested_at:
             self.requested_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         p.write_text(json.dumps(asdict(self), indent=2) + "\n", encoding="utf-8")
 
     @classmethod
-    def clear(cls) -> None:
-        cls.path().unlink(missing_ok=True)
+    def clear(cls, appid: int = SKYRIM_SE.appid) -> None:
+        cls.path(appid).unlink(missing_ok=True)
 
 
 # --- Steam on this machine --------------------------------------------------------
@@ -263,6 +287,7 @@ class LaunchHookStatus:
     steam_found: bool
     outdated: bool = False
     legacy: bool = False  # Steam still launches through the hook's old, cloud-breaking name
+    native: str | None = None  # what Play runs in place of the game, for Daggerfall
 
     @property
     def enabled(self) -> bool:
@@ -290,6 +315,10 @@ class LaunchHookStatus:
             return f"Waiting for Steam to close to select ModSync for {g}. {steamos.steam_restart_hint()}"
         if self.pending and self.pending.action == "restore":
             return f"Waiting for Steam to close to restore the previous launcher. {steamos.steam_restart_hint()}"
+        if self.enabled and self.native:
+            if not Path(self.native).exists():
+                return f"On, but {self.native} is missing, so Play starts the original {g}."
+            return f"On. Steam's Play button on {g} starts {_native_name(self.native)}."
         if self.enabled:
             if not self.underlying_exists:
                 return (
@@ -316,6 +345,10 @@ class LaunchHookStatus:
         if self.current_mapping and compattools.MO2LINT_TOOL_RE.match(self.current_mapping):
             return "Off. Steam's Play button opens Mod Organizer 2 (MO2-LINT) directly."
         return f"Off. Steam's Play button starts {g} directly."
+
+
+def _native_name(native: str | Path) -> str:
+    return "Daggerfall Unity" if Path(native).name.startswith("DaggerfallUnity") else Path(native).name
 
 
 def describe_target(underlying_name: str | None, underlying_display: str | None = None) -> str:
@@ -359,9 +392,9 @@ def encode_handoff(plan: "LaunchPlan") -> bytes:
 
 
 def status(appid: int = SKYRIM_SE.appid) -> LaunchHookStatus:
-    game = GAMES.get(appid, SKYRIM_SE)
+    game = hook_game(appid)
     env = steam_env()
-    pending = Pending.load()
+    pending = Pending.load(appid)
     if pending and pending.appid != appid:
         pending = None
     running = shortcuts.steam_is_running()
@@ -373,14 +406,14 @@ def status(appid: int = SKYRIM_SE.appid) -> LaunchHookStatus:
     except (OSError, ValueError):
         current = None
     tool_dir = env.installed_tool_dir(appid)
-    record = load_record(tool_dir)
+    record = load_record(tool_dir, appid)
     installed = is_hook_dir(tool_dir) and (tool_dir / "proton").exists()
     if pending and _pending_satisfied(pending, current):
         # The user already made that choice in Steam (e.g. picked the tool by hand
         # because Steam couldn't be closed). Left queued, it would be re-applied the
         # next time Steam closes and could undo whatever they've chosen since.
         log.info("queued launch hook %s for %s is already in place; dropping it", pending.action, appid)
-        Pending.clear()
+        Pending.clear(appid)
         pending = None
     underlying_name = record.underlying_name if record else None
     underlying_display = record.underlying_display if record else None
@@ -399,7 +432,16 @@ def status(appid: int = SKYRIM_SE.appid) -> LaunchHookStatus:
         steam_found=True,
         outdated=outdated,
         legacy=current == legacy_tool_id(appid),
+        native=_installed_native(tool_dir, record) if installed else None,
     )
+
+
+def _installed_native(tool_dir: Path, record: Record | None) -> str | None:
+    """What the installed script runs in place of the game. The marker is the
+    copy written with the script, so it's right even when another ModSync
+    (Flatpak or native, each with its own record) enabled the hook last."""
+    marker = Record.from_marker(tool_dir)
+    return ((marker or record).native or None) if (marker or record) else None
 
 
 def _pending_satisfied(pending: Pending, current: str | None) -> bool:
@@ -423,10 +465,12 @@ def render(
     underlying: CompatTool,
     command: list[str],
     library_paths: list[Path],
+    native: Path | str | None = None,
     template_dir: Path = TEMPLATE_DIR,
 ) -> None:
     """Write the tool directory. Refuses to touch a directory that exists but
-    is not ours (no marker), so a corrupted record can never delete a real Proton."""
+    is not ours (no marker), so a corrupted record can never delete a real Proton.
+    ``native`` is a program Play runs in place of the game, without opening ModSync."""
     if target.exists() and not is_hook_dir(target):
         raise RuntimeError(f"{target} exists but is not a ModSync launch hook; not overwriting it")
     replacements = {
@@ -441,6 +485,7 @@ def render(
         "@@MODSYNC_COMMAND@@": _bash_array(command),
         "@@LIBRARY_PATHS@@": _bash_array([str(p) for p in library_paths]),
         "@@HANDOFF_TAG@@": HANDOFF_TAG,
+        "@@NATIVE_PROGRAM@@": shlex.quote(str(native)) if native else "''",
     }
     target.mkdir(parents=True, exist_ok=True)
     (target / MARKER).write_text(
@@ -502,7 +547,7 @@ def game_proton(appid: int = SKYRIM_SE.appid, env: SteamEnv | None = None) -> Co
     if not current:
         return None
     if _is_ours(current, appid):
-        record = load_record(env.installed_tool_dir(appid))
+        record = load_record(env.installed_tool_dir(appid), appid)
         current = record.underlying_name if record else None
         if not current:
             return None
@@ -563,10 +608,17 @@ def _resolve_underlying(
     return tool
 
 
-def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None, command: list[str] | None = None) -> str:
+def enable(
+    appid: int = SKYRIM_SE.appid,
+    *,
+    through: str | None = None,
+    command: list[str] | None = None,
+    native: Path | str | None = None,
+) -> str:
     """Install the hook for the game and make Steam use it. Returns what happened.
-    ``command`` is how the hook starts ModSync; by default, the way this ModSync runs."""
-    game = GAMES.get(appid, SKYRIM_SE)
+    ``command`` is how the hook starts ModSync; by default, the way this ModSync runs.
+    ``native`` is a program Play runs in place of the game (Daggerfall Unity)."""
+    game = hook_game(appid)
     env = steam_env()
     if env is None:
         raise RuntimeError("Steam was not found on this machine")
@@ -576,7 +628,7 @@ def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None, command:
     current_entry = cfg.compat_tool(appid)
     current = str(current_entry["name"]) if current_entry and current_entry.get("name") else None
     ours = tool_id(appid)
-    record = load_record(env.installed_tool_dir(appid))
+    record = load_record(env.installed_tool_dir(appid), appid)
 
     underlying = _resolve_underlying(env, appid, current, record, through)
     # Keep the very first "previous" across re-enables, so disable restores what
@@ -591,6 +643,7 @@ def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None, command:
         underlying=underlying,
         command=command,
         library_paths=[lib.path for lib in env.libraries],
+        native=native,
     )
     new_record = Record(
         appid=appid,
@@ -602,20 +655,28 @@ def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None, command:
         previous=previous,
         command=command,
         enabled_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        native=str(native or ""),
     )
     new_record.save()
     new_record.write_marker()
 
     hands = describe_target(underlying.name, underlying.display_name)
+    play = f"Play starts {_native_name(native)}" if native else f"Play opens ModSync, then continues to {hands}"
     log.info("launch hook enabled for %s: hands off to %s (%s); Steam had %s; steam running: %s",
              appid, underlying.name, underlying.path, current or "(default)", shortcuts.steam_is_running())
     if current == ours:
-        Pending.clear()
+        Pending.clear(appid)
         _drop_legacy(env, appid, current)
-        return f"Launch hook refreshed. Play opens ModSync, then continues to {hands}."
+        return f"Launch hook refreshed. {play}."
     renaming = current == legacy_tool_id(appid)
     if shortcuts.steam_is_running():
         Pending("select", appid, {"name": ours, "config": "", "priority": "250"}).save()
+        if native and not renaming:
+            return (
+                f"Launch hook installed; {play[0].lower()}{play[1:]}. Steam is running, so the switch is "
+                f"queued. {steamos.steam_restart_hint()} You can also pick "
+                f"\"{display_name(game)}\" yourself under Properties, then Compatibility."
+            )
         if renaming:
             return (
                 f"Launch hook renamed so Steam Cloud syncs {game.name} saves again. Steam is running, "
@@ -628,23 +689,25 @@ def enable(appid: int = SKYRIM_SE.appid, *, through: str | None = None, command:
         )
     cfg.set_compat_tool(appid, ours)
     cfg.save()
-    Pending.clear()
+    Pending.clear(appid)
     _drop_legacy(env, appid, ours)
     if renaming:
         return f"Launch hook renamed so Steam Cloud syncs {game.name} saves again."
+    if native:
+        return f"Launch hook enabled. Start Steam and press Play on {game.name}: {play[0].lower()}{play[1:]}."
     return f"Launch hook enabled; it continues to {hands}. Start Steam and press Play on {game.name}."
 
 
 def disable(appid: int = SKYRIM_SE.appid) -> str:
     """Give Steam back its previous choice and remove the hook."""
-    game = GAMES.get(appid, SKYRIM_SE)
+    game = hook_game(appid)
     env = steam_env()
-    record = load_record(env.installed_tool_dir(appid) if env else None)
+    record = load_record(env.installed_tool_dir(appid) if env else None, appid)
     previous = record.previous if record else None
     log.info("launch hook disable for %s: restoring %s", appid, (previous or {}).get("name") or "Steam's default")
     if env is None:
-        Record.remove()
-        Pending.clear()
+        Record.remove(appid)
+        Pending.clear(appid)
         return "Steam was not found; forgot the launch hook."
     target = env.tool_dir(appid)
     current = None
@@ -653,9 +716,10 @@ def disable(appid: int = SKYRIM_SE.appid) -> str:
     if _is_ours(current, appid):
         if shortcuts.steam_is_running():
             Pending("restore", appid, previous, remove_tool=True).save()
+            until = f"starts {_native_name(record.native)}" if record and record.native else "opens ModSync"
             return (
                 f"Steam is running, so restoring the previous launcher is queued. {steamos.steam_restart_hint()} "
-                f"Until then Play still opens ModSync for {game.name}. You can also pick the previous "
+                f"Until then Play still {until} for {game.name}. You can also pick the previous "
                 "tool yourself under Properties, then Compatibility, and turn the hook off again."
             )
         cfg = SteamConfig.load(env.config_vdf)
@@ -663,18 +727,17 @@ def disable(appid: int = SKYRIM_SE.appid) -> str:
         cfg.save()
     remove_tool_dir(target)
     remove_tool_dir(env.legacy_tool_dir(appid))
-    Record.remove()
-    Pending.clear()
+    Record.remove(appid)
+    Pending.clear(appid)
     back = f"back to {previous['name']}" if previous and previous.get("name") else "back to Steam's default"
     return f"Launch hook off. {game.name} launches {back}."
 
 
 def apply_pending() -> str | None:
-    """Apply a queued config.vdf change once Steam has exited (called from the
+    """Apply queued config.vdf changes once Steam has exited (called from the
     serve loop and the app). Steam rewrites its files on shutdown, so
     wait a moment after it disappears before touching them."""
-    pending = Pending.load()
-    if pending is None or shortcuts.steam_is_running():
+    if not Pending.load_all() or shortcuts.steam_is_running():
         return None
     time.sleep(2.0)
     if shortcuts.steam_is_running():
@@ -682,28 +745,37 @@ def apply_pending() -> str | None:
     env = steam_env()
     if env is None or not env.config_vdf.exists():
         return None
-    log.info("applying queued launch hook change: %s for %s", pending.action, pending.appid)
+    messages = [m for pending in Pending.load_all() if (m := _apply(env, pending))]
+    return " ".join(messages) or None
+
+
+def _apply(env: SteamEnv, pending: Pending) -> str | None:
+    appid = pending.appid
+    log.info("applying queued launch hook change: %s for %s", pending.action, appid)
     try:
         cfg = SteamConfig.load(env.config_vdf)
         if pending.action == "select":
-            if not is_hook_dir(env.tool_dir(pending.appid)):
-                Pending.clear()
+            if not is_hook_dir(env.tool_dir(appid)):
+                Pending.clear(appid)
                 return "Launch hook: the tool files are gone, so the queued switch was dropped."
-            renaming = cfg.compat_tool_name(pending.appid) == legacy_tool_id(pending.appid)
-            cfg.set_compat_entry(pending.appid, pending.mapping)
+            renaming = cfg.compat_tool_name(appid) == legacy_tool_id(appid)
+            cfg.set_compat_entry(appid, pending.mapping)
             cfg.save()
-            Pending.clear()
-            _drop_legacy(env, pending.appid, cfg.compat_tool_name(pending.appid))
+            Pending.clear(appid)
+            _drop_legacy(env, appid, cfg.compat_tool_name(appid))
             if renaming:
                 return "Launch hook renamed. Steam Cloud syncs the game's saves again."
+            record = load_record(env.tool_dir(appid), appid)
+            if record and record.native:
+                return f"Launch hook selected. Play on {hook_game(appid).name} now starts {_native_name(record.native)}."
             return "Launch hook selected for the game. Play now opens ModSync first."
-        cfg.set_compat_entry(pending.appid, pending.mapping)
+        cfg.set_compat_entry(appid, pending.mapping)
         cfg.save()
         if pending.remove_tool:
-            remove_tool_dir(env.tool_dir(pending.appid))
-            remove_tool_dir(env.legacy_tool_dir(pending.appid))
-            Record.remove()
-        Pending.clear()
+            remove_tool_dir(env.tool_dir(appid))
+            remove_tool_dir(env.legacy_tool_dir(appid))
+            Record.remove(appid)
+        Pending.clear(appid)
         name = (pending.mapping or {}).get("name")
         return f"Launch hook off. The game launches {'with ' + str(name) if name else 'with Steam\'s default'} again."
     except Exception as exc:  # keep the loop alive; the queue stays for the next try
@@ -718,7 +790,7 @@ def refresh_if_outdated(appid: int = SKYRIM_SE.appid) -> bool:
     if env is None:
         return False
     target = env.tool_dir(appid)
-    record = load_record(target)
+    record = load_record(target, appid)
     if record is None or record.appid != appid:
         return False
     if not is_hook_dir(target) or record.template_version == TEMPLATE_VERSION:
@@ -740,10 +812,11 @@ def _rerender(env: SteamEnv, appid: int, record: Record) -> bool:
     target = env.tool_dir(appid)
     render(
         target,
-        game=GAMES.get(appid, SKYRIM_SE),
+        game=hook_game(appid),
         underlying=underlying,
         command=command,
         library_paths=[lib.path for lib in env.libraries],
+        native=record.native or None,
     )
     record.tool_id = tool_id(appid)
     record.tool_path = str(target)
@@ -763,20 +836,21 @@ def upgrade(appid: int = SKYRIM_SE.appid) -> str | None:
     env = steam_env()
     if env is None or not env.config_vdf.exists():
         return None
-    pending = Pending.load()
+    pending = Pending.load(appid)
     if pending and pending.appid == appid and (pending.mapping or {}).get("name") == legacy_tool_id(appid):
         # Queued by an older ModSync before Steam closed: select the new name instead.
         pending.mapping = {**(pending.mapping or {}), "name": tool_id(appid)}
         pending.save()
     legacy = env.legacy_tool_dir(appid)
-    record = load_record(legacy) if is_hook_dir(legacy) else None
+    record = load_record(legacy, appid) if is_hook_dir(legacy) else None
     if record is not None and record.appid == appid:
         current = SteamConfig.load(env.config_vdf).compat_tool_name(appid)
         if current == legacy_tool_id(appid):
             log.info("launch hook for %s still has its old name; renaming it", appid)
             try:
                 # Keep the ModSync the hook starts (say, the Flatpak), whichever one runs this.
-                return enable(appid, through=record.underlying_name, command=_recorded_command(record))
+                return enable(appid, through=record.underlying_name, command=_recorded_command(record),
+                              native=record.native or None)
             except RuntimeError as exc:
                 log.warning("could not rename the launch hook: %s", exc)
                 return None

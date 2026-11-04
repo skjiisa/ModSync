@@ -450,6 +450,145 @@ class LegacyName(LaunchHookBase):
         self.assertFalse(self.legacy_dir.exists())
 
 
+class DaggerfallHook(LaunchHookBase):
+    """For Daggerfall, Play runs Daggerfall Unity (a native program) and opens
+    no window; the hook has its own record and queue next to Skyrim's."""
+
+    DF = 1812390
+
+    def setUp(self):
+        super().setUp()
+        self.dfu = self.tmp / "Daggerfall Unity" / "DaggerfallUnity.x86_64"
+        fakesteam._executable(self.dfu, "#!/bin/sh\n")
+        self.df_dir = self.root / "compatibilitytools.d" / "modsync_1812390_proton"
+
+    def df_mapping(self):
+        return SteamConfig.load(self.root / "config/config.vdf").compat_tool_name(self.DF)
+
+    def test_enable_runs_daggerfall_unity_and_disable_restores_the_default(self):
+        msg = launchhook.enable(self.DF, native=self.dfu)
+        self.assertIn("starts Daggerfall Unity", msg)
+        self.assertEqual(self.df_mapping(), "modsync_1812390_proton")
+        script = (self.df_dir / "proton").read_text()
+        self.assertIn(f"native='{self.dfu}'", script)
+        self.assertIn('appid="1812390"', script)
+        self.assertIn('"display_name" "ModSync (The Elder Scrolls II: Daggerfall)"',
+                      (self.df_dir / "compatibilitytool.vdf").read_text())
+        record = launchhook.Record.load(self.DF)
+        self.assertEqual(record.native, str(self.dfu))
+        self.assertTrue(launchhook.Record.path(self.DF).name.endswith("-1812390.json"))
+        self.assertIsNone(launchhook.Record.load())  # Skyrim's record is a separate file
+        st = launchhook.status(self.DF)
+        self.assertTrue(st.enabled)
+        self.assertEqual(st.summary(), "On. Steam's Play button on The Elder Scrolls II: Daggerfall starts Daggerfall Unity.")
+        self.assertIn("Steam's default", launchhook.disable(self.DF))
+        self.assertIsNone(self.df_mapping())
+        self.assertFalse(self.df_dir.exists())
+        self.assertIsNone(launchhook.Record.load(self.DF))
+
+    def test_skyrims_script_runs_no_native_program(self):
+        launchhook.enable()
+        self.assertIn("native=''", (self.tool_dir / "proton").read_text())
+
+    def test_both_hooks_live_side_by_side(self):
+        launchhook.enable()
+        launchhook.enable(self.DF, native=self.dfu)
+        launchhook.disable(self.DF)
+        self.assertTrue(launchhook.status().enabled)
+        self.assertEqual(launchhook.Record.load().native, "")
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
+
+    def test_queued_switches_for_both_games_apply_together(self):
+        self.steam_running = True
+        self.assertIn("queued", launchhook.enable())
+        self.assertIn("queued", launchhook.enable(self.DF, native=self.dfu))
+        self.assertEqual({p.appid for p in launchhook.Pending.load_all()}, {489830, self.DF})
+        self.assertIsNone(launchhook.apply_pending())
+        self.steam_running = False
+        out = launchhook.apply_pending()
+        self.assertIn("Play now opens ModSync first", out)
+        self.assertIn("Play on The Elder Scrolls II: Daggerfall now starts Daggerfall Unity", out)
+        self.assertEqual(self.mapping_name(), "modsync_489830_proton")
+        self.assertEqual(self.df_mapping(), "modsync_1812390_proton")
+        self.assertEqual(launchhook.Pending.load_all(), [])
+
+    def test_missing_program_is_reported(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        self.dfu.unlink()
+        self.assertIn("is missing, so Play starts the original", launchhook.status(self.DF).summary())
+
+    def test_refresh_keeps_the_native_program(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        record = launchhook.Record.load(self.DF)
+        record.template_version = 1
+        record.save()
+        self.assertTrue(launchhook.refresh_if_outdated(self.DF))
+        self.assertIn(f"native='{self.dfu}'", (self.df_dir / "proton").read_text())
+        self.assertEqual(launchhook.Record.load(self.DF).native, str(self.dfu))
+
+
+class DaggerfallHookFollowsInstall(DaggerfallHook):
+    """Installing Daggerfall Unity elsewhere moves the hook only while Steam
+    uses it, and never undoes a choice made since (review of #112)."""
+
+    def setUp(self):
+        super().setUp()
+        from modsync import dfu
+
+        self.dfu_mod = dfu
+        self.moved = dfu.Install(self.tmp / "Moved")
+        fakesteam._executable(self.moved.executable, "#!/bin/sh\n")
+
+    def script_native(self):
+        import shlex
+
+        line = next(l for l in (self.df_dir / "proton").read_text().splitlines() if l.startswith("native="))
+        return shlex.split(line.removeprefix("native="))[0]
+
+    def test_follows_while_on(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        self.assertIn("refreshed", self.dfu_mod.follow_install(self.moved))
+        self.assertEqual(self.script_native(), str(self.moved.executable))
+        self.assertEqual(launchhook.Record.load(self.DF).native, str(self.moved.executable))
+
+    def test_follows_a_switch_queued_while_steam_runs(self):
+        self.steam_running = True
+        launchhook.enable(self.DF, native=self.dfu)
+        self.assertIn("queued", self.dfu_mod.follow_install(self.moved))
+        self.assertEqual(self.script_native(), str(self.moved.executable))
+        self.assertEqual(launchhook.Pending.load(self.DF).action, "select")
+        self.assertIsNone(self.df_mapping())  # still Steam's default until it closes
+
+    def test_a_queued_disable_survives(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        self.steam_running = True
+        launchhook.disable(self.DF)
+        self.assertIsNone(self.dfu_mod.follow_install(self.moved))
+        self.assertEqual(launchhook.Pending.load(self.DF).action, "restore")
+        self.assertIn("restore the previous launcher", launchhook.status(self.DF).summary())
+
+    def test_another_launcher_picked_in_steam_stays(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        cfg = SteamConfig.load(self.root / "config/config.vdf")
+        cfg.set_compat_tool(self.DF, "GE-Proton10-34")
+        cfg.save()
+        self.assertIsNone(self.dfu_mod.follow_install(self.moved))
+        self.assertEqual(self.df_mapping(), "GE-Proton10-34")
+
+    def test_the_installed_script_wins_over_another_modsyncs_record(self):
+        # The native ModSync enables copy A; the Flatpak, with its own config, copy B.
+        launchhook.enable(self.DF, native=self.dfu)
+        own_config = os.environ["XDG_CONFIG_HOME"]
+        os.environ["XDG_CONFIG_HOME"] = str(self.tmp / "flatpak-config")
+        launchhook.enable(self.DF, native=self.moved.executable)
+        os.environ["XDG_CONFIG_HOME"] = own_config
+        self.assertEqual(launchhook.Record.load(self.DF).native, str(self.dfu))  # stale, local
+        self.assertEqual(launchhook.status(self.DF).native, str(self.moved.executable))
+        a = self.dfu_mod.Install(self.dfu.parent)
+        self.assertIn("refreshed", self.dfu_mod.follow_install(a))
+        self.assertEqual(self.script_native(), str(self.dfu))
+
+
 class HandoffTests(unittest.TestCase):
     def test_fields_end_in_nul_and_keep_spaces_and_unicode(self):
         from modsync.mo2.launch import LaunchPlan

@@ -148,6 +148,7 @@ modsync service install [--linger] | status | uninstall
 modsync firewall status | allow | remove   # ModSync's ports in ufw or firewalld
 modsync steam shortcut [--remove]   # add ModSync as a non-Steam game, or remove it
 modsync launch status | enable [--through <tool>] | disable
+modsync dfu status | install [<dest>] | hook enable | disable   # Daggerfall Unity, see below
 ```
 
 ## Game version records
@@ -498,6 +499,56 @@ without a controller in hand.
 
 `modsync launch enable --through <tool>` chains to a named compatibility tool
 instead of the detected one.
+
+## Daggerfall Unity
+
+ModSync can set up [Daggerfall Unity](https://www.dfworkshop.net/) (DFU)
+from the free Steam copy of *The Elder Scrolls II: Daggerfall*. This is
+separate from the Skyrim setup and uses none of the MO2 tools. So far it is
+command line only. Syncing DFU's mods and saves, and the app screens, are
+tracked in #111.
+
+1. Install *The Elder Scrolls II: Daggerfall* in Steam.
+2. `modsync dfu install` downloads the official DFU 1.1.1 Linux build,
+   checks it against a pinned checksum, and unpacks it unmodified into
+   `~/Games/Daggerfall Unity`. To use another folder, pass it as an argument;
+   the folder must be new or empty.
+3. `modsync dfu hook enable` makes Steam's own Play button on Daggerfall
+   start Daggerfall Unity, also in Gaming Mode. It uses the same launch hook
+   as Skyrim (see "How the launch hook works"), but opens no ModSync window
+   first. When Steam is running, the switch waits until Steam closes.
+
+ModSync adds two things to the install:
+
+- `Portable.txt`, so DFU keeps its settings, saves and mod load order in
+  `PortableAppdata/` inside the install instead of `~/.config/unity3d`.
+- Two settings in `PortableAppdata/settings.ini`. `MyDaggerfallPath` points
+  at Steam's `DF/DAGGER` folder. The resolution is set to the primary
+  display's, as reported by `xrandr`. DFU fills in everything else.
+  - DFU's own first run asks for a resolution, but only while it still needs
+    the data path, so it skips that step here. Without this, it falls back to
+    1920×1080, which looks stretched on a screen of another shape.
+  - To change the resolution later, use Advanced on DFU's startup screen.
+
+DFU's startup screen still opens. That's where the mod list and DFU's own
+settings are edited. Mods go in
+`DaggerfallUnity_Data/StreamingAssets/Mods`. Use the Linux build of a mod
+where one is offered, because mods are built separately for each system.
+
+To play the original Daggerfall in DOSBox, put
+`MODSYNC_ORIGINAL_GAME=1 %command%` in its launch options under Properties,
+or run `modsync dfu hook disable`. If Daggerfall Unity's folder is gone, Play
+starts the original too.
+
+If Daggerfall moves to another Steam library, run `modsync dfu install`
+again. It only rewrites `MyDaggerfallPath`, and leaves mods, saves and
+other settings alone. An install into another folder moves the Play
+button with it. `modsync dfu status` shows where everything is, whether DFU
+still points at Steam's copy, and what Play does.
+
+DFU only has an x86_64 build. On the Steam Frame it would have to run under
+emulation, which is untested (#110). DFU's developers don't support builds or setups from third parties,
+so report problems with a ModSync-installed DFU to ModSync.
 
 ## Background service
 

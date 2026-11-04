@@ -26,3 +26,14 @@ SKYRIM_SE = Game(
 
 # Keyed by Steam AppID for quick lookup; extend over time.
 GAMES: dict[int, Game] = {SKYRIM_SE.appid: SKYRIM_SE}
+
+# Not an MO2 game, so not in GAMES: Steam's Play button on it can start
+# Daggerfall Unity instead (modsync.dfu, modsync.launchhook).
+DAGGERFALL = Game(
+    appid=1812390,
+    name="The Elder Scrolls II: Daggerfall",
+    mo2_game_name="",
+    nexus_slug="",
+    mo2lint_key="",
+    exe_name="",
+)

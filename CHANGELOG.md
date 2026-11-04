@@ -6,6 +6,16 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Daggerfall Unity, set up from Steam's free *The Elder Scrolls II:
+  Daggerfall* (#103). `modsync dfu install` downloads the official Linux
+  build and points it at Steam's data. `modsync dfu hook enable` makes
+  Steam's Play button on Daggerfall start it, through the same launch hook
+  as Skyrim, and `modsync dfu status` shows the setup. Its startup screen,
+  where mods are turned on and off, still opens. Command line only for now.
+  See "Daggerfall Unity" in `docs/advanced.md`.
+
 ## [2.0.0] - 2026-10-28
 
 - Full app redesign!

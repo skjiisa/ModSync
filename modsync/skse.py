@@ -17,7 +17,6 @@ of a URL; the UI opens it and the user installs by hand.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import shutil
 import tempfile
@@ -115,28 +114,14 @@ class Installed:
     files: int = 0  # files copied in
 
 
-def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def _fetch(build: SkseBuild, cache_dir: Path, progress: engine.ProgressFn | None) -> Path:
     assert build.url is not None
-    archive = cache_dir / (build.subdir + ".7z")
-    if archive.exists() and _sha256(archive) == build.sha256:
-        return archive
-    archive.unlink(missing_ok=True)
     try:
-        engine._download(build.url, archive, progress, f"SKSE {build.version}")
+        return engine.fetch_verified(
+            build.url, cache_dir / (build.subdir + ".7z"), build.sha256, f"SKSE {build.version}", progress,
+        )
     except engine.DowngradeError as exc:
         raise SkseError(str(exc)) from exc
-    if _sha256(archive) != build.sha256:
-        archive.unlink(missing_ok=True)
-        raise SkseError(f"SKSE {build.version} download didn't match its checksum; deleted it, please retry")
-    return archive
 
 
 # The scripts SKSE ships: ``<name>.pex`` in ``Data/Scripts`` and ``<name>.psc``

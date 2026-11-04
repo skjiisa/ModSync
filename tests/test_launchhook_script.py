@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 from modsync import launchhook
-from modsync.games import SKYRIM_SE
+from modsync.games import DAGGERFALL, SKYRIM_SE
 from modsync.mo2.launch import LaunchPlan
 from modsync.steam import libraries as libs
 from modsync.steam.compattools import CompatTool
@@ -242,6 +242,63 @@ class RenderedScript(unittest.TestCase):
         self.run_hook("waitforexitandrun", self.game_exe)
         self.assertIsNotNone(self.record("SteamLinuxRuntime_sniper"))
         self.assertIsNone(self.record("SteamLinuxRuntime_4"))
+
+
+@unittest.skipIf(shutil.which("bash") is None, "bash required")
+class NativeProgramScript(unittest.TestCase):
+    """Daggerfall's hook: Play execs Daggerfall Unity on the host and opens no
+    window; anything else, or the original game asked for, goes to Proton."""
+
+    run_hook = RenderedScript.run_hook
+    record = RenderedScript.record
+    log = RenderedScript.log
+
+    def setUp(self):
+        RenderedScript.setUp(self)
+        self.dfu = self.tmp / "Daggerfall Unity" / "DaggerfallUnity.x86_64"
+        fakesteam._executable(self.dfu, RECORDER)
+        self.tool_dir = self.root / "compatibilitytools.d" / "modsync_1812390_proton"
+        underlying = CompatTool("proton_experimental", "Proton Experimental", self.proton_dir, "valve")
+        launchhook.render(
+            self.tool_dir,
+            game=DAGGERFALL,
+            underlying=underlying,
+            command=[str(self.modsync_dir / "modsync")],
+            library_paths=[lib.path for lib in libs.all_libraries([self.root])],
+            native=self.dfu,
+        )
+        self.dosbox = str(self.tmp / "The Elder Scrolls Daggerfall/DOSBox-0.74/DOSBox.exe")
+
+    def test_play_runs_daggerfall_unity_in_its_folder_with_steams_environment(self):
+        result = self.run_hook("waitforexitandrun", self.dosbox, "-conf", "df.conf")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dfu = self.record("Daggerfall Unity")
+        self.assertEqual(dfu["argv"], [])  # DOSBox's arguments mean nothing to it
+        self.assertEqual(dfu["cwd"], str(self.dfu.parent))
+        self.assertEqual(dfu["env"]["LD_PRELOAD"], "/fake/gameoverlayrenderer.so")  # Steam's overlay
+        self.assertIsNone(self.record("modsync-cmd"))  # no window
+        self.assertIsNone(self.record("SteamLinuxRuntime_4"))
+
+    def test_original_game_on_request(self):
+        result = self.run_hook("waitforexitandrun", self.dosbox, extra_env={"MODSYNC_ORIGINAL_GAME": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(self.record("Daggerfall Unity"))
+        self.assertIsNone(self.record("modsync-cmd"))
+        self.assertEqual(self.record("SteamLinuxRuntime_4")["argv"][-2:], ["waitforexitandrun", self.dosbox])
+
+    def test_missing_program_starts_the_original_game(self):
+        self.dfu.unlink()
+        result = self.run_hook("waitforexitandrun", self.dosbox)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(self.record("modsync-cmd"))
+        self.assertEqual(self.record("SteamLinuxRuntime_4")["argv"][-1], self.dosbox)
+        self.assertIn("is gone; starting the original game", self.log())
+
+    def test_setup_steps_still_go_to_proton(self):
+        result = self.run_hook("run", self.dosbox)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(self.record("Daggerfall Unity"))
+        self.assertEqual(self.record("SteamLinuxRuntime_4")["argv"][:1], ["--verb=run"])
 
 
 if __name__ == "__main__":

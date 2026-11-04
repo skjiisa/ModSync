@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - not on Windows
 from modsync import config
 
 _FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "awaiting_vault_version",
-           "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside")
+           "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside", "dfu_path")
 
 
 @dataclass
@@ -57,6 +57,8 @@ class State:
     copy_archive: str = ""  # where this copy keeps what it replaced or set aside
     # A finished copy's archive, while it holds anything the user may want back.
     set_aside: str = ""
+    # Where Daggerfall Unity is installed (modsync.dfu); "" when it isn't.
+    dfu_path: str = ""
 
     @staticmethod
     def path() -> Path:

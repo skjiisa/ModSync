@@ -199,14 +199,20 @@ def modsync_target(flatpak_id: str | None = MODSYNC_FLATPAK_ID) -> tuple[str, st
 
 def steam_is_running() -> bool:
     """Best-effort (Linux) check: editing shortcuts.vdf while Steam is running is
-    unsafe because Steam rewrites the file from memory when it exits.
+    unsafe because Steam rewrites the file from memory when it exits."""
+    return process_running("steam")
+
+
+def process_running(comm: str) -> bool:
+    """Whether a host process named ``comm`` (as ``/proc/<pid>/comm`` has it,
+    cut to 15 characters) is running.
 
     A Flatpak has its own PID namespace, so ``/proc`` shows nothing of the host
     there; ask the host through the Flatpak portal instead."""
     if os.environ.get("FLATPAK_ID") or Path("/.flatpak-info").exists():
         try:
             result = subprocess.run(
-                ["flatpak-spawn", "--host", "pgrep", "-x", "steam"],
+                ["flatpak-spawn", "--host", "pgrep", "-x", comm],
                 capture_output=True,
                 timeout=10,
                 check=False,
@@ -222,7 +228,7 @@ def steam_is_running() -> bool:
         if not entry.name.isdigit():
             continue
         try:
-            if (entry / "comm").read_text().strip() == "steam":
+            if (entry / "comm").read_text().strip() == comm:
                 return True
         except OSError:
             continue
