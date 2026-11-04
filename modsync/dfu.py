@@ -403,10 +403,16 @@ def follow_install(inst: Install) -> str | None:
 
 
 def current_install() -> Install | None:
-    """The install this machine uses: the one ModSync recorded, else one in
-    the default folder (installed before ModSync kept a record, or the record
-    was reset). Everything that acts on "the" install goes through this."""
-    return find_install(State.load().dfu_path) or find_install(default_install_dir())
+    """The install this machine uses: the one ModSync recorded, else one
+    ModSync made in the default folder (its record reset since). One there
+    that ModSync didn't make (no record of its version, or not portable) is
+    never taken: syncing it would change a folder nobody handed to ModSync.
+    Everything that acts on "the" install goes through this."""
+    recorded = find_install(State.load().dfu_path)
+    if recorded is not None:
+        return recorded
+    default = find_install(default_install_dir())
+    return default if default is not None and default.version and default.portable else None
 
 
 def _install_root() -> Path | None:
@@ -671,8 +677,11 @@ def setup(dest: Path | str | None = None, *, progress: engine.ProgressFn | None 
     problems = data_problems(dagger)
     if problems:
         raise DfuError(" ".join(problems))
-    dest = Path(dest) if dest else Path(State.load().dfu_path or default_install_dir())
-    result = install(dest, dagger, cache_dir=config.data_dir() / "dfu", progress=progress,
+    if not dest:
+        # The install it shows, if any: repairing never makes a second one elsewhere.
+        shown = current_install()
+        dest = shown.path if shown is not None else Path(State.load().dfu_path or default_install_dir())
+    result = install(Path(dest), dagger, cache_dir=config.data_dir() / "dfu", progress=progress,
                      resolution=display_resolution())
     State.update(dfu_path=str(result.install.path))
     return result, follow_install(result.install)

@@ -968,7 +968,7 @@ def _dfu_install(args: list[str]) -> int:
             print(problem)
         print("Install The Elder Scrolls II: Daggerfall in Steam, then run this again.")
         return 1
-    dest = Path(args[0]) if args else Path(State.load().dfu_path or dfu.default_install_dir())
+    dest = Path(args[0]) if args else None
     if platform.machine().lower() not in {"x86_64", "amd64"}:
         print(f"Note: Daggerfall Unity only has an x86_64 build; on {platform.machine()} it's untested.")
 

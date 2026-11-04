@@ -402,6 +402,8 @@ class Cli(unittest.TestCase):
         inst = dfu.Install(Path(d))
         inst.executable.parent.mkdir(parents=True, exist_ok=True)
         inst.executable.touch()
+        (inst.path / dfu.RECORD_NAME).write_text(json.dumps({"version": dfu.DFU_VERSION}))  # as ModSync makes one
+        (inst.path / "Portable.txt").touch()
         dfu.write_daggerfall_path(inst.settings_ini, data)
         return dfu.Installed(inst, data, fresh=True)
 
@@ -700,13 +702,40 @@ class Launch(unittest.TestCase):
             dfu.launch(self.inst)
         self.assertEqual(popen.call_args.kwargs["env"], {"HOME": "/home/you"})
 
-    def test_an_install_in_the_default_folder_is_the_one_everything_uses(self):
+    def test_an_install_modsync_made_in_the_default_folder_is_the_one_everything_uses(self):
         with tempfile.TemporaryDirectory() as tmp:
             default = dfu.Install(Path(tmp) / "Daggerfall Unity")
             default.executable.parent.mkdir(parents=True)
             default.executable.touch()
             State.update(dfu_path="")
             with patch.object(dfu, "default_install_dir", lambda: default.path):
+                self.assertIsNone(dfu.current_install())  # one put there by hand is never taken
+                self.assertIsNone(dfu.MODS_FOLDER.path())
+                (default.path / dfu.RECORD_NAME).write_text('{"version": "1.1.1"}')
+                self.assertIsNone(dfu.current_install())  # nor one that isn't portable
+                (default.path / "Portable.txt").touch()
                 self.assertEqual(dfu.current_install().path, default.path)
                 self.assertEqual(dfu.MODS_FOLDER.path(), default.path)
                 self.assertIsNotNone(dfu.SAVES_FOLDER.path())
+
+    def test_repairing_never_makes_a_second_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            default = dfu.Install(Path(tmp) / "Daggerfall Unity")
+            default.executable.parent.mkdir(parents=True)
+            default.executable.touch()
+            (default.path / dfu.RECORD_NAME).write_text('{"version": "1.1.1"}')
+            (default.path / "Portable.txt").touch()
+            State.update(dfu_path=str(Path(tmp) / "gone"))  # recorded somewhere that's gone
+            calls = []
+
+            def fake_install(dest, dagger, **kw):
+                calls.append(Path(dest))
+                return dfu.Installed(dfu.Install(Path(dest)), dagger, fresh=False)
+
+            with patch.object(dfu, "default_install_dir", lambda: default.path), \
+                    patch.object(dfu, "steam_daggerfall", lambda: Path(tmp)), \
+                    patch.object(dfu, "data_problems", lambda d: []), patch.object(dfu, "install", fake_install), \
+                    patch.object(dfu, "display_resolution", lambda: None), \
+                    patch.object(dfu, "follow_install", lambda inst: None):
+                dfu.setup()
+            self.assertEqual(calls, [default.path])
