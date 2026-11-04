@@ -737,7 +737,10 @@ def sync(saves: Path, library: Path, machine: Machine, *, guard: Guard | None = 
                 # What it holds is known by name; its vector comes from that record.
                 own = next((r for r in recs if not r.deleted and r.name == held.get("version")), None)
                 if own is None:
-                    continue  # not here yet: decide nothing for this save until it is
+                    # Not here yet (or its entry is damaged): decide nothing for this save until it is.
+                    log.warning("DFU saves: %s holds %s, whose record isn't in the library; its save waits",
+                                slot, held.get("version") or "an unnamed version")
+                    continue
                 held["held"] = own.vv
                 mapping.save()
             # Taking the winner, or holding it, settles every record it beat, too.
