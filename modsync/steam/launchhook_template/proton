@@ -44,7 +44,7 @@ if [[ -n "$native" && "$verb" == "waitforexitandrun" ]]; then
         # Daggerfall Unity's saves sync through a library ModSync keeps (modsync
         # dfu saves): bring the newest in before it starts, and store the new
         # ones once it exits. Only where saves sync has run; never blocking the game.
-        if [[ -f "${native%/*}/PortableAppdata/Saves/.modsync-saves.json" ]]; then
+        if [[ -f "${native%/*}/.modsync-saves" ]]; then
             saves=("${modsync[@]}")
             if [[ -f /.flatpak-info ]] && command -v flatpak-spawn >/dev/null 2>&1; then
                 saves=(flatpak-spawn --host "${modsync[@]}")

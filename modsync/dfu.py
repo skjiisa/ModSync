@@ -492,12 +492,36 @@ MODS_FOLDER = FolderSpec(
 
 def saves_dir(inst: Install) -> Path:
     """Where DFU keeps this install's saves: ``MyDaggerfallUnitySavePath`` when
-    set, else ``PortableAppdata/Saves``."""
+    it names a folder that exists (DFU uses it as it is), else
+    ``PortableAppdata/Saves``."""
     custom = read_setting(inst.settings_ini, "Daggerfall", "MyDaggerfallUnitySavePath")
     if custom:
-        path = Path(custom)
-        return path if path.is_absolute() else inst.path / path
+        path = Path(custom) if Path(custom).is_absolute() else inst.path / custom
+        if path.is_dir():
+            return path
     return inst.data_dir / "Saves"
+
+
+SAVES_MARKER = ".modsync-saves"  # in the install: the Play hook syncs saves around DFU
+
+
+def _machine_id() -> str:
+    """This machine's name in the save versions it writes. Kept with ModSync,
+    not with the saves, so a DFU install copied to another machine can't
+    bring it along."""
+    from modsync import config, dfu_saves
+
+    path = config.data_dir() / "dfu-saves-machine"
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+        if dfu_saves.valid_machine_id(value):
+            return value
+    except OSError:
+        pass
+    value = dfu_saves.new_machine_id()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(value + "\n", encoding="utf-8")
+    return value
 
 
 def saves_library() -> Path:
@@ -526,7 +550,8 @@ def sync_saves(*, force: bool = False) -> "dfu_saves.Report":
     elif is_running():
         report.skipped = "Daggerfall Unity is running; its saves sync once it closes."
     else:
-        return dfu_saves.sync(saves_dir(inst), saves_library())
+        (inst.path / SAVES_MARKER).touch()
+        return dfu_saves.sync(saves_dir(inst), saves_library(), _machine_id())
     return report
 
 

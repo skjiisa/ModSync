@@ -297,7 +297,7 @@ class NativeProgramScript(unittest.TestCase):
     def test_saves_sync_before_and_after_where_they_are_set_up(self):
         calls = self.tmp / "calls.log"
         fakesteam._executable(self.modsync_dir / "modsync", f"""#!/usr/bin/env bash
-echo "modsync $* preload=${{LD_PRELOAD-}} saves_mapping=$(ls "{self.dfu.parent}/PortableAppdata/Saves")" >> "{calls}"
+echo "modsync $* preload=${{LD_PRELOAD-}}" >> "{calls}"
 """)
         fakesteam._executable(self.dfu, f"""#!/usr/bin/env bash
 echo "dfu preload=${{LD_PRELOAD-}} cwd=$PWD" >> "{calls}"
@@ -307,24 +307,20 @@ exit 3
         self.assertEqual(result.returncode, 3, result.stderr)  # exec'd: DFU's own exit code
         self.assertEqual(calls.read_text().splitlines(), [f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}"])
         calls.unlink()
-        saves = self.dfu.parent / "PortableAppdata" / "Saves"
-        saves.mkdir(parents=True)
-        (saves / ".modsync-saves.json").write_text("{}")
+        (self.dfu.parent / ".modsync-saves").touch()
         result = self.run_hook("waitforexitandrun", self.dosbox)
         self.assertEqual(result.returncode, 3, result.stderr)  # DFU's own exit code
         self.assertEqual(calls.read_text().splitlines(), [
-            "modsync dfu saves --quiet preload= saves_mapping=",  # no overlay in ModSync
+            "modsync dfu saves --quiet preload=",  # no overlay in ModSync
             f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}",
-            "modsync dfu saves --quiet preload= saves_mapping=",
+            "modsync dfu saves --quiet preload=",
         ])
 
     def test_a_failing_saves_sync_never_blocks_the_game(self):
         calls = self.tmp / "calls.log"
         fakesteam._executable(self.modsync_dir / "modsync", "#!/usr/bin/env bash\nexit 1\n")
         fakesteam._executable(self.dfu, f'#!/usr/bin/env bash\necho ran >> "{calls}"\n')
-        saves = self.dfu.parent / "PortableAppdata" / "Saves"
-        saves.mkdir(parents=True)
-        (saves / ".modsync-saves.json").write_text("{}")
+        (self.dfu.parent / ".modsync-saves").touch()
         result = self.run_hook("waitforexitandrun", self.dosbox)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls.read_text(), "ran\n")

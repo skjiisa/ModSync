@@ -116,8 +116,11 @@ def complete(version: Path) -> bool:
     try:
         manifest = json.loads((version / MANIFEST).read_text(encoding="utf-8"))
         files = manifest["files"]
-        return all((version / rel).is_file() and (version / rel).stat().st_size == meta["size"]
-                   and _sha256(version / rel) == meta["sha256"] for rel, meta in files.items())
+        # Sizes first: until the last file has arrived this fails without reading any.
+        if not all((version / rel).is_file() and (version / rel).stat().st_size == meta["size"]
+                   for rel, meta in files.items()):
+            return False
+        return all(_sha256(version / rel) == meta["sha256"] for rel, meta in files.items())
     except (OSError, ValueError, KeyError, TypeError):
         return False
 
@@ -186,16 +189,22 @@ class Report:
         return ", ".join(parts) if parts else "Saves are up to date."
 
 
+def new_machine_id() -> str:
+    return secrets.token_hex(4)
+
+
+def valid_machine_id(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{8}", value) is not None
+
+
 class _Mapping:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, machine: str) -> None:
         self.path = path
+        self.machine = machine
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
-        machine = data.get("machine")
-        self.machine = machine if isinstance(machine, str) and re.fullmatch(r"[0-9a-f]{8}", machine) else \
-            secrets.token_hex(4)
         slots = data.get("slots")
         self.slots: dict[str, dict] = slots if isinstance(slots, dict) else {}
         verified = data.get("verified")
@@ -204,7 +213,7 @@ class _Mapping:
     def save(self, library: Path) -> None:
         self.verified = {v for v in self.verified if (library / v).is_dir()}  # pruned ones go
         tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
-        tmp.write_text(json.dumps({"machine": self.machine, "slots": self.slots, "verified": sorted(self.verified)},
+        tmp.write_text(json.dumps({"slots": self.slots, "verified": sorted(self.verified)},
                                   indent=2) + "\n", encoding="utf-8")
         os.replace(tmp, self.path)
 
@@ -223,14 +232,31 @@ def _locked(saves: Path):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def _slots(saves: Path) -> dict[str, tuple[Info, str]]:
-    out = {}
+def _slots(saves: Path) -> tuple[dict[str, tuple[Info, str]], set[str]]:
+    """The readable saves here, and every ``SAVE<n>`` folder (readable or not)."""
+    out, present = {}, set()
     for entry in saves.iterdir():
         if entry.is_dir() and _SLOT_RE.match(entry.name):
+            present.add(entry.name)
             info = read_info(entry)
             if info is not None:
                 out[entry.name] = (info, fingerprint(entry))
-    return out
+    return out, present
+
+
+def _recover(saves: Path, library: Path) -> None:
+    """Finish what an interrupted sync left half done (the Play hook's time
+    limit, a crash): a slot caught mid-swap gets its old contents back, so it
+    never reads as deleted, and leftover copies go."""
+    for old in saves.glob(".modsync-old-SAVE*"):
+        slot = saves / old.name.removeprefix(".modsync-old-")
+        if slot.exists():
+            shutil.rmtree(old, ignore_errors=True)  # the swap was done; only the clean-up wasn't
+        else:
+            os.rename(old, slot)
+            log.warning("put back %s after an interrupted sync", slot.name)
+    for leftover in [*saves.glob(".modsync-incoming-*"), *library.glob(".incoming-*")]:
+        shutil.rmtree(leftover, ignore_errors=True)
 
 
 def _store(slot: Path, info: Info, machine: str, library: Path) -> Path:
@@ -238,7 +264,9 @@ def _store(slot: Path, info: Info, machine: str, library: Path) -> Path:
     it into place, so Syncthing never sends half of one."""
     dest = library / info.key / f"{info.real_time:020d}-{machine}"
     if dest.exists():
-        return dest
+        if complete(dest):
+            return dest
+        shutil.rmtree(dest)  # this machine's own, cut short before its manifest: write it again
     incoming = library / f".incoming-{secrets.token_hex(4)}"
     shutil.copytree(slot, incoming)
     files = {p.relative_to(incoming).as_posix(): {"size": p.stat().st_size, "sha256": _sha256(p)}
@@ -277,17 +305,20 @@ def _free_slot(saves: Path) -> Path:
     return saves / f"SAVE{n}"
 
 
-def sync(saves: Path, library: Path, *, now: int | None = None) -> Report:
+def sync(saves: Path, library: Path, machine: str) -> Report:
     """Bring ``saves`` (DFU's folder) and ``library`` (the synced one) in line.
-    Call only while DFU isn't running: it writes saves as it pleases."""
+    ``machine`` names this machine in the versions it writes; it must differ
+    from every other machine's. Call only while DFU isn't running: it writes
+    saves as it pleases."""
     report = Report()
     if not saves.is_dir():
         report.skipped = f"{saves} doesn't exist yet."
         return report
     library.mkdir(parents=True, exist_ok=True)
     with _locked(saves):
-        mapping = _Mapping(saves / MAPPING)
-        local = _slots(saves)
+        _recover(saves, library)
+        mapping = _Mapping(saves / MAPPING, machine)
+        local, present = _slots(saves)
 
         # 1. What changed here goes into the library.
         for slot, (info, fp) in sorted(local.items()):
@@ -296,18 +327,21 @@ def sync(saves: Path, library: Path, *, now: int | None = None) -> Report:
                 continue
             if known and known.get("key") != info.key:
                 # The slot now holds another save: the one it held was deleted.
-                _delete(library, known["key"], mapping.machine, now, report)
+                _delete(library, known, mapping.machine, report)
             version = _store_and_verify(saves / slot, info, mapping, library)
             mapping.slots[slot] = {"key": info.key, "version": version.name, "fingerprint": fp}
             report.stored.append(f"{info.character}: {info.name}")
-        for slot in [s for s in mapping.slots if s not in local]:
-            _delete(library, mapping.slots.pop(slot)["key"], mapping.machine, now, report)
+        # Only a slot that is gone was deleted; one DFU can't read either is left alone.
+        for slot in [s for s in mapping.slots if s not in present]:
+            _delete(library, mapping.slots.pop(slot), mapping.machine, report)
+        unreadable = {mapping.slots[s]["key"] for s in present - set(local) if s in mapping.slots}
 
         # 2. Each save's newest version is the one here.
         by_key = {m["key"]: slot for slot, m in mapping.slots.items()}
+        seen: dict[Path, list[Record]] = {}
         for key_dir in sorted(p for p in library.iterdir() if p.is_dir() and not p.name.startswith(".")):
-            found = records(key_dir, mapping.verified)
-            if not found:
+            found = seen[key_dir] = records(key_dir, mapping.verified)
+            if not found or key_dir.name in unreadable:
                 continue
             latest = found[-1]
             slot = by_key.get(key_dir.name)
@@ -326,23 +360,27 @@ def sync(saves: Path, library: Path, *, now: int | None = None) -> Report:
                                           "fingerprint": fingerprint(target)}
             report.placed.append(f"{info.character}: {info.name}" if info else target.name)
         # 3. Keep the newest few versions of each save.
-        for key_dir in (p for p in library.iterdir() if p.is_dir() and not p.name.startswith(".")):
-            _prune(key_dir, mapping.verified)
+        for key_dir, found in seen.items():
+            _prune(found)
         mapping.save(library)
     if report.changed:
         log.info("DFU saves: %s", report.summary())
     return report
 
 
-def _delete(library: Path, key: str, machine: str, now: int | None, report: Report) -> None:
-    marker = library / key / f"{now or ticks():020d}-{machine}.deleted"
+def _delete(library: Path, known: dict, machine: str, report: Report) -> None:
+    """Record that the save ``known`` held was deleted here. When isn't known
+    (ModSync may only notice much later), so the marker is dated just after
+    the version deleted: a save made anywhere since then wins over it."""
+    m = _RECORD_RE.match(str(known.get("version", "")))
+    when = int(m["time"]) + 1 if m else ticks()
+    marker = library / known["key"] / f"{when:020d}-{machine}.deleted"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.touch()
-    report.deleted.append(key)
+    report.deleted.append(known["key"])
 
 
-def _prune(key_dir: Path, verified: set[str]) -> None:
-    found = records(key_dir, verified)
+def _prune(found: list[Record]) -> None:
     versions = [r for r in found if not r.deleted]
     for old in versions[:-KEEP_VERSIONS]:
         shutil.rmtree(old.path, ignore_errors=True)

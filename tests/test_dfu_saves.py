@@ -51,8 +51,8 @@ class TwoMachines(unittest.TestCase):
         self.a.mkdir(parents=True)
         self.b.mkdir(parents=True)
 
-    def sync(self, saves, now=None):
-        return dfu_saves.sync(saves, self.library, now=now)
+    def sync(self, saves):
+        return dfu_saves.sync(saves, self.library, "aaaaaaaa" if saves == self.a else "bbbbbbbb")
 
     def round(self):
         """A, then B, then A again: what a few sync passes on each settle to."""
@@ -103,7 +103,7 @@ class TwoMachines(unittest.TestCase):
         self.round()
         b_slot = next(s for s, label in slots(self.b).items() if "Ellte 1" in label)  # B numbers its own
         shutil.rmtree(self.a / "SAVE0")
-        self.sync(self.a, now=500)
+        self.sync(self.a)
         report = self.sync(self.b)
         self.assertEqual(report.removed, [b_slot])
         self.assertEqual(list(slots(self.b).values()), ["Ellte: Ellte 2 @ 110"])
@@ -113,7 +113,7 @@ class TwoMachines(unittest.TestCase):
         make_save(self.a, "SAVE0", "Ellte", "QuickSave", 100, "v1")
         self.round()
         shutil.rmtree(self.a / "SAVE0")
-        self.sync(self.a, now=200)
+        self.sync(self.a)
         make_save(self.b, "SAVE0", "Ellte", "QuickSave", 300, "made again on B")  # B quicksaved after
         self.sync(self.b)
         self.sync(self.a)
@@ -126,9 +126,52 @@ class TwoMachines(unittest.TestCase):
         self.round()
         shutil.rmtree(self.a / "SAVE0")
         make_save(self.a, "SAVE0", "Bjorn", "Bjorn 1", 120, "new")  # DFU takes the first free number
-        self.sync(self.a, now=130)
+        self.sync(self.a)
         self.sync(self.b)
         self.assertEqual(slots(self.b), {"SAVE0": "Bjorn: Bjorn 1 @ 120"})
+
+    def test_a_deletion_noticed_late_never_beats_a_newer_save(self):
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 100, "v1")
+        self.round()
+        shutil.rmtree(self.a / "SAVE0")  # deleted in DFU at some point after 100...
+        make_save(self.b, "SAVE0", "Ellte", "QuickSave", 200, "B saved again")  # ...B saves at 200
+        self.sync(self.b)
+        self.sync(self.a)  # A notices the deletion only now
+        self.sync(self.b)
+        self.assertEqual(slots(self.b), {"SAVE0": "Ellte: QuickSave @ 200"})
+        self.assertEqual(slots(self.a), {"SAVE0": "Ellte: QuickSave @ 200"})
+
+    def test_an_interrupted_swap_is_put_back_not_deleted(self):
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
+        self.round()
+        before = contents(self.b / "SAVE0")
+        os.rename(self.b / "SAVE0", self.b / ".modsync-old-SAVE0")  # killed mid-swap
+        (self.b / ".modsync-incoming-SAVE0").mkdir()
+        report = self.sync(self.b)
+        self.assertEqual(report.deleted, [])
+        self.assertEqual(contents(self.b / "SAVE0"), before)
+        self.assertFalse((self.b / ".modsync-old-SAVE0").exists())
+        self.assertFalse((self.b / ".modsync-incoming-SAVE0").exists())
+        self.sync(self.a)
+        self.assertEqual(slots(self.a), {"SAVE0": "Ellte: Ellte 1 @ 100"})
+
+    def test_a_save_dfu_cant_read_is_left_alone(self):
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
+        self.round()
+        (self.b / "SAVE0" / "SaveInfo.txt").write_text("{trunc")
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 150, "v2")
+        self.sync(self.a)
+        report = self.sync(self.b)
+        self.assertEqual((report.deleted, report.placed), ([], []))
+        self.assertEqual((self.b / "SAVE0" / "SaveInfo.txt").read_text(), "{trunc")  # not overwritten either
+        self.sync(self.a)
+        self.assertEqual(slots(self.a), {"SAVE0": "Ellte: Ellte 1 @ 150"})
+
+    def test_leftovers_of_an_interrupted_store_are_cleaned_up(self):
+        (self.library / ".incoming-dead").mkdir(parents=True)
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
+        self.sync(self.a)
+        self.assertFalse((self.library / ".incoming-dead").exists())
 
     def test_a_version_still_arriving_is_not_used(self):
         make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
@@ -212,9 +255,25 @@ class SyncSaves(unittest.TestCase):
         self.assertFalse(dfu.saves_library().exists())
 
     def test_a_custom_save_folder_is_honoured(self):
+        (self.tmp / "Elsewhere").mkdir()
         dfu.write_settings(self.inst.settings_ini, "Daggerfall", {"MyDaggerfallUnitySavePath": self.tmp / "Elsewhere"})
         self.assertEqual(dfu.saves_dir(self.inst), self.tmp / "Elsewhere")
         dfu.write_settings(self.inst.settings_ini, "Daggerfall", {"MyDaggerfallUnitySavePath": ""})
+        self.assertEqual(dfu.saves_dir(self.inst), self.inst.data_dir / "Saves")
+
+    def test_the_machine_id_stays_with_modsync_not_the_saves(self):
+        State.update(game_folders={"dfu-saves": str(dfu.saves_library())})
+        dfu.sync_saves()
+        machine = (self.tmp / "data" / "modsync" / "dfu-saves-machine").read_text().strip()
+        self.assertRegex(machine, r"^[0-9a-f]{8}$")
+        mapping = json.loads((self.inst.data_dir / "Saves" / dfu_saves.MAPPING).read_text())
+        self.assertNotIn("machine", mapping)
+        (version,) = next(dfu.saves_library().iterdir()).iterdir()
+        self.assertTrue(version.name.endswith("-" + machine))
+        self.assertTrue((self.inst.path / dfu.SAVES_MARKER).exists())  # the Play hook syncs around DFU now
+
+    def test_a_custom_save_folder_that_doesnt_exist_is_ignored_like_dfu_does(self):
+        dfu.write_settings(self.inst.settings_ini, "Daggerfall", {"MyDaggerfallUnitySavePath": self.tmp / "nowhere"})
         self.assertEqual(dfu.saves_dir(self.inst), self.inst.data_dir / "Saves")
 
     def test_no_install_no_folder(self):
