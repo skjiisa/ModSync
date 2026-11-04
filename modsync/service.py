@@ -257,6 +257,24 @@ class ModSyncService:
             self.manager.start(timeout=timeout)
         self._refresh_stignore()
         self._refresh_game_folders()
+        self._introduce_peers()
+
+    _peers_introduced = False
+
+    def _introduce_peers(self) -> None:
+        """Once per run: machines paired before ModSync made them introducers
+        become introducers, so the machines paired with them find each other."""
+        if self._peers_introduced or not self.state.active:
+            return
+        try:
+            with self.manager.client() as client:
+                changed = pairing.introduce_peers(client)
+        except Exception as exc:
+            log.info("could not make the paired machines introducers: %s", exc)
+            return
+        self._peers_introduced = True
+        if changed:
+            log.info("paired machines now introduce the others: %s", ", ".join(d[:7] for d in changed))
 
     _FOLDERS_REFRESH_S = 60.0
     _folders_refreshed_at: float | None = None
@@ -909,6 +927,9 @@ class ModSyncService:
                 folders.share_with(client, device_id)
                 accepted.append(device_id)
                 log.info("accepted pending device %s… (%s)", device_id[:7], name)
+            # Machines another one introduced are paired without coming
+            # through here: the games' folders are shared with them now.
+            folders.share_with_peers(client)
             # A paired machine may have started syncing a game set up here too.
             taken = folders.take_offers(client)
         if accepted or taken:

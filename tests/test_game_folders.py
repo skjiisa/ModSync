@@ -374,6 +374,56 @@ class MachineWidePairing(GameFolderBase):
         self.assertNotIn("DECK", self.st.devices)
         self.assertFalse(State.load().paired)
 
+    def test_every_way_of_pairing_makes_the_other_machine_an_introducer(self):
+        self.service.share_game_folder("test-mods")
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.service.add_peer(PairingCode("DECK", "", "Deck"))
+        self.st.pending_devices["FRAME"] = {"name": "Steam Frame"}
+        self.service.accept_pending()
+        for device_id in ("DESKTOP", "DECK", "FRAME"):
+            device = self.st.devices[device_id]
+            self.assertTrue(device["introducer"], device_id)
+            self.assertTrue(device["skipIntroductionRemovals"], device_id)
+
+    def test_machines_paired_before_become_introducers_once(self):
+        self.st.devices["DESKTOP"] = {"deviceID": "DESKTOP", "name": "Desktop", "introducer": False,
+                                      "paused": True}
+        self.service.ensure_running()  # nothing syncs or is paired here yet: left alone
+        self.assertFalse(self.st.devices["DESKTOP"]["introducer"])
+        State.update(paired=True)
+        self.service.reload_state()
+        self.service.ensure_running()
+        desktop = self.st.devices["DESKTOP"]
+        self.assertEqual((desktop["introducer"], desktop["skipIntroductionRemovals"], desktop["paused"]),
+                         (True, True, True))
+        self.assertNotIn("introducer", self.st.devices["ME"])
+        self.st.devices["DESKTOP"]["introducer"] = False
+        self.service.ensure_running()  # once per run
+        self.assertFalse(self.st.devices["DESKTOP"]["introducer"])
+
+    def test_a_connected_machine_made_an_introducer_reconnects(self):
+        self.st.devices["DECK"] = {"deviceID": "DECK", "paused": False}
+        self.st.devices["PAUSED"] = {"deviceID": "PAUSED", "paused": True}
+        written = []
+        put = _Client.put_device
+
+        def record(client, device):
+            written.append((device["deviceID"], device.get("paused")))
+            put(client, device)
+
+        State.update(paired=True)
+        self.service.reload_state()
+        with patch.object(_Client, "put_device", record):
+            self.service.ensure_running()
+        # Syncthing reads what an introducer passes on only as it connects.
+        self.assertEqual(written, [("DECK", True), ("DECK", False), ("PAUSED", True)])
+
+    def test_a_machine_introduced_by_another_gets_the_games_folders(self):
+        self.service.share_game_folder("test-mods")
+        self.st.devices["LAPTOP"] = {"deviceID": "LAPTOP", "introducer": True}  # Syncthing added it
+        self.service.accept_pending()
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "LAPTOP"})
+
     def test_status_lists_the_games_folders(self):
         self.service.share_game_folder("test-mods")
         st = self.service.status()

@@ -39,6 +39,11 @@ All notable changes to ModSync are documented here. The format follows
   installs it, sets what Steam's Play button starts, plays it, opens the mods
   folder, and turns mods and saves sync on and off. ModSync reopens on the
   game last shown; opened by Skyrim's Play button, it shows only Skyrim.
+- Machines paired through a third one sync with each other directly. When
+  a Deck and a laptop have both paired with the desktop, the desktop
+  introduces them, and they keep syncing with the desktop off. Machines
+  paired before get this the next time ModSync runs and the shared machine
+  is online.
 
 ## [2.0.0] - 2026-10-28
 
