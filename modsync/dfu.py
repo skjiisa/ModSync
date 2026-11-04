@@ -39,7 +39,13 @@ import stat
 import subprocess
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - not on Windows
+    fcntl = None
 from pathlib import Path
 
 from modsync import background, launchhook, platforms
@@ -534,7 +540,31 @@ def _saves_root() -> Path | None:
     return saves_library() if _install_root() is not None else None
 
 
-def sync_saves(*, force: bool = False) -> "dfu_saves.Report":
+PLAYING_LOCK = ".modsync-playing"  # in the install: held by Steam's Play hook while DFU runs
+
+
+@contextmanager
+def _not_playing(inst: Install, playing: bool):
+    """While Steam's Play hook has DFU starting or running it holds this lock;
+    any other sync then gives way (yields a reason). The hook's own syncs,
+    just before and after DFU, say ``playing``. Held shared for the sync, so
+    the hook waits for one under way before starting DFU."""
+    if playing or fcntl is None:
+        yield ""
+        return
+    with open(inst.path / PLAYING_LOCK, "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield "Daggerfall Unity is starting or running; its saves sync once it closes."
+            return
+        try:
+            yield ""
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def sync_saves(*, force: bool = False, playing: bool = False) -> "dfu_saves.Report":
     """Bring this machine's saves and the synced library in line, when saves
     sync is on here (or ``force``) and DFU is closed."""
     from modsync import dfu_saves
@@ -545,14 +575,20 @@ def sync_saves(*, force: bool = False) -> "dfu_saves.Report":
     inst = find_install(st.dfu_path)
     if inst is None:
         report.skipped = "Daggerfall Unity isn't installed."
-    elif not force and (SAVES_FOLDER.key not in st.game_folders or folders.stopping(SAVES_FOLDER.key, st)):
+        return report
+    if not force and (SAVES_FOLDER.key not in st.game_folders or folders.stopping(SAVES_FOLDER.key, st)):
         report.skipped = "Saves don't sync on this machine."
-    elif is_running():
-        report.skipped = "Daggerfall Unity is running; its saves sync once it closes."
-    else:
-        (inst.path / SAVES_MARKER).touch()
-        return dfu_saves.sync(saves_dir(inst), saves_library(), _machine_id())
-    return report
+        return report
+    (inst.path / SAVES_MARKER).touch()
+    with _not_playing(inst, playing) as reason:
+        if reason:
+            report.skipped = reason
+            return report
+
+        def busy() -> str:  # asked again once the saves are locked: DFU may have started meanwhile
+            return "Daggerfall Unity is running; its saves sync once it closes." if is_running() else ""
+
+        return dfu_saves.sync(saves_dir(inst), saves_library(), _machine_id(), busy=busy)
 
 
 SAVES_FOLDER = FolderSpec(

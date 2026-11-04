@@ -879,8 +879,8 @@ def dfu(args: list[str]) -> int:
         return _dfu_install(rest)
     if sub == "hook":
         return _dfu_hook(rest)
-    if sub == "saves" and rest in ([], ["--quiet"]):
-        return _dfu_saves(quiet=bool(rest))
+    if sub == "saves" and set(rest) <= {"--quiet", "--playing"}:
+        return _dfu_saves(quiet="--quiet" in rest, playing="--playing" in rest)
     print(
         "usage:\n"
         "  modsync dfu status                   Steam's Daggerfall data and the Daggerfall Unity install\n"
@@ -1018,11 +1018,11 @@ def _dfu_install(args: list[str]) -> int:
     return 0
 
 
-def _dfu_saves(*, quiet: bool) -> int:
+def _dfu_saves(*, quiet: bool, playing: bool = False) -> int:
     from modsync import dfu
 
     try:
-        report = dfu.sync_saves()
+        report = dfu.sync_saves(playing=playing)
     except Exception as exc:  # run by the Play hook: say so, never block the game
         print(f"Saves didn't sync: {exc}")
         return 1

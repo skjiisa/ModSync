@@ -11,29 +11,44 @@ beside it, where nothing is ever written twice:
 
 ``<library>/<key>/<version>/``
     One version of one save, copied whole from a ``SAVE<n>``, with a
-    ``modsync-save.json`` manifest (character, name, the file list with sizes
-    and checksums). ``<key>`` stands for the character and save name;
-    ``<version>`` is the save's own time (``SaveInfo.txt``'s ``realTime``)
-    and the machine that made it, so no two machines ever write one path.
+    ``modsync-save.json`` manifest: character, name, the file list with sizes
+    and checksums, and the versions it was made from (``ancestors``, newest
+    first). ``<key>`` stands for the character and save name; ``<version>`` is
+    the save's own time (``SaveInfo.txt``'s ``realTime``) and the machine that
+    made it, so no two machines ever write one path.
 
 ``<library>/<key>/<time>-<machine>.deleted``
-    The save was deleted at that time on that machine.
+    The save was deleted on that machine; the file lists the versions the
+    deletion did away with.
+
+Which version of a save wins goes by descent first: a version made from
+another always replaces it, whatever the clocks of the machines say (DFU's
+times are local time, so time zones and the end of summer time would
+otherwise let older progress win). Only versions made separately (neither
+from the other; say, each machine played on from the same save before they
+met) are decided by DFU's clock, and both are kept. A slot is never moved back
+to a version its own descends from.
 
 Whenever DFU isn't running, :func:`sync` copies new and changed local saves
-into the library, then makes each save's newest version (by DFU's own clock)
-the one in its local slot: an older local copy is replaced, a save new here
-gets a free number, a deleted one goes. The version replaced stays in the
-library (the newest few of each save are kept), so the save that lost to a
-newer one can still be had. A version still arriving is never used: its
-files must match its manifest first.
+into the library, then makes each save's winning version the one in its local
+slot: an older local copy is replaced (swapped in one step, so an interrupted
+sync never leaves a slot missing), a save new here gets a free number, a
+deleted one goes. The version replaced stays in the library (the winner and the
+newest few others of each save are kept). A version is used
+only once its files match its manifest, checked again just before it goes
+into a slot.
 
-Which local slot holds which save, as last synced, is in
-``Saves/.modsync-saves.json``. DFU only reads ``SAVE<n>`` folders, so that and
-ModSync's temporary folders (``.modsync-*``) are invisible to it.
+Which local slot holds which version, as last synced with one library, is in
+``Saves/.modsync-saves-<library>.json``: the Flatpak and a native ModSync on
+one machine keep separate libraries and must not take each other's word.
+DFU only reads ``SAVE<n>`` folders, so that and ModSync's temporary folders
+(``.modsync-*``) are invisible to it.
 """
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import hashlib
 import json
 import logging
@@ -45,6 +60,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 try:
     import fcntl
@@ -53,9 +69,10 @@ except ImportError:  # pragma: no cover - not on Windows
 
 log = logging.getLogger(__name__)
 
-MAPPING = ".modsync-saves.json"  # in the local Saves folder; never synced
+MAPPING_PREFIX = ".modsync-saves-"  # + the library's id + ".json", in the local Saves folder; never synced
 MANIFEST = "modsync-save.json"  # in each version in the library
-KEEP_VERSIONS = 3  # of each save, newest first
+KEEP_VERSIONS = 3  # of each save besides the winning one, newest first
+MAX_ANCESTORS = 64  # how far back a version remembers what it was made from
 _SLOT_RE = re.compile(r"^SAVE(\d+)$")
 _RECORD_RE = re.compile(r"^(?P<time>\d{20})-(?P<machine>[0-9a-f]{8})(?P<deleted>\.deleted)?$")
 _EPOCH = datetime(1, 1, 1)  # .NET's DateTime ticks count 100 ns from here
@@ -110,19 +127,35 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def complete(version: Path) -> bool:
-    """Every file the manifest lists is here, whole: the version has fully
-    arrived from the machine that made it."""
+def _manifest(version: Path) -> dict | None:
     try:
-        manifest = json.loads((version / MANIFEST).read_text(encoding="utf-8"))
-        files = manifest["files"]
+        data = json.loads((version / MANIFEST).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) and isinstance(data.get("files"), dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def matches(folder: Path, files: dict) -> bool:
+    """``folder`` holds exactly what ``files`` (a manifest's) lists, whole."""
+    try:
         # Sizes first: until the last file has arrived this fails without reading any.
-        if not all((version / rel).is_file() and (version / rel).stat().st_size == meta["size"]
+        if not all((folder / rel).is_file() and (folder / rel).stat().st_size == meta["size"]
                    for rel, meta in files.items()):
             return False
-        return all(_sha256(version / rel) == meta["sha256"] for rel, meta in files.items())
-    except (OSError, ValueError, KeyError, TypeError):
+        return all(_sha256(folder / rel) == meta["sha256"] for rel, meta in files.items())
+    except (OSError, KeyError, TypeError):
         return False
+
+
+def complete(version: Path) -> bool:
+    """Every file the manifest lists is here, whole: the version has fully
+    arrived from the machine that made it (or not yet begun to go)."""
+    manifest = _manifest(version)
+    return manifest is not None and matches(version, manifest["files"])
+
+
+def _ancestors(value: object) -> list[str]:
+    return [a for a in value if isinstance(a, str) and _RECORD_RE.match(a)] if isinstance(value, list) else []
 
 
 @dataclass
@@ -131,17 +164,22 @@ class Record:
     time: int
     machine: str
     deleted: bool
+    ancestors: list[str] = field(default_factory=list)
+
+    @property
+    def name(self) -> str:
+        return self.path.name
 
     @property
     def order(self) -> tuple[int, str]:
         return self.time, self.machine
 
 
-def records(key_dir: Path, verified: set[str] | None = None) -> list[Record]:
+def records(key_dir: Path, verified: dict[str, list[str]] | None = None) -> list[Record]:
     """A save's versions and deletions in the library, oldest first. Versions
-    still arriving are left out. ``verified`` holds ``<key>/<version>`` of
-    versions already found complete: they're written once, so they stay so,
-    and checking again would read every save on every sync."""
+    still arriving are left out. ``verified`` maps ``<key>/<version>`` of
+    versions already found complete to their ancestors: they're written once,
+    so reading them again on every sync would only cost time."""
     out = []
     try:
         entries = list(key_dir.iterdir())
@@ -151,27 +189,45 @@ def records(key_dir: Path, verified: set[str] | None = None) -> list[Record]:
         m = _RECORD_RE.match(entry.name)
         if not m:
             continue
-        deleted = bool(m["deleted"])
-        if deleted:
+        if m["deleted"]:
             if not entry.is_file():
                 continue
-        else:
-            name = f"{key_dir.name}/{entry.name}"
-            if not entry.is_dir():
-                continue
-            if verified is None or name not in verified:
-                if not complete(entry):
-                    continue
-                if verified is not None:
-                    verified.add(name)
-        out.append(Record(entry, int(m["time"]), m["machine"], deleted))
+            try:
+                ancestors = _ancestors(json.loads(entry.read_text(encoding="utf-8") or "{}").get("ancestors"))
+            except (OSError, ValueError, AttributeError):
+                ancestors = []
+            out.append(Record(entry, int(m["time"]), m["machine"], True, ancestors))
+            continue
+        name = f"{key_dir.name}/{entry.name}"
+        if verified is not None and name in verified:
+            out.append(Record(entry, int(m["time"]), m["machine"], False, verified[name]))
+            continue
+        if not entry.is_dir() or not complete(entry):
+            continue
+        ancestors = _ancestors(_manifest(entry).get("ancestors"))
+        if verified is not None:
+            verified[name] = ancestors
+        out.append(Record(entry, int(m["time"]), m["machine"], False, ancestors))
     return sorted(out, key=lambda r: r.order)
+
+
+def heads(found: list[Record]) -> list[Record]:
+    """The records no other was made from, oldest first."""
+    replaced = {a for r in found for a in r.ancestors}
+    return [r for r in found if r.name not in replaced]
+
+
+def winner(found: list[Record]) -> Record | None:
+    """The record that decides a save: of those nothing was made from, the
+    newest by DFU's clock (only versions made separately are compared so)."""
+    tops = heads(found)
+    return tops[-1] if tops else None
 
 
 @dataclass
 class Report:
     stored: list[str] = field(default_factory=list)  # local saves copied into the library
-    placed: list[str] = field(default_factory=list)  # newer versions put into a local slot
+    placed: list[str] = field(default_factory=list)  # winning versions put into a local slot
     removed: list[str] = field(default_factory=list)  # local slots of saves deleted elsewhere
     deleted: list[str] = field(default_factory=list)  # saves deleted here, recorded for the others
     skipped: str = ""  # why nothing was done
@@ -197,9 +253,15 @@ def valid_machine_id(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{8}", value) is not None
 
 
+def mapping_path(saves: Path, library: Path) -> Path:
+    library_id = hashlib.sha256(str(library.resolve()).encode()).hexdigest()[:12]
+    return saves / f"{MAPPING_PREFIX}{library_id}.json"
+
+
 class _Mapping:
-    def __init__(self, path: Path, machine: str) -> None:
+    def __init__(self, path: Path, library: Path, machine: str) -> None:
         self.path = path
+        self.library = library
         self.machine = machine
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -208,12 +270,14 @@ class _Mapping:
         slots = data.get("slots")
         self.slots: dict[str, dict] = slots if isinstance(slots, dict) else {}
         verified = data.get("verified")
-        self.verified: set[str] = {v for v in verified if isinstance(v, str)} if isinstance(verified, list) else set()
+        self.verified: dict[str, list[str]] = {k: _ancestors(v) for k, v in verified.items()} \
+            if isinstance(verified, dict) else {}
 
-    def save(self, library: Path) -> None:
-        self.verified = {v for v in self.verified if (library / v).is_dir()}  # pruned ones go
+    def save(self) -> None:
+        """After every change to a slot, so an interrupted sync loses none of them."""
+        self.verified = {v: a for v, a in self.verified.items() if (self.library / v).is_dir()}  # pruned ones go
         tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
-        tmp.write_text(json.dumps({"slots": self.slots, "verified": sorted(self.verified)},
+        tmp.write_text(json.dumps({"library": str(self.library), "slots": self.slots, "verified": self.verified},
                                   indent=2) + "\n", encoding="utf-8")
         os.replace(tmp, self.path)
 
@@ -245,8 +309,8 @@ def _slots(saves: Path) -> tuple[dict[str, tuple[Info, str]], set[str]]:
 
 
 def _recover(saves: Path, library: Path) -> None:
-    """Finish what an interrupted sync left half done (the Play hook's time
-    limit, a crash): a slot caught mid-swap gets its old contents back, so it
+    """Finish what an interrupted sync left half done: a slot caught mid-swap
+    (where the swap couldn't be one step) gets its old contents back, so it
     never reads as deleted, and leftover copies go."""
     for old in saves.glob(".modsync-old-SAVE*"):
         slot = saves / old.name.removeprefix(".modsync-old-")
@@ -259,7 +323,30 @@ def _recover(saves: Path, library: Path) -> None:
         shutil.rmtree(leftover, ignore_errors=True)
 
 
-def _store(slot: Path, info: Info, machine: str, library: Path) -> Path:
+_RENAME_EXCHANGE = 2
+_libc = None
+
+
+def _exchange(a: Path, b: Path) -> bool:
+    """Swap two folders in one step (Linux's renameat2 RENAME_EXCHANGE).
+    False where that isn't available."""
+    global _libc
+    try:
+        if _libc is None:
+            _libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+        at_fdcwd = -100
+        result = _libc.renameat2(at_fdcwd, os.fsencode(a), at_fdcwd, os.fsencode(b), _RENAME_EXCHANGE)
+    except (OSError, AttributeError):
+        return False
+    if result != 0:
+        err = ctypes.get_errno()
+        if err in (22, 38, 95):  # EINVAL, ENOSYS, EOPNOTSUPP: this filesystem or kernel can't
+            return False
+        raise OSError(err, os.strerror(err), str(a))
+    return True
+
+
+def _store(slot: Path, info: Info, machine: str, library: Path, ancestors: list[str]) -> Path:
     """Copy a local save into the library as a new version, whole, then move
     it into place, so Syncthing never sends half of one."""
     dest = library / info.key / f"{info.real_time:020d}-{machine}"
@@ -273,29 +360,39 @@ def _store(slot: Path, info: Info, machine: str, library: Path) -> Path:
              for p in _files(incoming)}
     (incoming / MANIFEST).write_text(json.dumps({"character": info.character, "name": info.name,
                                                  "realTime": info.real_time, "machine": machine,
+                                                 "ancestors": ancestors[:MAX_ANCESTORS],
                                                  "files": files}, indent=2) + "\n", encoding="utf-8")
     dest.parent.mkdir(parents=True, exist_ok=True)
     os.rename(incoming, dest)
     return dest
 
 
-def _store_and_verify(slot: Path, info: Info, mapping: "_Mapping", library: Path) -> Path:
-    version = _store(slot, info, mapping.machine, library)
-    mapping.verified.add(f"{info.key}/{version.name}")  # written here, whole
-    return version
-
-
-def _place(version: Path, slot: Path) -> None:
-    """Make ``slot`` hold exactly ``version``, swapped in whole."""
+def _place(version: Path, slot: Path) -> bool:
+    """Make ``slot`` hold exactly ``version``. The copy is checked against the
+    manifest first (the version may have changed since it was found whole:
+    another machine pruning it, say), and swapped in in one step. False,
+    changing nothing, when the copy isn't whole."""
+    manifest = _manifest(version)
+    if manifest is None:
+        return False
     incoming = slot.with_name(f".modsync-incoming-{slot.name}")
-    old = slot.with_name(f".modsync-old-{slot.name}")
-    for leftover in (incoming, old):
-        shutil.rmtree(leftover, ignore_errors=True)
+    shutil.rmtree(incoming, ignore_errors=True)
     shutil.copytree(version, incoming, ignore=shutil.ignore_patterns(MANIFEST, ".syncthing.*", "*.sync-conflict-*"))
-    if slot.exists():
-        os.rename(slot, old)
+    if not matches(incoming, manifest["files"]) or len(_files(incoming)) != len(manifest["files"]):
+        shutil.rmtree(incoming, ignore_errors=True)
+        return False
+    if not slot.exists():
+        os.rename(incoming, slot)
+        return True
+    if _exchange(incoming, slot):
+        shutil.rmtree(incoming, ignore_errors=True)  # now the old contents
+        return True
+    old = slot.with_name(f".modsync-old-{slot.name}")
+    shutil.rmtree(old, ignore_errors=True)
+    os.rename(slot, old)
     os.rename(incoming, slot)
     shutil.rmtree(old, ignore_errors=True)
+    return True
 
 
 def _free_slot(saves: Path) -> Path:
@@ -305,19 +402,29 @@ def _free_slot(saves: Path) -> Path:
     return saves / f"SAVE{n}"
 
 
-def sync(saves: Path, library: Path, machine: str) -> Report:
+def _lineage(entry: dict) -> list[str]:
+    """The version a slot holds and what that was made from, newest first."""
+    return [entry["version"], *_ancestors(entry.get("ancestors"))] if entry.get("version") else []
+
+
+def sync(saves: Path, library: Path, machine: str, *, busy: Callable[[], str] | None = None) -> Report:
     """Bring ``saves`` (DFU's folder) and ``library`` (the synced one) in line.
     ``machine`` names this machine in the versions it writes; it must differ
-    from every other machine's. Call only while DFU isn't running: it writes
-    saves as it pleases."""
+    from every other machine's. ``busy`` says (as a reason) why DFU may be
+    writing saves right now, checked once the lock is held; nothing is done
+    then."""
     report = Report()
     if not saves.is_dir():
         report.skipped = f"{saves} doesn't exist yet."
         return report
     library.mkdir(parents=True, exist_ok=True)
     with _locked(saves):
+        reason = busy() if busy is not None else ""
+        if reason:
+            report.skipped = reason
+            return report
         _recover(saves, library)
-        mapping = _Mapping(saves / MAPPING, machine)
+        mapping = _Mapping(mapping_path(saves, library), library, machine)
         local, present = _slots(saves)
 
         # 1. What changed here goes into the library.
@@ -325,68 +432,82 @@ def sync(saves: Path, library: Path, machine: str) -> Report:
             known = mapping.slots.get(slot)
             if known and known.get("fingerprint") == fp:
                 continue
-            if known and known.get("key") != info.key:
+            same = known is not None and known.get("key") == info.key
+            if known and not same:
                 # The slot now holds another save: the one it held was deleted.
-                _delete(library, known, mapping.machine, report)
-            version = _store_and_verify(saves / slot, info, mapping, library)
-            mapping.slots[slot] = {"key": info.key, "version": version.name, "fingerprint": fp}
+                _delete(library, known, machine, report)
+            lineage = _lineage(known) if same else []
+            version = _store(saves / slot, info, machine, library, lineage)
+            mapping.verified[f"{info.key}/{version.name}"] = lineage[:MAX_ANCESTORS]
+            mapping.slots[slot] = {"key": info.key, "version": version.name, "fingerprint": fp,
+                                   "ancestors": lineage[:MAX_ANCESTORS]}
+            mapping.save()
             report.stored.append(f"{info.character}: {info.name}")
         # Only a slot that is gone was deleted; one DFU can't read either is left alone.
         for slot in [s for s in mapping.slots if s not in present]:
-            _delete(library, mapping.slots.pop(slot), mapping.machine, report)
+            _delete(library, mapping.slots.pop(slot), machine, report)
+            mapping.save()
         unreadable = {mapping.slots[s]["key"] for s in present - set(local) if s in mapping.slots}
 
-        # 2. Each save's newest version is the one here.
+        # 2. Each save's winning version is the one here.
         by_key = {m["key"]: slot for slot, m in mapping.slots.items()}
         seen: dict[Path, list[Record]] = {}
         for key_dir in sorted(p for p in library.iterdir() if p.is_dir() and not p.name.startswith(".")):
             found = seen[key_dir] = records(key_dir, mapping.verified)
-            if not found or key_dir.name in unreadable:
+            best = winner(found)
+            if best is None or key_dir.name in unreadable:
                 continue
-            latest = found[-1]
             slot = by_key.get(key_dir.name)
-            if latest.deleted:
+            held = _lineage(mapping.slots[slot]) if slot is not None else []
+            if best.name in held:
+                continue  # it holds that version, or one made from it: never go back
+            if best.deleted:
                 if slot is not None:
                     shutil.rmtree(saves / slot)
                     del mapping.slots[slot]
+                    mapping.save()
                     report.removed.append(slot)
                 continue
-            if slot is not None and mapping.slots[slot]["version"] == latest.path.name:
-                continue
             target = saves / slot if slot is not None else _free_slot(saves)
-            _place(latest.path, target)
+            if not _place(best.path, target):
+                mapping.verified.pop(f"{key_dir.name}/{best.name}", None)  # check it again next time
+                continue
             info = read_info(target)
-            mapping.slots[target.name] = {"key": key_dir.name, "version": latest.path.name,
-                                          "fingerprint": fingerprint(target)}
+            mapping.slots[target.name] = {"key": key_dir.name, "version": best.name,
+                                          "fingerprint": fingerprint(target), "ancestors": best.ancestors}
+            mapping.save()
             report.placed.append(f"{info.character}: {info.name}" if info else target.name)
-        # 3. Keep the newest few versions of each save.
-        for key_dir, found in seen.items():
+
+        # 3. Keep what nothing replaced, and the newest few others of each save.
+        for found in seen.values():
             _prune(found)
-        mapping.save(library)
+        mapping.save()
     if report.changed:
         log.info("DFU saves: %s", report.summary())
     return report
 
 
 def _delete(library: Path, known: dict, machine: str, report: Report) -> None:
-    """Record that the save ``known`` held was deleted here. When isn't known
-    (ModSync may only notice much later), so the marker is dated just after
-    the version deleted: a save made anywhere since then wins over it."""
-    m = _RECORD_RE.match(str(known.get("version", "")))
+    """Record that the save ``known`` held was deleted here, and what it held:
+    the deletion replaces that version and those it came from. A version made
+    separately elsewhere is weighed against it by time, so the marker is dated
+    just after the version deleted (when it was deleted isn't known; ModSync
+    may only notice much later) and any save made since wins."""
+    lineage = _lineage(known)
+    m = _RECORD_RE.match(lineage[0]) if lineage else None
     when = int(m["time"]) + 1 if m else ticks()
     marker = library / known["key"] / f"{when:020d}-{machine}.deleted"
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.touch()
+    marker.write_text(json.dumps({"ancestors": lineage[:MAX_ANCESTORS]}) + "\n", encoding="utf-8")
     report.deleted.append(known["key"])
 
 
 def _prune(found: list[Record]) -> None:
-    versions = [r for r in found if not r.deleted]
+    """Keep the winner and the newest few other versions, to go back to by
+    hand. A deletion that doesn't decide the save says nothing any more."""
+    best = winner(found)
+    versions = [r for r in found if not r.deleted and r is not best]
     for old in versions[:-KEEP_VERSIONS]:
         shutil.rmtree(old.path, ignore_errors=True)
-    newest = versions[-1].order if versions else None
-    deletions = [r for r in found if r.deleted]
-    for marker in deletions[:-1]:  # only the latest deletion still says anything
+    for marker in (r for r in found if r.deleted and r is not best):
         marker.path.unlink(missing_ok=True)
-    if deletions and newest is not None and deletions[-1].order < newest:
-        deletions[-1].path.unlink(missing_ok=True)  # the save came back after it

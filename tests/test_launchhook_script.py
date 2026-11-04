@@ -311,9 +311,9 @@ exit 3
         result = self.run_hook("waitforexitandrun", self.dosbox)
         self.assertEqual(result.returncode, 3, result.stderr)  # DFU's own exit code
         self.assertEqual(calls.read_text().splitlines(), [
-            "modsync dfu saves --quiet preload=",  # no overlay in ModSync
+            "modsync dfu saves --quiet --playing preload=",  # no overlay in ModSync
             f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}",
-            "modsync dfu saves --quiet preload=",
+            "modsync dfu saves --quiet --playing preload=",
         ])
 
     def test_a_failing_saves_sync_never_blocks_the_game(self):
