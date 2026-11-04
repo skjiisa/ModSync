@@ -191,6 +191,15 @@ has installed it.
 
 ![Daggerfall Unity before Steam has Daggerfall](daggerfall-steam.png)
 
+"Use an existing installation…", under the blue action, picks a Daggerfall
+Unity installed by hand. Once one is in use it reads "Use another
+installation…", and pressing the Daggerfall Unity row does the same. Before anything changes, a confirmation
+says what will: a Daggerfall Unity that keeps its data in `~/.config` gets a
+copy of it in its own folder, and one replacing another takes over the Play
+button and sync that are on.
+
+![Using a Daggerfall Unity installed by hand](daggerfall-existing.png)
+
 Once installed, the blue action plays it, through Steam when the Play button
 is set to Daggerfall Unity, which also syncs the saves around the game.
 

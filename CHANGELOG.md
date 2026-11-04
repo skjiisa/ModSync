@@ -13,8 +13,8 @@ All notable changes to ModSync are documented here. The format follows
   build and points it at Steam's data. `modsync dfu hook enable` makes
   Steam's Play button on Daggerfall start it, through the same launch hook
   as Skyrim, and `modsync dfu status` shows the setup. Its startup screen,
-  where mods are turned on and off, still opens. Command line only for now.
-  See "Daggerfall Unity" in `docs/advanced.md`.
+  where mods are turned on and off, still opens. See "Daggerfall Unity" in
+  `docs/advanced.md`.
 - Machine-wide pairing (#104). Paired machines share every folder ModSync
   syncs, and games other than Skyrim get their own folders. A machine that
   starts syncing one offers it to the others, and each takes it up once the
@@ -41,6 +41,11 @@ All notable changes to ModSync are documented here. The format follows
   folder, and turns mods and saves sync on and off. ModSync reopens on the
   game last shown, or on Skyrim while that game isn't installed; opened by
   Skyrim's Play button, it shows only Skyrim.
+- A Daggerfall Unity you installed yourself can be used instead of
+  installing one: "Use an existing installation…" on its Home, or
+  `modsync dfu use <dir>`. If it keeps its data in `~/.config`, the data is
+  copied into its folder first, and the originals stay. Daggerfall data it
+  already uses, like a GOG copy, is kept.
 - Machines paired through a third one sync with each other directly. When
   a Deck and a laptop have both paired with the desktop, the desktop
   introduces them, and they keep syncing with the desktop off. Machines

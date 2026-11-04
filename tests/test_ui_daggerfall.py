@@ -1,6 +1,7 @@
 """Daggerfall Unity as a game Home can show, and the switcher that picks it,
 with modsync.dfu faked."""
 
+import dataclasses
 from pathlib import Path
 from unittest.mock import patch
 
@@ -8,20 +9,23 @@ from modsync import dfu, launchhook
 from modsync.games import DAGGERFALL, SKYRIM_SE
 from modsync.state import State
 from modsync.ui.input import Action, InputRouter
-from modsync.ui.overlays import GameSheet
+from modsync.ui.overlays import ConfirmSheet, FolderSheet, GameSheet
 from modsync.ui.widgets import HintButton
 from tests.ui_support import UiTestCase
 
 
 def overview(*, steam=True, installed=False, hook_on=False, mods="off", saves="off", version_problem=None,
-             problems=None):
+             problems=None, own_data=None):
+    """``own_data``: the copy of Daggerfall the install uses instead of Steam's."""
     inst = dfu.Install(Path("/games/Daggerfall Unity")) if installed else None
     hook = launchhook.LaunchHookStatus(DAGGERFALL, hook_on, "modsync_1812390_proton" if hook_on else None, hook_on,
                                        None, None, True, None, False, True,
                                        native=str(inst.executable) if hook_on and inst else None)
     dagger = Path("/steam/The Elder Scrolls Daggerfall/DF/DAGGER") if steam else None
-    return dfu.Overview(dagger, problems if problems is not None else ([] if steam else ["Steam hasn't installed it."]),
-                        inst, str(dagger) if installed and dagger else None, hook, mods, saves, version_problem)
+    problems = problems if problems is not None else ([] if steam else ["Steam hasn't installed it."])
+    configured = own_data or (str(dagger) if installed and dagger else None)
+    return dfu.Overview(dagger, problems, inst, configured, hook, mods, saves, version_problem,
+                        configured_ok=bool(configured) and (bool(own_data) or not problems))
 
 
 class DaggerfallUiTests(UiTestCase):
@@ -389,3 +393,152 @@ class DaggerfallReviewTests(UiTestCase):
         self.assertEqual(row.badge.text(), "Ready")
         self.assertIn("saves", row.description)
         self.assertTrue(row.end.check)
+
+
+class ExistingInstallTests(UiTestCase):
+    """Using a Daggerfall Unity the user installed themselves."""
+
+    def open_sheet(self, ov):
+        p = patch.object(dfu, "overview", lambda hook=True: ov)
+        p.start()
+        self.addCleanup(p.stop)
+        window = self.window()
+        window.go("daggerfall")
+        self.settle(3)
+        return window, window.pages["daggerfall"]
+
+    def found(self, *, data_from=None, path="/home/you/DFU"):
+        return dfu.Existing(dfu.Install(Path(path)), Path(data_from) if data_from else None)
+
+    def choose(self, window, page, tile, found):
+        """Press ``tile``, pick a folder in the sheet that opens, and get ``found`` for it."""
+        with patch.object(dfu, "examine", return_value=found) as examine:
+            tile.click()
+            self.settle(2)
+            sheet = window.top_overlay
+            self.assertIsInstance(sheet, FolderSheet)
+            sheet.navigate(Path("/"))
+            sheet.use.click()
+            self.settle(3)
+        examine.assert_called_once_with(Path("/"))
+
+    def test_offered_until_one_is_set_up_with_or_without_steams_daggerfall(self):
+        for steam in (True, False):
+            with self.subTest(steam=steam):
+                window, page = self.open_sheet(overview(steam=steam))
+                self.assertTrue(page.use_existing.isVisibleTo(page))
+                self.assertTrue(page.use_existing.isEnabled())
+                self.assertIsNot(page.preferred_focus(), page.use_existing)  # the blue action leads
+                window.close()
+        window, page = self.open_sheet(overview(installed=True))
+        self.assertTrue(page.use_existing.isVisibleTo(page))
+        self.assertEqual(page.use_existing.text(), "Use another installation…")
+
+    def test_another_can_be_chosen_whatever_state_the_one_in_use_is_in(self):
+        """Its data path broken and Steam's copy incomplete: nothing to repair it
+        with, but another install can still be chosen."""
+        ov = dataclasses.replace(overview(installed=True, problems=["ARENA2 is missing WOODS.WLD."]),
+                                 configured="/gone/DF/DAGGER", configured_ok=False)
+        window, page = self.open_sheet(ov)
+        self.assertTrue(ov.stale_path)
+        self.assertFalse(page.install_row.isEnabled())
+        self.assertTrue(page.use_existing.isVisibleTo(page))
+        self.assertTrue(page.use_existing.isEnabled())
+        with patch.object(dfu, "adopt", return_value=(self.found(), None)) as adopt:
+            self.choose(window, page, page.use_existing, self.found())
+            window.top_overlay.tiles["go"].click()
+            self.settle(4)
+        adopt.assert_called_once()
+
+    def test_a_portable_one_is_used_straight_away(self):
+        window, page = self.open_sheet(overview(steam=False))
+        found = self.found()
+        with patch.object(dfu, "adopt", return_value=(found, None)) as adopt, \
+                patch.object(dfu.Install, "version", "1.1.1"):
+            self.choose(window, page, page.use_existing, found)
+            self.settle(3)
+        adopt.assert_called_once_with(Path("/home/you/DFU"))
+        self.assertEqual(window.messages[-1], "Using Daggerfall Unity 1.1.1 in /home/you/DFU.")
+        self.assertFalse(window.busy)
+
+    def test_copying_its_data_in_is_confirmed_first(self):
+        window, page = self.open_sheet(overview())
+        found = self.found(data_from="/home/you/.config/unity3d/Daggerfall Workshop/Daggerfall Unity")
+        with patch.object(dfu, "adopt", return_value=(found, "Steam's Play button now starts it.")) as adopt, \
+                patch.object(dfu.Install, "version", None):
+            self.choose(window, page, page.use_existing, found)
+            sheet = window.top_overlay
+            self.assertIsInstance(sheet, ConfirmSheet)
+            self.assertIn("copied into its folder", sheet.text.text())
+            self.assertIn("The originals in /home/you/.config/unity3d", sheet.text.text())
+            self.assertNotIn("replaces", sheet.text.text())  # none was in use
+            adopt.assert_not_called()
+            sheet.tiles["go"].click()
+            self.settle(4)
+        adopt.assert_called_once()
+        self.assertEqual(window.messages[-1], "Using Daggerfall Unity in /home/you/DFU. Its settings and saves were "
+                                              "copied into its folder. Steam's Play button now starts it.")
+
+    def test_cancelling_changes_nothing(self):
+        window, page = self.open_sheet(overview())
+        found = self.found(data_from="/home/you/.config/unity3d/Daggerfall Workshop/Daggerfall Unity")
+        with patch.object(dfu, "adopt") as adopt:
+            self.choose(window, page, page.use_existing, found)
+            window.top_overlay.tiles["cancel"].click()
+            self.settle(3)
+        adopt.assert_not_called()
+        self.assertFalse(window.busy)
+
+    def test_a_folder_without_dfu_says_why(self):
+        window, page = self.open_sheet(overview())
+        with patch.object(dfu, "examine", side_effect=dfu.DfuError("There's no Daggerfall Unity in /.")), \
+                patch.object(dfu, "adopt") as adopt:
+            page.use_existing.click()
+            self.settle(2)
+            window.top_overlay.use.click()
+            self.settle(3)
+        adopt.assert_not_called()
+        self.assertIn("There's no Daggerfall Unity", window.messages[-1])
+
+    def test_the_install_row_picks_another_once_one_is_in_use(self):
+        window, page = self.open_sheet(overview(installed=True, steam=False, hook_on=True, saves="on"))
+        self.assertTrue(page.install_row.isEnabled())  # needs no Steam data to switch
+        found = self.found()
+        with patch.object(dfu, "adopt", return_value=(found, None)) as adopt, patch.object(dfu, "setup") as setup:
+            self.choose(window, page, page.install_row, found)
+            sheet = window.top_overlay
+            self.assertIsInstance(sheet, ConfirmSheet)  # it takes over from the one in use
+            self.assertEqual(sheet.text.text(), "It replaces the one in /games/Daggerfall Unity, which stays as it "
+                                                "is. Steam's Play button and saves sync switch to it.")
+            self.assertEqual(sheet.tiles["go"].description, "/home/you/DFU")
+            sheet.tiles["go"].click()
+            self.settle(4)
+        setup.assert_not_called()
+        adopt.assert_called_once()
+
+    def test_choosing_the_one_in_use_changes_nothing(self):
+        window, page = self.open_sheet(overview(installed=True))
+        with patch.object(dfu, "adopt") as adopt:
+            self.choose(window, page, page.install_row, self.found(path="/games/Daggerfall Unity"))
+        adopt.assert_not_called()
+        self.assertIn("in use already", window.messages[-1])
+
+    def test_a_stale_data_path_is_still_repaired_from_the_row(self):
+        ov = overview(installed=True)
+        ov = dataclasses.replace(ov, configured="/old/library/DF/DAGGER", configured_ok=False)
+        window, page = self.open_sheet(ov)
+        self.assertEqual(page.install_row.badge.text(), "Points elsewhere")
+        installed = dfu.Installed(ov.install, ov.dagger, fresh=False)
+        with patch.object(dfu, "setup", return_value=(installed, None)) as setup:
+            page.install_row.click()
+            self.settle(4)
+        setup.assert_called_once()
+        self.assertIsNone(window.top_overlay)
+
+    def test_its_own_copy_of_daggerfall_is_no_fault(self):
+        ov = overview(installed=True, steam=False, own_data="/home/you/GOG Games/Daggerfall/DAGGER")
+        window, page = self.open_sheet(ov)
+        self.assertEqual(page.data_row.badge.text(), "Not used")
+        self.assertIn("uses the copy in", page.data_row.description)
+        self.assertEqual(page.install_row.badge.property("tone"), "ok")
+        self.assertEqual(page.summary(ov)[:2], ("Ready", "ok"))

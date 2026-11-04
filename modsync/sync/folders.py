@@ -343,6 +343,9 @@ def refresh(client: SyncthingClient) -> None:
         if root is None:
             continue
         if str(root) != recorded:
+            if spec.in_use is not None and spec.in_use():
+                log.info("%s moved to %s; it follows once the game has closed", spec.folder_id, root)
+                continue
             try:
                 folder = client.get_folder(spec.folder_id)
                 _relocate(client, spec, folder, root)
