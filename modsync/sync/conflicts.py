@@ -87,14 +87,16 @@ def parse(path: Path) -> Conflict | None:
     return Conflict(path, path.with_name(m["stem"] + (m["ext"] or "")), m["device"], when)
 
 
-def find(instance: Path | str) -> list[Conflict]:
+def find(instance: Path | str, dirs: tuple[str, ...] = SEARCHED_DIRS) -> list[Conflict]:
+    """The conflict copies at the top of ``instance`` and anywhere under
+    ``dirs`` (its synced folders, relative to it)."""
     instance = Path(instance)
     candidates: list[Path] = []
     try:
         candidates += [p for p in instance.iterdir() if p.is_file()]
     except OSError:
         return []
-    for name in SEARCHED_DIRS:
+    for name in dirs:
         for root, _dirs, files in os.walk(instance / name):
             candidates += [Path(root) / f for f in files if ".sync-conflict-" in f]
     found = [c for c in map(parse, candidates) if c is not None]

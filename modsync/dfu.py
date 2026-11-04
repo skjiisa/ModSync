@@ -19,6 +19,13 @@ patches it). Two files make it ours to manage:
 Mods go in ``DaggerfallUnity_Data/StreamingAssets/Mods``. Steam's own Play
 button on Daggerfall can start it, through the launch hook
 (:mod:`modsync.launchhook`).
+
+:data:`MODS_FOLDER` syncs the mods between machines (see
+:mod:`modsync.sync.folders`): one Syncthing folder rooted at the install,
+allowing only what users add (the folders under ``StreamingAssets`` that DFU
+ships empty but for a readme) and ``PortableAppdata/Mods``, where DFU keeps
+the load order (``GameData/Mods.json``) and each mod's settings. Everything
+DFU ships itself, its ``settings.ini`` and key bindings, and saves stay out.
 """
 
 from __future__ import annotations
@@ -38,6 +45,8 @@ from pathlib import Path
 from modsync import background, launchhook, platforms
 from modsync.downgrade import engine
 from modsync.games import DAGGERFALL
+from modsync.state import State
+from modsync.sync.folders import FolderSpec
 from modsync.steam import libraries as libs
 from modsync.steam import shortcuts
 
@@ -55,7 +64,16 @@ DFU_URL = (
 DFU_SHA256 = "be3c476ae92972f42448757719266ad82c04868eb7b6f3a3c90fcfcf1490849a"
 
 EXECUTABLE = "DaggerfallUnity.x86_64"
-RECORD_NAME = "modsync-dfu.json"  # which DFU version ModSync put here
+RECORD_NAME = "modsync-dfu.json"  # which DFU version ModSync put here; never synced
+VAULT_RECORD = "modsync-dfu-vault.json"  # which DFU version the synced mods are for; synced
+
+# The StreamingAssets folders a release ships with nothing but a readme: what
+# users add. The others (Quests, Text, Tables, Fonts, ...) are DFU's own and
+# must stay as each machine's version installed them.
+USER_ASSET_DIRS = ("Mods", "Textures", "Sound", "Books", "Movies", "Presets", "QuestPacks", "SoundFonts",
+                   "WorldData")
+_ASSETS = "DaggerfallUnity_Data/StreamingAssets"
+SYNCED_DIRS = (*(f"{_ASSETS}/{d}" for d in USER_ASSET_DIRS), "PortableAppdata/Mods")
 
 # DFU's DFValidator: what makes a folder a usable ARENA2.
 _MIN_TEXTURES = 472
@@ -373,3 +391,56 @@ def follow_install(inst: Install) -> str | None:
     if st.native == str(inst.executable):
         return None
     return enable_hook(inst)
+
+
+# --- syncing the mods -------------------------------------------------------------
+
+
+def _install_root() -> Path | None:
+    inst = find_install(State.load().dfu_path)
+    return inst.path if inst else None
+
+
+def _record_vault_version(root: Path) -> None:
+    """The machine that starts syncing the mods says which DFU they're for."""
+    record = root / VAULT_RECORD
+    if not record.exists():
+        version = Install(root).version or DFU_VERSION
+        record.write_text(json.dumps({"dfu_version": version}, indent=2) + "\n", encoding="utf-8")
+
+
+def vault_version(inst: Install) -> str | None:
+    try:
+        return json.loads((inst.path / VAULT_RECORD).read_text(encoding="utf-8")).get("dfu_version")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def version_problem(inst: Install) -> str | None:
+    """Why the synced mods may not suit this machine's DFU, or None."""
+    wanted, here = vault_version(inst), inst.version
+    if wanted and here and wanted != here:
+        return (f"The synced mods are for Daggerfall Unity {wanted}, but this machine has {here}. "
+                "Install the same version on every machine.")
+    return None
+
+
+MODS_FOLDER = FolderSpec(
+    key="dfu-mods",
+    label="Daggerfall Unity mods (ModSync)",
+    path=_install_root,
+    ignore=(
+        "// Managed by ModSync. Syncs Daggerfall Unity's mods, the files users add under",
+        "// StreamingAssets, and the load order and mod settings in PortableAppdata/Mods.",
+        "// Never the program, the files DFU ships itself, settings.ini, key bindings or saves.",
+        "",
+        *(f"!/{d}" for d in SYNCED_DIRS),
+        f"!/{VAULT_RECORD}",
+        "",
+        "// Everything else. Syncthing still looks inside these for the folders above.",
+        "/*",
+    ),
+    conflict_dirs=SYNCED_DIRS,
+    on_share=_record_vault_version,
+    in_use=lambda: is_running(),  # looked up when asked, so tests and callers see the live check
+)

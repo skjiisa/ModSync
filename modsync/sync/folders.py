@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Callable
 
 from modsync.state import State
+from modsync.sync import conflicts
 from modsync.sync.api import SyncthingClient
 
 log = logging.getLogger(__name__)
@@ -36,6 +37,9 @@ class FolderSpec:
     label: str  # how Syncthing and ModSync name it
     path: Callable[[], Path | None]  # where it is on this machine; None while the game isn't set up
     ignore: tuple[str, ...]  # its .stignore, one pattern per line
+    conflict_dirs: tuple[str, ...] = ()  # where conflict copies can turn up, relative to the folder
+    on_share: Callable[[Path], None] | None = None  # run on the machine that starts sharing it
+    in_use: Callable[[], bool] | None = None  # the game is running: settling a conflict waits
 
     @property
     def folder_id(self) -> str:
@@ -47,7 +51,9 @@ class FolderSpec:
 
 def specs() -> list[FolderSpec]:
     """Every game folder ModSync knows. The games add theirs here."""
-    return []
+    from modsync import dfu  # imports this module's users; loaded on first use
+
+    return [dfu.MODS_FOLDER]
 
 
 def spec_for(key: str) -> FolderSpec | None:
@@ -66,6 +72,7 @@ class FolderStatus:
     completion: float | None = None
     need_items: int = 0
     stopping: bool = False  # stopped here; Syncthing lets go of it once it answers
+    conflicts: int = 0  # conflict copies waiting for a choice
 
 
 def device_entries(ids) -> list[dict]:
@@ -175,6 +182,8 @@ def share(client: SyncthingClient, spec: FolderSpec) -> Path:
     root = spec.path()
     if root is None:
         raise RuntimeError(f"{spec.label}: set the game up on this machine first.")
+    if spec.on_share is not None:
+        spec.on_share(root)
     _put(client, spec, root, peers(client))
     _remember(spec.key, root)
     log.info("sharing %s (%s) from %s", spec.folder_id, spec.label, root)
@@ -298,7 +307,8 @@ def status(client: SyncthingClient) -> list[FolderStatus]:
         spec = spec_for(key)
         if spec is None:
             continue
-        fs = FolderStatus(spec, path, stopping=stopping(key, st))
+        fs = FolderStatus(spec, path, stopping=stopping(key, st),
+                          conflicts=len(conflicts.find(path, spec.conflict_dirs)) if spec.conflict_dirs else 0)
         try:
             folder = client.folder_status(spec.folder_id)
             fs.state = folder.get("state")

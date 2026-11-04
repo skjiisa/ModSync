@@ -5,6 +5,7 @@ Skipped unless MODSYNC_IT=1 so the normal suite stays fast and offline. Run with
     MODSYNC_IT=1 .venv/bin/python -m unittest tests.test_sync_integration -v
 """
 
+import json
 import os
 import re
 import shutil
@@ -396,6 +397,89 @@ class SyncthingIntegration(unittest.TestCase):
                     self.assertFalse((roots["B"] / "skipped.txt").exists())
                     with on("B"):
                         self.assertEqual([f.spec.key for f in b.status().game_folders], ["it-mods"])
+            except Exception:
+                for name in ("A", "B"):
+                    path = tmp / f"{name}.log"
+                    if path.exists():
+                        print(path.name, path.read_text()[-6000:])
+                raise
+            finally:
+                a_mgr.stop()
+                b_mgr.stop()
+
+    def test_daggerfall_unity_mods_sync_and_nothing_else(self) -> None:
+        """The dfu-mods folder's allow-list against a real Syncthing: mods, the
+        files users add under StreamingAssets and PortableAppdata/Mods arrive;
+        the program, DFU's own files, settings.ini and saves never do."""
+        from modsync import dfu
+
+        def install(root: Path) -> Path:
+            (root / "DaggerfallUnity_Data/StreamingAssets/Quests").mkdir(parents=True)
+            (root / "DaggerfallUnity.x86_64").write_text("#!/bin/sh\n")
+            (root / "DaggerfallUnity.x86_64").chmod(0o755)
+            (root / dfu.RECORD_NAME).write_text('{"version": "1.1.1"}\n')
+            (root / "DaggerfallUnity_Data/StreamingAssets/Quests/A0C00Y00.txt").write_text("DFU's own")
+            (root / "PortableAppdata").mkdir()
+            (root / "PortableAppdata/settings.ini").write_text(f"[Daggerfall]\nMyDaggerfallPath = {root}\n")
+            return root
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            a_root, b_root = install(tmp / "A" / "Daggerfall Unity"), install(tmp / "B" / "Daggerfall Unity")
+            assets = a_root / "DaggerfallUnity_Data/StreamingAssets"
+            (assets / "Mods").mkdir()
+            (assets / "Mods/handpainted.dfmod").write_bytes(b"UnityFS")
+            (assets / "Textures/Img").mkdir(parents=True)
+            (assets / "Textures/Img/TEXTURE.001.png").write_bytes(b"png")
+            (assets / "Quests/A0C00Y00.txt").write_text("changed on A")
+            (a_root / "PortableAppdata/Mods/GameData/1234-guid").mkdir(parents=True)
+            (a_root / "PortableAppdata/Mods/GameData/Mods.json").write_text('[{"FileName": "handpainted"}]')
+            (a_root / "PortableAppdata/Mods/GameData/1234-guid/modsettings.json").write_text("{}")
+            (a_root / "PortableAppdata/Saves/SAVE0").mkdir(parents=True)
+            (a_root / "PortableAppdata/Saves/SAVE0/SaveInfo.txt").write_text("{}")
+            (a_root / "PortableAppdata/KeyBinds.txt").write_text("keys")
+            (a_mgr, a_port), (b_mgr, b_port) = self._two_nodes(tmp)
+
+            @contextmanager
+            def on(name, root):
+                with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp / f"config-{name}")}):
+                    State.update(dfu_path=str(root))
+                    yield
+
+            try:
+                with on("A", a_root):
+                    a = ModSyncService(manager=a_mgr)
+                    a.share_game_folder("dfu-mods")
+                    code = a.my_pairing_code()
+                with on("B", b_root):
+                    b = ModSyncService(manager=b_mgr)
+                    b.pair(code)
+                    with b_mgr.client() as client:
+                        pairing.add_peer_device(client, code.device_id, "A", addresses=[f"tcp://127.0.0.1:{a_port}"])
+                wanted = b_root / "PortableAppdata/Mods/GameData/1234-guid/modsettings.json"
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline and not (
+                        wanted.exists() and (b_root / "DaggerfallUnity_Data/StreamingAssets/Mods/handpainted.dfmod").exists()):
+                    with on("A", a_root):
+                        a.accept_pending()
+                    with on("B", b_root):
+                        b.accept_pending()
+                    time.sleep(0.5)
+                time.sleep(3)  # anything wrongly allowed would have arrived with these
+                b_assets = b_root / "DaggerfallUnity_Data/StreamingAssets"
+                self.assertEqual((b_assets / "Mods/handpainted.dfmod").read_bytes(), b"UnityFS")
+                self.assertEqual((b_assets / "Textures/Img/TEXTURE.001.png").read_bytes(), b"png")
+                self.assertEqual((b_root / "PortableAppdata/Mods/GameData/Mods.json").read_text(),
+                                 '[{"FileName": "handpainted"}]')
+                self.assertTrue(wanted.exists())
+                self.assertEqual(json.loads((b_root / dfu.VAULT_RECORD).read_text()), {"dfu_version": "1.1.1"})
+                # Never synced: DFU's own files, the program, settings, key bindings, saves.
+                self.assertEqual((b_assets / "Quests/A0C00Y00.txt").read_text(), "DFU's own")
+                self.assertIn(str(b_root), (b_root / "PortableAppdata/settings.ini").read_text())
+                self.assertFalse((b_root / "PortableAppdata/Saves").exists())
+                self.assertFalse((b_root / "PortableAppdata/KeyBinds.txt").exists())
+                self.assertEqual((b_root / "DaggerfallUnity.x86_64").read_text(), "#!/bin/sh\n")
+                self.assertEqual(json.loads((b_root / dfu.RECORD_NAME).read_text()), {"version": "1.1.1"})
             except Exception:
                 for name in ("A", "B"):
                     path = tmp / f"{name}.log"
