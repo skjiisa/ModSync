@@ -55,14 +55,22 @@ INTRODUCER = {"introducer": True, "skipIntroductionRemovals": True}
 
 def introduce_peers(client: SyncthingClient) -> list[str]:
     """Make every paired machine an introducer, for machines paired before
-    ModSync did that. Returns the ids changed."""
+    ModSync did that. Returns the ids changed.
+
+    Syncthing reads what an introducer passes on only as it connects, so a
+    machine connected already is disconnected and connected again: pausing
+    it and resuming it does that. One the user paused stays paused."""
     me = client.my_id()
     changed = []
     for device in client.devices():
         if device.get("deviceID") in (None, "", me) or all(device.get(k) == v for k, v in INTRODUCER.items()):
             continue
         device.update(INTRODUCER)
-        client.put_device(device)
+        if device.get("paused"):
+            client.put_device(device)
+        else:
+            client.put_device({**device, "paused": True})
+            client.put_device(device)
         changed.append(device["deviceID"])
     return changed
 

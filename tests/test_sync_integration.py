@@ -397,6 +397,133 @@ class SyncthingIntegration(unittest.TestCase):
                 for mgr, _port in nodes.values():
                     mgr.stop()
 
+    def _mesh(self, tmp: Path):
+        """Three isolated daemons and their REST clients, by name."""
+        nodes = dict(zip("ABC", self._two_nodes(tmp, "ABC")))
+        clients = {name: mgr.client() for name, (mgr, _port) in nodes.items()}
+        ids = {name: c.my_id() for name, c in clients.items()}
+        address = {name: [f"tcp://127.0.0.1:{port}"] for name, (_mgr, port) in nodes.items()}
+        return nodes, clients, ids, address
+
+    @staticmethod
+    def _wait(check, seconds=90) -> bool:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline and not check():
+            time.sleep(0.5)
+        return check()
+
+    def test_machines_paired_before_find_each_other_without_reconnecting(self) -> None:
+        """B and C paired with A before ModSync made machines introducers, and
+        stay connected while ModSync turns that on: they still find each other."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            inst = {name: tmp / name / "MO2" for name in "ABC"}
+            for root in inst.values():
+                (root / "mods").mkdir(parents=True)
+            nodes, clients, ids, address = self._mesh(tmp)
+
+            def old_pairing(client, device_id, name, addresses):
+                device = pairing.add_peer_device(client, device_id, name, addresses=addresses)
+                client.put_device({**device, "introducer": False, "skipIntroductionRemovals": False})
+
+            try:
+                for joiner in "BC":
+                    old_pairing(clients["A"], ids[joiner], joiner, address[joiner])
+                    old_pairing(clients[joiner], ids["A"], "A", address["A"])
+                    pairing.share_instance_folder(clients[joiner], "modsync-old", inst[joiner], [ids["A"]])
+                pairing.share_instance_folder(clients["A"], "modsync-old", inst["A"], [ids["B"], ids["C"]])
+
+                def connected(name, other):
+                    return clients[name].connections()["connections"].get(ids[other], {}).get("connected")
+
+                self.assertTrue(self._wait(lambda: connected("B", "A") and connected("C", "A")))
+                time.sleep(3)  # the cluster configs are exchanged by now
+                self.assertNotIn(ids["C"], {d["deviceID"] for d in clients["B"].devices()})
+                for name in "BC":
+                    self.assertEqual(pairing.introduce_peers(clients[name]), [ids["A"]])
+                knows = lambda name, other: ids[other] in {d["deviceID"] for d in clients[name].devices()}  # noqa: E731
+                self.assertTrue(self._wait(lambda: knows("B", "C") and knows("C", "B")),
+                                "B and C stayed strangers after becoming introducers")
+            except Exception:
+                for name in "ABC":
+                    path = tmp / f"{name}.log"
+                    if path.exists():
+                        print(path.name, path.read_text()[-6000:])
+                raise
+            finally:
+                for c in clients.values():
+                    c.close()
+                for mgr, _port in nodes.values():
+                    mgr.stop()
+
+    def test_a_game_folder_reaches_a_machine_introduced_later(self) -> None:
+        """B syncs a game's folder A never took up. A introduces C through the
+        vault afterwards, and C still gets B's folder, with A off."""
+        from modsync.sync import folders
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            inst = {name: tmp / name / "MO2" for name in "ABC"}
+            for root in inst.values():
+                (root / "mods").mkdir(parents=True)
+            roots = {name: tmp / name / "Game" / "Mods" for name in "ABC"}
+            side = {"now": "A"}
+            spec = folders.FolderSpec("it-mods", "IT mods (ModSync)", lambda: roots[side["now"]],
+                                      ("!/kept.txt", "/*"))
+            nodes, clients, ids, address = self._mesh(tmp)
+            services = {}
+
+            @contextmanager
+            def on(name):
+                side["now"] = name
+                with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp / f"config-{name}")}):
+                    yield
+
+            try:
+                with patch.object(folders, "specs", lambda: [spec]):
+                    def join(joiner):
+                        pairing.add_peer_device(clients["A"], ids[joiner], joiner, addresses=address[joiner])
+                        pairing.add_peer_device(clients[joiner], ids["A"], "A", addresses=address["A"])
+                        pairing.share_instance_folder(clients[joiner], "modsync-vault", inst[joiner], [ids["A"]])
+                        pairing.share_instance_folder(clients["A"], "modsync-vault", inst["A"],
+                                                      [d for d in (ids["B"], ids["C"]) if d in
+                                                       {x["deviceID"] for x in clients["A"].devices()}])
+
+                    join("B")
+                    with on("B"):
+                        services["B"] = ModSyncService(manager=nodes["B"][0])
+                        services["B"].share_game_folder("it-mods")
+                        (roots["B"] / "kept.txt").write_text("from B")
+                    with on("C"):
+                        State.update(paired=True)
+                        services["C"] = ModSyncService(manager=nodes["C"][0])
+                    join("C")
+                    knows = lambda name, other: ids[other] in {d["deviceID"] for d in clients[name].devices()}  # noqa: E731
+                    self.assertTrue(self._wait(lambda: knows("B", "C") and knows("C", "B")),
+                                    "A never introduced B and C")
+                    nodes["A"][0].stop()
+                    received = roots["C"] / "kept.txt"
+
+                    def step():
+                        for name in "BC":
+                            with on(name):
+                                services[name].accept_pending()
+                        return received.exists()
+
+                    self.assertTrue(self._wait(step), "B's game folder never reached C")
+                    self.assertEqual(received.read_text(), "from B")
+            except Exception:
+                for name in "ABC":
+                    path = tmp / f"{name}.log"
+                    if path.exists():
+                        print(path.name, path.read_text()[-6000:])
+                raise
+            finally:
+                for c in clients.values():
+                    c.close()
+                for mgr, _port in nodes.values():
+                    mgr.stop()
+
     def test_a_game_folder_reaches_a_machine_paired_without_a_vault(self) -> None:
         """Machine-wide pairing end to end: A syncs only a game's folder and
         gives a machine code; B pairs with it, A accepts B, A's folder is

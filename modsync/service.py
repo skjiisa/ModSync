@@ -927,6 +927,9 @@ class ModSyncService:
                 folders.share_with(client, device_id)
                 accepted.append(device_id)
                 log.info("accepted pending device %s… (%s)", device_id[:7], name)
+            # Machines another one introduced are paired without coming
+            # through here: the games' folders are shared with them now.
+            folders.share_with_peers(client)
             # A paired machine may have started syncing a game set up here too.
             taken = folders.take_offers(client)
         if accepted or taken:

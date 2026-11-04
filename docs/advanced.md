@@ -313,7 +313,9 @@ Each paired machine also passes on the machines it shares folders with
 (Syncthing calls it an introducer). When a Steam Deck and a laptop have both
 paired with the desktop, the desktop tells each about the other the next time
 they connect to it. After that, the Deck and the laptop sync with each other
-directly, even with the desktop off. Machines paired with an older
+directly, even with the desktop off. The desktop passes them on through a
+folder it syncs with both, and once they know each other they share every
+folder, including a game's folder the desktop doesn't sync. Machines paired with an older
 ModSync get this the next time ModSync runs on them, and the shared machine
 has to be online once afterwards. If it never will be, "Add a machine by
 code…" on one of the others, with the other's code, pairs them directly.
