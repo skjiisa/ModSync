@@ -264,13 +264,26 @@ class MovedGameFailures(GameFolderBase):
         self.service.share_game_folder("dfu-mods")
         self.service._folders_refreshed_at = time.monotonic()  # refreshed just now: only forcing moves it
 
-        def adopt(path):
+        def adopt(path, hook_error=None):
             self.root = Path(path)
+            State.update(dfu_path=str(path))
+            if hook_error:
+                raise hook_error
             return "adopted", None
 
         with patch.object(dfu, "adopt", adopt), patch.object(dfu, "MODS_FOLDER", self.spec):
             self.assertEqual(self.service.use_dfu_install(self.tmp / "My DFU"), ("adopted", None))
-        self.assertEqual(self.st.folders["modsync-dfu-mods"]["path"], str(self.tmp / "My DFU"))
+            self.assertEqual(self.st.folders["modsync-dfu-mods"]["path"], str(self.tmp / "My DFU"))
+            # Chosen, but Steam's Play button couldn't follow: mods sync still moves, and the error comes through.
+            with patch.object(dfu, "adopt", lambda path: adopt(path, RuntimeError("Steam's config is read-only"))):
+                with self.assertRaisesRegex(RuntimeError, "read-only"):
+                    self.service.use_dfu_install(self.tmp / "Other DFU")
+            self.assertEqual(self.st.folders["modsync-dfu-mods"]["path"], str(self.tmp / "Other DFU"))
+            # Not chosen at all (say, no DFU there): nothing moves.
+            with patch.object(dfu, "adopt", side_effect=dfu.DfuError("There's no Daggerfall Unity there.")):
+                with self.assertRaises(dfu.DfuError):
+                    self.service.use_dfu_install(self.tmp / "Nothing")
+            self.assertEqual(self.st.folders["modsync-dfu-mods"]["path"], str(self.tmp / "Other DFU"))
 
     def test_refresh_runs_at_most_once_a_minute(self):
         calls = []
