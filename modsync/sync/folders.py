@@ -45,6 +45,7 @@ class FolderSpec:
     on_share: Callable[[Path], None] | None = None  # run on the machine that starts a new shared folder
     in_use: Callable[[], bool] | None = None  # the game is running: settling a conflict waits
     tidy: Callable[[Path], object] | None = None  # run on the folder whenever its status is read
+    on_stop: Callable[[], None] | None = None  # run once it has stopped syncing here
 
     @property
     def folder_id(self) -> str:
@@ -251,6 +252,11 @@ def stop(client: SyncthingClient | None, spec: FolderSpec) -> bool:
         log.info("stopping %s once Syncthing answers", spec.folder_id)
         return False
     _forget(spec.key)
+    if spec.on_stop is not None:
+        try:
+            spec.on_stop()
+        except Exception as exc:
+            log.warning("after stopping %s: %s", spec.folder_id, exc)
     log.info("stopped syncing %s", spec.folder_id)
     return True
 

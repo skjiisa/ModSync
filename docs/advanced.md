@@ -651,24 +651,27 @@ So the folder that syncs is a library ModSync keeps beside DFU's, at
   files have since been removed, counts as that version, so nothing is
   published twice. ModSync then puts each save's winning version into a slot
   here. It replaces an older copy, in one step where the filesystem allows,
-  or takes a free number for a save new here. What a slot is about to hold
-  is written down first and its old contents are kept until that's done, so
-  a sync cut short is finished or undone by the next one, even if you played
-  in between. A slot is never moved back to a version it already takes in,
+  or takes a free number for a save new here. The new files are copied and
+  checked beside the slot first. What the slot is about to hold is written
+  down before it changes, and its old contents are kept until that's done.
+  So the next sync finishes or undoes one that was cut short, even if you
+  played in between. A slot is never moved back to a version it already takes in,
   and until the winner's files have arrived its save stays as it is.
 - The files of every version that could still win, and of the three newest
   others of each save, are kept.
 - A save deleted in DFU is deleted on the other machines too, once no slot
-  here still holds it, unless one of them made it again separately, later by
+  here still holds it (with two copies in two slots, once both are gone), unless one of them made it again separately, later by
   DFU's clock. Deletions are kept in the library for good, a few bytes each.
 - One ModSync syncs a given Saves folder. If the Flatpak and a natively
   installed ModSync both have saves sync on for one install, the second
-  says so and leaves the saves alone.
+  says so and leaves the saves alone. Stopping saves sync in the first lets
+  the second take over.
 
 Play in Steam brings in the newest saves just before DFU starts, and stores
-the new ones right after it exits. Meanwhile no other sync changes DFU's
-saves: each change another sync makes holds a lock the Play hook takes
-before starting DFU, so the hook waits for at most the one change under way.
+the new ones right after it exits. Each change another sync makes to DFU's
+saves holds a lock the Play hook takes before starting DFU, so the hook
+waits for the one change under way, which takes a moment. Only if a sync has
+been stuck for ten minutes does the hook start DFU without it.
 ModSync also syncs saves whenever it checks sync status. Saves made while
 ModSync and its background service were both off travel the next time either
 runs.

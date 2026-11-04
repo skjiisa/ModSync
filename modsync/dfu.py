@@ -590,4 +590,13 @@ SAVES_FOLDER = FolderSpec(
     ),
     in_use=lambda: is_running(),
     tidy=lambda root: sync_saves(),
+    on_stop=lambda: _release_saves(),
 )
+
+
+def _release_saves() -> None:
+    from modsync import dfu_saves
+
+    inst = find_install(State.load().dfu_path)
+    if inst is not None:
+        dfu_saves.release(saves_dir(inst), saves_library())

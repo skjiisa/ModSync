@@ -476,30 +476,26 @@ def _old(slot: Path) -> Path:
 
 
 def _settle_placement(saves: Path, slot: str, entry: dict) -> dict | None:
-    """Finish or undo a placement a sync was cut short in. The entry says what
-    the slot was about to hold (``pending``); whether it does tells by what
-    the slot and its copies hold. Returns the slot's entry as it now stands
+    """Finish or undo a placement a sync was cut short in. ``pending`` is
+    written only once the copy beside the slot (``.modsync-incoming-``) is
+    whole and checked, so from what the slot and its copies hold now the
+    swap can be told apart: that copy still there with the new files, not
+    swapped; there with other files, swapped in one step (it holds the old
+    ones); gone, moved into place. Returns the slot's entry as it now stands
     (None: the slot holds nothing of ours)."""
     pending = entry.pop("pending")
     target, incoming, old = saves / slot, _incoming(saves / slot), _old(saves / slot)
     if old.exists() and not target.exists():
         os.rename(old, target)  # cut short between the two renames of a two-step swap: undo it
-        shutil.rmtree(incoming, ignore_errors=True)
-        return entry if entry.get("version") else None
-    shutil.rmtree(old, ignore_errors=True)
-    if incoming.exists():
-        if content(incoming) == pending["digest"]:
-            shutil.rmtree(incoming)  # copied, never swapped in
-            return entry if entry.get("version") else None
-        shutil.rmtree(incoming)  # swapped in one step: this is what the slot held before
-        done = True
+        swapped = False
+    elif incoming.exists():
+        swapped = content(incoming) != pending["digest"]
     else:
-        done = target.exists()
-    if not done:
+        swapped = target.exists()
+    shutil.rmtree(incoming, ignore_errors=True)
+    shutil.rmtree(old, ignore_errors=True)
+    if not swapped:
         return entry if entry.get("version") else None
-    info = read_info(target)
-    if not entry.get("version") and (info is None or info.key != entry["key"]):
-        return None  # a new save DFU made there since, nothing to do with this
     # It holds the placed version, or (if DFU saved since) one made from it:
     # "" as fingerprint has the next step look at it as a change made here.
     still = content(target) == pending["digest"]
@@ -508,30 +504,24 @@ def _settle_placement(saves: Path, slot: str, entry: dict) -> dict | None:
 
 
 def _place(record: Record, target: Path, mapping: _Mapping, slot_entry: dict) -> bool:
-    """Make ``target`` hold exactly ``record``'s files: noted in the mapping
-    first, then copied, checked against the manifest, swapped in (in one
-    step where the filesystem allows) and noted as done, the old contents
-    removed last. False, changing nothing, when the copy isn't whole."""
+    """Make ``target`` hold exactly ``record``'s files: copied beside it and
+    checked against the manifest, then noted in the mapping as under way,
+    swapped in (in one step where the filesystem allows) and noted as done,
+    the old contents removed last. False, changing nothing, when the copy
+    isn't whole."""
     manifest = _manifest(record.path)
     if manifest is None or digest(manifest["files"]) != record.digest:
         return False
-    slot = target.name
-    mapping.slots[slot] = {**slot_entry, "pending": {"version": record.name, "vv": slot_entry["vv_new"],
-                                                     "digest": record.digest}}
-    mapping.slots[slot].pop("vv_new", None)
-    mapping.save()
+    slot, settled = target.name, slot_entry.pop("vv_new")
     incoming = _incoming(target)
     shutil.rmtree(incoming, ignore_errors=True)
     shutil.copytree(record.path, incoming,
                     ignore=shutil.ignore_patterns(MANIFEST, ".syncthing.*", "*.sync-conflict-*"))
     if not matches(incoming, manifest["files"]):
-        if slot_entry.get("version"):
-            mapping.slots[slot].pop("pending", None)
-        else:
-            del mapping.slots[slot]
-        mapping.save()
         shutil.rmtree(incoming, ignore_errors=True)
         return False
+    mapping.slots[slot] = {**slot_entry, "pending": {"version": record.name, "vv": settled, "digest": record.digest}}
+    mapping.save()
     if not target.exists():
         os.rename(incoming, target)
     elif not _exchange(incoming, target):
@@ -540,7 +530,7 @@ def _place(record: Record, target: Path, mapping: _Mapping, slot_entry: dict) ->
         os.rename(target, old)
         os.rename(incoming, target)
         incoming = old
-    mapping.slots[slot] = {"key": slot_entry["key"], "version": record.name, "vv": slot_entry["vv_new"],
+    mapping.slots[slot] = {"key": slot_entry["key"], "version": record.name, "vv": settled,
                            "fingerprint": fingerprint(target)}
     mapping.save()
     shutil.rmtree(incoming, ignore_errors=True)  # the old contents
@@ -609,10 +599,21 @@ def owner_problem(saves: Path, library: Path) -> str:
         other = owner.read_text(encoding="utf-8").strip()
     except OSError:
         return ""
-    if other and Path(other) != library and Path(other).is_dir():
+    if other and Path(other).resolve() != library.resolve() and Path(other).is_dir():
         return (f"These saves already sync through another ModSync (its library is {other}). "
-                "Stop syncing saves there first.")
+                f"Stop syncing saves there first, or delete {owner} if that ModSync is gone.")
     return ""
+
+
+def release(saves: Path, library: Path) -> None:
+    """Saves sync stopped here: another ModSync may take these saves over."""
+    owner = saves / OWNER
+    with _locked(saves) if saves.is_dir() else contextlib.nullcontext():
+        try:
+            if Path(owner.read_text(encoding="utf-8").strip()).resolve() == library.resolve():
+                owner.unlink()
+        except OSError:
+            pass
 
 
 def sync(saves: Path, library: Path, machine: Machine, *, guard: Guard | None = None) -> Report:
@@ -648,12 +649,19 @@ def sync(saves: Path, library: Path, machine: Machine, *, guard: Guard | None = 
             return machine.next(max(mine, vv.get(machine.id, 0)))
 
         def delete(known: dict) -> None:
-            """The save ``known`` held was deleted here; once no slot holds it."""
-            if any(e["key"] == known["key"] for e in mapping.slots.values() if e is not known):
+            """The save ``known`` held was deleted here, once no slot holds it;
+            until then what it took in goes to the copies left, so the
+            deletion of the last one covers all of them."""
+            others = [e for e in mapping.slots.values() if e is not known and e["key"] == known["key"]]
+            m = _NAME_RE.match(str(known.get("version", "")))
+            latest = max(int(m["time"]) if m else 0, int(known.get("latest", 0)))
+            if others:
+                for e in others:
+                    e["vv"] = joined(e["vv"], known["vv"])
+                    e["latest"] = max(int(e.get("latest", 0)), latest)
                 return
             n = count(known["vv"])
-            m = _NAME_RE.match(str(known.get("version", "")))
-            when = int(m["time"]) + 1 if m else ticks()  # just after: any save made since wins over it
+            when = latest + 1 if latest else ticks()  # just after: any save made since wins over it
             marker = library / known["key"] / f"{_record_name(when, machine.id, n)}.deleted"
             marker.parent.mkdir(parents=True, exist_ok=True)
             _write_once(marker, {"vv": {**known["vv"], machine.id: n}})

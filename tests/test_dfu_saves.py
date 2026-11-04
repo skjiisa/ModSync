@@ -605,6 +605,82 @@ class TwoMachines(unittest.TestCase):
         self.assertFalse(mine.exists())
         self.assertTrue(theirs.exists())
 
+    # --- from GPT-6.1 Sol's fifth pass ---
+
+    def _conflict_then_cut_short_while_copying(self, partly: bool):
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 100, "A's")
+        make_save(self.b, "SAVE0", "Ellte", "QuickSave", 90, "B's, made separately")
+        self.sync(self.a)
+        original = dfu_saves.shutil.copytree
+
+        def copytree(src, dst, *args, **kwargs):
+            if ".modsync-incoming-" in str(dst):
+                if partly:
+                    Path(dst).mkdir()
+                    shutil.copy2(Path(src) / "SaveInfo.txt", Path(dst) / "SaveInfo.txt")
+                raise KeyboardInterrupt
+            return original(src, dst, *args, **kwargs)
+
+        with patch.object(dfu_saves.shutil, "copytree", copytree), self.assertRaises(KeyboardInterrupt):
+            self.sync(self.b)
+        self.assertEqual((self.b / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt B's, made separately")
+        for _ in range(2):
+            self.round()
+        for saves in (self.a, self.b):
+            self.assertEqual((saves / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt A's")
+
+    def test_a_placement_cut_short_before_copying_is_not_taken_as_done(self):
+        self._conflict_then_cut_short_while_copying(partly=False)
+
+    def test_a_placement_cut_short_mid_copy_is_not_taken_as_done(self):
+        self._conflict_then_cut_short_while_copying(partly=True)
+
+    def test_dfu_saving_into_the_slot_a_placement_was_headed_for(self):
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 100, "A's")
+        self.sync(self.a)
+        original = dfu_saves.os.rename
+
+        def rename(a, b):
+            if ".modsync-incoming-" in str(a) and str(b).endswith("SAVE0"):
+                raise KeyboardInterrupt  # copied and noted, never moved into place
+            return original(a, b)
+
+        with patch.object(dfu_saves.os, "rename", rename), self.assertRaises(KeyboardInterrupt):
+            self.sync(self.b)
+        make_save(self.b, "SAVE0", "Ellte", "QuickSave", 50, "B's own, made in that free slot")
+        self.sync(self.b)
+        key = dfu_saves.Info("Ellte", "QuickSave", 0).key
+        mine = [r for r in dfu_saves.records(self.library / key) if r.machine == self.machines[self.b].id]
+        self.assertEqual([r.vv for r in mine], [{self.machines[self.b].id: 1}])  # made separately, not from A's
+        self.round()
+        for saves in (self.a, self.b):
+            self.assertEqual((saves / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt A's")  # newer wins
+
+    def test_deleting_every_copy_of_a_duplicated_save_deletes_it(self):
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v100")
+        self.round()
+        shutil.copytree(self.a / "SAVE0", self.a / "SAVE1")
+        self.round()
+        b_slot = next(iter(slots(self.b)))
+        make_save(self.b, b_slot, "Ellte", "Ellte 1", 200, "v200")
+        self.round()  # A puts v200 into one of its two copies
+        shutil.rmtree(self.a / "SAVE0")
+        shutil.rmtree(self.a / "SAVE1")
+        self.sync(self.a)
+        self.sync(self.b)
+        self.sync(self.a)
+        self.assertEqual(slots(self.a), {})
+        self.assertEqual(slots(self.b), {})
+
+    def test_stopping_saves_sync_hands_the_saves_over(self):
+        other = self.tmp / "other-library"
+        make_save(self.a, "SAVE0", "Ellte", "Ellte 1", 100, "v1")
+        self.sync(self.a)
+        flatpak = dfu_saves.Machine(self.tmp / "C.json")
+        self.assertIn("another ModSync", dfu_saves.sync(self.a, other, flatpak).skipped)
+        dfu_saves.release(self.a, self.library / "." / "")  # the same library, written another way
+        self.assertEqual(dfu_saves.sync(self.a, other, flatpak).skipped, "")
+
     def test_ticks_match_dfus_clock(self):
         from datetime import datetime
 
@@ -690,6 +766,21 @@ class SyncSaves(unittest.TestCase):
             self.assertEqual(reason, "")
             self.assertFalse(can_take_it_exclusively())  # the hook waits for this change
         self.assertTrue(can_take_it_exclusively())  # and only this one
+
+    def test_stopping_the_folder_releases_the_saves(self):
+        from modsync.sync import folders
+
+        State.update(game_folders={"dfu-saves": str(dfu.saves_library())})
+        dfu.sync_saves()
+        owner = self.inst.data_dir / "Saves" / dfu_saves.OWNER
+        self.assertTrue(owner.exists())
+
+        class Client:
+            def delete_folder(self, folder_id):
+                pass
+
+        self.assertTrue(folders.stop(Client(), dfu.SAVES_FOLDER))
+        self.assertFalse(owner.exists())
 
     def test_no_install_no_folder(self):
         State.update(dfu_path="")
