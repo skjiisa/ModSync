@@ -40,8 +40,34 @@ if [[ -n "$native" && "$verb" == "waitforexitandrun" ]]; then
     if [[ -n "${MODSYNC_ORIGINAL_GAME:-}" ]]; then
         log "MODSYNC_ORIGINAL_GAME is set; starting the original game"
     elif [[ -x "$native" ]]; then
-        log "exec $native (in place of the game)"
         cd "${native%/*}" || exit 1
+        # Daggerfall Unity's saves sync through a library ModSync keeps (modsync
+        # dfu saves): bring the newest in before it starts, and store the new
+        # ones once it exits. Only where saves sync has run; never blocking the game.
+        if [[ -f "${native%/*}/.modsync-saves" ]]; then
+            saves=("${modsync[@]}")
+            if [[ -f /.flatpak-info ]] && command -v flatpak-spawn >/dev/null 2>&1; then
+                saves=(flatpak-spawn --host "${modsync[@]}")
+            fi
+            # Held from before the first sync until DFU and the last sync are done
+            # (DFU inherits it): any other sync gives way meanwhile, and one under
+            # way is waited for, so nothing copies saves while DFU writes them.
+            if command -v flock >/dev/null 2>&1 && exec {play_lock}>>"${native%/*}/.modsync-playing"; then
+                # A sync holds it for one change at a time, so this is a moment, unless one hangs.
+                flock -x -w 600 "$play_lock" || log "WARNING: a saves sync has been stuck for ten minutes; starting anyway"
+            fi
+            sync_saves() {
+                env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT timeout 60 "${saves[@]}" dfu saves --quiet --playing \
+                    </dev/null >>"$log_file" 2>&1 || log "WARNING: saves didn't sync ($1)"
+            }
+            sync_saves "before playing"
+            log "running $native (in place of the game), saves sync after"
+            "$native"
+            rc=$?
+            sync_saves "after playing"
+            exit $rc
+        fi
+        log "exec $native (in place of the game)"
         exec "$native"
     else
         log "WARNING: $native is gone; starting the original game. 'modsync dfu install' puts it back."

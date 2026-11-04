@@ -39,7 +39,13 @@ import stat
 import subprocess
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - not on Windows
+    fcntl = None
 from pathlib import Path
 
 from modsync import background, launchhook, platforms
@@ -485,3 +491,112 @@ MODS_FOLDER = FolderSpec(
     in_use=lambda: is_running(),  # looked up when asked, so tests and callers see the live check
     tidy=lambda root: set_aside_mod_copies(root),
 )
+
+
+# --- syncing the saves (see modsync.dfu_saves) ------------------------------------
+
+
+def saves_dir(inst: Install) -> Path:
+    """Where DFU keeps this install's saves: ``MyDaggerfallUnitySavePath`` when
+    it names a folder that exists (DFU uses it as it is), else
+    ``PortableAppdata/Saves``."""
+    custom = read_setting(inst.settings_ini, "Daggerfall", "MyDaggerfallUnitySavePath")
+    if custom:
+        path = Path(custom) if Path(custom).is_absolute() else inst.path / custom
+        if path.is_dir():
+            return path
+    return inst.data_dir / "Saves"
+
+
+SAVES_MARKER = ".modsync-saves"  # in the install: the Play hook syncs saves around DFU
+
+
+def _machine() -> "dfu_saves.Machine":
+    """This machine in the save versions it writes. Kept with ModSync, not
+    with the saves, so a DFU install copied to another machine can't bring
+    it along."""
+    from modsync import config, dfu_saves
+
+    return dfu_saves.Machine(config.data_dir() / "dfu-saves-machine.json")
+
+
+def saves_library() -> Path:
+    from modsync import config
+
+    return config.data_dir() / "dfu-saves"
+
+
+def _saves_root() -> Path | None:
+    return saves_library() if _install_root() is not None else None
+
+
+PLAYING_LOCK = ".modsync-playing"  # in the install: held by Steam's Play hook while DFU runs
+
+
+@contextmanager
+def _free_to_sync(inst: Install, playing: bool):
+    """Entered around each change the saves sync makes: yields why it must
+    stop ("" when it needn't). While Steam's Play hook has DFU starting or
+    running, it holds :data:`PLAYING_LOCK`; otherwise this holds it shared,
+    so the hook waits for the one change under way, never a whole sync,
+    before it starts DFU. The hook's own syncs, just before and after DFU,
+    say ``playing``."""
+    if is_running():
+        yield "Daggerfall Unity is running; its saves sync once it closes."
+        return
+    if playing or fcntl is None:
+        yield ""
+        return
+    with open(inst.path / PLAYING_LOCK, "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield "Daggerfall Unity is starting or running; its saves sync once it closes."
+            return
+        try:
+            yield ""
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def sync_saves(*, force: bool = False, playing: bool = False) -> "dfu_saves.Report":
+    """Bring this machine's saves and the synced library in line, when saves
+    sync is on here (or ``force``) and DFU is closed."""
+    from modsync import dfu_saves
+    from modsync.sync import folders
+
+    st = State.load()
+    report = dfu_saves.Report()
+    inst = find_install(st.dfu_path)
+    if inst is None:
+        report.skipped = "Daggerfall Unity isn't installed."
+        return report
+    if not force and (SAVES_FOLDER.key not in st.game_folders or folders.stopping(SAVES_FOLDER.key, st)):
+        report.skipped = "Saves don't sync on this machine."
+        return report
+    (inst.path / SAVES_MARKER).touch()
+    return dfu_saves.sync(saves_dir(inst), saves_library(), _machine(),
+                          guard=lambda: _free_to_sync(inst, playing))
+
+
+SAVES_FOLDER = FolderSpec(
+    key="dfu-saves",
+    label="Daggerfall Unity saves (ModSync)",
+    path=_saves_root,
+    ignore=(
+        "// Managed by ModSync: Daggerfall Unity's saves, one folder per version, never",
+        "// written twice. ModSync copies them to and from DFU's own Saves folder.",
+        ".incoming-*",
+    ),
+    in_use=lambda: is_running(),
+    tidy=lambda root: sync_saves(),
+    on_stop=lambda: _release_saves(),
+)
+
+
+def _release_saves() -> None:
+    from modsync import dfu_saves
+
+    inst = find_install(State.load().dfu_path)
+    if inst is not None:
+        dfu_saves.release(saves_dir(inst), saves_library())

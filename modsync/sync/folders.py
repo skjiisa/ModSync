@@ -45,6 +45,7 @@ class FolderSpec:
     on_share: Callable[[Path], None] | None = None  # run on the machine that starts a new shared folder
     in_use: Callable[[], bool] | None = None  # the game is running: settling a conflict waits
     tidy: Callable[[Path], object] | None = None  # run on the folder whenever its status is read
+    on_stop: Callable[[], None] | None = None  # run once it has stopped syncing here
 
     @property
     def folder_id(self) -> str:
@@ -58,7 +59,7 @@ def specs() -> list[FolderSpec]:
     """Every game folder ModSync knows. The games add theirs here."""
     from modsync import dfu  # imports this module's users; loaded on first use
 
-    return [dfu.MODS_FOLDER]
+    return [dfu.MODS_FOLDER, dfu.SAVES_FOLDER]
 
 
 def spec_for(key: str) -> FolderSpec | None:
@@ -250,9 +251,19 @@ def stop(client: SyncthingClient | None, spec: FolderSpec) -> bool:
     if client is None or not _remove(client, spec):
         log.info("stopping %s once Syncthing answers", spec.folder_id)
         return False
-    _forget(spec.key)
-    log.info("stopped syncing %s", spec.folder_id)
+    _finish_stop(spec)
     return True
+
+
+def _finish_stop(spec: FolderSpec) -> None:
+    """Syncthing has let go of it: forget it here, and let the game tidy up."""
+    _forget(spec.key)
+    if spec.on_stop is not None:
+        try:
+            spec.on_stop()
+        except Exception as exc:
+            log.warning("after stopping %s: %s", spec.folder_id, exc)
+    log.info("stopped syncing %s", spec.folder_id)
 
 
 def share_with(client: SyncthingClient, device_id: str) -> list[str]:
@@ -315,8 +326,7 @@ def refresh(client: SyncthingClient) -> None:
             continue
         if stopping(key, st):
             if _remove(client, spec):
-                _forget(key)
-                log.info("stopped syncing %s", spec.folder_id)
+                _finish_stop(spec)
             continue
         root = spec.path()
         if root is None:
@@ -346,7 +356,7 @@ def status(client: SyncthingClient) -> list[FolderStatus]:
         if spec.tidy is not None and not stopping(key, st):
             try:
                 spec.tidy(Path(path))
-            except OSError as exc:
+            except Exception as exc:  # a status read must never fail over it
                 log.warning("could not tidy %s: %s", spec.folder_id, exc)
         fs = FolderStatus(spec, path, stopping=stopping(key, st),
                           conflicts=len(conflicts.find(path, spec.content)) if spec.content else 0)

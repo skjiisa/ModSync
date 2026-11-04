@@ -534,7 +534,7 @@ instead of the detected one.
 ModSync can set up [Daggerfall Unity](https://www.dfworkshop.net/) (DFU)
 from the free Steam copy of *The Elder Scrolls II: Daggerfall*. This is
 separate from the Skyrim setup and uses none of the MO2 tools. So far it is
-command line only. Syncing saves and the app screens are tracked in #111.
+command line only. The app screens are tracked in #107.
 
 1. Install *The Elder Scrolls II: Daggerfall* in Steam.
 2. `modsync dfu install` downloads the official DFU 1.1.1 Linux build,
@@ -614,6 +614,70 @@ Mods published per system work across Linux machines. A Windows build also
 worked on Linux in testing: the Linux and Windows builds of Handpainted
 Models differ only in their shaders, and both include the OpenGL shaders
 DFU uses on Linux.
+
+### Syncing Daggerfall Unity's saves
+
+`modsync sync share dfu-saves` syncs saves, separately from mods, so a
+machine can sync one without the other.
+
+DFU numbers its saves per machine (`SAVE0`, `SAVE1`, and so on), each time
+taking the first free number. Two machines that each made a save before
+syncing can therefore both have a `SAVE7` holding different saves, or each
+a QuickSave of the same character. Syncthing works one file at a time, so
+syncing DFU's `Saves` folder directly would build one save out of two.
+
+So the folder that syncs is a library ModSync keeps beside DFU's, at
+`~/.local/share/modsync/dfu-saves`, or the Flatpak's data folder:
+
+- Each version of each save is a folder of its own. Its name holds the
+  save's time, the machine that made it, and that machine's count of
+  changes, so no two are ever named alike. It's written once and never
+  changed, so Syncthing never has two versions of one file to choose
+  between. Its manifest lists its files, so a version still arriving is
+  never used, and it's checked again as it goes into a slot.
+- Beside each version is a small `.id` file holding its version vector (for
+  each machine, how many changes to the save it takes in) and a digest of
+  its files. These are kept for good, and which version wins is decided
+  from them alone, so removing old versions' files never changes it. A
+  version made after another takes in everything the other does, so a save
+  you continued always replaces the one it came from, even when the clocks
+  disagree. DFU's times are local time, so a different time zone or the end
+  of summer time would otherwise let older progress win. Only saves made
+  separately on two machines (each played on before they met) are decided by
+  DFU's clock. The other one stays in the library, and once a machine has
+  taken or kept the winner, what it saves next beats the other one too.
+- Whenever DFU is closed, ModSync copies new and changed saves into the
+  library. A local save whose files match a known version, even one whose
+  files have since been removed, counts as that version, so nothing is
+  published twice. ModSync then puts each save's winning version into a slot
+  here. It replaces an older copy, in one step where the filesystem allows,
+  or takes a free number for a save new here. The new files are copied and
+  checked beside the slot first. What the slot is about to hold is written
+  down before it changes, and its old contents are kept until that's done.
+  So the next sync finishes or undoes one that was cut short, even if you
+  played in between. A slot is never moved back to a version it already takes in,
+  and until the winner's files have arrived its save stays as it is.
+- The files of every version that could still win, and of the three newest
+  others of each save, are kept.
+- A save deleted in DFU is deleted on the other machines too, once no slot
+  here still holds it (with two copies in two slots, once both are gone), unless one of them made it again separately, later by
+  DFU's clock. Deletions are kept in the library for good, a few bytes each.
+- One ModSync syncs a given Saves folder. If the Flatpak and a natively
+  installed ModSync both have saves sync on for one install, the second
+  says so and leaves the saves alone. Stopping saves sync in the first lets
+  the second take over.
+
+Play in Steam brings in the newest saves just before DFU starts, and stores
+the new ones right after it exits. Each change another sync makes to DFU's
+saves holds a lock the Play hook takes before starting DFU, so the hook
+waits for the one change under way, which takes a moment. Only if a sync has
+been stuck for ten minutes does the hook start DFU without it.
+ModSync also syncs saves whenever it checks sync status. Saves made while
+ModSync and its background service were both off travel the next time either
+runs.
+
+DFU warns by itself when a save needs mods this machine is missing. The
+version check under "Syncing Daggerfall Unity's mods" covers DFU itself.
 
 DFU only has an x86_64 build. On the Steam Frame it would have to run under
 emulation, which is untested (#110). DFU's developers don't support builds or setups from third parties,
