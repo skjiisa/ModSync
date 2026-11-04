@@ -49,7 +49,7 @@ keyboard, a mouse and the Deck's touch screen work too.
 | A | Enter | Choose |
 | B | Escape | Back: close a sheet, go back a wizard step, or return to Home. On Home it asks to quit |
 | LB / RB | Q / E, Ctrl+Tab, or a tap of Ctrl / Alt | Previous / next section |
-| X | X | Switch game, once Steam has Daggerfall. In sheets, what the hint bar says |
+| X | X | Switch game. In sheets, what the hint bar says |
 | Y | Y | Shortcuts named in the hint bar, such as "Check again" |
 | LT / RT, right stick | Page Up / Page Down | Scroll |
 | Start | Home | Home |
@@ -124,9 +124,9 @@ The insertion point stays visible while a keyboard button has focus.
 Home offers MO2 installation and selection, matching SKSE, and the next
 repair when the game version, SKSE or MO2 needs attention. The MO2 and Game
 version rows open maintenance sheets; restore, unpin and installation details
-remain available there. Home, Sync and Settings are the three tabs. Once
-Steam has Daggerfall, the game switcher beside the ModSync name (X) picks
-whether Home shows Skyrim or Daggerfall Unity. Play or
+remain available there. Home, Sync and Settings are the three tabs. The game
+switcher beside the ModSync name (X) picks whether Home shows Skyrim or
+Daggerfall Unity, installed or not. Play or
 Continue remains available and says what may fail if you launch now. Missing
 SKSE is an optional suggestion: it leaves Play primary and never takes default
 controller focus, including when Steam's Play button opened ModSync. The Steam
@@ -550,8 +550,9 @@ from the free Steam copy of *The Elder Scrolls II: Daggerfall*. This is
 separate from the Skyrim setup and uses none of the MO2 tools. In the app,
 choose Daggerfall Unity in the game switcher beside the ModSync name (or
 press X), and Home shows all of it: installing, Steam's Play button, Play,
-and mods and saves sync. The switcher appears once Steam has Daggerfall.
-The commands below do the same from a terminal.
+and mods and saves sync. Until Steam has Daggerfall, its blue action
+opens Steam's install dialog for it. The commands below do the same from a
+terminal.
 
 1. Install *The Elder Scrolls II: Daggerfall* in Steam.
 2. `modsync dfu install` downloads the official DFU 1.1.1 Linux build,

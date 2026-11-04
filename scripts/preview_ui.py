@@ -179,7 +179,10 @@ def main():
         dfu_install = dfu.Install(Path("/home/you/Games/Daggerfall Unity"))
         dagger = Path("/home/you/.local/share/Steam/steamapps/common/The Elder Scrolls Daggerfall/DF/DAGGER")
 
-        def dfu_overview(installed: bool):
+        def dfu_overview(installed: bool | None):
+            """``None``: Steam doesn't have Daggerfall yet."""
+            if installed is None:
+                return dfu.Overview(None, dfu.data_problems(None), None, None, None, "off", "off", None)
             hook_on = installed
             status = launchhook.LaunchHookStatus(
                 DAGGERFALL, hook_on, "modsync_1812390_proton" if hook_on else None, hook_on, None, None, True,
@@ -189,7 +192,7 @@ def main():
                                 "on" if installed else "off", "on" if installed else "off", None,
                                 "1.1.1" if installed else None)
 
-        for installed, name in ((False, "daggerfall-install"), (True, "daggerfall")):
+        for installed, name in ((None, "daggerfall-steam"), (False, "daggerfall-install"), (True, "daggerfall")):
             with patch("modsync.dfu.overview", lambda hook=True, i=installed: dfu_overview(i)), \
                     patch.object(dfu.Install, "version", property(lambda self: "1.1.1")):
                 dw = window_for(State(**configured), mode="gamepad")
@@ -202,6 +205,10 @@ def main():
                     capture(dw, "game-switch")
                     dw.top_overlay.choose("daggerfall")
                 else:
+                    if installed is None:  # the picker offers it, focus staying on Skyrim
+                        dw.open_game_picker()
+                        capture(dw, "game-switch-steam")
+                        dw.top_overlay.cancel()
                     dw.go("daggerfall")
                 capture(dw, name)
                 dw.close()

@@ -158,20 +158,25 @@ is a separate build and does not pick up source edits.
 
 ## Daggerfall Unity
 
-Where Steam has *The Elder Scrolls II: Daggerfall*, or Daggerfall Unity is
-already installed, a game switcher appears beside the ModSync name, with X
-beside it. It names the game Home shows. Without either, the top bar is
-unchanged and Home is Skyrim's. The switcher is as wide as the longest game
+A game switcher sits beside the ModSync name, with X beside it. It names
+the game Home shows, and it is there whether or not Steam has *The Elder
+Scrolls II: Daggerfall* yet. The switcher is as wide as the longest game
 name, so the section tabs stay put when the game changes.
 
 ![Home with the game switcher](home-dfu.png)
 
 X, or choosing the switcher, lists the games with how each stands. The one
 shown now is checked, and focus starts on the other, so X then A switches.
-ModSync reopens on the game last shown. When Skyrim's Play button opened
-ModSync, only Skyrim is shown.
+A game that isn't on this machine is listed too, but focus stays on the game
+shown now. Its Home starts with getting it: Daggerfall's blue action opens
+Steam's install dialog, and the Steam row waits for Steam until the game is
+there. ModSync reopens on the game last shown, or on Skyrim while that game
+isn't on this machine. When Skyrim's Play button opened ModSync, only Skyrim
+is shown.
 
 ![Switching game](game-switch.png)
+
+![Switching game before Steam has Daggerfall](game-switch-steam.png)
 
 Daggerfall Unity's Home lists the Steam data, the install, what Steam's Play
 button starts, and mods and saves sync. Each row changes what it shows when
@@ -179,6 +184,12 @@ pressed. Until Daggerfall Unity is installed, the blue action installs it,
 and the rows that need it wait.
 
 ![Daggerfall Unity before installing](daggerfall-install.png)
+
+Before Steam has *The Elder Scrolls II: Daggerfall*, the blue action opens
+Steam's install dialog for it instead. The page notices the game once Steam
+has installed it.
+
+![Daggerfall Unity before Steam has Daggerfall](daggerfall-steam.png)
 
 Once installed, the blue action plays it, through Steam when the Play button
 is set to Daggerfall Unity, which also syncs the saves around the game.
