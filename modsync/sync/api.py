@@ -107,6 +107,13 @@ class SyncthingClient:
             self._http.get("/rest/cluster/pending/devices").raise_for_status().json()
         )
 
+    def pending_folders(self) -> dict[str, Any]:
+        """Folders paired devices offer that aren't configured here yet:
+        ``{folder_id: {"offeredBy": {device_id: {"time", "label", ...}}}}``."""
+        return (
+            self._http.get("/rest/cluster/pending/folders").raise_for_status().json()
+        )
+
     def folder_status(self, folder_id: str) -> dict[str, Any]:
         return (
             self._http.get("/rest/db/status", params={"folder": folder_id})

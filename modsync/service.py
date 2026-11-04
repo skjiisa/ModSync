@@ -31,7 +31,7 @@ from modsync.pairing_code import PairingCode
 from modsync.state import State
 from modsync.steam import appinfo, libraries as libs, prefixes, shortcuts
 from modsync.steam.appmanifest import AppManifest, PinChange
-from modsync.sync import conflicts, pairing, stignore
+from modsync.sync import conflicts, folders, pairing, stignore
 from modsync.sync.manager import SyncthingManager
 
 try:
@@ -107,6 +107,7 @@ class SyncStatus:
     need_items: int = 0  # files and folders this machine knows it hasn't received yet
     copy: CopyProgress | None = None
     conflicts: int = 0  # conflict copies waiting for a choice (see conflicts.find)
+    game_folders: list[folders.FolderStatus] = field(default_factory=list)  # the games' folders synced here
 
 
 @dataclass
@@ -255,6 +256,25 @@ class ModSyncService:
         if not self.manager.running:
             self.manager.start(timeout=timeout)
         self._refresh_stignore()
+        self._refresh_game_folders()
+
+    _FOLDERS_REFRESH_S = 60.0
+    _folders_refreshed_at: float | None = None
+
+    def _refresh_game_folders(self, *, force: bool = False) -> None:
+        """Follow games that moved and keep their .stignore current: at most
+        once a minute, since everything Syncthing-bound comes through here."""
+        now = time.monotonic()
+        if not self.state.game_folders:
+            return
+        if not force and self._folders_refreshed_at is not None and now - self._folders_refreshed_at < self._FOLDERS_REFRESH_S:
+            return
+        self._folders_refreshed_at = now
+        try:
+            with self.manager.client() as client:
+                folders.refresh(client)
+        except Exception as exc:
+            log.info("could not refresh the games' folders: %s", exc)
 
     def _refresh_stignore(self) -> None:
         """Keep an existing vault's .stignore current with this version of ModSync
@@ -405,7 +425,10 @@ class ModSyncService:
         """Stop using the chosen instance (and its vault, if any). Files stay."""
         if self.state.syncing:
             self.stop_sync()
-        self.state = State()
+        # Everything about MO2 and its vault goes; the other games stay set up.
+        keep = self.reload_state()
+        self.state = State(dfu_path=keep.dfu_path, game_folders=keep.game_folders,
+                           declined_folders=keep.declined_folders, paired=keep.paired)
         self.state.save()
 
     # --- vaults ---
@@ -419,7 +442,8 @@ class ModSyncService:
         instance_path = _absolute(instance_path)
         folder_id = self.state.folder_id or self._new_folder_id()
         with self.manager.client() as client:
-            pairing.share_instance_folder(client, folder_id, instance_path, [], label=label)
+            # Pairing is machine-wide: machines already paired for another game get it too.
+            pairing.share_instance_folder(client, folder_id, instance_path, folders.peers(client), label=label)
             device_id = client.my_id()
         self._remember(instance_path, folder_id, label)
         log.info("created vault %s for %s", folder_id, instance_path)
@@ -449,6 +473,9 @@ class ModSyncService:
 
         ``peer_host`` is the address the peer was reached on during LAN pairing,
         so Syncthing can connect without its own discovery."""
+        if not code.has_vault:
+            raise RuntimeError("That code pairs machines that sync only games' folders, not Mod Organizer 2. "
+                               "Use the code from the machine whose Mod Organizer 2 setup you want.")
         self.ensure_running()
         instance_path = _absolute(instance_path)
         label = code.label or self.state.instance_label
@@ -476,8 +503,9 @@ class ModSyncService:
                 client, code.folder_id, instance_path, [code.device_id], label=label,
                 receive_only=not merge, versions_dir=archive,
             )
+            folders.share_with(client, code.device_id)
             device_id = client.my_id()
-        self._remember(instance_path, code.folder_id, label, sync_paused=False,
+        self._remember(instance_path, code.folder_id, label, sync_paused=False, paired=True,
                        copy_phase="" if merge else "receiving", copy_source="" if merge else code.device_id,
                        copy_expected=-1 if merge or code.sequence is None else code.sequence,
                        copy_archive=str(archive) if archive else "", set_aside="",
@@ -822,10 +850,20 @@ class ModSyncService:
         return archive
 
     def add_peer(self, code: PairingCode, *, peer_host: str | None = None) -> None:
-        """Add another machine to the vault this machine already has."""
-        self.ensure_running()
-        if not self.state.folder_id:
+        """Pair another machine with this one, sharing the vault and every
+        game folder synced here with it."""
+        if not self.reload_state().syncs_anything:
             raise RuntimeError("no vault configured on this machine yet")
+        self._pair_device(code, peer_host)
+
+    def pair(self, code: PairingCode, *, peer_host: str | None = None) -> None:
+        """Pair with the machine a code names, without joining a vault: the
+        two share every game folder each syncs."""
+        self._pair_device(code, peer_host, take_offers=True)
+        log.info("paired with %s… (%s)", code.device_id[:7], code.label or "no name")
+
+    def _pair_device(self, code: PairingCode, peer_host: str | None, *, take_offers: bool = False) -> None:
+        self.ensure_running()
         with self.manager.client() as client:
             pairing.add_peer_device(
                 client,
@@ -833,14 +871,17 @@ class ModSyncService:
                 code.label or "ModSync device",
                 addresses=pairing.static_addresses(peer_host),
             )
-            folder = client.get_folder(self.state.folder_id)
-            ids = {d["deviceID"] for d in folder.get("devices", [])}
-            ids.add(code.device_id)
-            folder["devices"] = [
-                {"deviceID": d, "introducedBy": "", "encryptionPassword": ""}
-                for d in ids
-            ]
-            client.put_folder(folder)
+            if self.state.folder_id:
+                self._add_to_vault(client, code.device_id)
+            folders.share_with(client, code.device_id)
+            if take_offers:
+                folders.take_offers(client)
+        self.update_state(paired=True)
+
+    def _add_to_vault(self, client, device_id: str) -> None:
+        folder = client.get_folder(self.state.folder_id)
+        folder["devices"] = folders.device_entries([*(d["deviceID"] for d in folder.get("devices", [])), device_id])
+        client.put_folder(folder)
 
     def accept_pending(self) -> list[str]:
         """Add any devices that have tried to connect, sharing the vault with them.
@@ -850,26 +891,54 @@ class ModSyncService:
         device ids. Only a device that knows our device id (i.e. has our pairing
         code) can become pending, and accepting it only grants this one vault.
         """
-        if not self.state.folder_id:
+        st = self.reload_state()
+        if not st.active:
             return []
         self.ensure_running()
         accepted: list[str] = []
         with self.manager.client() as client:
-            pending = client.pending_devices() or {}
+            # Only a machine that shares something here hands out codes, so only
+            # it accepts machines that come knocking.
+            pending = (client.pending_devices() or {}) if st.syncs_anything else {}
             for device_id, info in pending.items():
                 name = (info or {}).get("name") or "ModSync peer"
                 pairing.add_peer_device(client, device_id, name)
-                folder = client.get_folder(self.state.folder_id)
-                ids = {d["deviceID"] for d in folder.get("devices", [])}
-                ids.add(device_id)
-                folder["devices"] = [
-                    {"deviceID": d, "introducedBy": "", "encryptionPassword": ""}
-                    for d in ids
-                ]
-                client.put_folder(folder)
+                if st.folder_id:
+                    self._add_to_vault(client, device_id)
+                folders.share_with(client, device_id)
                 accepted.append(device_id)
                 log.info("accepted pending device %s… (%s)", device_id[:7], name)
+            # A paired machine may have started syncing a game set up here too.
+            taken = folders.take_offers(client)
+        if accepted or taken:
+            self.update_state(paired=True)
         return accepted
+
+    # --- the games' folders (see modsync.sync.folders) ---
+    def share_game_folder(self, key: str) -> Path:
+        """Start syncing one of a game's folders, with every paired machine."""
+        spec = folders.spec_for(key)
+        if spec is None:
+            raise RuntimeError(f"ModSync has no folder called {key!r}")
+        self.ensure_running()
+        with self.manager.client() as client:
+            root = folders.share(client, spec)
+        self.reload_state()
+        return root
+
+    def stop_game_folder(self, key: str) -> None:
+        """Stop syncing one of a game's folders here. Its files stay."""
+        spec = folders.spec_for(key)
+        if spec is None:
+            raise RuntimeError(f"ModSync has no folder called {key!r}")
+        try:
+            self.ensure_running()
+            with self.manager.client() as client:
+                folders.stop(client, spec)
+        except Exception as exc:  # the daemon is down: forgetting it here is what matters
+            log.info("Syncthing unavailable while stopping %s: %s", key, exc)
+            folders.stop(None, spec)
+        self.reload_state()
 
     # --- LAN pairing (no code typing) ---
     def host_network_pairing(
@@ -884,16 +953,17 @@ class ModSyncService:
         """Offer this machine's vault on the LAN and wait for a peer to pair with
         the PIN, then add it to the vault. Requires a vault here already. Blocks."""
         self.ensure_running()
-        if not self.state.folder_id:
+        if not self.reload_state().syncs_anything:
             raise RuntimeError("create a vault on this machine first")
         payload = pairing_lan.PairPayload(
-            self.device_id(), self.state.folder_id, self.state.instance_label, sequence=self._folder_sequence()
+            self.device_id(), self.state.folder_id or "", self.state.instance_label if self.state.folder_id else "ModSync",
+            sequence=self._folder_sequence(),
         )
         peer = pairing_lan.host_pairing(
             payload, name, pin, on_ready=on_ready, stop=stop, timeout=timeout
         )
         self.add_peer(
-            PairingCode(peer.device_id, self.state.folder_id, peer.label or name),
+            PairingCode(peer.device_id, self.state.folder_id or "", peer.label or name),
             peer_host=peer.host,
         )
         return peer
@@ -910,14 +980,20 @@ class ModSyncService:
         *,
         timeout: float = 15.0,
         merge: bool = False,
+        pair_only: bool = False,
     ) -> pairing_lan.PairPayload:
         """Pair with a discovered host via PIN and join its vault (see
-        ``join_vault`` for ``merge``). Blocks."""
+        ``join_vault`` for ``merge``). A host that syncs only games' folders
+        is refused unless ``pair_only``, when the two machines just pair. Blocks."""
         self.ensure_running()
         payload = pairing_lan.PairPayload(self.device_id())
         peer = pairing_lan.join_pairing(announcement, payload, pin, timeout=timeout)
         if not peer.folder_id:
-            raise RuntimeError("that machine isn't offering a vault to join")
+            if not pair_only:
+                raise RuntimeError("that machine isn't offering a vault to join")
+            # It shares only games' folders: pair, and they're offered here.
+            self.pair(PairingCode(peer.device_id, "", peer.label), peer_host=peer.host)
+            return peer
         self.join_vault(
             PairingCode(peer.device_id, peer.folder_id, peer.label, peer.sequence),
             instance_path,
@@ -942,6 +1018,10 @@ class ModSyncService:
 
     def _leave_vault(self, forget_devices: bool) -> None:
         folder_id = self.reload_state().folder_id
+        if forget_devices and self.state.game_folders:
+            # Pairing is machine-wide: the games' folders still sync with them.
+            log.info("keeping the paired machines for %s", ", ".join(self.state.game_folders))
+            forget_devices = False
         log.info("leaving vault %s (forget devices: %s)", folder_id, forget_devices)
         try:
             self.ensure_running()
@@ -964,7 +1044,8 @@ class ModSyncService:
             pass  # daemon may be down; clearing our own state is what matters
         # A copy left half-way leaves what it set aside so far in its archive.
         self.update_state(folder_id=None, sync_paused=False, copy_phase="", copy_source="", copy_expected=0,
-                          copy_archive="", set_aside="", awaiting_vault_version=False)
+                          copy_archive="", set_aside="", awaiting_vault_version=False,
+                          **({"paired": False} if forget_devices else {}))
 
     def reset(self, *, forget_devices: bool = True) -> None:
         """Forget everything on this machine: the vault and the chosen instance."""
@@ -972,10 +1053,14 @@ class ModSyncService:
         self.forget_instance()
 
     def my_pairing_code(self) -> PairingCode | None:
-        if not self.state.syncing:
-            return None
-        return PairingCode(self.device_id(), self.state.folder_id, self.state.instance_label,
-                           self._folder_sequence())
+        """The code other machines join with: the vault's when there is one,
+        else (only games' folders sync here) one naming just this machine."""
+        if self.state.syncing:
+            return PairingCode(self.device_id(), self.state.folder_id, self.state.instance_label,
+                               self._folder_sequence())
+        if self.state.game_folders:
+            return PairingCode(self.device_id(), "", "ModSync")
+        return None
 
     def _folder_sequence(self) -> int | None:
         """How far this machine's list of the vault's files goes, for a joiner
@@ -1354,6 +1439,7 @@ class ModSyncService:
                 need_items=need,
                 copy=copy,
                 conflicts=self._conflict_count() if self.state.folder_id else 0,
+                game_folders=folders.status(client) if self.state.game_folders else [],
             )
 
     # --- internal ---

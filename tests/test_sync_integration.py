@@ -14,6 +14,7 @@ import tempfile
 import time
 import unittest
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -345,6 +346,65 @@ class SyncthingIntegration(unittest.TestCase):
             mgr.start(40)
             nodes.append((mgr, port))
         return nodes
+
+    def test_a_game_folder_reaches_a_machine_paired_without_a_vault(self) -> None:
+        """Machine-wide pairing end to end: A syncs only a game's folder and
+        gives a machine code; B pairs with it, A accepts B, A's folder is
+        offered to B, and B takes it up and receives the files."""
+        from modsync.sync import folders
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            roots = {"A": tmp / "A-game" / "Mods", "B": tmp / "B-game" / "Mods"}
+            side = {"now": "A"}
+            spec = folders.FolderSpec("it-mods", "IT mods (ModSync)", lambda: roots[side["now"]],
+                                      ("!/kept.txt", "/*"))
+            (a_mgr, a_port), (b_mgr, b_port) = self._two_nodes(tmp)
+
+            @contextmanager
+            def on(name):
+                side["now"] = name
+                with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp / f"config-{name}")}):
+                    yield
+
+            try:
+                with patch.object(folders, "specs", lambda: [spec]):
+                    with on("A"):
+                        a = ModSyncService(manager=a_mgr)
+                        a.share_game_folder("it-mods")
+                        (roots["A"] / "kept.txt").write_text("from A")
+                        (roots["A"] / "skipped.txt").write_text("not synced")
+                        code = a.my_pairing_code()
+                        self.assertTrue(code.encode().startswith("MODSYNC2-"))
+                    with on("B"):
+                        b = ModSyncService(manager=b_mgr)
+                        b.pair(code)
+                        with b_mgr.client() as client:
+                            pairing.add_peer_device(client, code.device_id, "A",
+                                                    addresses=[f"tcp://127.0.0.1:{a_port}"])
+                    deadline = time.monotonic() + 90
+                    taken = False
+                    while time.monotonic() < deadline and not (roots["B"] / "kept.txt").exists():
+                        with on("A"):
+                            a.accept_pending()
+                        with on("B"):
+                            b.accept_pending()
+                            taken = taken or "it-mods" in State.load().game_folders
+                        time.sleep(0.5)
+                    self.assertTrue(taken, "B never took up A's folder")
+                    self.assertEqual((roots["B"] / "kept.txt").read_text(), "from A")
+                    self.assertFalse((roots["B"] / "skipped.txt").exists())
+                    with on("B"):
+                        self.assertEqual([f.spec.key for f in b.status().game_folders], ["it-mods"])
+            except Exception:
+                for name in ("A", "B"):
+                    path = tmp / f"{name}.log"
+                    if path.exists():
+                        print(path.name, path.read_text()[-6000:])
+                raise
+            finally:
+                a_mgr.stop()
+                b_mgr.stop()
 
     def test_copy_from_another_machine(self) -> None:
         """Joining copies the vault exactly without touching the source: a file

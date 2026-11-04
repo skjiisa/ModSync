@@ -183,12 +183,19 @@ def vault(args: list[str]) -> int:
         return _sync_status()
     if sub == "conflicts":
         return _sync_conflicts(rest)
+    if sub in {"share", "stop"} and len(rest) == 1:
+        return _sync_game_folder(sub, rest[0])
+    if sub == "code" and not rest:
+        return _sync_code()
     if sub == "serve":  # kept for units installed by older versions
         return serve(rest)
     print(
         "usage:\n"
         "  modsync sync create <instance-dir> [--label NAME]\n"
         "  modsync sync join <pairing-code> <instance-dir> [--merge]\n"
+        "  modsync sync join <machine-code>    pair with a machine that syncs only games' folders\n"
+        "  modsync sync share | stop <folder>  start or stop syncing a game's folder (e.g. dfu-mods)\n"
+        "  modsync sync code                   this machine's pairing code\n"
         "  modsync sync status\n"
         "  modsync sync conflicts [keep current|other <file>]\n"
         "  modsync serve                       keep syncing / watching in the foreground"
@@ -196,11 +203,53 @@ def vault(args: list[str]) -> int:
     return 2
 
 
+def _sync_game_folder(action: str, key: str) -> int:
+    from modsync.service import ModSyncService
+    from modsync.sync import folders
+
+    spec = folders.spec_for(key)
+    if spec is None:
+        known = ", ".join(s.key for s in folders.specs()) or "none yet"
+        print(f"ModSync has no folder called {key!r} (known: {known}).")
+        return 2
+    service = ModSyncService()
+    try:
+        if action == "share":
+            root = service.share_game_folder(key)
+            print(f"Syncing {spec.label} from {root} with every paired machine.")
+            if not service.state.paired:
+                print("No machine is paired yet: 'modsync sync code' prints the code to pair one.")
+        else:
+            service.stop_game_folder(key)
+            print(f"Stopped syncing {spec.label} here. Its files stay where they are.")
+    except RuntimeError as exc:
+        print(exc)
+        return 1
+    finally:
+        service.shutdown()
+    return 0
+
+
+def _sync_code() -> int:
+    from modsync.service import ModSyncService
+
+    service = ModSyncService()
+    try:
+        code = service.my_pairing_code()
+    finally:
+        service.shutdown()
+    if code is None:
+        print("Nothing syncs on this machine yet: 'modsync sync create' or 'modsync sync share' first.")
+        return 1
+    print(code.encode())
+    return 0
+
+
 def _sync_status() -> int:
     from modsync.service import ModSyncService
 
     service = ModSyncService()
-    if not service.state.syncing:
+    if not service.state.active:
         print("Sync: off. 'modsync sync create' shares this setup; 'modsync sync join' copies another.")
         return 0
     try:
@@ -210,6 +259,16 @@ def _sync_status() -> int:
         return 1
     finally:
         service.shutdown()
+    for fs in st.game_folders:
+        pct = int(round(fs.completion or 0))
+        print(f"Folder:     {fs.spec.label}  ({fs.path}): {fs.state or 'starting'}, {pct}% here"
+              + (f", {fs.need_items} item(s) still to arrive" if fs.need_items else ""))
+    if not service.state.syncing:
+        for d in st.devices:
+            print(f"Machine:    {d.name or d.id[:7]}  {'connected' if d.connected else 'offline'}")
+        if not st.devices:
+            print("Machines:   none paired yet")
+        return 0
     print(f"Vault:      {st.folder_id}  ({service.state.instance_path})")
     if st.paused:
         print("State:      paused. Nothing syncs until you resume it under Sync in the app.")
@@ -325,10 +384,10 @@ def _vault_create(args: list[str]) -> int:
 def _vault_join(args: list[str]) -> int:
     merge = "--merge" in args
     args = [a for a in args if a != "--merge"]
-    if len(args) != 2:
+    if len(args) not in (1, 2):
         print("usage: modsync sync join <pairing-code> <instance-dir> [--merge]")
         return 2
-    code_text, instance = args
+    code_text, instance = args[0], (args[1] if len(args) == 2 else None)
 
     from modsync.pairing_code import PairingCode
     from modsync.service import ModSyncService
@@ -336,7 +395,22 @@ def _vault_join(args: list[str]) -> int:
     try:
         code = PairingCode.decode(code_text)
     except Exception:
-        print("That doesn't look like a valid pairing code (expected MODSYNC1-…).")
+        print("That doesn't look like a valid pairing code (expected MODSYNC1-… or MODSYNC2-…).")
+        return 2
+    if not code.has_vault:
+        service = ModSyncService()
+        print(f"Starting Syncthing and pairing with {code.device_id[:7]}… ")
+        try:
+            service.pair(code)
+        except Exception as exc:
+            print(f"Couldn't pair: {exc}")
+            service.shutdown()
+            return 1
+        print("Paired. The other machine accepts this one while ModSync runs there. The games' folders")
+        print("each machine syncs are then offered to the other, and taken up here once the game is set up.")
+        return _run_until_interrupt(service)
+    if instance is None:
+        print("That code is for a Mod Organizer 2 vault: modsync sync join <pairing-code> <instance-dir>")
         return 2
 
     service = ModSyncService()

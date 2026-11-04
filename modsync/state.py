@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 try:
@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - not on Windows
 from modsync import config
 
 _FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "awaiting_vault_version",
-           "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside", "dfu_path")
+           "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside", "dfu_path", "game_folders", "declined_folders", "paired")
 
 
 @dataclass
@@ -59,6 +59,14 @@ class State:
     set_aside: str = ""
     # Where Daggerfall Unity is installed (modsync.dfu); "" when it isn't.
     dfu_path: str = ""
+    # The games' folders this machine syncs (modsync.sync.folders), by key:
+    # where each one is here. Skyrim's MO2 vault is the fields above.
+    game_folders: dict[str, str] = field(default_factory=dict)
+    # Folders stopped here: offers of them from paired machines aren't taken up.
+    declined_folders: list[str] = field(default_factory=list)
+    # Paired with another machine (pairing is machine-wide), so Syncthing keeps
+    # running to take up the folders it offers, even before anything syncs here.
+    paired: bool = False
 
     @staticmethod
     def path() -> Path:
@@ -70,7 +78,13 @@ class State:
         if p.exists():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
-                return cls(**{k: data[k] for k in _FIELDS if k in data})
+                state = cls(**{k: data[k] for k in _FIELDS if k in data})
+                # A hand-edited or damaged file must not take the rest with it.
+                if not isinstance(state.game_folders, dict):
+                    state.game_folders = {}
+                if not isinstance(state.declined_folders, list):
+                    state.declined_folders = []
+                return state
             except (OSError, ValueError, TypeError):
                 pass
         return cls()
@@ -124,6 +138,16 @@ class State:
     def syncing(self) -> bool:
         """The instance is shared through a Syncthing vault."""
         return bool(self.instance_path and self.folder_id)
+
+    @property
+    def syncs_anything(self) -> bool:
+        """The MO2 vault or any game's folder is shared from here."""
+        return bool(self.syncing or self.game_folders)
+
+    @property
+    def active(self) -> bool:
+        """Syncthing has work here: something syncs, or a paired machine may offer a folder."""
+        return bool(self.syncs_anything or self.paired)
 
     @property
     def copying(self) -> bool:

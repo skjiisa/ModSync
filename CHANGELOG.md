@@ -15,6 +15,12 @@ All notable changes to ModSync are documented here. The format follows
   as Skyrim, and `modsync dfu status` shows the setup. Its startup screen,
   where mods are turned on and off, still opens. Command line only for now.
   See "Daggerfall Unity" in `docs/advanced.md`.
+- Machine-wide pairing (#104). Paired machines share every folder ModSync
+  syncs, and games other than Skyrim get their own folders. A machine that
+  starts syncing one offers it to the others, and each takes it up once the
+  game is set up there. `modsync sync share`, `stop` and `code` manage them,
+  and `modsync sync join` takes a machine code (`MODSYNC2-`). Skyrim's vault
+  works as before.
 
 ## [2.0.0] - 2026-10-28
 
