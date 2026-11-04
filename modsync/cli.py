@@ -896,7 +896,7 @@ def _dfu_install_in_use():
     from modsync import dfu
     from modsync.state import State
 
-    return dfu.find_install(State.load().dfu_path) or dfu.find_install(dfu.default_install_dir())
+    return dfu.current_install()
 
 
 def _dfu_status() -> int:
@@ -968,7 +968,7 @@ def _dfu_install(args: list[str]) -> int:
             print(problem)
         print("Install The Elder Scrolls II: Daggerfall in Steam, then run this again.")
         return 1
-    dest = Path(args[0]) if args else Path(State.load().dfu_path or dfu.default_install_dir())
+    dest = Path(args[0]) if args else None
     if platform.machine().lower() not in {"x86_64", "amd64"}:
         print(f"Note: Daggerfall Unity only has an x86_64 build; on {platform.machine()} it's untested.")
 
@@ -987,14 +987,15 @@ def _dfu_install(args: list[str]) -> int:
             last["line"] = line
 
     try:
-        result = dfu.install(dest, dagger, cache_dir=config.data_dir() / "dfu", progress=progress,
-                             resolution=dfu.display_resolution())
+        result, followed = dfu.setup(dest, progress=progress)
     except dfu.DfuError as exc:
         print(f"\n{exc}" if last["line"] else str(exc))
         return 1
+    except RuntimeError as exc:  # installed, but the Play hook couldn't follow it
+        print(f"\nSteam's Play button still starts the old copy: {exc}")
+        return 1
     if last["line"]:
         print()
-    State.update(dfu_path=str(result.install.path))
     if result.fresh:
         print(f"Installed Daggerfall Unity {dfu.DFU_VERSION} into {result.install.path}")
     else:
@@ -1006,11 +1007,6 @@ def _dfu_install(args: list[str]) -> int:
         shown = f"{width}x{height}" if width and height else "DFU's default (1920x1080)"
         print(f"  Resolution:      {shown}; change it under Advanced on DFU's startup screen")
     print(f"  Mods go in:      {result.install.mods_dir}")
-    try:
-        followed = dfu.follow_install(result.install)
-    except RuntimeError as exc:
-        print(f"Steam's Play button still starts the old copy: {exc}")
-        return 1
     if followed:
         print(followed)
     elif not dfu.hook_status().installed:

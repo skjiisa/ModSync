@@ -33,6 +33,10 @@ All notable changes to ModSync are documented here. The format follows
   or each made a QuickSave. The newest version of each save is used
   everywhere, and older ones are kept. Play in Steam syncs saves just before
   and just after DFU runs.
+- Daggerfall Unity in the app (#107). A Daggerfall Unity line on Home, shown
+  once Steam has Daggerfall, opens a sheet that installs it, sets what
+  Steam's Play button starts, plays it, opens the mods folder, and turns
+  mods and saves sync on and off.
 
 ## [2.0.0] - 2026-10-28
 

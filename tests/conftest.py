@@ -90,3 +90,13 @@ def _no_real_steam_hook():
 
     with patch.object(launchhook, "steam_env", lambda: None):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dfu_install(_scratch_home):
+    """modsync.dfu also looks in ~/Games/Daggerfall Unity, the default folder:
+    never the developer's real one. Tests that need it patch it themselves."""
+    from unittest.mock import patch
+
+    with patch("modsync.dfu.default_install_dir", lambda: _scratch_home / "no-default-dfu"):
+        yield
