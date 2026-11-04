@@ -176,6 +176,8 @@ is shown.
 
 ![Switching game](game-switch.png)
 
+![Switching game before Steam has Daggerfall](game-switch-steam.png)
+
 Daggerfall Unity's Home lists the Steam data, the install, what Steam's Play
 button starts, and mods and saves sync. Each row changes what it shows when
 pressed. Until Daggerfall Unity is installed, the blue action installs it,

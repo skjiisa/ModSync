@@ -205,6 +205,10 @@ def main():
                     capture(dw, "game-switch")
                     dw.top_overlay.choose("daggerfall")
                 else:
+                    if installed is None:  # the picker offers it, focus staying on Skyrim
+                        dw.open_game_picker()
+                        capture(dw, "game-switch-steam")
+                        dw.top_overlay.cancel()
                     dw.go("daggerfall")
                 capture(dw, name)
                 dw.close()
