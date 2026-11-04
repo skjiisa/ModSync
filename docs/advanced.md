@@ -534,8 +534,7 @@ instead of the detected one.
 ModSync can set up [Daggerfall Unity](https://www.dfworkshop.net/) (DFU)
 from the free Steam copy of *The Elder Scrolls II: Daggerfall*. This is
 separate from the Skyrim setup and uses none of the MO2 tools. So far it is
-command line only. Syncing DFU's mods and saves, and the app screens, are
-tracked in #111.
+command line only. Syncing saves and the app screens are tracked in #111.
 
 1. Install *The Elder Scrolls II: Daggerfall* in Steam.
 2. `modsync dfu install` downloads the official DFU 1.1.1 Linux build,
@@ -562,7 +561,7 @@ ModSync adds two things to the install:
 DFU's startup screen still opens. That's where the mod list and DFU's own
 settings are edited. Mods go in
 `DaggerfallUnity_Data/StreamingAssets/Mods`. Use the Linux build of a mod
-where one is offered, because mods are built separately for each system.
+where one is offered.
 
 To play the original Daggerfall in DOSBox, put
 `MODSYNC_ORIGINAL_GAME=1 %command%` in its launch options under Properties,
@@ -574,6 +573,47 @@ again. It only rewrites `MyDaggerfallPath`, and leaves mods, saves and
 other settings alone. An install into another folder moves the Play
 button with it. `modsync dfu status` shows where everything is, whether DFU
 still points at Steam's copy, and what Play does.
+
+### Syncing Daggerfall Unity's mods
+
+`modsync sync share dfu-mods` syncs DFU's mods with every paired machine (see
+"Pairing and the games' folders"). Each machine takes up the folder once DFU
+is installed there, so mods dropped into one machine show up on the others.
+The Syncthing folder is the DFU install. Its `.stignore` allows only these
+paths:
+
+- `DaggerfallUnity_Data/StreamingAssets/Mods` and the other `StreamingAssets`
+  folders DFU ships with nothing but a readme: `Textures`, `Sound`, `Books`,
+  `Movies`, `Presets`, `QuestPacks`, `SoundFonts` and `WorldData`.
+- `PortableAppdata/Mods`, which holds the load order and on/off switches
+  (`GameData/Mods.json`) and each mod's settings.
+- `modsync-dfu-vault.json`, which records the DFU version the mods are for.
+  `modsync dfu status` warns when this machine runs a different version.
+
+The program, the files DFU ships itself (`Quests`, `Text`, `Tables` and the
+like), `settings.ini`, key bindings and saves stay on each machine.
+
+If two machines change the load order or a mod's settings before they sync,
+Syncthing keeps the newer file and sets the other aside. `modsync sync
+conflicts` lists those files under names like
+`dfu-mods:PortableAppdata/Mods/GameData/Mods.json`. To settle one, close DFU
+and run `modsync sync conflicts keep current|other <name>`. The version not
+kept goes to `.modsync-conflicts` in the install.
+
+A mod file itself (`.dfmod`) changed on two machines is settled
+automatically. DFU loads every `.dfmod` it finds, so the other version could
+load in place of the one in use. ModSync keeps the newer one, Syncthing's
+choice, and moves the other to `.modsync-conflicts/set-aside` in the install.
+
+If DFU moves to another folder, the synced files are copied from the old
+install to the new one first, so mods that hadn't reached another machine
+come along. Nothing already in the new folder is replaced, and the old
+install is left alone.
+
+Mods published per system work across Linux machines. A Windows build also
+worked on Linux in testing: the Linux and Windows builds of Handpainted
+Models differ only in their shaders, and both include the OpenGL shaders
+DFU uses on Linux.
 
 DFU only has an x86_64 build. On the Steam Frame it would have to run under
 emulation, which is untested (#110). DFU's developers don't support builds or setups from third parties,

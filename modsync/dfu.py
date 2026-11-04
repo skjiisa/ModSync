@@ -19,6 +19,13 @@ patches it). Two files make it ours to manage:
 Mods go in ``DaggerfallUnity_Data/StreamingAssets/Mods``. Steam's own Play
 button on Daggerfall can start it, through the launch hook
 (:mod:`modsync.launchhook`).
+
+:data:`MODS_FOLDER` syncs the mods between machines (see
+:mod:`modsync.sync.folders`): one Syncthing folder rooted at the install,
+allowing only what users add (the folders under ``StreamingAssets`` that DFU
+ships empty but for a readme) and ``PortableAppdata/Mods``, where DFU keeps
+the load order (``GameData/Mods.json``) and each mod's settings. Everything
+DFU ships itself, its ``settings.ini`` and key bindings, and saves stay out.
 """
 
 from __future__ import annotations
@@ -38,6 +45,8 @@ from pathlib import Path
 from modsync import background, launchhook, platforms
 from modsync.downgrade import engine
 from modsync.games import DAGGERFALL
+from modsync.state import State
+from modsync.sync.folders import FolderSpec
 from modsync.steam import libraries as libs
 from modsync.steam import shortcuts
 
@@ -55,7 +64,16 @@ DFU_URL = (
 DFU_SHA256 = "be3c476ae92972f42448757719266ad82c04868eb7b6f3a3c90fcfcf1490849a"
 
 EXECUTABLE = "DaggerfallUnity.x86_64"
-RECORD_NAME = "modsync-dfu.json"  # which DFU version ModSync put here
+RECORD_NAME = "modsync-dfu.json"  # which DFU version ModSync put here; never synced
+VAULT_RECORD = "modsync-dfu-vault.json"  # which DFU version the synced mods are for; synced
+
+# The StreamingAssets folders a release ships with nothing but a readme: what
+# users add. The others (Quests, Text, Tables, Fonts, ...) are DFU's own and
+# must stay as each machine's version installed them.
+USER_ASSET_DIRS = ("Mods", "Textures", "Sound", "Books", "Movies", "Presets", "QuestPacks", "SoundFonts",
+                   "WorldData")
+_ASSETS = "DaggerfallUnity_Data/StreamingAssets"
+SYNCED_DIRS = (*(f"{_ASSETS}/{d}" for d in USER_ASSET_DIRS), "PortableAppdata/Mods")
 
 # DFU's DFValidator: what makes a folder a usable ARENA2.
 _MIN_TEXTURES = 472
@@ -373,3 +391,97 @@ def follow_install(inst: Install) -> str | None:
     if st.native == str(inst.executable):
         return None
     return enable_hook(inst)
+
+
+# --- syncing the mods -------------------------------------------------------------
+
+
+def _install_root() -> Path | None:
+    inst = find_install(State.load().dfu_path)
+    return inst.path if inst else None
+
+
+def _record_vault_version(root: Path) -> None:
+    """The machine that starts syncing the mods says which DFU they're for."""
+    record = root / VAULT_RECORD
+    if not record.exists():
+        version = Install(root).version or DFU_VERSION
+        record.write_text(json.dumps({"dfu_version": version}, indent=2) + "\n", encoding="utf-8")
+
+
+def _read_version(path: Path) -> str | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("dfu_version")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def vault_version(inst: Install) -> str | None:
+    return _read_version(inst.path / VAULT_RECORD)
+
+
+def vault_versions(inst: Install) -> set[str]:
+    """Every version the synced records name: two machines that each started
+    sharing before they met leave a conflict copy of the record too."""
+    stem, ext = VAULT_RECORD.rsplit(".", 1)
+    paths = [inst.path / VAULT_RECORD, *inst.path.glob(f"{stem}.sync-conflict-*.{ext}")]
+    return {v for p in paths if (v := _read_version(p))}
+
+
+def version_problem(inst: Install) -> str | None:
+    """Why the synced mods may not suit this machine's DFU, or None."""
+    here = inst.version
+    others = sorted(v for v in vault_versions(inst) if v != here)
+    if here and others:
+        return (f"The synced mods are for Daggerfall Unity {', '.join(others)}, but this machine has {here}. "
+                "Install the same version on every machine.")
+    return None
+
+
+SET_ASIDE_DIR = ".modsync-conflicts/set-aside"  # in the install; outside everything DFU reads
+
+
+def set_aside_mod_copies(root: Path) -> list[Path]:
+    """Move the conflict copies Syncthing leaves beside a ``.dfmod`` out of
+    DFU's reach. DFU loads every ``.dfmod`` under ``Mods``, and of two with
+    one title keeps whichever it finds first, so an older copy could load in
+    place of the version in use. The version in use stays (the newer one,
+    Syncthing's choice); the other goes to ``SET_ASIDE_DIR``, which nothing
+    syncs. Returns where each went."""
+    mods = root / _ASSETS / "Mods"
+    moved = []
+    for top, _dirs, files in os.walk(mods):
+        for name in files:
+            if ".sync-conflict-" not in name or not name.endswith(".dfmod"):
+                continue
+            source = Path(top) / name
+            dest = root / SET_ASIDE_DIR / source.relative_to(root)
+            if dest.exists():
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(source, dest)
+            moved.append(dest)
+            log.info("set aside the other version of a mod: %s", dest)
+    return moved
+
+
+MODS_FOLDER = FolderSpec(
+    key="dfu-mods",
+    label="Daggerfall Unity mods (ModSync)",
+    path=_install_root,
+    ignore=(
+        "// Managed by ModSync. Syncs Daggerfall Unity's mods, the files users add under",
+        "// StreamingAssets, and the load order and mod settings in PortableAppdata/Mods.",
+        "// Never the program, the files DFU ships itself, settings.ini, key bindings or saves.",
+        "",
+        *(f"!/{d}" for d in SYNCED_DIRS),
+        f"!/{VAULT_RECORD}",
+        "",
+        "// Everything else. Syncthing still looks inside these for the folders above.",
+        "/*",
+    ),
+    content=(*SYNCED_DIRS, VAULT_RECORD),
+    on_share=_record_vault_version,
+    in_use=lambda: is_running(),  # looked up when asked, so tests and callers see the live check
+    tidy=lambda root: set_aside_mod_copies(root),
+)

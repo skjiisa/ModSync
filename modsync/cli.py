@@ -268,7 +268,8 @@ def _sync_status() -> int:
             print(f"Folder:     {fs.spec.label}  ({fs.path}): stopping")
             continue
         print(f"Folder:     {fs.spec.label}  ({fs.path}): {fs.state or 'starting'}, {pct}% here"
-              + (f", {fs.need_items} item(s) still to arrive" if fs.need_items else ""))
+              + (f", {fs.need_items} item(s) still to arrive" if fs.need_items else "")
+              + (f", {fs.conflicts} conflict(s)" if fs.conflicts else ""))
     if not service.state.syncing:
         for d in st.devices:
             print(f"Machine:    {d.name or d.id[:7]}  {'connected' if d.connected else 'offline'}")
@@ -308,29 +309,59 @@ def _sync_conflicts(args: list[str]) -> int:
         print(usage)
         return 2
     service = ModSyncService()
-    if not service.state.syncing:
+    if not service.state.syncs_anything:
         print("Sync is off on this machine, so there are no conflicts to look for.")
         return 0
-    if service.state.copying:
-        print("Mods are still being copied from another machine. Whatever differs is set aside when it "
-              "finishes, so there is nothing to choose yet.")
-        return 0
+    copying = service.state.copying
     instance = Path(service.state.instance_path or "")
-    found = service.conflicts()
+    found = service.conflicts() if service.state.syncing and not copying else []
+    games = service.game_conflicts()
+
+    def game_name(spec, c) -> str:
+        return f"{spec.key}:{c.relative(service.state.game_folders[spec.key])}"
+
     if not args:
-        if not found:
+        if copying:
+            print("Mods are still being copied from another machine. Whatever differs is set aside when it "
+                  "finishes, so there is nothing to choose for Mod Organizer 2 yet.\n")
+        if not found and not games:
             print("No conflicts.")
             return 0
-        print(f"{len(found)} file(s) changed on two machines before they synced. MO2 uses the version in use.\n")
+        print(f"{len(found) + len(games)} file(s) changed on two machines before they synced. "
+              "The games use the version in use.\n")
         for c in found:
             changed = f"  (other version last changed {c.changed:%Y-%m-%d %H:%M})" if c.changed else ""
             print(c.relative(instance) + changed)
             for line in conflicts.differences(c):
                 print(f"    {line}")
+        for spec, c in games:
+            changed = f"  (other version last changed {c.changed:%Y-%m-%d %H:%M})" if c.changed else ""
+            print(game_name(spec, c) + changed)
         print("\nKeep one: modsync sync conflicts keep current|other <file>")
         return 0
     keep, target = args[1], args[2]
     wanted = Path(target).expanduser()
+    game_matches = [(spec, c) for spec, c in games if wanted in (c.original, c.path) or target == game_name(spec, c)]
+    if game_matches:
+        if len(game_matches) > 1:
+            print(f"{target} has {len(game_matches)} other versions. Name the one to settle:")
+            for _spec, c in game_matches:
+                print(f"    {c.path}")
+            return 1
+        spec, c = game_matches[0]
+        try:
+            archive = service.resolve_game_conflict(spec.key, c, keep)
+        except (RuntimeError, OSError) as exc:
+            print(exc)
+            return 1
+        which = "the version in use" if keep == "current" else "the other version"
+        print(f"Kept {which} of {game_name(spec, c)}.")
+        print(f"The other version is in {archive}.")
+        return 0
+    if copying:
+        print("Mods are still being copied from another machine. Whatever differs is set aside when it "
+              "finishes, so there is nothing to choose yet.")
+        return 0
     matches = [c for c in found if wanted in (c.original, c.path)
                or target in (c.relative(instance), c.path.relative_to(instance).as_posix())]
     if not matches:
@@ -894,6 +925,19 @@ def _dfu_status() -> int:
     mods = sorted(inst.mods_dir.rglob("*.dfmod")) if inst.mods_dir.is_dir() else []
     print(f"  Mods:               {len(mods)} in {inst.mods_dir}")
     print(f"Play in Steam:        {dfu.hook_status().summary()}")
+    from modsync.state import State
+    from modsync.sync import folders
+
+    st = State.load()
+    if folders.stopping(dfu.MODS_FOLDER.key, st):
+        print("Mods sync:            stopping (once Syncthing answers)")
+    elif dfu.MODS_FOLDER.key in st.game_folders:
+        print("Mods sync:            on ('modsync sync status' shows how far along)")
+    else:
+        print(f"Mods sync:            off ('modsync sync share {dfu.MODS_FOLDER.key}' turns it on)")
+    version = dfu.version_problem(inst)
+    if version:
+        print(f"  ! {version}")
     return 0 if not problems and configured else 1
 
 

@@ -21,6 +21,12 @@ All notable changes to ModSync are documented here. The format follows
   game is set up there. `modsync sync share`, `stop` and `code` manage them,
   and `modsync sync join` takes a machine code (`MODSYNC2-`). Skyrim's vault
   works as before.
+- Daggerfall Unity's mods sync between machines (#105):
+  `modsync sync share dfu-mods`. It covers the mods, the files users add
+  under `StreamingAssets`, the load order and mod settings. Never the
+  program, DFU's own files, `settings.ini`, key bindings or saves.
+  `modsync sync conflicts` settles a load order changed on two machines, and
+  `modsync dfu status` warns when the synced mods are for another DFU version.
 
 ## [2.0.0] - 2026-10-28
 

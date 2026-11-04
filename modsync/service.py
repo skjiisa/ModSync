@@ -945,6 +945,43 @@ class ModSyncService:
         self.reload_state()
         return done
 
+    def game_conflicts(self) -> list[tuple[folders.FolderSpec, conflicts.Conflict]]:
+        """Conflict copies in the games' folders, each with the folder's spec."""
+        st = self.reload_state()
+        found = []
+        for key, path in st.game_folders.items():
+            spec = folders.spec_for(key)
+            if spec is None or not spec.content or folders.stopping(key, st):
+                continue
+            if spec.tidy is not None:
+                spec.tidy(Path(path))  # what the game must never see goes first
+            found += [(spec, c) for c in conflicts.find(path, spec.content)]
+        return found
+
+    def resolve_game_conflict(self, key: str, conflict: conflicts.Conflict, keep: str) -> Path:
+        """Keep one version of a file in a game's folder, whole. The other goes
+        to a new folder under ``.modsync-conflicts`` there, which is returned."""
+        spec = folders.spec_for(key)
+        path = self.reload_state().game_folders.get(key)
+        if spec is None or not path:
+            raise RuntimeError(f"{key} doesn't sync on this machine.")
+        root = Path(path)
+        if not conflict.path.is_relative_to(root):
+            raise RuntimeError("That file isn't in that folder.")
+        if spec.in_use is not None and spec.in_use():
+            # The game writes its files back when it exits, over the choice.
+            raise RuntimeError("Close the game first.")
+        archive = conflicts.new_archive(root)
+        try:
+            conflicts.resolve(root, conflict, keep, archive=archive)
+        except Exception:
+            if not any(archive.rglob("*")):
+                archive.rmdir()
+            raise
+        log.info("conflict on %s in %s: kept the %s version, the other is in %s",
+                 conflict.relative(root), key, keep, archive)
+        return archive
+
     # --- LAN pairing (no code typing) ---
     def host_network_pairing(
         self,

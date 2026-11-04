@@ -18,11 +18,14 @@ conflicts. Nothing here touches it.
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from modsync.state import State
+from modsync.sync import conflicts
 from modsync.sync.api import SyncthingClient
 
 log = logging.getLogger(__name__)
@@ -36,6 +39,12 @@ class FolderSpec:
     label: str  # how Syncthing and ModSync name it
     path: Callable[[], Path | None]  # where it is on this machine; None while the game isn't set up
     ignore: tuple[str, ...]  # its .stignore, one pattern per line
+    # The synced paths, relative to the folder: where conflict copies can turn
+    # up, and what a move to another place carries over.
+    content: tuple[str, ...] = ()
+    on_share: Callable[[Path], None] | None = None  # run on the machine that starts a new shared folder
+    in_use: Callable[[], bool] | None = None  # the game is running: settling a conflict waits
+    tidy: Callable[[Path], object] | None = None  # run on the folder whenever its status is read
 
     @property
     def folder_id(self) -> str:
@@ -47,7 +56,9 @@ class FolderSpec:
 
 def specs() -> list[FolderSpec]:
     """Every game folder ModSync knows. The games add theirs here."""
-    return []
+    from modsync import dfu  # imports this module's users; loaded on first use
+
+    return [dfu.MODS_FOLDER]
 
 
 def spec_for(key: str) -> FolderSpec | None:
@@ -66,6 +77,7 @@ class FolderStatus:
     completion: float | None = None
     need_items: int = 0
     stopping: bool = False  # stopped here; Syncthing lets go of it once it answers
+    conflicts: int = 0  # conflict copies waiting for a choice
 
 
 def device_entries(ids) -> list[dict]:
@@ -105,6 +117,9 @@ def _relocate(client: SyncthingClient, spec: FolderSpec, folder: dict, root: Pat
     is deleted anywhere. ``root`` is set up first, and if the folder can't be
     added there the old one is put back, so a failure loses nothing."""
     _prepare(spec, root)
+    old = Path(folder["path"]) if folder.get("path") else None
+    if old is not None and old != root and old.is_dir():
+        _carry_over(spec, old, root)
     moved = {**folder, "path": str(root)}
     client.delete_folder(spec.folder_id)
     try:
@@ -175,10 +190,40 @@ def share(client: SyncthingClient, spec: FolderSpec) -> Path:
     root = spec.path()
     if root is None:
         raise RuntimeError(f"{spec.label}: set the game up on this machine first.")
+    if spec.on_share is not None and not _offered(client, spec):
+        spec.on_share(root)  # a new shared folder; one already offered is joined as it is
     _put(client, spec, root, peers(client))
     _remember(spec.key, root)
     log.info("sharing %s (%s) from %s", spec.folder_id, spec.label, root)
     return root
+
+
+def _offered(client: SyncthingClient, spec: FolderSpec) -> bool:
+    """A paired machine already offers this folder."""
+    try:
+        offer = (client.pending_folders() or {}).get(spec.folder_id) or {}
+    except Exception:
+        return False
+    return bool(set(offer.get("offeredBy") or {}) & set(peers(client)))
+
+
+def _carry_over(spec: FolderSpec, old: Path, new: Path) -> None:
+    """Copy the synced content of ``old`` to ``new`` where ``new`` has nothing
+    yet, so what hadn't reached another machine moves too. Nothing at
+    ``new`` is replaced, and ``old`` stays as it is."""
+    for rel in spec.content:
+        source = old / rel
+        if source.is_file() and not (new / rel).exists():
+            (new / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, new / rel)
+            continue
+        for top, _dirs, files in os.walk(source):
+            for name in files:
+                src = Path(top) / name
+                dest = new / src.relative_to(old)
+                if not dest.exists():
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dest)
 
 
 def _remove(client: SyncthingClient, spec: FolderSpec) -> bool:
@@ -298,7 +343,13 @@ def status(client: SyncthingClient) -> list[FolderStatus]:
         spec = spec_for(key)
         if spec is None:
             continue
-        fs = FolderStatus(spec, path, stopping=stopping(key, st))
+        if spec.tidy is not None and not stopping(key, st):
+            try:
+                spec.tidy(Path(path))
+            except OSError as exc:
+                log.warning("could not tidy %s: %s", spec.folder_id, exc)
+        fs = FolderStatus(spec, path, stopping=stopping(key, st),
+                          conflicts=len(conflicts.find(path, spec.content)) if spec.content else 0)
         try:
             folder = client.folder_status(spec.folder_id)
             fs.state = folder.get("state")

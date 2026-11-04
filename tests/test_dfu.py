@@ -2,6 +2,7 @@
 (fake) release zip, and pointing it at the data — offline, with the download
 faked."""
 
+import dataclasses
 import hashlib
 import io
 import json
@@ -451,3 +452,193 @@ class Cli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _ModsFolderBase(unittest.TestCase):
+    def setUp(self):
+        from modsync.service import ModSyncService
+        from tests.test_game_folders import FakeSyncthing
+
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        p = patch.dict("os.environ", {"XDG_CONFIG_HOME": str(self.tmp / "config")})
+        p.start()
+        self.addCleanup(p.stop)
+        self.inst = dfu.Install(self.tmp / "Daggerfall Unity")
+        self.inst.executable.parent.mkdir(parents=True)
+        self.inst.executable.touch()
+        (self.inst.path / dfu.RECORD_NAME).write_text(json.dumps({"version": "1.1.1"}))
+        self.st = FakeSyncthing()
+        self.service = ModSyncService(manager=self.st)
+
+
+class ModsFolder(_ModsFolderBase):
+    """dfu-mods: what syncs, where it is, and settling its conflicts."""
+
+    def test_the_folder_is_the_install_in_use(self):
+        self.assertIsNone(dfu.MODS_FOLDER.path())
+        State.update(dfu_path=str(self.inst.path))
+        self.assertEqual(dfu.MODS_FOLDER.path(), self.inst.path)
+        State.update(dfu_path=str(self.tmp / "gone"))
+        self.assertIsNone(dfu.MODS_FOLDER.path())
+
+    def test_the_allow_list(self):
+        lines = dfu.MODS_FOLDER.ignore
+        allowed = {l[2:] for l in lines if l.startswith("!/")}
+        assets = "DaggerfallUnity_Data/StreamingAssets/"
+        self.assertIn(assets + "Mods", allowed)
+        self.assertIn(assets + "Textures", allowed)
+        self.assertIn("PortableAppdata/Mods", allowed)
+        self.assertIn(dfu.VAULT_RECORD, allowed)
+        for own in ("Quests", "Text", "Tables", "Fonts", "BIOGs", "Factions", "aa", "SpellIcons", "GameFiles"):
+            self.assertNotIn(assets + own, allowed)
+        self.assertEqual(lines[-1], "/*")
+
+    def test_sharing_records_the_version_the_mods_are_for(self):
+        State.update(dfu_path=str(self.inst.path))
+        self.service.share_game_folder("dfu-mods")
+        self.assertEqual(dfu.vault_version(self.inst), "1.1.1")
+        self.assertEqual(self.st.folders["modsync-dfu-mods"]["path"], str(self.inst.path))
+        self.assertEqual((self.inst.path / ".stignore").read_text(), dfu.MODS_FOLDER.stignore_text())
+        self.assertIsNone(dfu.version_problem(self.inst))
+        # A record that came from another machine is never overwritten.
+        (self.inst.path / dfu.VAULT_RECORD).write_text(json.dumps({"dfu_version": "1.2.0"}))
+        self.service.share_game_folder("dfu-mods")
+        self.assertEqual(dfu.vault_version(self.inst), "1.2.0")
+        self.assertIn("for Daggerfall Unity 1.2.0, but this machine has 1.1.1", dfu.version_problem(self.inst))
+
+    def _conflict(self):
+        data = self.inst.path / "PortableAppdata/Mods/GameData"
+        data.mkdir(parents=True)
+        (data / "Mods.json").write_text("mine")
+        other = data / "Mods.sync-conflict-20261103-120000-ABCDEFG.json"
+        other.write_text("theirs")
+        (self.inst.path / "DaggerfallUnity_Data/StreamingAssets/Quests").mkdir(parents=True)
+        (self.inst.path / "DaggerfallUnity_Data/StreamingAssets/Quests/Q.sync-conflict-20261103-120000-ABCDEFG.txt").touch()
+        return data / "Mods.json", other
+
+    def test_conflicts_are_found_only_where_things_sync(self):
+        State.update(dfu_path=str(self.inst.path))
+        self.service.share_game_folder("dfu-mods")
+        current, other = self._conflict()
+        found = self.service.game_conflicts()
+        self.assertEqual([(spec.key, c.path) for spec, c in found], [("dfu-mods", other)])
+        self.assertEqual(self.service.status().game_folders[0].conflicts, 1)
+
+    def test_keeping_one_version_waits_for_dfu_to_close(self):
+        State.update(dfu_path=str(self.inst.path))
+        self.service.share_game_folder("dfu-mods")
+        current, other = self._conflict()
+        (spec, c), = self.service.game_conflicts()
+        running = dataclasses.replace(spec, in_use=lambda: True)
+        with patch("modsync.sync.folders.spec_for", lambda key: running):
+            with self.assertRaisesRegex(RuntimeError, "Close the game first"):
+                self.service.resolve_game_conflict("dfu-mods", c, "other")
+        self.assertEqual(current.read_text(), "mine")
+        with patch.object(dfu, "is_running", lambda: False):
+            archive = self.service.resolve_game_conflict("dfu-mods", c, "other")
+        self.assertEqual(current.read_text(), "theirs")
+        self.assertFalse(other.exists())
+        self.assertEqual((archive / "PortableAppdata/Mods/GameData/Mods.json").read_text(), "mine")
+        self.assertEqual(archive.parent.name, ".modsync-conflicts")
+
+    def test_the_cli_lists_and_settles_them(self):
+        from modsync import cli
+
+        State.update(dfu_path=str(self.inst.path))
+        self.service.share_game_folder("dfu-mods")
+        current, other = self._conflict()
+        out = io.StringIO()
+        with redirect_stdout(out), patch("modsync.service.ModSyncService", lambda: self.service), \
+                patch.object(dfu, "is_running", lambda: False):
+            self.assertEqual(cli.vault(["conflicts"]), 0)
+            self.assertIn("dfu-mods:PortableAppdata/Mods/GameData/Mods.json", out.getvalue())
+            code = cli.vault(["conflicts", "keep", "current", "dfu-mods:PortableAppdata/Mods/GameData/Mods.json"])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertEqual(current.read_text(), "mine")
+        self.assertFalse(other.exists())
+
+    def test_status_says_whether_the_mods_sync(self):
+        State.update(dfu_path=str(self.inst.path))
+        out = io.StringIO()
+        with redirect_stdout(out), patch.object(dfu, "steam_daggerfall", lambda: None), \
+                patch.object(dfu, "hook_status", _hook_off):
+            cli.dfu(["status"])
+            self.assertIn("Mods sync:            off ('modsync sync share dfu-mods'", out.getvalue())
+            State.update(game_folders={"dfu-mods": str(self.inst.path)})
+            cli.dfu(["status"])
+        self.assertIn("Mods sync:            on", out.getvalue())
+
+
+class ModsFolderReview(_ModsFolderBase):
+    """From GPT-6.1 Sol's review of #114."""
+
+    def test_an_older_copy_of_a_mod_never_reaches_dfu(self):
+        State.update(dfu_path=str(self.inst.path))
+        self.service.share_game_folder("dfu-mods")
+        mods = self.inst.mods_dir
+        (mods / "Sub").mkdir(parents=True)
+        (mods / "Sub/hp.dfmod").write_bytes(b"new")
+        copy = mods / "Sub/hp.sync-conflict-20261103-120000-ABCDEFG.dfmod"
+        copy.write_bytes(b"old")
+        settings = mods / "hp.sync-conflict-20261103-120000-ABCDEFG.json"  # a mod's default settings: DFU skips these
+        settings.write_text("{}")
+        self.service.status()
+        self.assertFalse(copy.exists())
+        self.assertEqual((mods / "Sub/hp.dfmod").read_bytes(), b"new")
+        aside = self.inst.path / dfu.SET_ASIDE_DIR / copy.relative_to(self.inst.path)
+        self.assertEqual(aside.read_bytes(), b"old")
+        self.assertTrue(settings.exists())
+        self.assertEqual([c.path for _s, c in self.service.game_conflicts()], [settings])
+        # Listing conflicts sets them aside too, even before any status was read.
+        copy.write_bytes(b"old again")
+        other = mods / "Sub/hp.sync-conflict-20261104-120000-ABCDEFG.dfmod"
+        other.write_bytes(b"older")
+        self.service.game_conflicts()
+        self.assertFalse(other.exists())
+        self.assertTrue(copy.exists())  # its place in the set-aside folder was taken: left for the user
+
+    def test_records_from_two_first_sharers_warn_both(self):
+        (self.inst.path / dfu.VAULT_RECORD).write_text(json.dumps({"dfu_version": "1.1.1"}))
+        self.assertIsNone(dfu.version_problem(self.inst))
+        (self.inst.path / "modsync-dfu-vault.sync-conflict-20261103-120000-ABCDEFG.json").write_text(
+            json.dumps({"dfu_version": "1.2.0"}))
+        self.assertEqual(dfu.vault_versions(self.inst), {"1.1.1", "1.2.0"})
+        self.assertIn("for Daggerfall Unity 1.2.0, but this machine has 1.1.1", dfu.version_problem(self.inst))
+
+    def test_joining_an_offered_folder_writes_no_record(self):
+        State.update(dfu_path=str(self.inst.path))
+        self.st.devices["DESKTOP"] = {"deviceID": "DESKTOP"}
+        self.st.pending_folders["modsync-dfu-mods"] = {"offeredBy": {"DESKTOP": {}}}
+        self.service.share_game_folder("dfu-mods")
+        self.assertFalse((self.inst.path / dfu.VAULT_RECORD).exists())
+        self.st.pending_folders["modsync-dfu-mods"] = {"offeredBy": {"STRANGER": {}}}
+        self.service.stop_game_folder("dfu-mods")
+        self.service.share_game_folder("dfu-mods")  # a stranger's offer isn't a shared folder to join
+        self.assertTrue((self.inst.path / dfu.VAULT_RECORD).exists())
+
+    def test_moving_dfu_carries_over_what_hadnt_synced(self):
+        State.update(dfu_path=str(self.inst.path))
+        self.service.share_game_folder("dfu-mods")
+        (self.inst.mods_dir).mkdir(parents=True)
+        (self.inst.mods_dir / "only-here.dfmod").write_bytes(b"local")
+        data = self.inst.path / "PortableAppdata/Mods/GameData"
+        data.mkdir(parents=True)
+        (data / "Mods.json").write_text("old install")
+        (self.inst.path / "PortableAppdata/settings.ini").write_text("old settings")
+        (self.inst.path / "DaggerfallUnity_Data/StreamingAssets/Quests").mkdir(parents=True)
+        (self.inst.path / "DaggerfallUnity_Data/StreamingAssets/Quests/Q.txt").write_text("old DFU")
+        new = dfu.Install(self.tmp / "New DFU")
+        new.executable.parent.mkdir(parents=True)
+        new.executable.touch()
+        (new.path / "PortableAppdata/Mods/GameData").mkdir(parents=True)
+        (new.path / "PortableAppdata/Mods/GameData/Mods.json").write_text("new install")
+        State.update(dfu_path=str(new.path))
+        self.service._refresh_game_folders(force=True)
+        self.assertEqual(self.st.folders["modsync-dfu-mods"]["path"], str(new.path))
+        self.assertEqual((new.mods_dir / "only-here.dfmod").read_bytes(), b"local")
+        self.assertEqual((new.path / "PortableAppdata/Mods/GameData/Mods.json").read_text(), "new install")
+        self.assertEqual(dfu.vault_version(new), "1.1.1")  # the record moved with the mods
+        self.assertFalse((new.path / "PortableAppdata/settings.ini").exists())  # never synced, never carried
+        self.assertFalse((new.path / "DaggerfallUnity_Data/StreamingAssets/Quests/Q.txt").exists())
+        self.assertTrue((self.inst.mods_dir / "only-here.dfmod").exists())  # the old install is left alone
