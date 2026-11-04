@@ -122,3 +122,67 @@ class DaggerfallUiTests(UiTestCase):
             self.settle(4)
         self.assertIn("Syncthing didn't start", window.messages[-1])
         self.assertFalse(window.busy)
+
+
+class DaggerfallReviewTests(UiTestCase):
+    """From GPT-6.1 Sol's review of #116."""
+
+    def setUp(self):
+        super().setUp()
+        self.ov = overview(installed=True)
+        p = patch.object(dfu, "overview", lambda hook=True: self.ov)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_a_queued_disable_can_be_undone_from_the_row(self):
+        hook = launchhook.LaunchHookStatus(DAGGERFALL, True, "modsync_1812390_proton", True, None, None, True,
+                                           launchhook.Pending("restore", DAGGERFALL.appid, None), True, True)
+        self.ov = overview(installed=True)
+        self.ov.hook = hook
+        window = self.window()
+        window.go("daggerfall")
+        self.settle(3)
+        page = window.pages["daggerfall"]
+        with patch.object(dfu, "enable_hook", return_value="ok") as enable, \
+                patch.object(dfu, "disable_hook") as disable:
+            page.hook_row.click()
+            self.settle(4)
+        enable.assert_called_once()
+        disable.assert_not_called()
+
+    def test_the_version_comes_with_the_rest(self):
+        self.ov = overview(installed=True)
+        self.ov.version = "1.1.1"
+        window = self.window()
+        window.go("daggerfall")
+        self.settle(3)
+        self.assertEqual(window.pages["daggerfall"].install_row.badge.text(), "1.1.1")
+
+    def test_the_mods_folder_is_opened_off_the_ui_thread(self):
+        window = self.window()
+        window.go("daggerfall")
+        self.settle(3)
+        with patch.object(dfu, "open_mods_folder", return_value=Path("/games/dfu/Mods")) as opener, \
+                patch("modsync.ui.pages.daggerfall.QDesktopServices.openUrl") as open_url:
+            window.pages["daggerfall"].mods_folder.click()
+            self.settle(4)
+        opener.assert_called_once()
+        self.assertEqual(open_url.call_args.args[0].toLocalFile(), "/games/dfu/Mods")
+        with patch.object(dfu, "open_mods_folder", side_effect=dfu.DfuError("Permission denied")):
+            window.pages["daggerfall"].mods_folder.click()
+            self.settle(4)
+        self.assertIn("Permission denied", window.messages[-1])
+
+    def test_home_shows_what_changed_once_the_sheet_closes(self):
+        self.ov = overview()
+        window = self.window()
+        self.settle(3)
+        home = window.pages["home"]
+        self.assertEqual(home.dfu_row.badge.text(), "Not installed")
+        window.go("daggerfall")
+        self.settle(3)
+        self.ov = overview(installed=True, saves="on")
+        window.top_overlay.cancel()
+        self.settle(4)
+        self.assertEqual(home.dfu_row.badge.text(), "Ready")
+        self.assertIn("saves", home.dfu_row.description)

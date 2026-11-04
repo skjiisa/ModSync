@@ -110,8 +110,15 @@ class DaggerfallPage(Page):
         worker.run_async(dfu.overview, on_done=self._show, on_failed=lambda e: self.host.notify(f"⚠ {e}"))
 
     def poll(self) -> None:
-        if not self._working:
+        if not self._working and self.isVisible():
             self.refresh()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        """Closing the sheet: Home's line shows what changed here."""
+        super().hideEvent(event)
+        home = self.host.pages.get("home")
+        if home is not None and hasattr(home, "refresh_dfu"):
+            home.refresh_dfu()
 
     def _show(self, ov: dfu.Overview) -> None:
         self.overview = ov
@@ -127,7 +134,7 @@ class DaggerfallPage(Page):
         elif ov.stale_path:
             self.install_row.set_state("Points elsewhere", "warn", "Press to point it at Steam's Daggerfall again.")
         else:
-            self.install_row.set_state(inst.version or "Installed", "ok", _short(inst.path))
+            self.install_row.set_state(ov.version or "Installed", "ok", _short(inst.path))
         hook = ov.hook
         if inst is None:
             self.hook_row.set_state("Original game", "off", "Starts Daggerfall in DOSBox until DFU is installed.")
@@ -243,7 +250,12 @@ class DaggerfallPage(Page):
         ov = self.overview
         if ov is None or ov.install is None:
             return
-        on = ov.hook is not None and (ov.hook.enabled or (ov.hook.pending is not None and ov.hook.pending.action == "select"))
+        hook = ov.hook
+        # What's queued for when Steam closes is what Steam will do: that decides, not what it does now.
+        if hook is not None and hook.pending is not None:
+            on = hook.pending.action == "select"
+        else:
+            on = hook is not None and hook.enabled
         if on:
             self._run(dfu.disable_hook, message="Giving Steam's Play button back to the original game…")
         else:
@@ -270,10 +282,11 @@ class DaggerfallPage(Page):
         self._run(dfu.launch, ov.install, message="Starting Daggerfall Unity…")
 
     def _open_mods_folder(self) -> None:
-        ov = self.overview
-        if ov is not None and ov.install is not None:
-            ov.install.mods_dir.mkdir(parents=True, exist_ok=True)
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(ov.install.mods_dir)))
+        if self.overview is None or self.overview.install is None:
+            return
+        worker.run_async(dfu.open_mods_folder,
+                         on_done=lambda path: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))),
+                         on_failed=lambda e: self.host.notify(f"⚠ {e}"))
 
     def _open_steam_page(self) -> None:
         if self.overview is not None and self.overview.dagger is None:

@@ -654,7 +654,7 @@ class Launch(unittest.TestCase):
 
     def test_through_steam_when_the_play_button_starts_it(self):
         done = subprocess.CompletedProcess(["xdg-open"], 0, "", "")
-        with patch.object(dfu, "hook_status", lambda: self._hook(True)), \
+        with patch.object(dfu, "is_running", return_value=False), patch.object(dfu, "hook_status", lambda: self._hook(True)), \
                 patch.object(dfu.background, "run_host", return_value=done) as run_host, \
                 patch.object(dfu.subprocess, "Popen") as popen:
             self.assertIn("through Steam", dfu.launch(self.inst))
@@ -663,7 +663,7 @@ class Launch(unittest.TestCase):
 
     def test_directly_otherwise_with_the_saves_synced_first(self):
         order = []
-        with patch.object(dfu, "hook_status", lambda: self._hook(False)), \
+        with patch.object(dfu, "is_running", return_value=False), patch.object(dfu, "hook_status", lambda: self._hook(False)), \
                 patch.object(dfu, "sync_saves", side_effect=lambda: order.append("sync") or dfu_saves.Report()), \
                 patch.object(dfu.background, "in_flatpak", return_value=False), \
                 patch.object(dfu.subprocess, "Popen", side_effect=lambda *a, **k: order.append("run")) as popen:
@@ -673,9 +673,40 @@ class Launch(unittest.TestCase):
         self.assertEqual(popen.call_args.kwargs["cwd"], self.inst.path)
 
     def test_from_the_flatpak_it_runs_on_the_host(self):
-        with patch.object(dfu, "hook_status", lambda: self._hook(False)), \
+        with patch.object(dfu, "is_running", return_value=False), patch.object(dfu, "hook_status", lambda: self._hook(False)), \
                 patch.object(dfu, "sync_saves", return_value=dfu_saves.Report()), \
                 patch.object(dfu.background, "in_flatpak", return_value=True), \
                 patch.object(dfu.subprocess, "Popen") as popen:
             dfu.launch(self.inst)
         self.assertEqual(popen.call_args.args[0][:3], ["flatpak-spawn", "--host", f"--directory={self.inst.path}"])
+
+    # --- from GPT-6.1 Sol's review of #116 ---
+
+    def test_never_a_second_one(self):
+        with patch.object(dfu, "is_running", return_value=True), \
+                patch.object(dfu.subprocess, "Popen") as popen, patch.object(dfu.background, "run_host") as run_host:
+            self.assertEqual(dfu.launch(self.inst), "Daggerfall Unity is already running.")
+        popen.assert_not_called()
+        run_host.assert_not_called()
+
+    def test_without_steams_or_qts_libraries(self):
+        env = {"LD_PRELOAD": "/steam/overlay.so", "LD_LIBRARY_PATH": "/steam/runtime", "QT_QPA_PLATFORM": "xcb",
+               "HOME": "/home/you"}
+        with patch.object(dfu, "is_running", return_value=False), \
+                patch.object(dfu, "hook_status", lambda: self._hook(False)), \
+                patch.object(dfu, "sync_saves", return_value=dfu_saves.Report()), \
+                patch.object(dfu.background, "in_flatpak", return_value=False), \
+                patch.dict(dfu.os.environ, env, clear=True), patch.object(dfu.subprocess, "Popen") as popen:
+            dfu.launch(self.inst)
+        self.assertEqual(popen.call_args.kwargs["env"], {"HOME": "/home/you"})
+
+    def test_an_install_in_the_default_folder_is_the_one_everything_uses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            default = dfu.Install(Path(tmp) / "Daggerfall Unity")
+            default.executable.parent.mkdir(parents=True)
+            default.executable.touch()
+            State.update(dfu_path="")
+            with patch.object(dfu, "default_install_dir", lambda: default.path):
+                self.assertEqual(dfu.current_install().path, default.path)
+                self.assertEqual(dfu.MODS_FOLDER.path(), default.path)
+                self.assertIsNotNone(dfu.SAVES_FOLDER.path())

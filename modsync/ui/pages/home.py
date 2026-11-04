@@ -76,8 +76,9 @@ class HomePage(Page):
         self.dfu_row.hide()
         left.addSpacing(12)
         left.addWidget(self.dfu_row)
+        self._dfu_polls = 0
         if steam is None:
-            worker.run_async(dfu.overview, hook=False, on_done=self._show_dfu, on_failed=lambda _e: None)
+            self.refresh_dfu()
         self.copy_setup = Tile("Copy setup from another machine…", "", "devices", size="compact", chevron=True)
         self.copy_setup.clicked.connect(lambda: host.start_setup(copy_from_machine=True))
         self.copy_setup.setVisible(not state.has_instance and steam is None)
@@ -159,8 +160,20 @@ class HomePage(Page):
         host.busyChanged.connect(self.update_enabled)
         self.update_enabled()
 
+    def refresh_dfu(self) -> None:
+        """Read Daggerfall Unity's state again (off the UI thread), for its line."""
+        if self.host.steam_launch is None:
+            worker.run_async(dfu.overview, hook=False, on_done=self._show_dfu, on_failed=lambda _e: None)
+
+    def poll(self) -> None:
+        # Now and then, so Daggerfall installed through Steam meanwhile gets its line.
+        self._dfu_polls += 1
+        if self._dfu_polls % 8 == 0:
+            self.refresh_dfu()
+
     def _show_dfu(self, ov: dfu.Overview) -> None:
         if not ov.relevant:
+            self.dfu_row.hide()
             return
         if ov.install is None:
             self.dfu_row.set_state("Not installed", "off", "Set it up from Steam's Daggerfall.")

@@ -402,8 +402,15 @@ def follow_install(inst: Install) -> str | None:
 # --- syncing the mods -------------------------------------------------------------
 
 
+def current_install() -> Install | None:
+    """The install this machine uses: the one ModSync recorded, else one in
+    the default folder (installed before ModSync kept a record, or the record
+    was reset). Everything that acts on "the" install goes through this."""
+    return find_install(State.load().dfu_path) or find_install(default_install_dir())
+
+
 def _install_root() -> Path | None:
-    inst = find_install(State.load().dfu_path)
+    inst = current_install()
     return inst.path if inst else None
 
 
@@ -567,7 +574,7 @@ def sync_saves(*, force: bool = False, playing: bool = False) -> "dfu_saves.Repo
 
     st = State.load()
     report = dfu_saves.Report()
-    inst = find_install(st.dfu_path)
+    inst = current_install()
     if inst is None:
         report.skipped = "Daggerfall Unity isn't installed."
         return report
@@ -597,7 +604,7 @@ SAVES_FOLDER = FolderSpec(
 def _release_saves() -> None:
     from modsync import dfu_saves
 
-    inst = find_install(State.load().dfu_path)
+    inst = current_install()
     if inst is not None:
         dfu_saves.release(saves_dir(inst), saves_library())
 
@@ -618,6 +625,7 @@ class Overview:
     mods: str  # "on" | "off" | "stopping"
     saves: str
     version_problem: str | None
+    version: str | None = None  # the install's DFU version, read with the rest
 
     @property
     def relevant(self) -> bool:
@@ -635,7 +643,7 @@ def overview(*, hook: bool = True) -> Overview:
 
     dagger = steam_daggerfall()
     st = State.load()
-    inst = find_install(st.dfu_path) or find_install(default_install_dir())
+    inst = current_install()
 
     def sync_state(spec: FolderSpec) -> str:
         if folders.stopping(spec.key, st):
@@ -650,7 +658,7 @@ def overview(*, hook: bool = True) -> Overview:
             log.warning("could not read the Play hook's status: %s", exc)
     return Overview(dagger, data_problems(dagger), inst, inst.daggerfall_path() if inst else None, status,
                     sync_state(MODS_FOLDER), sync_state(SAVES_FOLDER),
-                    version_problem(inst) if inst else None)
+                    version_problem(inst) if inst else None, inst.version if inst else None)
 
 
 def setup(dest: Path | str | None = None, *, progress: engine.ProgressFn | None = None) -> tuple[Installed, str | None]:
@@ -675,6 +683,8 @@ def launch(inst: Install) -> str:
     Steam's launch, and the hook syncs the saves around it); otherwise
     directly, its saves synced first and again once it has closed (at the
     next sync status). Returns what happened."""
+    if is_running():
+        return "Daggerfall Unity is already running."
     st = hook_status()
     if st.enabled and st.native == str(inst.executable):
         result = background.run_host(["xdg-open", f"steam://rungameid/{DAGGERFALL_APPID}"], timeout=15)
@@ -687,6 +697,18 @@ def launch(inst: Install) -> str:
     cmd = [str(inst.executable)]
     if background.in_flatpak():
         cmd = ["flatpak-spawn", "--host", f"--directory={inst.path}", *cmd]
-    subprocess.Popen(cmd, cwd=inst.path, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+    # As a native game would get it: not the libraries Steam preloads for ModSync, nor Qt's.
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH")}
+    subprocess.Popen(cmd, cwd=inst.path, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, start_new_session=True)
     return "Starting Daggerfall Unity."
+
+
+def open_mods_folder() -> Path:
+    """The mods folder, made if it isn't there yet (for the app to show)."""
+    inst = current_install()
+    if inst is None:
+        raise DfuError("Daggerfall Unity isn't installed.")
+    inst.mods_dir.mkdir(parents=True, exist_ok=True)
+    return inst.mods_dir

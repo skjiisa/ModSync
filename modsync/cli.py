@@ -896,7 +896,7 @@ def _dfu_install_in_use():
     from modsync import dfu
     from modsync.state import State
 
-    return dfu.find_install(State.load().dfu_path) or dfu.find_install(dfu.default_install_dir())
+    return dfu.current_install()
 
 
 def _dfu_status() -> int:
