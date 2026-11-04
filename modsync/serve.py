@@ -47,16 +47,21 @@ class Server:
 
     @property
     def syncing(self) -> bool:
-        return bool(self.service.state.syncing)
+        """Syncthing has work: the vault, a game's folder, or a paired machine's offers."""
+        return bool(self.service.state.active)
 
     def start(self) -> None:
         state = self.service.state
-        if self.syncing:
+        if state.syncing:
             self.log(f"Serving vault {state.folder_id} for {state.instance_path}")
         elif state.has_instance:
-            self.log(f"Watching {state.instance_path} (sync is off)")
+            self.log(f"Watching {state.instance_path} (MO2 sync is off)")
         else:
             self.log("No instance chosen yet; watching Steam only")
+        for key, path in state.game_folders.items():
+            self.log(f"Serving {key} for {path}")
+        if state.paired and not state.syncs_anything:
+            self.log("Paired; waiting for another machine to offer a game's folder")
         vc = self.service.game_version_check()
         self._last_installed = vc.installed
         if vc.mismatch or vc.skse_suggests:
@@ -114,6 +119,8 @@ class Server:
             line = f"  devices {connected}/{len(status.devices)} connected"
             if status.folder_state is not None:
                 line += f" · folder {status.folder_state} · {int(status.completion or 0)}% in sync"
+            for fs in status.game_folders:
+                line += f" · {fs.spec.key} {fs.state or '?'} · {int(fs.completion or 0)}%"
             copy = progress if progress is not None and progress.phase == "done" else status.copy
             if copy is not None and copy.phase != "done":
                 line += f" · copying from {copy.source}: {copy.phase}"

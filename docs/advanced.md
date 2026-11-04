@@ -300,6 +300,35 @@ syncs. The files that differ between operating systems are exactly the ones
 that never sync, so a Steam Deck and a Windows machine can share an instance
 too. Steam Cloud already handles saves.
 
+### Pairing and the games' folders
+
+Pairing is between machines, not between folders. Machines that have paired,
+by joining the MO2 vault, with the LAN PIN or with a code, share every folder
+ModSync syncs on either one. A vault created later is shared with them too.
+
+Games other than Skyrim sync through their own folders, each with a fixed
+Syncthing id (`modsync-<name>`). When a paired machine starts syncing one,
+the others are offered it. Each takes it up as soon as that game is set up
+there, at its own location, so no second code is needed.
+
+```sh
+modsync sync share <folder>    # start syncing one of a game's folders here
+modsync sync stop <folder>     # stop; the files stay, and offers of it are left alone
+modsync sync code              # this machine's code
+modsync sync join <code>       # pair with a machine that syncs only games' folders
+```
+
+A machine that syncs only games' folders gives out a code starting with
+`MODSYNC2-`. A machine with the vault gives the vault's `MODSYNC1-` code, which
+joins the vault as before. Versions from before machine-wide pairing reject a
+`MODSYNC2-` code rather than misreading it.
+
+If Syncthing isn't answering when a folder is stopped, the folder shows as
+stopping and is let go the next time ModSync reaches Syncthing. Leaving the
+vault keeps the paired machines while a game's folder still syncs with them. If a game moves to another place on one machine, its folder there is
+removed from Syncthing and added again at the new place, with its settings. This way, files missing
+at the new place arrive from the others instead of being deleted on every machine.
+
 ### Copying from another machine
 
 "Copy from another machine" makes this machine match the vault without
