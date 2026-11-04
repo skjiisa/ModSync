@@ -634,11 +634,6 @@ class Overview:
     version: str | None = None  # the install's DFU version, read with the rest
 
     @property
-    def relevant(self) -> bool:
-        """Worth a line on Home: Steam has Daggerfall, or DFU is installed."""
-        return self.dagger is not None or self.install is not None
-
-    @property
     def stale_path(self) -> bool:
         return bool(self.install and self.dagger and self.configured and Path(self.configured) != self.dagger)
 

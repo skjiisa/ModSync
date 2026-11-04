@@ -1,11 +1,12 @@
 """Daggerfall Unity: set it up from Steam's Daggerfall, start it, and sync its
 mods and saves (see modsync.dfu). Home shows it once Daggerfall is chosen in
-the game switcher at the top.
+the game switcher at the top, whether or not Steam has Daggerfall yet.
 
 The rows say how each part stands and change it when pressed: Steam's Play
 button switches between Daggerfall Unity and the original game, and the two
 sync rows turn mods and saves sync on and off on this machine. The blue
-action installs Daggerfall Unity until it is installed, then plays it.
+action gets Daggerfall from Steam until Steam has it, then installs Daggerfall
+Unity, then plays it.
 """
 
 from __future__ import annotations
@@ -82,6 +83,9 @@ class DaggerfallPage(Page):
         self.saves_row.clicked.connect(lambda: self._toggle_sync(dfu.SAVES_FOLDER))
         left.addStretch(1)
 
+        self.steam_tile = HeroTile("Install Daggerfall in Steam",
+                                   "It's free. Daggerfall Unity is set up from it.", "download")
+        self.steam_tile.clicked.connect(self._open_steam_page)
         self.install_tile = HeroTile("Install Daggerfall Unity",
                                      "The official build, set up to use Steam's Daggerfall.", "download")
         self.install_tile.clicked.connect(self._install)
@@ -91,8 +95,9 @@ class DaggerfallPage(Page):
         self.mods_folder.clicked.connect(self._open_mods_folder)
         self.work = label("", "secondary")
         self.work_bar = QProgressBar()
-        for widget in (self.install_tile, self.play, self.mods_folder, self.work, self.work_bar):
+        for widget in (self.steam_tile, self.install_tile, self.play, self.mods_folder, self.work, self.work_bar):
             right.addWidget(widget)
+        self.steam_tile.hide()
         self.install_tile.hide()
         self.play.hide()
         self.mods_folder.hide()
@@ -129,8 +134,13 @@ class DaggerfallPage(Page):
         return False
 
     @staticmethod
-    def summary(ov: dfu.Overview) -> tuple[str, str, str]:
-        """How Daggerfall Unity stands, as the game picker shows it: value word, tone, detail."""
+    def summary(ov: dfu.Overview | None) -> tuple[str, str, str]:
+        """How Daggerfall Unity stands, as the game picker shows it: value word, tone, detail.
+        ``None`` before it has been read."""
+        if ov is None:
+            return "Checking", "off", ""
+        if ov.install is None and ov.dagger is None:
+            return "Not installed", "off", "Install The Elder Scrolls II: Daggerfall in Steam first (free)."
         if ov.install is None:
             return "Not installed", "off", "Set it up from Steam's Daggerfall."
         if ov.problems or ov.version_problem or ov.stale_path:
@@ -148,7 +158,9 @@ class DaggerfallPage(Page):
         else:
             self.data_row.set_state("Ready", "ok", f"In {_short(_library_of(ov.dagger))}")
         inst = ov.install
-        if inst is None:
+        if inst is None and ov.dagger is None:
+            self.install_row.set_state("Not installed", "off", "Set up from Steam's Daggerfall once it's there.")
+        elif inst is None:
             self.install_row.set_state("Not installed", "off", "Install it with the blue button.")
         elif ov.stale_path:
             self.install_row.set_state("Points elsewhere", "warn", "Press to point it at Steam's Daggerfall again.")
@@ -172,7 +184,8 @@ class DaggerfallPage(Page):
         notes = [n for n in (ov.version_problem,) if n]
         self.note.setText(" ".join(notes))
         self.note.setVisible(bool(notes))
-        self.install_tile.setVisible(inst is None and not self._working)
+        self.steam_tile.setVisible(inst is None and ov.dagger is None and not self._working)
+        self.install_tile.setVisible(inst is None and ov.dagger is not None and not self._working)
         self.play.setVisible(inst is not None and not self._working)
         self.mods_folder.setVisible(inst is not None)
         if inst is not None:
@@ -203,6 +216,8 @@ class DaggerfallPage(Page):
             row.setEnabled(has and not busy)
 
     def preferred_focus(self):
+        if self.steam_tile.isVisible():
+            return self.steam_tile
         if self.install_tile.isVisible() and self.install_tile.isEnabled():
             return self.install_tile
         if self.play.isVisible() and self.play.isEnabled():
@@ -312,5 +327,6 @@ class DaggerfallPage(Page):
                          on_failed=lambda e: self.host.notify(f"⚠ {e}"))
 
     def _open_steam_page(self) -> None:
+        """Steam's install dialog for Daggerfall. This page notices it on its next read."""
         if self.overview is not None and self.overview.dagger is None:
             QDesktopServices.openUrl(QUrl(f"steam://install/{dfu.DAGGERFALL_APPID}"))

@@ -33,10 +33,11 @@ All notable changes to ModSync are documented here. The format follows
   or each made a QuickSave. The newest version of each save is used
   everywhere, and older ones are kept. Play in Steam syncs saves just before
   and just after DFU runs.
-- Daggerfall Unity in the app (#107). Once Steam has Daggerfall, a game
-  switcher beside the ModSync name (or X) picks which game Home shows,
-  Skyrim or Daggerfall Unity, each with how it stands. Daggerfall's Home
-  installs it, sets what Steam's Play button starts, plays it, opens the mods
+- Daggerfall Unity in the app (#107). A game switcher beside the ModSync
+  name (or X) picks which game Home shows, Skyrim or Daggerfall Unity,
+  installed or not, each with how it stands. Until Steam has Daggerfall,
+  its Home opens Steam's install dialog for it. Then it installs Daggerfall
+  Unity, sets what Steam's Play button starts, plays it, opens the mods
   folder, and turns mods and saves sync on and off. ModSync reopens on the
   game last shown; opened by Skyrim's Play button, it shows only Skyrim.
 

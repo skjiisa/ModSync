@@ -2,8 +2,7 @@
 
 Home, Sync and Settings are switched with the bumpers or Q/E. Home holds
 setup, repairs and launch actions for one game at a time: the game switcher
-beside the wordmark (or X) picks which, once there is more than Skyrim to
-show. Game and MO2 maintenance open as sheets without leaving Home. The setup
+beside the wordmark (or X) picks which, set up or not. Game and MO2 maintenance open as sheets without leaving Home. The setup
 wizard takes over the middle when it runs.
 
 The same window serves Steam's launch hook. Given a ``SteamLaunch``, Steam is
@@ -331,23 +330,11 @@ class MainWindow(QMainWindow):
     # --- games ---
     @property
     def switchable(self) -> bool:
-        """More than Skyrim to show: Steam has Daggerfall, or DFU is installed
-        (or Home shows Daggerfall already, before that has been read)."""
-        if self.steam_launch is not None:
-            return False
-        ov = self.dfu_overview
-        return ov.relevant if ov is not None else self.game != "skyrim"
+        """Every game can be picked, installed or not: its Home says how to get
+        it. A window Steam's Play button opened for Skyrim shows only Skyrim."""
+        return self.steam_launch is None
 
     def _update_game_switch(self) -> None:
-        if not self.switchable and self.game != "skyrim":
-            # Daggerfall went away (uninstalled from Steam, say): Home is Skyrim's again.
-            # Focus moves only if it was on Daggerfall's page, which is going.
-            was_inside = alive(self.focusWidget()) and self.pages["daggerfall"].isAncestorOf(self.focusWidget())
-            self._show_skyrim()
-            if self._current == "home" and self.setup is None:
-                self.stack.setCurrentWidget(self.page)
-                if was_inside and not self.overlays:
-                    self.page.focus_default()
         name = dict((key, name) for key, _page, name in GAMES)[self.game]
         self.topbar.set_game(name if self.switchable else "")
         self.refresh_hints()
@@ -372,18 +359,15 @@ class MainWindow(QMainWindow):
             worker.run_async(dfu.overview, hook=False, on_done=self.dfu_checked, on_failed=lambda _e: None)
 
     def dfu_checked(self, ov: dfu.Overview) -> None:
-        """Daggerfall Unity was read (here, or by its page): the switcher follows."""
+        """Daggerfall Unity was read (here, or by its page): the picker says how it stands."""
         if not shiboken6.isValid(self):
             return
         self.dfu_overview = ov
-        self._update_game_switch()
 
     def game_choices(self) -> list[tuple[str, str, str, str, str]]:
         """Each game the picker offers, with how it stands."""
-        choices = [("skyrim", SKYRIM_SE.name, *self.pages["home"].summary())]
-        if self.dfu_overview is not None and self.dfu_overview.relevant:
-            choices.append(("daggerfall", "Daggerfall Unity", *DaggerfallPage.summary(self.dfu_overview)))
-        return choices
+        return [("skyrim", SKYRIM_SE.name, *self.pages["home"].summary()),
+                ("daggerfall", "Daggerfall Unity", *DaggerfallPage.summary(self.dfu_overview))]
 
     def open_game_picker(self) -> None:
         if not self.switchable or self.setup is not None or self.overlays:
@@ -671,7 +655,7 @@ class MainWindow(QMainWindow):
     def poll(self) -> None:
         for page in self.pages.values():
             page.poll()
-        # Now and then, so Daggerfall installed through Steam meanwhile can be switched to.
+        # Now and then, so the picker knows about Daggerfall installed through Steam meanwhile.
         self._game_polls += 1
         if self._game_polls % _GAME_POLLS == 0 and self.game != "daggerfall":
             self._look_for_games()
