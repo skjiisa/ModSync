@@ -313,12 +313,12 @@ class LaunchHookStatus:
             )
         if self.pending and self.pending.action == "select":
             return f"Waiting for Steam to close to select ModSync for {g}. {steamos.steam_restart_hint()}"
+        if self.pending and self.pending.action == "restore":
+            return f"Waiting for Steam to close to restore the previous launcher. {steamos.steam_restart_hint()}"
         if self.enabled and self.native:
             if not Path(self.native).exists():
                 return f"On, but {self.native} is missing, so Play starts the original {g}."
             return f"On. Steam's Play button on {g} starts {_native_name(self.native)}."
-        if self.pending and self.pending.action == "restore":
-            return f"Waiting for Steam to close to restore the previous launcher. {steamos.steam_restart_hint()}"
         if self.enabled:
             if not self.underlying_exists:
                 return (
@@ -432,8 +432,16 @@ def status(appid: int = SKYRIM_SE.appid) -> LaunchHookStatus:
         steam_found=True,
         outdated=outdated,
         legacy=current == legacy_tool_id(appid),
-        native=(record.native or None) if record else None,
+        native=_installed_native(tool_dir, record) if installed else None,
     )
+
+
+def _installed_native(tool_dir: Path, record: Record | None) -> str | None:
+    """What the installed script runs in place of the game. The marker is the
+    copy written with the script, so it's right even when another ModSync
+    (Flatpak or native, each with its own record) enabled the hook last."""
+    marker = Record.from_marker(tool_dir)
+    return ((marker or record).native or None) if (marker or record) else None
 
 
 def _pending_satisfied(pending: Pending, current: str | None) -> bool:

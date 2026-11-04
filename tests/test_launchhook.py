@@ -527,6 +527,68 @@ class DaggerfallHook(LaunchHookBase):
         self.assertEqual(launchhook.Record.load(self.DF).native, str(self.dfu))
 
 
+class DaggerfallHookFollowsInstall(DaggerfallHook):
+    """Installing Daggerfall Unity elsewhere moves the hook only while Steam
+    uses it, and never undoes a choice made since (review of #112)."""
+
+    def setUp(self):
+        super().setUp()
+        from modsync import dfu
+
+        self.dfu_mod = dfu
+        self.moved = dfu.Install(self.tmp / "Moved")
+        fakesteam._executable(self.moved.executable, "#!/bin/sh\n")
+
+    def script_native(self):
+        import shlex
+
+        line = next(l for l in (self.df_dir / "proton").read_text().splitlines() if l.startswith("native="))
+        return shlex.split(line.removeprefix("native="))[0]
+
+    def test_follows_while_on(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        self.assertIn("refreshed", self.dfu_mod.follow_install(self.moved))
+        self.assertEqual(self.script_native(), str(self.moved.executable))
+        self.assertEqual(launchhook.Record.load(self.DF).native, str(self.moved.executable))
+
+    def test_follows_a_switch_queued_while_steam_runs(self):
+        self.steam_running = True
+        launchhook.enable(self.DF, native=self.dfu)
+        self.assertIn("queued", self.dfu_mod.follow_install(self.moved))
+        self.assertEqual(self.script_native(), str(self.moved.executable))
+        self.assertEqual(launchhook.Pending.load(self.DF).action, "select")
+        self.assertIsNone(self.df_mapping())  # still Steam's default until it closes
+
+    def test_a_queued_disable_survives(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        self.steam_running = True
+        launchhook.disable(self.DF)
+        self.assertIsNone(self.dfu_mod.follow_install(self.moved))
+        self.assertEqual(launchhook.Pending.load(self.DF).action, "restore")
+        self.assertIn("restore the previous launcher", launchhook.status(self.DF).summary())
+
+    def test_another_launcher_picked_in_steam_stays(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        cfg = SteamConfig.load(self.root / "config/config.vdf")
+        cfg.set_compat_tool(self.DF, "GE-Proton10-34")
+        cfg.save()
+        self.assertIsNone(self.dfu_mod.follow_install(self.moved))
+        self.assertEqual(self.df_mapping(), "GE-Proton10-34")
+
+    def test_the_installed_script_wins_over_another_modsyncs_record(self):
+        # The native ModSync enables copy A; the Flatpak, with its own config, copy B.
+        launchhook.enable(self.DF, native=self.dfu)
+        own_config = os.environ["XDG_CONFIG_HOME"]
+        os.environ["XDG_CONFIG_HOME"] = str(self.tmp / "flatpak-config")
+        launchhook.enable(self.DF, native=self.moved.executable)
+        os.environ["XDG_CONFIG_HOME"] = own_config
+        self.assertEqual(launchhook.Record.load(self.DF).native, str(self.dfu))  # stale, local
+        self.assertEqual(launchhook.status(self.DF).native, str(self.moved.executable))
+        a = self.dfu_mod.Install(self.dfu.parent)
+        self.assertIn("refreshed", self.dfu_mod.follow_install(a))
+        self.assertEqual(self.script_native(), str(self.dfu))
+
+
 class HandoffTests(unittest.TestCase):
     def test_fields_end_in_nul_and_keep_spaces_and_unicode(self):
         from modsync.mo2.launch import LaunchPlan

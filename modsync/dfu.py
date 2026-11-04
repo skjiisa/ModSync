@@ -363,8 +363,13 @@ def disable_hook() -> str:
 
 
 def follow_install(inst: Install) -> str | None:
-    """Point an enabled hook at ``inst`` when it runs another copy."""
+    """Point the hook at ``inst`` when Steam uses it (or is about to) for
+    another copy. A queued disable, or another launcher picked in Steam,
+    is left as it is: enabling would undo that choice."""
     st = hook_status()
-    if not st.installed or st.native == str(inst.executable):
+    wanted = st.enabled or bool(st.pending and st.pending.action == "select")
+    if not st.installed or not wanted or (st.pending and st.pending.action == "restore"):
+        return None
+    if st.native == str(inst.executable):
         return None
     return enable_hook(inst)
