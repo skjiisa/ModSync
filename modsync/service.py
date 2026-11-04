@@ -951,9 +951,11 @@ class ModSyncService:
         found = []
         for key, path in st.game_folders.items():
             spec = folders.spec_for(key)
-            if spec is None or not spec.conflict_dirs or folders.stopping(key, st):
+            if spec is None or not spec.content or folders.stopping(key, st):
                 continue
-            found += [(spec, c) for c in conflicts.find(path, spec.conflict_dirs)]
+            if spec.tidy is not None:
+                spec.tidy(Path(path))  # what the game must never see goes first
+            found += [(spec, c) for c in conflicts.find(path, spec.content)]
         return found
 
     def resolve_game_conflict(self, key: str, conflict: conflicts.Conflict, keep: str) -> Path:

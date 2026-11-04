@@ -409,20 +409,60 @@ def _record_vault_version(root: Path) -> None:
         record.write_text(json.dumps({"dfu_version": version}, indent=2) + "\n", encoding="utf-8")
 
 
-def vault_version(inst: Install) -> str | None:
+def _read_version(path: Path) -> str | None:
     try:
-        return json.loads((inst.path / VAULT_RECORD).read_text(encoding="utf-8")).get("dfu_version")
+        return json.loads(path.read_text(encoding="utf-8")).get("dfu_version")
     except (OSError, ValueError, AttributeError):
         return None
 
 
+def vault_version(inst: Install) -> str | None:
+    return _read_version(inst.path / VAULT_RECORD)
+
+
+def vault_versions(inst: Install) -> set[str]:
+    """Every version the synced records name: two machines that each started
+    sharing before they met leave a conflict copy of the record too."""
+    stem, ext = VAULT_RECORD.rsplit(".", 1)
+    paths = [inst.path / VAULT_RECORD, *inst.path.glob(f"{stem}.sync-conflict-*.{ext}")]
+    return {v for p in paths if (v := _read_version(p))}
+
+
 def version_problem(inst: Install) -> str | None:
     """Why the synced mods may not suit this machine's DFU, or None."""
-    wanted, here = vault_version(inst), inst.version
-    if wanted and here and wanted != here:
-        return (f"The synced mods are for Daggerfall Unity {wanted}, but this machine has {here}. "
+    here = inst.version
+    others = sorted(v for v in vault_versions(inst) if v != here)
+    if here and others:
+        return (f"The synced mods are for Daggerfall Unity {', '.join(others)}, but this machine has {here}. "
                 "Install the same version on every machine.")
     return None
+
+
+SET_ASIDE_DIR = ".modsync-conflicts/set-aside"  # in the install; outside everything DFU reads
+
+
+def set_aside_mod_copies(root: Path) -> list[Path]:
+    """Move the conflict copies Syncthing leaves beside a ``.dfmod`` out of
+    DFU's reach. DFU loads every ``.dfmod`` under ``Mods``, and of two with
+    one title keeps whichever it finds first, so an older copy could load in
+    place of the version in use. The version in use stays (the newer one,
+    Syncthing's choice); the other goes to ``SET_ASIDE_DIR``, which nothing
+    syncs. Returns where each went."""
+    mods = root / _ASSETS / "Mods"
+    moved = []
+    for top, _dirs, files in os.walk(mods):
+        for name in files:
+            if ".sync-conflict-" not in name or not name.endswith(".dfmod"):
+                continue
+            source = Path(top) / name
+            dest = root / SET_ASIDE_DIR / source.relative_to(root)
+            if dest.exists():
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(source, dest)
+            moved.append(dest)
+            log.info("set aside the other version of a mod: %s", dest)
+    return moved
 
 
 MODS_FOLDER = FolderSpec(
@@ -440,7 +480,8 @@ MODS_FOLDER = FolderSpec(
         "// Everything else. Syncthing still looks inside these for the folders above.",
         "/*",
     ),
-    conflict_dirs=SYNCED_DIRS,
+    content=(*SYNCED_DIRS, VAULT_RECORD),
     on_share=_record_vault_version,
     in_use=lambda: is_running(),  # looked up when asked, so tests and callers see the live check
+    tidy=lambda root: set_aside_mod_copies(root),
 )

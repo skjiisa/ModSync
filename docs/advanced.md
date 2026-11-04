@@ -600,6 +600,16 @@ conflicts` lists those files under names like
 and run `modsync sync conflicts keep current|other <name>`. The version not
 kept goes to `.modsync-conflicts` in the install.
 
+A mod file itself (`.dfmod`) changed on two machines is settled
+automatically. DFU loads every `.dfmod` it finds, so the other version could
+load in place of the one in use. ModSync keeps the newer one, Syncthing's
+choice, and moves the other to `.modsync-conflicts/set-aside` in the install.
+
+If DFU moves to another folder, the synced files are copied from the old
+install to the new one first, so mods that hadn't reached another machine
+come along. Nothing already in the new folder is replaced, and the old
+install is left alone.
+
 Mods published per system work across Linux machines. A Windows build also
 worked on Linux in testing: the Linux and Windows builds of Handpainted
 Models differ only in their shaders, and both include the OpenGL shaders
