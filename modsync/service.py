@@ -924,6 +924,11 @@ class ModSyncService:
         with self.manager.client() as client:
             root = folders.share(client, spec)
         self.reload_state()
+        if spec.tidy is not None:
+            try:
+                spec.tidy(root)  # e.g. the saves there now go into the folder straight away
+            except Exception as exc:
+                log.warning("could not tidy %s: %s", spec.folder_id, exc)
         return root
 
     def stop_game_folder(self, key: str) -> bool:

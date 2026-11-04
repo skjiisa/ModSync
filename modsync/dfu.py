@@ -485,3 +485,60 @@ MODS_FOLDER = FolderSpec(
     in_use=lambda: is_running(),  # looked up when asked, so tests and callers see the live check
     tidy=lambda root: set_aside_mod_copies(root),
 )
+
+
+# --- syncing the saves (see modsync.dfu_saves) ------------------------------------
+
+
+def saves_dir(inst: Install) -> Path:
+    """Where DFU keeps this install's saves: ``MyDaggerfallUnitySavePath`` when
+    set, else ``PortableAppdata/Saves``."""
+    custom = read_setting(inst.settings_ini, "Daggerfall", "MyDaggerfallUnitySavePath")
+    if custom:
+        path = Path(custom)
+        return path if path.is_absolute() else inst.path / path
+    return inst.data_dir / "Saves"
+
+
+def saves_library() -> Path:
+    from modsync import config
+
+    return config.data_dir() / "dfu-saves"
+
+
+def _saves_root() -> Path | None:
+    return saves_library() if _install_root() is not None else None
+
+
+def sync_saves(*, force: bool = False) -> "dfu_saves.Report":
+    """Bring this machine's saves and the synced library in line, when saves
+    sync is on here (or ``force``) and DFU is closed."""
+    from modsync import dfu_saves
+    from modsync.sync import folders
+
+    st = State.load()
+    report = dfu_saves.Report()
+    inst = find_install(st.dfu_path)
+    if inst is None:
+        report.skipped = "Daggerfall Unity isn't installed."
+    elif not force and (SAVES_FOLDER.key not in st.game_folders or folders.stopping(SAVES_FOLDER.key, st)):
+        report.skipped = "Saves don't sync on this machine."
+    elif is_running():
+        report.skipped = "Daggerfall Unity is running; its saves sync once it closes."
+    else:
+        return dfu_saves.sync(saves_dir(inst), saves_library())
+    return report
+
+
+SAVES_FOLDER = FolderSpec(
+    key="dfu-saves",
+    label="Daggerfall Unity saves (ModSync)",
+    path=_saves_root,
+    ignore=(
+        "// Managed by ModSync: Daggerfall Unity's saves, one folder per version, never",
+        "// written twice. ModSync copies them to and from DFU's own Saves folder.",
+        ".incoming-*",
+    ),
+    in_use=lambda: is_running(),
+    tidy=lambda root: sync_saves(),
+)

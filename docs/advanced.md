@@ -534,7 +534,7 @@ instead of the detected one.
 ModSync can set up [Daggerfall Unity](https://www.dfworkshop.net/) (DFU)
 from the free Steam copy of *The Elder Scrolls II: Daggerfall*. This is
 separate from the Skyrim setup and uses none of the MO2 tools. So far it is
-command line only. Syncing saves and the app screens are tracked in #111.
+command line only. The app screens are tracked in #107.
 
 1. Install *The Elder Scrolls II: Daggerfall* in Steam.
 2. `modsync dfu install` downloads the official DFU 1.1.1 Linux build,
@@ -614,6 +614,43 @@ Mods published per system work across Linux machines. A Windows build also
 worked on Linux in testing: the Linux and Windows builds of Handpainted
 Models differ only in their shaders, and both include the OpenGL shaders
 DFU uses on Linux.
+
+### Syncing Daggerfall Unity's saves
+
+`modsync sync share dfu-saves` syncs saves, separately from mods, so a
+machine can sync one without the other.
+
+DFU numbers its saves per machine (`SAVE0`, `SAVE1`, and so on), each time
+taking the first free number. Two machines that each made a save before
+syncing can therefore both have a `SAVE7` holding different saves, or each
+a QuickSave of the same character. Syncthing works one file at a time, so
+syncing DFU's `Saves` folder directly would build one save out of two.
+
+So the folder that syncs is a library ModSync keeps beside DFU's, at
+`~/.local/share/modsync/dfu-saves`, or the Flatpak's data folder:
+
+- Each version of each save is a folder of its own, named after the save's
+  time and the machine that made it. It's written once and never changed,
+  so Syncthing never has two versions of one file to choose between. A
+  manifest of its files means a version still arriving is never used.
+- Whenever DFU is closed, ModSync copies new and changed saves into the
+  library. For each save (one character and save name), it puts the newest
+  version, by DFU's own clock, into a slot here: it replaces an older copy,
+  or takes a free number for a save new here. Slot numbers stay each
+  machine's own, which is all DFU needs.
+- When a newer version from another machine replaces an older one here, the
+  older version stays in the library. The newest three versions of each save
+  are kept.
+- A save deleted in DFU is deleted on the other machines too, unless one of
+  them saved it again later.
+
+Play in Steam brings in the newest saves just before DFU starts, and stores
+the new ones right after it exits. ModSync also syncs saves whenever it
+checks sync status. Saves made while ModSync and its background service
+were both off travel the next time either runs.
+
+DFU warns by itself when a save needs mods this machine is missing. The
+version check under "Syncing Daggerfall Unity's mods" covers DFU itself.
 
 DFU only has an x86_64 build. On the Steam Frame it would have to run under
 emulation, which is untested (#110). DFU's developers don't support builds or setups from third parties,

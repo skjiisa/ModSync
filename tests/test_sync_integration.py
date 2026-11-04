@@ -490,6 +490,77 @@ class SyncthingIntegration(unittest.TestCase):
                 a_mgr.stop()
                 b_mgr.stop()
 
+    def test_daggerfall_unity_saves_never_mix(self) -> None:
+        """Each machine makes a different SAVE0 and a QuickSave of the same
+        character before they meet. Through the library, both end up with
+        both SAVE0s whole and the newer QuickSave, on real Syncthing."""
+        from modsync import dfu
+        from tests.test_dfu_saves import contents, make_save, slots
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            installs = {}
+            for name, (char, qs_time) in {"A": ("Ellte", 300), "B": ("Bjorn", 400)}.items():
+                inst = dfu.Install(tmp / name / "Daggerfall Unity")
+                inst.executable.parent.mkdir(parents=True)
+                inst.executable.write_text("#!/bin/sh\n")
+                saves = inst.data_dir / "Saves"
+                make_save(saves, "SAVE0", char, f"{char} 1", 100 if name == "A" else 200, f"{name}'s own")
+                make_save(saves, "SAVE1", "Ellte", "QuickSave", qs_time, f"{name}'s quicksave")
+                installs[name] = inst
+            originals = {n: {s: contents(i.data_dir / "Saves" / s) for s in ("SAVE0", "SAVE1")} for n, i in installs.items()}
+            (a_mgr, a_port), (b_mgr, b_port) = self._two_nodes(tmp)
+
+            @contextmanager
+            def on(name):
+                env = {"XDG_CONFIG_HOME": str(tmp / f"config-{name}"), "XDG_DATA_HOME": str(tmp / f"data-{name}")}
+                with patch.dict(os.environ, env), patch.object(dfu, "is_running", return_value=False):
+                    State.update(dfu_path=str(installs[name].path))
+                    yield
+
+            def settled(name):
+                got = sorted(slots(installs[name].data_dir / "Saves").values())
+                return got == ["Bjorn: Bjorn 1 @ 200", "Ellte: Ellte 1 @ 100", "Ellte: QuickSave @ 400"]
+
+            try:
+                with on("A"):
+                    a = ModSyncService(manager=a_mgr)
+                    a.share_game_folder("dfu-saves")
+                    code = a.my_pairing_code()
+                with on("B"):
+                    b = ModSyncService(manager=b_mgr)
+                    b.pair(code)
+                    with b_mgr.client() as client:
+                        pairing.add_peer_device(client, code.device_id, "A", addresses=[f"tcp://127.0.0.1:{a_port}"])
+                deadline = time.monotonic() + 120
+                while time.monotonic() < deadline and not (settled("A") and settled("B")):
+                    for name, svc in (("A", a), ("B", b)):
+                        with on(name):
+                            svc.accept_pending()
+                            if State.load().game_folders:
+                                svc.status()  # reading it syncs the saves (FolderSpec.tidy)
+                    time.sleep(0.5)
+                for name in ("A", "B"):
+                    saves = installs[name].data_dir / "Saves"
+                    self.assertTrue(settled(name), f"{name}: {slots(saves)}")
+                    for slot, label in slots(saves).items():
+                        if label.startswith("Ellte: Ellte 1"):
+                            self.assertEqual(contents(saves / slot), originals["A"]["SAVE0"])
+                        elif label.startswith("Bjorn"):
+                            self.assertEqual(contents(saves / slot), originals["B"]["SAVE0"])
+                        else:
+                            self.assertEqual(contents(saves / slot), originals["B"]["SAVE1"])
+                    self.assertFalse([p for p in saves.rglob("*sync-conflict*")])
+            except Exception:
+                for name in ("A", "B"):
+                    path = tmp / f"{name}.log"
+                    if path.exists():
+                        print(path.name, path.read_text()[-6000:])
+                raise
+            finally:
+                a_mgr.stop()
+                b_mgr.stop()
+
     def test_copy_from_another_machine(self) -> None:
         """Joining copies the vault exactly without touching the source: a file
         that matches stays put, one that differs is replaced (even though the

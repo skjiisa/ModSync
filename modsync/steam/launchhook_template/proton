@@ -40,8 +40,27 @@ if [[ -n "$native" && "$verb" == "waitforexitandrun" ]]; then
     if [[ -n "${MODSYNC_ORIGINAL_GAME:-}" ]]; then
         log "MODSYNC_ORIGINAL_GAME is set; starting the original game"
     elif [[ -x "$native" ]]; then
-        log "exec $native (in place of the game)"
         cd "${native%/*}" || exit 1
+        # Daggerfall Unity's saves sync through a library ModSync keeps (modsync
+        # dfu saves): bring the newest in before it starts, and store the new
+        # ones once it exits. Only where saves sync has run; never blocking the game.
+        if [[ -f "${native%/*}/PortableAppdata/Saves/.modsync-saves.json" ]]; then
+            saves=("${modsync[@]}")
+            if [[ -f /.flatpak-info ]] && command -v flatpak-spawn >/dev/null 2>&1; then
+                saves=(flatpak-spawn --host "${modsync[@]}")
+            fi
+            sync_saves() {
+                env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT timeout 60 "${saves[@]}" dfu saves --quiet \
+                    </dev/null >>"$log_file" 2>&1 || log "WARNING: saves didn't sync ($1)"
+            }
+            sync_saves "before playing"
+            log "running $native (in place of the game), saves sync after"
+            "$native"
+            rc=$?
+            sync_saves "after playing"
+            exit $rc
+        fi
+        log "exec $native (in place of the game)"
         exec "$native"
     else
         log "WARNING: $native is gone; starting the original game. 'modsync dfu install' puts it back."

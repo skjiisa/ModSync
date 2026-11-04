@@ -58,7 +58,7 @@ def specs() -> list[FolderSpec]:
     """Every game folder ModSync knows. The games add theirs here."""
     from modsync import dfu  # imports this module's users; loaded on first use
 
-    return [dfu.MODS_FOLDER]
+    return [dfu.MODS_FOLDER, dfu.SAVES_FOLDER]
 
 
 def spec_for(key: str) -> FolderSpec | None:
@@ -346,7 +346,7 @@ def status(client: SyncthingClient) -> list[FolderStatus]:
         if spec.tidy is not None and not stopping(key, st):
             try:
                 spec.tidy(Path(path))
-            except OSError as exc:
+            except Exception as exc:  # a status read must never fail over it
                 log.warning("could not tidy %s: %s", spec.folder_id, exc)
         fs = FolderStatus(spec, path, stopping=stopping(key, st),
                           conflicts=len(conflicts.find(path, spec.content)) if spec.content else 0)

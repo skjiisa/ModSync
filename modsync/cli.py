@@ -879,12 +879,15 @@ def dfu(args: list[str]) -> int:
         return _dfu_install(rest)
     if sub == "hook":
         return _dfu_hook(rest)
+    if sub == "saves" and rest in ([], ["--quiet"]):
+        return _dfu_saves(quiet=bool(rest))
     print(
         "usage:\n"
         "  modsync dfu status                   Steam's Daggerfall data and the Daggerfall Unity install\n"
         "  modsync dfu install [<dest-dir>]     install Daggerfall Unity using Steam's Daggerfall data\n"
         "        (run it again to follow Daggerfall to another Steam library)\n"
-        "  modsync dfu hook enable | disable    make Steam's Play button on Daggerfall start Daggerfall Unity"
+        "  modsync dfu hook enable | disable    make Steam's Play button on Daggerfall start Daggerfall Unity\n"
+        "  modsync dfu saves                    sync the saves now (Play in Steam does it before and after)"
     )
     return 2
 
@@ -935,6 +938,12 @@ def _dfu_status() -> int:
         print("Mods sync:            on ('modsync sync status' shows how far along)")
     else:
         print(f"Mods sync:            off ('modsync sync share {dfu.MODS_FOLDER.key}' turns it on)")
+    if folders.stopping(dfu.SAVES_FOLDER.key, st):
+        print("Saves sync:           stopping (once Syncthing answers)")
+    elif dfu.SAVES_FOLDER.key in st.game_folders:
+        print(f"Saves sync:           on ({dfu.saves_dir(inst)})")
+    else:
+        print(f"Saves sync:           off ('modsync sync share {dfu.SAVES_FOLDER.key}' turns it on)")
     version = dfu.version_problem(inst)
     if version:
         print(f"  ! {version}")
@@ -1006,6 +1015,19 @@ def _dfu_install(args: list[str]) -> int:
         print(followed)
     elif not dfu.hook_status().installed:
         print("Run 'modsync dfu hook enable' so Steam's Play button on Daggerfall starts it.")
+    return 0
+
+
+def _dfu_saves(*, quiet: bool) -> int:
+    from modsync import dfu
+
+    try:
+        report = dfu.sync_saves()
+    except Exception as exc:  # run by the Play hook: say so, never block the game
+        print(f"Saves didn't sync: {exc}")
+        return 1
+    if not quiet or report.changed:
+        print(report.summary())
     return 0
 
 

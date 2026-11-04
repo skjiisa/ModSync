@@ -27,6 +27,12 @@ All notable changes to ModSync are documented here. The format follows
   program, DFU's own files, `settings.ini`, key bindings or saves.
   `modsync sync conflicts` settles a load order changed on two machines, and
   `modsync dfu status` warns when the synced mods are for another DFU version.
+- Daggerfall Unity's saves sync too (#106): `modsync sync share dfu-saves`.
+  They go through a library where each save version is written once, so two
+  machines' saves are never mixed, even when both used the same slot number
+  or each made a QuickSave. The newest version of each save is used
+  everywhere, and older ones are kept. Play in Steam syncs saves just before
+  and just after DFU runs.
 
 ## [2.0.0] - 2026-10-28
 

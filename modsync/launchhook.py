@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-TEMPLATE_VERSION = 3  # 2: runs the MO2 launch the window hands back; 3: a native program in place of the game
+TEMPLATE_VERSION = 4  # 2: the MO2 launch the window hands back; 3: a native program; 4: DFU's saves around it
 TEMPLATE_DIR = Path(__file__).parent / "steam" / "launchhook_template"
 MARKER = ".modsync-launch-hook"  # only directories carrying this are ever removed
 
