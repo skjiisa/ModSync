@@ -323,9 +323,10 @@ A machine that syncs only games' folders gives out a code starting with
 joins the vault as before. Versions from before machine-wide pairing reject a
 `MODSYNC2-` code rather than misreading it.
 
-Leaving the vault keeps the paired machines while a game's folder still syncs
-with them. If a game moves to another place on one machine, its folder there is
-removed from Syncthing and added again at the new place. This way, files missing
+If Syncthing isn't answering when a folder is stopped, the folder shows as
+stopping and is let go the next time ModSync reaches Syncthing. Leaving the
+vault keeps the paired machines while a game's folder still syncs with them. If a game moves to another place on one machine, its folder there is
+removed from Syncthing and added again at the new place, with its settings. This way, files missing
 at the new place arrive from the others instead of being deleted on every machine.
 
 ### Copying from another machine

@@ -926,19 +926,24 @@ class ModSyncService:
         self.reload_state()
         return root
 
-    def stop_game_folder(self, key: str) -> None:
-        """Stop syncing one of a game's folders here. Its files stay."""
+    def stop_game_folder(self, key: str) -> bool:
+        """Stop syncing one of a game's folders here. Its files stay. Returns
+        whether Syncthing let go of it now; otherwise it does the next time
+        ModSync reaches Syncthing, and the folder shows as stopping until then."""
         spec = folders.spec_for(key)
         if spec is None:
             raise RuntimeError(f"ModSync has no folder called {key!r}")
         try:
             self.ensure_running()
             with self.manager.client() as client:
-                folders.stop(client, spec)
-        except Exception as exc:  # the daemon is down: forgetting it here is what matters
+                done = folders.stop(client, spec)
+        except Exception as exc:
             log.info("Syncthing unavailable while stopping %s: %s", key, exc)
-            folders.stop(None, spec)
+            done = folders.stop(None, spec)
+        if not done:
+            self._folders_refreshed_at = None  # try again at the next chance
         self.reload_state()
+        return done
 
     # --- LAN pairing (no code typing) ---
     def host_network_pairing(

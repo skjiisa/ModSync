@@ -220,8 +220,11 @@ def _sync_game_folder(action: str, key: str) -> int:
             if not service.state.paired:
                 print("No machine is paired yet: 'modsync sync code' prints the code to pair one.")
         else:
-            service.stop_game_folder(key)
-            print(f"Stopped syncing {spec.label} here. Its files stay where they are.")
+            if service.stop_game_folder(key):
+                print(f"Stopped syncing {spec.label} here. Its files stay where they are.")
+            else:
+                print(f"Stopping {spec.label} here: Syncthing didn't answer, so it lets go of the folder")
+                print("the next time ModSync runs. Its files stay where they are.")
     except RuntimeError as exc:
         print(exc)
         return 1
@@ -261,6 +264,9 @@ def _sync_status() -> int:
         service.shutdown()
     for fs in st.game_folders:
         pct = int(round(fs.completion or 0))
+        if fs.stopping:
+            print(f"Folder:     {fs.spec.label}  ({fs.path}): stopping")
+            continue
         print(f"Folder:     {fs.spec.label}  ({fs.path}): {fs.state or 'starting'}, {pct}% here"
               + (f", {fs.need_items} item(s) still to arrive" if fs.need_items else ""))
     if not service.state.syncing:

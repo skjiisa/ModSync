@@ -24,6 +24,7 @@ class FakeSyncthing:
         self.pending_devices: dict[str, dict] = {}
         self.pending_folders: dict[str, dict] = {}
         self.running = True
+        self.refuse_delete = False
 
     # SyncthingManager
     def start(self, timeout=0):
@@ -73,7 +74,14 @@ class _Client:
         self.st.pending_folders.pop(folder["id"], None)
 
     def delete_folder(self, folder_id):
-        self.st.folders.pop(folder_id, None)
+        if self.st.refuse_delete:
+            raise OSError("Syncthing said no")
+        if folder_id not in self.st.folders:
+            raise KeyError(folder_id)  # Syncthing answers 404
+        del self.st.folders[folder_id]
+
+    def folders(self):
+        return list(copy.deepcopy(self.st.folders).values())
 
     def pending_devices(self):
         return copy.deepcopy(self.st.pending_devices)
@@ -137,11 +145,50 @@ class ShareAndStop(GameFolderBase):
         with self.assertRaisesRegex(RuntimeError, "no folder called"):
             self.service.share_game_folder("nope")
 
-    def test_stopping_with_syncthing_down_still_forgets_it(self):
+    def test_a_stop_syncthing_refuses_finishes_later(self):
+        self.st.devices["DECK"] = {"deviceID": "DECK"}
+        self.service.share_game_folder("test-mods")
+        self.st.refuse_delete = True
+        self.assertFalse(self.service.stop_game_folder("test-mods"))
+        self.assertIn("modsync-test-mods", self.st.folders)
+        self.assertTrue(folders.stopping("test-mods"))
+        self.assertTrue(self.service.status().game_folders[0].stopping)
+        # Meanwhile it's not handed to new machines, nor taken up again.
+        self.service.pair(PairingCode("NEW", "", "New"))
+        self.assertNotIn("NEW", folder_devices(self.st, "modsync-test-mods"))
+        self.st.refuse_delete = False
+        self.service._refresh_game_folders(force=True)  # the next retry (pair() above used one)
+        self.assertNotIn("modsync-test-mods", self.st.folders)
+        self.assertEqual(State.load().game_folders, {})
+        self.assertEqual(State.load().declined_folders, ["test-mods"])
+
+    def test_a_stop_with_syncthing_down_finishes_when_it_answers(self):
         self.service.share_game_folder("test-mods")
         with patch.object(self.service, "ensure_running", side_effect=OSError("down")):
-            self.service.stop_game_folder("test-mods")
+            self.assertFalse(self.service.stop_game_folder("test-mods"))
+        self.assertTrue(folders.stopping("test-mods"))
+        self.service.ensure_running()
         self.assertEqual(State.load().game_folders, {})
+
+    def test_stopping_a_folder_syncthing_already_dropped(self):
+        self.service.share_game_folder("test-mods")
+        del self.st.folders["modsync-test-mods"]
+        self.assertTrue(self.service.stop_game_folder("test-mods"))
+        self.assertEqual(State.load().game_folders, {})
+
+    def test_sharing_again_after_a_move_moves_it_safely(self):
+        self.service.share_game_folder("test-mods")
+        self.st.folders["modsync-test-mods"]["paused"] = True
+        deleted = []
+        original = _Client.delete_folder
+        with patch.object(_Client, "delete_folder", lambda c, fid: (deleted.append(fid), original(c, fid))):
+            self.root = self.tmp / "Elsewhere" / "Mods"
+            self.service._folders_refreshed_at = 0.0
+            with patch.object(self.service, "_FOLDERS_REFRESH_S", 1e9):  # the refresh hasn't come round yet
+                self.service.share_game_folder("test-mods")
+        self.assertEqual(deleted, ["modsync-test-mods"])
+        self.assertEqual(self.st.folders["modsync-test-mods"]["path"], str(self.root))
+        self.assertTrue(self.st.folders["modsync-test-mods"]["paused"])
 
     def test_a_moved_game_is_added_again_not_repointed(self):
         self.st.devices["DECK"] = {"deviceID": "DECK"}
@@ -155,6 +202,16 @@ class ShareAndStop(GameFolderBase):
         self.assertEqual(self.st.folders["modsync-test-mods"]["path"], str(self.root))
         self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DECK"})
         self.assertTrue((self.root / ".stignore").exists())
+
+    def test_a_moved_folder_keeps_its_settings(self):
+        self.service.share_game_folder("test-mods")
+        folder = self.st.folders["modsync-test-mods"]
+        folder.update(paused=True, type="receiveonly", versioning={"type": "trashcan", "params": {}})
+        self.root = self.tmp / "Elsewhere" / "Mods"
+        self.service._refresh_game_folders(force=True)
+        moved = self.st.folders["modsync-test-mods"]
+        self.assertEqual((moved["path"], moved["paused"], moved["type"], moved["versioning"]["type"]),
+                         (str(self.root), True, "receiveonly", "trashcan"))
         self.assertEqual(State.load().game_folders, {"test-mods": str(self.root)})
 
 

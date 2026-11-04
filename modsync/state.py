@@ -19,6 +19,7 @@ import os
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
+from typing import Callable
 
 try:
     import fcntl
@@ -111,6 +112,17 @@ class State:
             state = cls.load()
             for name, value in changes.items():
                 setattr(state, name, value)
+            state._write()
+        return state
+
+    @classmethod
+    def change(cls, fn: Callable[["State"], None]) -> "State":
+        """Read, change with ``fn`` and write back under the lock, for a field
+        whose new value depends on what is there now (say, a dict another
+        process may have added to since this one last read it)."""
+        with cls._locked():
+            state = cls.load()
+            fn(state)
             state._write()
         return state
 

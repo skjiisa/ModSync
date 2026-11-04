@@ -65,6 +65,7 @@ class FolderStatus:
     state: str | None = None  # Syncthing's folder state; None when it didn't answer
     completion: float | None = None
     need_items: int = 0
+    stopping: bool = False  # stopped here; Syncthing lets go of it once it answers
 
 
 def device_entries(ids) -> list[dict]:
@@ -94,26 +95,79 @@ def _prepare(spec: FolderSpec, root: Path) -> None:
     write_stignore(spec, root)
 
 
+def _relocate(client: SyncthingClient, spec: FolderSpec, folder: dict, root: Path) -> None:
+    """Move a configured folder to ``root``, keeping everything else about it
+    (machines, paused, versioning, type).
+
+    Pointing it at the new place would read every file not there yet as
+    deleted, and send those deletions to the others. Removed and added again,
+    it starts with no record here: files the others have arrive, and nothing
+    is deleted anywhere. ``root`` is set up first, and if the folder can't be
+    added there the old one is put back, so a failure loses nothing."""
+    _prepare(spec, root)
+    moved = {**folder, "path": str(root)}
+    client.delete_folder(spec.folder_id)
+    try:
+        client.put_folder(moved)
+    except Exception:
+        client.put_folder(folder)
+        raise
+    log.info("%s moved from %s to %s", spec.folder_id, folder.get("path"), root)
+
+
 def _put(client: SyncthingClient, spec: FolderSpec, root: Path, device_ids: list[str]) -> None:
     """Create the folder, or add machines to it as it is: its other settings
-    (paused, versioning, ...) and the machines it already has stay."""
-    _prepare(spec, root)
+    (paused, versioning, ...) and the machines it already has stay. One that
+    is configured somewhere else here is moved, never repointed."""
     try:
         folder = client.get_folder(spec.folder_id)
     except Exception:
+        folder = None
+    if folder is None:
+        _prepare(spec, root)
         folder = client.default_folder()
         folder["id"] = spec.folder_id
         folder["label"] = spec.label
-    folder["path"] = str(root)
+        folder["path"] = str(root)
+        folder["devices"] = device_entries([client.my_id(), *device_ids])
+        client.put_folder(folder)
+        return
     have = [d["deviceID"] for d in folder.get("devices", [])]
     folder["devices"] = device_entries([client.my_id(), *have, *device_ids])
+    if folder.get("path") and Path(folder["path"]) != root:
+        _relocate(client, spec, folder, root)
+        return
+    _prepare(spec, root)
+    folder["path"] = str(root)
     client.put_folder(folder)
 
 
 def _remember(key: str, path: Path) -> None:
-    st = State.load()
-    State.update(game_folders={**st.game_folders, key: str(path)},
-                 declined_folders=[k for k in st.declined_folders if k != key])
+    def change(st: State) -> None:
+        st.game_folders = {**st.game_folders, key: str(path)}
+        st.declined_folders = [k for k in st.declined_folders if k != key]
+
+    State.change(change)
+
+
+def _forget(key: str) -> None:
+    def change(st: State) -> None:
+        st.game_folders = {k: v for k, v in st.game_folders.items() if k != key}
+
+    State.change(change)
+
+
+def _decline(key: str) -> None:
+    def change(st: State) -> None:
+        st.declined_folders = sorted({*st.declined_folders, key})
+
+    State.change(change)
+
+
+def stopping(key: str, st: State | None = None) -> bool:
+    """Stopped here, but not yet removed from Syncthing (it wasn't answering)."""
+    st = st or State.load()
+    return key in st.game_folders and key in st.declined_folders
 
 
 def share(client: SyncthingClient, spec: FolderSpec) -> Path:
@@ -127,26 +181,42 @@ def share(client: SyncthingClient, spec: FolderSpec) -> Path:
     return root
 
 
-def stop(client: SyncthingClient | None, spec: FolderSpec) -> None:
-    """Stop syncing ``spec`` here. Files stay on disk, and offers of it from
-    other machines are no longer taken up."""
-    if client is not None:
+def _remove(client: SyncthingClient, spec: FolderSpec) -> bool:
+    """Take the folder out of Syncthing. Files stay. True once it's gone."""
+    try:
+        client.delete_folder(spec.folder_id)
+        return True
+    except Exception as exc:
         try:
-            client.delete_folder(spec.folder_id)
-        except Exception as exc:  # gone already, or the daemon is down: our own record is what matters
-            log.info("could not remove %s from Syncthing: %s", spec.folder_id, exc)
-    st = State.load()
-    State.update(game_folders={k: v for k, v in st.game_folders.items() if k != spec.key},
-                 declined_folders=sorted({*st.declined_folders, spec.key}))
+            if all(f.get("id") != spec.folder_id for f in client.folders()):
+                return True  # it was gone already
+        except Exception:
+            pass
+        log.warning("could not remove %s from Syncthing: %s", spec.folder_id, exc)
+        return False
+
+
+def stop(client: SyncthingClient | None, spec: FolderSpec) -> bool:
+    """Stop syncing ``spec`` here. Files stay on disk, and offers of it from
+    other machines are no longer taken up. Returns whether Syncthing has let
+    go of it; if not (``client`` is None, or it refused), the folder stays on
+    record as stopping, and :func:`refresh` removes it once Syncthing answers."""
+    _decline(spec.key)
+    if client is None or not _remove(client, spec):
+        log.info("stopping %s once Syncthing answers", spec.folder_id)
+        return False
+    _forget(spec.key)
     log.info("stopped syncing %s", spec.folder_id)
+    return True
 
 
 def share_with(client: SyncthingClient, device_id: str) -> list[str]:
     """Add a newly paired machine to every game folder synced here."""
     added = []
-    for key in State.load().game_folders:
+    st = State.load()
+    for key in st.game_folders:
         spec = spec_for(key)
-        if spec is None:
+        if spec is None or stopping(key, st):
             continue
         try:
             folder = client.get_folder(spec.folder_id)
@@ -190,35 +260,30 @@ def take_offers(client: SyncthingClient) -> list[str]:
 
 
 def refresh(client: SyncthingClient) -> None:
-    """Keep each synced folder's .stignore current with this version of ModSync,
-    and follow a game that moved on this machine (say, reinstalled elsewhere)."""
-    for key, recorded in State.load().game_folders.items():
+    """Finish stopping folders Syncthing didn't let go of before, keep each
+    synced folder's .stignore current with this version of ModSync, and
+    follow a game that moved on this machine (say, reinstalled elsewhere)."""
+    st = State.load()
+    for key, recorded in st.game_folders.items():
         spec = spec_for(key)
-        root = spec.path() if spec else None
-        if spec is None or root is None:
+        if spec is None:
+            continue
+        if stopping(key, st):
+            if _remove(client, spec):
+                _forget(key)
+                log.info("stopped syncing %s", spec.folder_id)
+            continue
+        root = spec.path()
+        if root is None:
             continue
         if str(root) != recorded:
-            # Pointing the folder at the new place would read every file not
-            # there yet as deleted, and send those deletions to the others.
-            # Removed and added again, it starts with no record here: files
-            # the others have arrive, and nothing is deleted anywhere.
             try:
-                _prepare(spec, root)  # before anything is removed
                 folder = client.get_folder(spec.folder_id)
+                _relocate(client, spec, folder, root)
             except Exception as exc:
                 log.warning("%s moved to %s, but it can't be set up there yet: %s", spec.folder_id, root, exc)
                 continue
-            ids = [d["deviceID"] for d in folder.get("devices", [])]
-            fresh = {**client.default_folder(), "id": spec.folder_id, "label": folder.get("label") or spec.label,
-                     "path": str(root), "devices": device_entries(ids)}
-            client.delete_folder(spec.folder_id)
-            try:
-                client.put_folder(fresh)
-            except Exception:
-                client.put_folder(folder)  # put the old one back, to try again next time
-                raise
             _remember(key, root)
-            log.info("%s moved from %s to %s", spec.folder_id, recorded, root)
             continue
         try:
             write_stignore(spec, root)
@@ -228,11 +293,12 @@ def refresh(client: SyncthingClient) -> None:
 
 def status(client: SyncthingClient) -> list[FolderStatus]:
     out = []
-    for key, path in State.load().game_folders.items():
+    st = State.load()
+    for key, path in st.game_folders.items():
         spec = spec_for(key)
         if spec is None:
             continue
-        fs = FolderStatus(spec, path)
+        fs = FolderStatus(spec, path, stopping=stopping(key, st))
         try:
             folder = client.folder_status(spec.folder_id)
             fs.state = folder.get("state")
