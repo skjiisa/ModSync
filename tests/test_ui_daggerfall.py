@@ -56,12 +56,39 @@ class DaggerfallUiTests(UiTestCase):
         daggerfall = sheet.rows["daggerfall"]
         self.assertEqual(daggerfall.badge.text(), "Not installed")
         self.assertIn("in Steam first", daggerfall.description)
-        self.assertIs(window.focusWidget(), daggerfall)
+        # Nothing here to switch to: focus stays on Skyrim, so X then A stays.
+        self.assertIs(window.focusWidget(), sheet.rows["skyrim"])
+        self.assertIn("Stay", window.hintbar.texts)
+        InputRouter.instance().dispatch(Action.DOWN)
+        self.settle()
         InputRouter.instance().dispatch(Action.ACCEPT)
         self.settle(3)
         page = window.pages["daggerfall"]
         self.assertIs(window.page, page)
         self.assertIs(window.focusWidget(), page.steam_tile)
+        self.assertEqual(State.load().home_game, "daggerfall")
+
+    def test_reopening_on_daggerfall_that_isnt_here_opens_on_skyrim(self):
+        """A look at Daggerfall doesn't make its install page the first screen."""
+        State.update(home_game="daggerfall")
+        window = self.window()  # the test machine has no Daggerfall
+        self.settle(3)
+        self.assertIs(window.page, window.pages["home"])
+        self.assertEqual(window.topbar.game_switch.text(), "Skyrim")
+        self.assertEqual(State.load().home_game, "daggerfall")  # kept for once it's here
+        window.close()
+        with patch.object(dfu, "overview", lambda hook=True: overview()):  # Steam has it now
+            window = self.window()
+            self.settle(3)
+        self.assertIs(window.page, window.pages["daggerfall"])
+
+    def test_choosing_daggerfall_before_it_is_read_keeps_it(self):
+        State.update(home_game="daggerfall")
+        window = self.window()
+        window.switch_game("skyrim")
+        window.switch_game("daggerfall")  # chosen now, before the first read lands
+        self.settle(3)
+        self.assertIs(window.page, window.pages["daggerfall"])
 
     def test_x_opens_the_picker_and_a_shows_daggerfall_on_home(self):
         with patch.object(dfu, "overview", lambda hook=True: overview(installed=True, mods="on")):
@@ -231,6 +258,7 @@ class DaggerfallUiTests(UiTestCase):
     def test_without_steams_daggerfall_the_blue_action_opens_steam(self):
         window, page = self.open_sheet(overview(steam=False))
         self.assertEqual(page.data_row.badge.text(), "Not installed")
+        self.assertEqual(page.data_row.badge.property("tone"), "off")  # not there yet is no fault
         self.assertFalse(page.install_tile.isVisibleTo(page))
         self.assertFalse(page.play.isVisibleTo(page))
         self.assertTrue(page.steam_tile.isVisibleTo(page))
@@ -238,6 +266,8 @@ class DaggerfallUiTests(UiTestCase):
         with patch("modsync.ui.pages.daggerfall.QDesktopServices.openUrl") as open_url:
             page.steam_tile.click()
         self.assertEqual(open_url.call_args.args[0].toString(), f"steam://install/{dfu.DAGGERFALL_APPID}")
+        self.assertIn("Steam opens to install Daggerfall", window.messages[-1])
+        self.assertEqual(page.data_row.badge.text(), "Waiting for Steam")
         with patch.object(dfu, "overview", lambda hook=True: overview()):  # Steam installed it meanwhile
             page.refresh()
             self.settle(3)

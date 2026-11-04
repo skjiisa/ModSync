@@ -167,10 +167,12 @@ name, so the section tabs stay put when the game changes.
 
 X, or choosing the switcher, lists the games with how each stands. The one
 shown now is checked, and focus starts on the other, so X then A switches.
-A game that isn't installed is listed too, and its Home starts with getting
-it: Daggerfall's blue action opens Steam's install dialog. ModSync reopens on
-the game last shown. When Skyrim's Play button opened ModSync, only Skyrim is
-shown.
+A game that isn't on this machine is listed too, but focus stays on the game
+shown now. Its Home starts with getting it: Daggerfall's blue action opens
+Steam's install dialog, and the Steam row waits for Steam until the game is
+there. ModSync reopens on the game last shown, or on Skyrim while that game
+isn't on this machine. When Skyrim's Play button opened ModSync, only Skyrim
+is shown.
 
 ![Switching game](game-switch.png)
 

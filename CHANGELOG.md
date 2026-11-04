@@ -39,7 +39,8 @@ All notable changes to ModSync are documented here. The format follows
   its Home opens Steam's install dialog for it. Then it installs Daggerfall
   Unity, sets what Steam's Play button starts, plays it, opens the mods
   folder, and turns mods and saves sync on and off. ModSync reopens on the
-  game last shown; opened by Skyrim's Play button, it shows only Skyrim.
+  game last shown, or on Skyrim while that game isn't installed; opened by
+  Skyrim's Play button, it shows only Skyrim.
 
 ## [2.0.0] - 2026-10-28
 

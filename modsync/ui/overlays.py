@@ -279,13 +279,15 @@ GameChoice = tuple[str, str, str, str, str]  # key, name, value word, tone, deta
 class GameSheet(Overlay):
     """Which game Home shows. One row per game with how it stands, the one
     shown now checked. Focus starts on another game: opening this means
-    switching, so X then A is enough."""
+    switching, so X then A is enough. ``start`` names the row to start on
+    instead."""
 
     def __init__(self, host, games: list[GameChoice], current: str,
-                 on_choice: Callable[[str], None]) -> None:
+                 on_choice: Callable[[str], None], *, start: str | None = None) -> None:
         super().__init__(host, "Switch game", width=640)
         self._on_choice = on_choice
         self._current = current
+        self._start = start
         self.body.addSpacing(2)
         self.rows: dict[str, Tile] = {}
         rows = QVBoxLayout()
@@ -315,7 +317,8 @@ class GameSheet(Overlay):
 
     def focus_default(self) -> None:
         others = [row for key, row in self.rows.items() if key != self._current and row.isEnabled()]
-        target = others[0] if others else self.rows.get(self._current)
+        target = self.rows.get(self._start) if self._start else None
+        target = target or (others[0] if others else self.rows.get(self._current))
         if target is not None:
             target.setFocus(Qt.FocusReason.OtherFocusReason)
         else:

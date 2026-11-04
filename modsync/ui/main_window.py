@@ -74,6 +74,11 @@ def alive(w: QWidget | None) -> bool:
     return w is not None and shiboken6.isValid(w)
 
 
+def dfu_here(ov: dfu.Overview | None) -> bool:
+    """Daggerfall is on this machine: Steam has it, or Daggerfall Unity is installed."""
+    return ov is not None and (ov.dagger is not None or ov.install is not None)
+
+
 def app_mark(size: int) -> QWidget:
     """The app icon, as installed (Flatpak) or from the checkout."""
     icon = QApplication.windowIcon()
@@ -198,6 +203,9 @@ class MainWindow(QMainWindow):
         # Steam's Play button opened this for Skyrim: only Skyrim is shown.
         saved = self.service.state.home_game
         self.game = saved if steam_launch is None and saved in GAME_PAGES else "skyrim"
+        # Reopened on a game other than Skyrim: until the first read says it's
+        # still on this machine, the window may open on Skyrim instead.
+        self._restored = self.game != "skyrim"
         self.dfu_overview: dfu.Overview | None = None
         self._game_polls = 0
         self._call.connect(lambda fn: fn())
@@ -363,6 +371,21 @@ class MainWindow(QMainWindow):
         if not shiboken6.isValid(self):
             return
         self.dfu_overview = ov
+        if self._restored:
+            self._restored = False
+            if not dfu_here(ov) and self.router.last_input < self.opened_at:
+                self._open_on_skyrim()
+
+    def _open_on_skyrim(self) -> None:
+        """Reopened on Daggerfall, which this machine doesn't have: Home is Skyrim's
+        this time. The choice stays saved, for once Daggerfall is here."""
+        was_inside = alive(self.focusWidget()) and self.pages["daggerfall"].isAncestorOf(self.focusWidget())
+        self.game = "skyrim"
+        self._update_game_switch()
+        if self._current == "home" and self.setup is None:
+            self.stack.setCurrentWidget(self.page)
+            if was_inside and not self.overlays:
+                self.page.focus_default()
 
     def game_choices(self) -> list[tuple[str, str, str, str, str]]:
         """Each game the picker offers, with how it stands."""
@@ -372,7 +395,11 @@ class MainWindow(QMainWindow):
     def open_game_picker(self) -> None:
         if not self.switchable or self.setup is not None or self.overlays:
             return
-        GameSheet(self, self.game_choices(), self.game, lambda key: self.switch_game(key)).open()
+        # Nothing to switch to while Daggerfall isn't here: focus stays, so X then A
+        # doesn't head for Steam's install dialog.
+        here = self.game != "skyrim" or dfu_here(self.dfu_overview)
+        GameSheet(self, self.game_choices(), self.game, lambda key: self.switch_game(key),
+                  start=None if here else self.game).open()
 
     def switch_game(self, game: str, *, focus: bool = True) -> None:
         """Show ``game`` on Home and go there. Remembered for next time."""
@@ -382,6 +409,7 @@ class MainWindow(QMainWindow):
             return
         order = list(GAME_PAGES)
         step = order.index(game) - order.index(self.game)
+        self._restored = False  # chosen now: stays, here or not
         if game != self.game:
             self.game = game
             self.topbar.set_game(dict((key, name) for key, _page, name in GAMES)[game])

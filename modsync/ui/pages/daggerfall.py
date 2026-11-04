@@ -61,7 +61,9 @@ class DaggerfallPage(Page):
         self._working = False
         self._focus_on_load = False
         self._shown_at = 0.0
-        self.head = self.header("Daggerfall Unity", "Set up from your Steam copy of The Elder Scrolls II: Daggerfall.")
+        self._steam_opened = False  # sent to Steam's install dialog since this was shown
+        self.head = self.header("Daggerfall Unity", "The 1996 game on a modern engine, with mods. "
+                                "Set up from your Steam copy of The Elder Scrolls II: Daggerfall.")
         self.note = label("", "warning")
         self.note.hide()
         self.content_layout.addWidget(self.note)
@@ -113,6 +115,7 @@ class DaggerfallPage(Page):
         if not self._working:
             self._focus_on_load = True
             self._shown_at = time.monotonic()
+            self._steam_opened = False
             self.refresh()
 
     # --- reading ---
@@ -140,7 +143,7 @@ class DaggerfallPage(Page):
         if ov is None:
             return "Checking", "off", ""
         if ov.install is None and ov.dagger is None:
-            return "Not installed", "off", "Install The Elder Scrolls II: Daggerfall in Steam first (free)."
+            return "Not installed", "off", "Get Daggerfall in Steam first. It's free."
         if ov.install is None:
             return "Not installed", "off", "Set it up from Steam's Daggerfall."
         if ov.problems or ov.version_problem or ov.stale_path:
@@ -151,8 +154,12 @@ class DaggerfallPage(Page):
     def _show(self, ov: dfu.Overview) -> None:
         self.overview = ov
         self.host.dfu_checked(ov)
-        if ov.dagger is None:
-            self.data_row.set_state("Not installed", "warn", "Install The Elder Scrolls II: Daggerfall in Steam (free).")
+        if ov.dagger is None and self._steam_opened:
+            self.data_row.set_state("Waiting for Steam", "busy", "This updates once Steam has installed it.")
+        elif ov.dagger is None:
+            # Not there yet is no fault, unless Daggerfall Unity is installed and needs it.
+            self.data_row.set_state("Not installed", "off" if ov.install is None else "warn",
+                                    "Install The Elder Scrolls II: Daggerfall in Steam. It's free.")
         elif ov.problems:
             self.data_row.set_state("Incomplete", "warn", ov.problems[0])
         else:
@@ -168,7 +175,8 @@ class DaggerfallPage(Page):
             self.install_row.set_state(ov.version or "Installed", "ok", _short(inst.path))
         hook = ov.hook
         if inst is None:
-            self.hook_row.set_state("Original game", "off", "Starts Daggerfall in DOSBox until DFU is installed.")
+            self.hook_row.set_state("Original game", "off",
+                                    "Starts the original game until Daggerfall Unity is installed.")
         elif hook is not None and hook.pending is not None:
             self.hook_row.set_state("Waiting for Steam", "busy", "Applied once Steam closes.")
         elif hook is not None and hook.enabled:
@@ -330,3 +338,6 @@ class DaggerfallPage(Page):
         """Steam's install dialog for Daggerfall. This page notices it on its next read."""
         if self.overview is not None and self.overview.dagger is None:
             QDesktopServices.openUrl(QUrl(f"steam://install/{dfu.DAGGERFALL_APPID}"))
+            self._steam_opened = True
+            self.host.notify("Steam opens to install Daggerfall. This page updates once it's installed.")
+            self._show(self.overview)
