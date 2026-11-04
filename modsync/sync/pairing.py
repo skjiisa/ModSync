@@ -34,14 +34,37 @@ def add_peer_device(
     name: str,
     addresses: Iterable[str] | None = None,
 ) -> dict:
-    """Register a peer device (so we'll connect to it)."""
+    """Register a peer device (so we'll connect to it), as an introducer."""
     device = client.default_device()
     device["deviceID"] = device_id
     device["name"] = name
     if addresses:
         device["addresses"] = list(addresses)
+    device.update(INTRODUCER)
     client.put_device(device)
     return device
+
+
+# Every paired machine introduces the machines it shares folders with: when
+# B and C have each paired with A, A tells B about C and C about B, and from
+# then on they sync with each other directly, with A offline. Syncthing
+# carries over the addresses A has for them. A machine that stops sharing a
+# folder with A, or that A forgets, stays paired here.
+INTRODUCER = {"introducer": True, "skipIntroductionRemovals": True}
+
+
+def introduce_peers(client: SyncthingClient) -> list[str]:
+    """Make every paired machine an introducer, for machines paired before
+    ModSync did that. Returns the ids changed."""
+    me = client.my_id()
+    changed = []
+    for device in client.devices():
+        if device.get("deviceID") in (None, "", me) or all(device.get(k) == v for k, v in INTRODUCER.items()):
+            continue
+        device.update(INTRODUCER)
+        client.put_device(device)
+        changed.append(device["deviceID"])
+    return changed
 
 
 def share_instance_folder(

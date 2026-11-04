@@ -334,11 +334,11 @@ class SyncthingIntegration(unittest.TestCase):
                 os.environ.pop("XDG_DATA_HOME", None)
 
 
-    def _two_nodes(self, tmp: Path):
-        """Two isolated daemons that can only reach each other. Returns the
-        managers and their sync ports."""
+    def _two_nodes(self, tmp: Path, names=("A", "B")):
+        """Isolated daemons (two by default) that can only reach each other.
+        Returns the managers and their sync ports."""
         nodes = []
-        for name in ("A", "B"):
+        for name in names:
             port = _free_port()
             mgr = SyncthingManager(tmp / f"home{name}", binary=self.binary,
                                    gui_address=f"127.0.0.1:{_free_port()}", log_file=tmp / f"{name}.log")
@@ -347,6 +347,55 @@ class SyncthingIntegration(unittest.TestCase):
             mgr.start(40)
             nodes.append((mgr, port))
         return nodes
+
+    def test_machines_paired_through_a_third_sync_without_it(self) -> None:
+        """B and C each paired only with A. A introduces them to each other,
+        so once A is off, a mod added on B still reaches C."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            inst = {name: tmp / name / "MO2" for name in "ABC"}
+            for root in inst.values():
+                (root / "mods").mkdir(parents=True)
+            nodes = dict(zip("ABC", self._two_nodes(tmp, "ABC")))
+            clients = {name: mgr.client() for name, (mgr, _port) in nodes.items()}
+            try:
+                ids = {name: c.my_id() for name, c in clients.items()}
+                address = {name: [f"tcp://127.0.0.1:{port}"] for name, (_mgr, port) in nodes.items()}
+                for joiner in "BC":
+                    pairing.add_peer_device(clients["A"], ids[joiner], joiner, addresses=address[joiner])
+                    pairing.add_peer_device(clients[joiner], ids["A"], "A", addresses=address["A"])
+                    pairing.share_instance_folder(clients[joiner], "modsync-mesh", inst[joiner], [ids["A"]])
+                pairing.share_instance_folder(clients["A"], "modsync-mesh", inst["A"], [ids["B"], ids["C"]])
+
+                def knows(name, other):
+                    folder = clients[name].get_folder("modsync-mesh")
+                    return ids[other] in {d["deviceID"] for d in folder["devices"]}
+
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline and not (knows("B", "C") and knows("C", "B")):
+                    time.sleep(0.5)
+                self.assertTrue(knows("B", "C") and knows("C", "B"), "A never introduced B and C")
+                nodes["A"][0].stop()
+                (inst["B"] / "mods" / "FromB").mkdir()
+                (inst["B"] / "mods" / "FromB" / "b.esp").write_text("from B")
+                clients["B"].rescan("modsync-mesh")
+                received = inst["C"] / "mods" / "FromB" / "b.esp"
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline and not received.exists():
+                    time.sleep(0.5)
+                self.assertTrue(received.exists(), "B's mod didn't reach C with A off")
+                self.assertEqual(received.read_text(), "from B")
+            except Exception:
+                for name in "ABC":
+                    path = tmp / f"{name}.log"
+                    if path.exists():
+                        print(path.name, path.read_text()[-6000:])
+                raise
+            finally:
+                for c in clients.values():
+                    c.close()
+                for mgr, _port in nodes.values():
+                    mgr.stop()
 
     def test_a_game_folder_reaches_a_machine_paired_without_a_vault(self) -> None:
         """Machine-wide pairing end to end: A syncs only a game's folder and
