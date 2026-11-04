@@ -760,6 +760,37 @@ class TwoMachines(unittest.TestCase):
         for saves in (self.a, self.b):
             self.assertEqual((saves / "SAVE0" / "SaveData.txt").read_text(), "SaveData.txt Z, B played on from Y")
 
+    # --- from GPT-6.1 Sol's eighth pass ---
+
+    def test_a_winner_with_the_same_files_is_taken_without_a_swap(self):
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 100, "same")
+        shutil.copytree(self.a / "SAVE0", self.b / "SAVE0")  # both copied the same save in by hand
+        self.sync(self.a)
+        self.sync(self.b)
+        swaps = []
+        with patch.object(dfu_saves, "_place", lambda *a: swaps.append(a) or True):
+            self.round()
+        self.assertEqual(swaps, [])
+        key = dfu_saves.Info("Ellte", "QuickSave", 0).key
+        best = dfu_saves.winner(dfu_saves.records(self.library / key))
+        for saves in (self.a, self.b):
+            entry = json.loads(dfu_saves.mapping_path(saves, self.library).read_text())["slots"]["SAVE0"]
+            self.assertEqual((entry["version"], entry["held"]), (best.name, best.vv))
+
+    def test_an_entry_without_held_is_looked_up_never_guessed(self):
+        make_save(self.a, "SAVE0", "Ellte", "QuickSave", 100, "v1")
+        self.round()
+        mapping = dfu_saves.mapping_path(self.b, self.library)
+        data = json.loads(mapping.read_text())
+        version = data["slots"]["SAVE0"]["version"]
+        del data["slots"]["SAVE0"]["held"]
+        data["slots"]["SAVE0"]["vv"] = {"ffffffff": 9, **data["slots"]["SAVE0"]["vv"]}  # settled much more
+        mapping.write_text(json.dumps(data))
+        self.sync(self.b)
+        key = dfu_saves.Info("Ellte", "QuickSave", 0).key
+        own = next(r for r in dfu_saves.records(self.library / key) if r.name == version)
+        self.assertEqual(json.loads(mapping.read_text())["slots"]["SAVE0"]["held"], own.vv)
+
     def test_ticks_match_dfus_clock(self):
         from datetime import datetime
 

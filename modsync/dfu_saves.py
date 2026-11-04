@@ -358,8 +358,8 @@ class _Mapping:
         if isinstance(slots, dict):
             for s, e in slots.items():
                 if isinstance(e, dict) and isinstance(e.get("key"), str) and _SLOT_RE.match(s):
-                    vv = _vv(e.get("vv"))
-                    self.slots[s] = {**e, "vv": vv, "held": _vv(e.get("held")) or vv}
+                    # A missing "held" is looked up from the record, never guessed (see sync).
+                    self.slots[s] = {**e, "vv": _vv(e.get("vv")), "held": _vv(e.get("held"))}
         cache = data.get("records")
         self.cache: dict[str, dict] = {k: v for k, v in cache.items() if isinstance(v, dict)} \
             if isinstance(cache, dict) else {}
@@ -504,8 +504,7 @@ def _settle_placement(saves: Path, slot: str, entry: dict) -> tuple[dict | None,
     # "" as fingerprint has the next step look at it as a change made here.
     still = content(target) == pending["digest"]
     return ({**_carried(entry), "key": entry["key"], "version": pending["version"], "vv": _vv(pending["vv"]),
-             "held": _vv(pending.get("held")) or _vv(pending["vv"]),
-             "fingerprint": fingerprint(target) if still else ""}, leftovers)
+             "held": _vv(pending.get("held")), "fingerprint": fingerprint(target) if still else ""}, leftovers)
 
 
 def _place(record: Record, target: Path, mapping: _Mapping, slot_entry: dict) -> bool:
@@ -734,6 +733,13 @@ def sync(saves: Path, library: Path, machine: Machine, *, guard: Guard | None = 
                 continue
             slot = next((s for s, e in mapping.slots.items() if e["key"] == key_dir.name), None)
             held = mapping.slots.get(slot) if slot is not None else None
+            if held is not None and not held["held"]:
+                # What it holds is known by name; its vector comes from that record.
+                own = next((r for r in recs if not r.deleted and r.name == held.get("version")), None)
+                if own is None:
+                    continue  # not here yet: decide nothing for this save until it is
+                held["held"] = own.vv
+                mapping.save()
             # Taking the winner, or holding it, settles every record it beat, too.
             settled = joined(held["vv"] if held else {}, *(t.vv for t in tops))
             # Whether it has the winner goes by what it holds, never by what it
@@ -752,6 +758,12 @@ def sync(saves: Path, library: Path, machine: Machine, *, guard: Guard | None = 
                 if reason:
                     report.skipped = reason
                     return report
+                if not best.deleted and slot is not None and content(saves / slot) == best.digest:
+                    # It has those very files already: only what it holds changes, nothing to swap.
+                    mapping.slots[slot] = {**_carried(held), "key": key_dir.name, "version": best.name,
+                                           "vv": settled, "held": best.vv, "fingerprint": fingerprint(saves / slot)}
+                    mapping.save()
+                    continue
                 if best.deleted:
                     _remove(saves / slot)
                     del mapping.slots[slot]
