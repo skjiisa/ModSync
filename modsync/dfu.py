@@ -164,12 +164,22 @@ class Install:
         return (self.path / "Portable.txt").exists()
 
     @property
-    def version(self) -> str | None:
+    def recorded_version(self) -> str | None:
         """The DFU version ModSync installed here; None for an install it didn't make."""
         try:
             return json.loads((self.path / RECORD_NAME).read_text(encoding="utf-8")).get("version")
         except (OSError, ValueError, AttributeError):
             return None
+
+    @property
+    def version(self) -> str | None:
+        """This install's DFU version: the one ModSync installed, else the one
+        the build says it is. None when neither tells."""
+        return self.recorded_version or built_version(self.path)
+
+    @property
+    def windows_build(self) -> bool:
+        return (self.path / "DaggerfallUnity.exe").is_file() and not self.executable.is_file()
 
     def daggerfall_path(self) -> str | None:
         return read_daggerfall_path(self.settings_ini)
@@ -181,6 +191,38 @@ def find_install(path: Path | str | None) -> Install | None:
         return None
     inst = Install(Path(path))
     return inst if inst.executable.is_file() else None
+
+
+# DFU's options window prints VersionInfo's product name, status and version
+# ("Daggerfall Unity Release 1.1.1"), so the three sit together among the
+# assembly's UTF-16 strings, one length or end byte apart.
+_BUILT_VERSION = re.compile(r"Daggerfall Unity(?:.[A-Za-z ]{1,16})?.(\d+\.\d+\.\d+)", re.DOTALL)
+_built_versions: dict[tuple[str, int, int], str | None] = {}
+
+
+def built_version(path: Path) -> str | None:
+    """The version a DFU build at ``path`` says it is, read from its game code.
+    None when it can't tell."""
+    dll = path / "DaggerfallUnity_Data" / "Managed" / "Assembly-CSharp.dll"
+    try:
+        st = dll.stat()
+    except OSError:
+        return None
+    key = (str(dll), st.st_mtime_ns, st.st_size)
+    if key not in _built_versions:
+        try:
+            data = dll.read_bytes()
+        except OSError:
+            return None
+        found = None
+        for start in (0, 1):  # a string can start at either byte
+            chunk = data[start:]
+            match = _BUILT_VERSION.search(chunk[:len(chunk) // 2 * 2].decode("utf-16-le", "replace"))
+            if match:
+                found = match.group(1)
+                break
+        _built_versions[key] = found
+    return _built_versions[key]
 
 
 def is_running() -> bool:
@@ -335,8 +377,9 @@ def install(
         raise DfuError("Close Daggerfall Unity first.")
     existing = find_install(dest)
     if existing is not None:
-        if existing.version != DFU_VERSION:
-            found = f"Daggerfall Unity {existing.version}" if existing.version else "a Daggerfall Unity ModSync didn't install"
+        if existing.recorded_version != DFU_VERSION:
+            found = (f"Daggerfall Unity {existing.recorded_version}" if existing.recorded_version
+                     else "a Daggerfall Unity ModSync didn't install")
             raise DfuError(f"{dest} already has {found}. Choose an empty folder.")
         configure(existing, dagger)
         return Installed(existing, dagger, fresh=False)
@@ -367,6 +410,95 @@ def install(
         write_settings(inst.settings_ini, "Video", {"ResolutionWidth": width, "ResolutionHeight": height})
     log.info("installed Daggerfall Unity %s into %s (resolution %s)", DFU_VERSION, dest, resolution or "DFU's default")
     return Installed(inst, dagger, fresh=True)
+
+
+# --- an install ModSync didn't make -------------------------------------------------
+
+
+def unity_data_dir() -> Path:
+    """Where a DFU without ``Portable.txt`` keeps its settings, saves and load
+    order: Unity's folder for the game under the host's ``~/.config``."""
+    base = os.environ.get("XDG_CONFIG_HOME")
+    config = Path(base) if base and not background.in_flatpak() else Path.home() / ".config"
+    return config / "unity3d" / "Daggerfall Workshop" / "Daggerfall Unity"
+
+
+# Unity's own files there, which it keeps using whether DFU is portable or not.
+_UNITY_OWN = ("prefs", "Player.log", "Player-prev.log")
+
+
+@dataclass
+class Existing:
+    """A DFU that ModSync didn't install, as adopting it would find it."""
+
+    install: Install
+    data_from: Path | None  # DFU's data in ~/.config, copied in because the install isn't portable
+
+
+def _unity_data(source: Path) -> list[Path]:
+    try:
+        return [p for p in source.iterdir() if p.name not in _UNITY_OWN]
+    except OSError:
+        return []
+
+
+def examine(path: Path | str) -> Existing:
+    """Check that ``path`` holds a DFU that ModSync can use, and what using it
+    would change. Raises :class:`DfuError` when it can't be used."""
+    path = Path(path).expanduser().absolute()
+    inst = Install(path)
+    if not inst.executable.is_file():
+        if inst.windows_build:
+            raise DfuError(f"{path} has the Windows build of Daggerfall Unity. ModSync works with the Linux "
+                           "build: install that, or let ModSync install it.")
+        raise DfuError(f"There's no Daggerfall Unity in {path}. Choose the folder with {EXECUTABLE} in it.")
+    if not os.access(path, os.W_OK):
+        raise DfuError(f"ModSync can't change {path}. Choose a Daggerfall Unity in a folder you own.")
+    source = unity_data_dir()
+    copies = not inst.portable and bool(_unity_data(source))
+    return Existing(inst, source if copies else None)
+
+
+def _copy_missing(source: Path, dest: Path) -> None:
+    """Copy ``source`` into ``dest``, keeping whatever ``dest`` has already."""
+    for entry in _unity_data(source):
+        files = [entry] if entry.is_file() else [Path(top) / n for top, _dirs, names in os.walk(entry) for n in names]
+        for src in files:
+            target = dest / src.relative_to(source)
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, target)
+
+
+def adopt(path: Path | str) -> tuple[Existing, str | None]:
+    """Use the DFU at ``path`` on this machine instead of installing one.
+
+    ModSync syncs saves and the load order from inside the install, so an
+    install that isn't portable is made portable, its data copied in from
+    ``~/.config`` first (the originals stay, and nothing already in the
+    install is replaced). Daggerfall's data it already uses is kept when DFU
+    would accept it, else it gets Steam's. An enabled Play hook moves to it.
+    Returns what was found and what the hook said, if anything."""
+    found = examine(path)
+    inst = found.install
+    if is_running():
+        # DFU writes settings.ini back when it exits, over these changes.
+        raise DfuError("Close Daggerfall Unity first.")
+    if found.data_from is not None:
+        _copy_missing(found.data_from, inst.data_dir)
+        log.info("copied Daggerfall Unity's data from %s into %s", found.data_from, inst.data_dir)
+    (inst.path / "Portable.txt").touch()
+    configured = inst.daggerfall_path()
+    if not configured or data_problems(Path(configured)):
+        dagger = steam_daggerfall()
+        if not data_problems(dagger):
+            write_daggerfall_path(inst.settings_ini, dagger)
+    previous = current_install()
+    if previous is not None and previous.path != inst.path:
+        _release_saves()  # the saves library syncs with the new install's Saves from now on
+    State.update(dfu_path=str(inst.path))
+    log.info("using the Daggerfall Unity in %s (%s)", inst.path, inst.version or "version unknown")
+    return found, follow_install(inst)
 
 
 # --- Steam's Play button -----------------------------------------------------------
@@ -412,7 +544,7 @@ def current_install() -> Install | None:
     if recorded is not None:
         return recorded
     default = find_install(default_install_dir())
-    return default if default is not None and default.version and default.portable else None
+    return default if default is not None and default.recorded_version and default.portable else None
 
 
 def _install_root() -> Path | None:
@@ -632,10 +764,18 @@ class Overview:
     saves: str
     version_problem: str | None
     version: str | None = None  # the install's DFU version, read with the rest
+    configured_ok: bool = False  # DFU would accept the data the install uses (Steam's or its own copy)
 
     @property
     def stale_path(self) -> bool:
-        return bool(self.install and self.dagger and self.configured and Path(self.configured) != self.dagger)
+        """Steam has Daggerfall, and the install uses neither it nor other data DFU accepts."""
+        return bool(self.install and self.dagger and not self.configured_ok
+                    and Path(self.configured or "") != self.dagger)
+
+    @property
+    def own_data(self) -> bool:
+        """The install uses a copy of Daggerfall other than Steam's (say, GOG's), which works."""
+        return bool(self.install and self.configured_ok and Path(self.configured or "") != self.dagger)
 
 
 def overview(*, hook: bool = True) -> Overview:
@@ -657,9 +797,12 @@ def overview(*, hook: bool = True) -> Overview:
             status = hook_status()
         except Exception as exc:  # Steam's files unreadable: show the rest
             log.warning("could not read the Play hook's status: %s", exc)
-    return Overview(dagger, data_problems(dagger), inst, inst.daggerfall_path() if inst else None, status,
+    configured = inst.daggerfall_path() if inst else None
+    problems = data_problems(dagger)
+    configured_ok = bool(configured) and not (problems if Path(configured) == dagger else data_problems(Path(configured)))
+    return Overview(dagger, problems, inst, configured, status,
                     sync_state(MODS_FOLDER), sync_state(SAVES_FOLDER),
-                    version_problem(inst) if inst else None, inst.version if inst else None)
+                    version_problem(inst) if inst else None, inst.version if inst else None, configured_ok)
 
 
 def setup(dest: Path | str | None = None, *, progress: engine.ProgressFn | None = None) -> tuple[Installed, str | None]:
@@ -673,9 +816,14 @@ def setup(dest: Path | str | None = None, *, progress: engine.ProgressFn | None 
     if problems:
         raise DfuError(" ".join(problems))
     if not dest:
-        # The install it shows, if any: repairing never makes a second one elsewhere.
+        # The install it shows, if any: repairing never makes a second one elsewhere,
+        # and only points it at Steam's data again, whoever installed it.
         shown = current_install()
-        dest = shown.path if shown is not None else Path(State.load().dfu_path or default_install_dir())
+        if shown is not None:
+            configure(shown, dagger)
+            State.update(dfu_path=str(shown.path))
+            return Installed(shown, dagger, fresh=False), follow_install(shown)
+        dest = Path(State.load().dfu_path or default_install_dir())
     result = install(Path(dest), dagger, cache_dir=config.data_dir() / "dfu", progress=progress,
                      resolution=display_resolution())
     State.update(dfu_path=str(result.install.path))

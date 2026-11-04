@@ -190,7 +190,7 @@ def main():
             inst = replace(dfu_install) if installed else None
             return dfu.Overview(dagger, [], inst, str(dagger) if installed else None, status,
                                 "on" if installed else "off", "on" if installed else "off", None,
-                                "1.1.1" if installed else None)
+                                "1.1.1" if installed else None, configured_ok=bool(installed))
 
         for installed, name in ((None, "daggerfall-steam"), (False, "daggerfall-install"), (True, "daggerfall")):
             with patch("modsync.dfu.overview", lambda hook=True, i=installed: dfu_overview(i)), \
@@ -211,6 +211,12 @@ def main():
                         dw.top_overlay.cancel()
                     dw.go("daggerfall")
                 capture(dw, name)
+                if installed is False:  # a Daggerfall Unity installed by hand, its data in ~/.config
+                    unity = Path("/home/you/.config/unity3d/Daggerfall Workshop/Daggerfall Unity")
+                    dw.pages["daggerfall"]._confirm_adopt(
+                        dfu.Existing(dfu.Install(Path("/home/you/Games/DFU 1.1.1")), unity))
+                    capture(dw, "daggerfall-existing")
+                    dw.top_overlay.cancel()
                 dw.close()
                 router._pad_seen = False
                 router.controllersChanged.emit()
