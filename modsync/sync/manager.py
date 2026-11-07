@@ -19,6 +19,7 @@ from modsync.sync.api import SyncthingClient
 from modsync.sync.binary import ensure_syncthing
 
 log = logging.getLogger(__name__)
+_EXIT_UPGRADED = 4  # Syncthing's exit code after it replaced its own binary
 
 
 class SyncthingError(RuntimeError):
@@ -110,12 +111,19 @@ class SyncthingManager:
         else:
             out = subprocess.DEVNULL
         log.info("starting %s serve --home %s (gui %s, log %s)", self.binary, self.home, self.address, self._log_file)
-        self._proc = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT)
-        try:
-            self._wait_ready(timeout)
-        except SyncthingError as exc:
-            log.error("Syncthing did not come up: %s", exc)
-            raise
+        for attempt in (1, 2):
+            self._proc = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT)
+            try:
+                self._wait_ready(timeout)
+                return
+            except SyncthingError as exc:
+                # Syncthing upgrades its binary in place when a release is out, then
+                # exits for its monitor to restart it, which --no-restart leaves to us.
+                if attempt == 1 and self._proc.returncode == _EXIT_UPGRADED:
+                    log.info("Syncthing upgraded itself; starting the new version")
+                    continue
+                log.error("Syncthing did not come up: %s", exc)
+                raise
 
     def _wait_ready(self, timeout: float) -> None:
         deadline = time.monotonic() + timeout

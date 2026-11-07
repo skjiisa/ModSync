@@ -336,6 +336,21 @@ class SyncthingPortConflict(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 5)
         self.assertFalse(mgr.running)
 
+    def test_syncthing_that_upgraded_itself_is_started_once_more(self):
+        address = self.serve(404, b"not found")
+        runs = self.tmp / "runs"
+        # The first run upgrades and exits 4; the new binary then fails for its own reason.
+        mgr = self.manager(address, f'echo x >> "{runs}"; [ "$(wc -l < "{runs}")" -gt 1 ] && exit 3; exit 4')
+        with self.assertRaisesRegex(SyncthingError, r"exited early \(code 3\)"):
+            mgr.start(timeout=5)
+        self.assertEqual(len(runs.read_text().splitlines()), 2)
+
+    def test_syncthing_that_keeps_upgrading_is_not_restarted_forever(self):
+        address = self.serve(404, b"not found")
+        mgr = self.manager(address, "exit 4")
+        with self.assertRaisesRegex(SyncthingError, r"exited early \(code 4\)"):
+            mgr.start(timeout=5)
+
     def test_port_owner_that_answers_garbage_is_not_mistaken_for_syncthing(self):
         address = self.serve(200, b"<html>hello from some other app</html>")
         mgr = self.manager(address, "exit 3")
