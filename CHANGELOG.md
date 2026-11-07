@@ -6,6 +6,16 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `modsync dfu hook enable` works when Steam already starts Daggerfall with
+  Luxtorpeda or another launcher that isn't a Proton. Setup steps and the
+  original game go to Steam's default Proton, and turning the hook off gives
+  Daggerfall back to that launcher. `modsync dfu status` names it while the
+  hook is off.
+- Syncing no longer fails to start the first time after a Syncthing release:
+  Syncthing upgrades itself and exits, and ModSync now starts it again.
+
 ## [2.1.0-beta1] - 2026-11-04
 
 Daggerfall Unity joins Skyrim. ModSync installs it from Steam's free
