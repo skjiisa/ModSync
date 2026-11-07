@@ -13,6 +13,9 @@ All notable changes to ModSync are documented here. The format follows
   original game go to Steam's default Proton, and turning the hook off gives
   Daggerfall back to that launcher. `modsync dfu status` names it while the
   hook is off.
+- A new Daggerfall Unity install gets the saves synced from other machines
+  before its first launch. Before, saves sync waited for DFU to make its
+  Saves folder, so the first Play started without them.
 - Syncing no longer fails to start the first time after a Syncthing release:
   Syncthing upgrades itself and exits, and ModSync now starts it again.
 
