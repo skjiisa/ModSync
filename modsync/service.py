@@ -1095,6 +1095,33 @@ class ModSyncService:
                     log.warning("mods sync didn't move to %s yet: %s", path, exc)
                 self.reload_state()
 
+    def use_cyberpunk_instance(self, path: Path | str) -> list[str]:
+        """Use another MO2 instance for Cyberpunk (see ``cyberpunk.use_instance``).
+        Mods sync, if on, moves to it now rather than at the next refresh, so it's
+        in place before the game can start from there; with the game running it
+        couldn't, so that's refused. Heroic's Play hook follows. Returns what the
+        user should know."""
+        from modsync import cyberpunk
+
+        key = cyberpunk.MODS_FOLDER.key
+        syncing = key in State.load().game_folders
+        if syncing and cyberpunk.game_running():
+            raise RuntimeError("Close Cyberpunk 2077 and Mod Organizer 2 first: mods sync moves to the new instance.")
+        instance = cyberpunk.use_instance(path)
+        notes = [f"Using Mod Organizer 2 in {instance}."]
+        notes += cyberpunk.refresh_hook()
+        self.reload_state()
+        if syncing:
+            try:
+                self.ensure_running()
+                self._refresh_game_folders(force=True)
+            except Exception as exc:  # it moves at the next refresh
+                log.warning("mods sync didn't move to %s yet: %s", instance, exc)
+            self.reload_state()
+            if self.state.game_folders.get(key) != str(instance):
+                notes.append("Mods sync moves to it once Syncthing answers; wait a moment before playing.")
+        return notes
+
     def stop_game_folder(self, key: str) -> bool:
         """Stop syncing one of a game's folders here. Its files stay. Returns
         whether Syncthing let go of it now; otherwise it does the next time

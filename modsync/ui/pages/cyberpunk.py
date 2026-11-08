@@ -5,9 +5,11 @@ chosen in the game switcher at the top, whether or not Heroic has it yet.
 The rows say how each part stands and change it when pressed: the MO2 row
 picks another instance, Heroic's Play button switches between playing through
 MO2 and the game as Heroic starts it, and the sync row turns mods sync on and
-off here. The blue action installs MO2 until there is an instance, then plays
-through it. "Use an existing installation…" picks an MO2 instance set up for
-Cyberpunk some other way.
+off here. The blue action installs MO2 until there is an instance (or
+finishes an install that stopped part way), then plays through it. "Use an
+existing installation…" picks an MO2 instance set up for Cyberpunk some other
+way. Everything shown comes from one read off the UI thread
+(``cyberpunk.overview``); a read that an action has overtaken is dropped.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import re
 import time
 from pathlib import Path
 
+import shiboken6
 from PySide6.QtCore import QObject, Signal
 
 from modsync import cyberpunk
@@ -50,6 +53,7 @@ class CyberpunkPage(Page):
         self._working = False
         self._focus_on_load = False
         self._shown_at = 0.0
+        self._reads = 0  # the latest read's number: older ones are dropped
         self.head = self.header("Cyberpunk 2077", "From GOG, through the Heroic Games Launcher, with mods "
                                 "in Mod Organizer 2. Cyber Engine Tweaks and RED4ext load as they should.")
         self.note = label("", "warning")
@@ -99,7 +103,16 @@ class CyberpunkPage(Page):
 
     # --- reading ---
     def refresh(self) -> None:
-        worker.run_async(cyberpunk.overview, on_done=self._show, on_failed=lambda e: self.host.notify(f"⚠ {e}"))
+        self._reads += 1
+        read = self._reads
+
+        def done(ov: cyberpunk.Overview) -> None:
+            # Gone with its window (Qt drops only bound methods' connections by
+            # itself), or overtaken by a newer read or an action that changed what it read.
+            if shiboken6.isValid(self) and read == self._reads and not self._working:
+                self._show(ov)
+
+        worker.run_async(cyberpunk.overview, on_done=done, on_failed=lambda e: self.host.notify(f"⚠ {e}"))
 
     def poll(self) -> None:
         if not self._working and self.isVisible():
@@ -123,12 +136,14 @@ class CyberpunkPage(Page):
             return "Checking", "off", ""
         if ov.game is None:
             return "Not installed", "off", "Install it from GOG in the Heroic Games Launcher."
-        if ov.game.drive_c is None:
+        if not ov.prefix_ready:
             return "Not set up", "off", "Launch it once from Heroic."
         if ov.instance is None:
             return "No mods yet", "off", "Install Mod Organizer 2 for it."
         if ov.instance_problem or ov.version_problem:
             return "Needs a look", "warn", ov.instance_problem or ov.version_problem
+        if ov.needs_setup:
+            return "Needs a look", "warn", "Finish setting up Mod Organizer 2 for it."
         return "Ready", "ok", "Syncing mods." if ov.mods == "on" else ""
 
     def _show(self, ov: cyberpunk.Overview) -> None:
@@ -137,7 +152,7 @@ class CyberpunkPage(Page):
         game = ov.game
         if game is None:
             self.game_row.set_state("Not installed", "off", "Install it from GOG in Heroic, then launch it once.")
-        elif game.drive_c is None:
+        elif not ov.prefix_ready:
             self.game_row.set_state("Not set up", "warn", "Launch it once from Heroic, so Heroic sets up its prefix.")
         else:
             version = ov.version[0] if ov.version else (game.version or "Installed")
@@ -147,6 +162,9 @@ class CyberpunkPage(Page):
             self.mo2_row.set_state("Not installed", "off", "Install it with the blue button.")
         elif ov.instance_problem:
             self.mo2_row.set_state("Needs a look", "warn", ov.instance_problem)
+        elif ov.needs_setup:
+            self.mo2_row.set_state("Not finished", "warn",
+                                   "RootBuilder is missing, so CET and RED4ext won't load. Use the blue button.")
         else:
             self.mo2_row.set_state("Installed", "ok", _short(ov.instance))
         hook = ov.hook
@@ -167,9 +185,11 @@ class CyberpunkPage(Page):
         self.mods_row.set_state(word, tone, detail)
         self.note.setText(ov.version_problem or "")
         self.note.setVisible(bool(ov.version_problem))
-        ready = game is not None and game.drive_c is not None
+        ready = game is not None and ov.prefix_ready
         has = ov.instance is not None and not ov.instance_problem
-        self.install_tile.setVisible(ready and ov.instance is None and not self._working)
+        finishing = has and ov.needs_setup
+        self.install_tile.setText("Finish setting up Mod Organizer 2" if finishing else "Install Mod Organizer 2")
+        self.install_tile.setVisible(ready and (ov.instance is None or finishing) and not self._working)
         self.play.setVisible(has and not self._working)
         self.open_mo2.setVisible(has and not self._working)
         self.use_existing.setVisible(not self._working)
@@ -190,7 +210,7 @@ class CyberpunkPage(Page):
     def _update_enabled(self, *_args) -> None:
         ov = self.overview
         busy = self.host.busy or self._working
-        ready = ov is not None and ov.game is not None and ov.game.drive_c is not None
+        ready = ov is not None and ov.game is not None and ov.prefix_ready
         has = ready and ov.instance is not None and not ov.instance_problem
         self.install_tile.setEnabled(ready and not busy)
         self.play.setEnabled(has and not busy)
@@ -198,7 +218,8 @@ class CyberpunkPage(Page):
         self.use_existing.setEnabled(ov is not None and not busy)
         self.mo2_row.setEnabled(ov is not None and not busy)
         self.hook_row.setEnabled(has and not busy)
-        self.mods_row.setEnabled(has and not busy)
+        # Stopping needs nothing to work; starting needs a usable instance.
+        self.mods_row.setEnabled(not busy and ov is not None and (has or ov.mods != "off"))
 
     def preferred_focus(self):
         for tile in (self.install_tile, self.play):
@@ -213,6 +234,7 @@ class CyberpunkPage(Page):
         if self.host.busy or self._working:
             return
         self._working = True
+        self._reads += 1  # a read under way now may predate what this changes
         self.host.set_busy(BUSY_KEY, True)
         self.work.setText(message)
         self.work.show()
@@ -237,6 +259,11 @@ class CyberpunkPage(Page):
         self.refresh()
 
     def _install(self) -> None:
+        """Install MO2, or finish the setup of the instance in use: the install
+        skips MO2-LINT for an instance that's there and does what's missing."""
+        ov = self.overview
+        finishing = ov is not None and ov.instance is not None and ov.needs_setup
+        dest = ov.instance if finishing else cyberpunk.default_instance_dir()
         bridge = _OutputBridge(self)
         bridge.said.connect(self._on_output)
         self.install_tile.hide()
@@ -245,8 +272,9 @@ class CyberpunkPage(Page):
             if not _TOOL_LINE.match(line):
                 bridge.said.emit(line.strip())
 
-        self._run(lambda: cyberpunk.install_mo2(cyberpunk.default_instance_dir(), output),
-                  message="Installing Mod Organizer 2 for Cyberpunk… This takes a few minutes.",
+        self._run(lambda: cyberpunk.install_mo2(dest, output),
+                  message="Finishing Mod Organizer 2's setup…" if finishing
+                  else "Installing Mod Organizer 2 for Cyberpunk… This takes a few minutes.",
                   on_done=lambda instance: f"Mod Organizer 2 is installed in {_short(instance)}. "
                                            "Open it to add mods, or play.")
 
@@ -263,12 +291,8 @@ class CyberpunkPage(Page):
                     description="The folder with ModOrganizer.exe in it.").open()
 
     def _use(self, path: Path) -> None:
-        def use() -> str:
-            instance = cyberpunk.use_instance(path)
-            notes = cyberpunk.refresh_hook()
-            return " ".join([f"Using Mod Organizer 2 in {_short(instance)}.", *notes])
-
-        self._run(use, message="Checking that folder…")
+        """Mods sync, if on, moves along before this finishes (see the service)."""
+        self._run(lambda: " ".join(self.service.use_cyberpunk_instance(path)), message="Checking that folder…")
 
     def _toggle_hook(self) -> None:
         ov = self.overview
@@ -281,7 +305,7 @@ class CyberpunkPage(Page):
 
     def _toggle_sync(self) -> None:
         ov = self.overview
-        if ov is None or ov.instance is None:
+        if ov is None or (ov.mods == "off" and ov.instance is None):
             return
         key = cyberpunk.MODS_FOLDER.key
         if ov.mods == "off":

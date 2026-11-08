@@ -699,6 +699,13 @@ class Overview:
     mods: str  # "on" | "off" | "stopping"
     version: tuple[str, str] | None  # the game here: (patch, build)
     version_problem: str | None
+    prefix_ready: bool = False  # Heroic has made the game's prefix (read here, off the UI thread)
+    needs_setup: bool = False  # the instance lacks RootBuilder: an install stopped part way, or MO2-LINT's own
+
+
+def setup_finished(instance: Path) -> bool:
+    """Whether ``install_mo2`` got to its last step for this instance."""
+    return (instance / "plugins" / "rootbuilder" / "__init__.py").is_file()
 
 
 def overview(*, hook: bool = True) -> Overview:
@@ -717,8 +724,11 @@ def overview(*, hook: bool = True) -> Overview:
         except Exception as exc:  # Heroic's files unreadable: show the rest
             log.warning("could not read Heroic's Play hook for Cyberpunk: %s", exc)
     chosen = instance is not None and instance == chosen_instance()
-    return Overview(game, instance, chosen, instance_problem(instance) if instance else None, status, mods,
-                    game_version(game) if game else None, version_problem(game) if game else None)
+    problem = instance_problem(instance) if instance else None
+    return Overview(game, instance, chosen, problem, status, mods,
+                    game_version(game) if game else None, version_problem(game) if game else None,
+                    prefix_ready=game is not None and game.drive_c is not None,
+                    needs_setup=instance is not None and problem is None and not setup_finished(instance))
 
 
 def launch(launcher, *, play: bool) -> str:
