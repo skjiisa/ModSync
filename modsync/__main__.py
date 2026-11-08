@@ -53,6 +53,8 @@ usage:
   modsync cyberpunk install [<dir>]      install MO2 for Cyberpunk (with RootBuilder for CET/RED4ext)
   modsync cyberpunk use <dir>            use this MO2 instance for Cyberpunk
   modsync cyberpunk open | play          open its MO2, or play through it, with Heroic's Proton
+  modsync cyberpunk hook enable | disable | status
+                                         make Heroic's Play button on Cyberpunk play through MO2
 
 sync create and join run headless and keep Syncthing alive until Ctrl-C.
 logs: ~/.local/state/modsync/modsync.log (MODSYNC_LOG_LEVEL=DEBUG for more).

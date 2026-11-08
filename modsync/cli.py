@@ -1164,13 +1164,17 @@ def cyberpunk(args: list[str]) -> int:
         return _cyberpunk_install(rest[0] if rest else None)
     if sub in ("open", "play") and not rest:
         return _cyberpunk_launch(play=sub == "play")
+    if sub == "hook" and len(rest) == 1 and rest[0] in ("enable", "disable", "status"):
+        return _cyberpunk_hook(rest[0])
     print(
         "usage:\n"
         "  modsync cyberpunk status          Cyberpunk 2077 in Heroic (GOG) and its MO2 instance\n"
         "  modsync cyberpunk install [<dir>] install MO2 for it (default ~/ModOrganizer2-cyberpunk2077)\n"
         "  modsync cyberpunk use <dir>       use this MO2 instance for Cyberpunk\n"
         "  modsync cyberpunk open            open its Mod Organizer 2 with Heroic's Proton\n"
-        "  modsync cyberpunk play            play through MO2 (CET and RED4ext load; REDmod deploys first)"
+        "  modsync cyberpunk play            play through MO2 (CET and RED4ext load; REDmod deploys first)\n"
+        "  modsync cyberpunk hook enable | disable | status\n"
+        "                                    make Heroic's Play button on the game play through MO2"
     )
     return 2
 
@@ -1196,6 +1200,9 @@ def _cyberpunk_status() -> int:
     print(f"MO2 instance:          {instance}{chosen}")
     if problem:
         print(f"  ! {problem}")
+    hook = cyberpunk.hook_status()
+    if hook is not None:
+        print(f"Play in Heroic:        {hook.summary()}")
     return 0 if game is not None and not problem else 1
 
 
@@ -1208,6 +1215,8 @@ def _cyberpunk_use(path: str) -> int:
         print(f"error: {e}")
         return 1
     print(f"Cyberpunk's MO2 instance: {instance}")
+    for note in cyberpunk.refresh_hook():
+        print(note)
     return 0
 
 
@@ -1228,10 +1237,33 @@ def _cyberpunk_install(dest: str | None) -> int:
     return 0
 
 
+def _cyberpunk_hook(action: str) -> int:
+    from modsync import cyberpunk
+
+    if action == "status":
+        hook = cyberpunk.hook_status()
+        print(f"Play in Heroic: {hook.summary() if hook else 'Cyberpunk 2077 is not installed in Heroic'}")
+        if hook is not None and hook.enabled:
+            print(f"  script: {hook.script}")
+        return 0
+    try:
+        if action == "enable":
+            for line in cyberpunk.enable_hook():
+                print(line)
+        else:
+            print(cyberpunk.disable_hook())
+    except (cyberpunk.CyberpunkError, OSError) as e:
+        print(f"error: {e}")
+        return 1
+    return 0
+
+
 def _cyberpunk_launch(*, play: bool) -> int:
     from modsync import cyberpunk
     from modsync.mo2.launch import Launcher
 
+    for note in cyberpunk.refresh_hook():
+        print(note)
     try:
         plan = cyberpunk.build_plan(cyberpunk.find_instance(), cyberpunk.find_game(), play=play)
         print(Launcher().start(plan))
