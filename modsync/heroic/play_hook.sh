@@ -16,7 +16,9 @@
 #
 # Every launch sets WINEDLLOVERRIDES for winmm and version (native, then Wine's
 # own): Cyber Engine Tweaks and RED4ext load through those DLLs. MO2-LINT's
-# "Launch Mod Organizer" option opens MO2 instead of playing.
+# "Launch Mod Organizer" option opens MO2 instead of playing, and so does a
+# launch ModSync started for a Nexus download: it leaves the nxm:// link in
+# $download_note, which this takes (once, and only while fresh) and hands to MO2.
 # MODSYNC_ORIGINAL_GAME=1 in the game's environment variables in Heroic starts
 # the game as Heroic would have.
 set -u
@@ -26,6 +28,9 @@ game_dir=@@GAME_DIR@@
 game_exe=@@GAME_EXE@@             # MO2 executables running this play the game
 prefer=@@PREFER_ARGUMENT@@        # and the one with this argument wins
 direct=(@@DIRECT_ARGS@@)          # MO2's arguments when it has no such executable yet
+download_note=@@DOWNLOAD_NOTE@@
+download_taken=@@DOWNLOAD_TAKEN@@  # emptied once taken: its time is when MO2's launch began
+download_ttl=@@DOWNLOAD_TTL@@     # seconds
 
 say() { printf 'ModSync: %s\n' "$*" >&2; }  # Heroic keeps it in the game's log
 
@@ -80,7 +85,23 @@ runner=("${launch[@]:0:target}")
 program=$(unix_path "${launch[$target]}")
 program="${program##*/}"
 
-if [[ "${program,,}" == "mo2-redirector.exe" ]]; then
+download=""
+if [[ -f "$download_note" ]] && mv -f "$download_note" "$download_taken" 2>/dev/null; then  # taken whole, once
+    left=$(stat -c %Y "$download_taken" 2>/dev/null || echo 0)
+    link=""
+    IFS= read -r link < "$download_taken" || true
+    : > "$download_taken"
+    if (( $(date +%s) - left <= download_ttl )) && [[ "${link,,}" == nxm://* ]]; then
+        download=$link
+    else
+        say "ignoring a download link ModSync left over ${download_ttl}s ago"
+    fi
+fi
+
+if [[ -n "$download" ]]; then
+    args=("$download")
+    say "opening Mod Organizer 2 ($instance) for a Nexus Mods download"
+elif [[ "${program,,}" == "mo2-redirector.exe" ]]; then
     args=()
     say "opening Mod Organizer 2 ($instance)"
 else

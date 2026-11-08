@@ -174,6 +174,10 @@ def _heroic_section(plat: platforms.Platform, line) -> None:
         line(f"  • prefix: {game.prefix}")
     if game.wine is not None:
         line(f"  • runs with: {game.wine.name or game.wine.bin} ({game.wine.type})")
+    from modsync import nxm
+
+    downloads = nxm.status()
+    line(f"  {'•' if downloads.active or not downloads.enabled else '!'} Nexus downloads (nxm://): {downloads.summary()}")
     line()
 
 

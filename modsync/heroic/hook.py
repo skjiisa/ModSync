@@ -34,7 +34,11 @@ from pathlib import Path
 from modsync import __version__, background
 from modsync.heroic.library import GogGame
 
-HOOK_VERSION = 2  # 2: MO2's executable read at launch; the game's program found by its folder
+HOOK_VERSION = 3  # 2: MO2's executable read at launch; the game's program found by its folder; 3: downloads
+# How long a download link left for the hook (leave_download) stays good: long
+# enough for Heroic to start and launch the game, short enough that a launch
+# that never came doesn't turn a later Play into opening MO2.
+DOWNLOAD_TTL = 180
 TEMPLATE = Path(__file__).parent / "play_hook.sh"
 MARKER = "--modsync-heroic-hook"
 FLATPAK_ID = "com.heroicgameslauncher.hgl"
@@ -70,6 +74,37 @@ def script_path(game: GogGame) -> Path:
     return game.config_dir / "modsync" / f"play-{game.app_name}.sh"
 
 
+def download_note(game: GogGame) -> Path:
+    """Where ModSync leaves an nxm:// link for the next launch to open MO2 with:
+    beside the script, which Heroic's Flatpak can read."""
+    return game.config_dir / "modsync" / f"download-{game.app_name}.txt"
+
+
+def download_taken(game: GogGame) -> Path:
+    """Where the hook moves a link it takes. It empties the file then, so the
+    file's time says when the launch for the link began."""
+    return download_note(game).with_suffix(".taken")
+
+
+def leave_download(game: GogGame, url: str) -> None:
+    _write(download_note(game), url + "\n")
+
+
+def launch(game: GogGame) -> None:
+    """Ask Heroic to launch the game, as its Play button does (starting Heroic
+    if it isn't running). Its Flatpak directly: with both installed, the
+    protocol could reach the Heroic that doesn't have the game."""
+    url = f"heroic://launch?appName={game.app_name}&runner=gog"
+    command = ["flatpak", "run", FLATPAK_ID, url] if game.flatpak else ["xdg-open", url]
+    if background.in_flatpak():
+        command = ["flatpak-spawn", "--host", *command]
+    try:
+        subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError as e:
+        raise HookError(f"Couldn't ask Heroic to launch the game: {e}") from e
+
+
 def _settings_path(game: GogGame) -> Path:
     return game.config_dir / "GamesConfig" / f"{game.app_name}.json"
 
@@ -91,6 +126,9 @@ def render(game: GogGame, *, game_name: str, instance: Path, game_exe: str, pref
         "GAME_EXE": shlex.quote(game_exe),
         "PREFER_ARGUMENT": shlex.quote(prefer_argument),
         "DIRECT_ARGS": " ".join(shlex.quote(a) for a in direct_args),
+        "DOWNLOAD_NOTE": shlex.quote(str(download_note(game))),
+        "DOWNLOAD_TAKEN": shlex.quote(str(download_taken(game))),
+        "DOWNLOAD_TTL": str(DOWNLOAD_TTL),
         "MARKER": MARKER,
     }.items():
         text = text.replace(f"@@{key}@@", value)
@@ -205,6 +243,8 @@ def disable(game: GogGame) -> str:
         _write(_settings_path(game), json.dumps(data, indent=2))
     script = script_path(game)
     script.unlink(missing_ok=True)
+    download_note(game).unlink(missing_ok=True)
+    download_taken(game).unlink(missing_ok=True)
     try:
         script.parent.rmdir()
     except OSError:

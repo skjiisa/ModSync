@@ -11,7 +11,7 @@ from __future__ import annotations
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QGridLayout
 
-from modsync import __version__, background, cyberpunk, diagnostics, firewall, launchhook, steamos
+from modsync import __version__, background, cyberpunk, diagnostics, firewall, launchhook, nxm, steamos
 from modsync.steam import shortcuts
 from modsync.ui import worker
 from modsync.ui.input import Action
@@ -93,6 +93,8 @@ class SystemPage(Page):
                          on_failed=lambda _: self.refresh_hook())
         # Heroic's Play hook for Cyberpunk, likewise (it never raises).
         worker.run_async(cyberpunk.refresh_hook, on_failed=lambda _: None)
+        # ModSync's handler for Nexus downloads, taken back from MO2-LINT if it took it.
+        worker.run_async(nxm.refresh, on_failed=lambda _: None)
         self.firewall: firewall.Check | None = None
         self._refresh_firewall()
         host.busyChanged.connect(self._on_busy)

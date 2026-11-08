@@ -1295,6 +1295,71 @@ def _cyberpunk_launch(*, play: bool) -> int:
     return 0
 
 
+def nxm(args: list[str]) -> int:
+    """Nexus Mods' download links: ModSync as their handler, and opening one."""
+    from modsync import nxm as handler
+
+    sub = args[0] if args else ""
+    if len(args) == 1 and handler.game_of(sub) is not None:
+        return _nxm_open(sub)
+    try:
+        if args == ["status"]:
+            st = handler.status()
+            print(f"Nexus downloads: {st.summary()}")
+            if st.enabled:
+                print(f"  entry: {handler.entry_path()}")
+            return 0 if st.active else 1
+        if args == ["enable"]:
+            print(handler.enable())
+            return 0
+        if args == ["disable"]:
+            print(handler.disable())
+            return 0
+    except (handler.NxmError, OSError) as e:
+        print(f"error: {e}")
+        return 1
+    print(
+        "usage:\n"
+        "  modsync nxm status                whether Nexus Mods downloads (nxm:// links) come to ModSync\n"
+        "  modsync nxm enable                send them to the MO2 of the games ModSync runs; others go on\n"
+        "                                    to the program that opened them before (MO2-LINT's)\n"
+        "  modsync nxm disable               give them back to that program\n"
+        "  modsync nxm <nxm://…>             (run by the desktop) open one"
+    )
+    return 2
+
+
+def _nxm_open(url: str) -> int:
+    """What the desktop runs for a link. Nobody sees a terminal here, so a
+    failure is also shown as a desktop notification."""
+    from modsync import nxm as handler
+
+    try:
+        print(handler.handle(url))
+        return 0
+    except Exception as e:  # noqa: BLE001 — whatever it is, the user must hear of it
+        import logging
+
+        logging.getLogger(__name__).exception("couldn't open %s link", handler.game_of(url))
+        print(f"error: {e}", file=sys.stderr)
+        _notify(f"The Nexus Mods download didn't start: {e}")
+        return 1
+
+
+def _notify(message: str) -> None:
+    from modsync import background
+
+    try:
+        if background.run_host(["notify-send", "--app-name=ModSync", "--icon=io.github.skjiisa.ModSync",
+                                "ModSync", message], timeout=15).returncode == 0:
+            return
+    except Exception:  # noqa: BLE001 — no notification service: a dialog instead
+        pass
+    from modsync.__main__ import _show_error
+
+    _show_error(message)
+
+
 def launch(args: list[str]) -> int:
     """Open ModSync when the game is launched from Steam (the launch hook)."""
     from modsync import launchhook
