@@ -56,7 +56,7 @@ class DaggerfallUiTests(UiTestCase):
         self.settle(2)
         sheet = window.top_overlay
         self.assertIsInstance(sheet, GameSheet)
-        self.assertEqual(list(sheet.rows), ["skyrim", "daggerfall"])
+        self.assertEqual(list(sheet.rows), ["skyrim", "daggerfall", "cyberpunk"])
         daggerfall = sheet.rows["daggerfall"]
         self.assertEqual(daggerfall.badge.text(), "Not installed")
         self.assertIn("in Steam first", daggerfall.description)
@@ -102,7 +102,7 @@ class DaggerfallUiTests(UiTestCase):
             self.settle(2)
             sheet = window.top_overlay
             self.assertIsInstance(sheet, GameSheet)
-            self.assertEqual(list(sheet.rows), ["skyrim", "daggerfall"])
+            self.assertEqual(list(sheet.rows), ["skyrim", "daggerfall", "cyberpunk"])
             self.assertEqual(sheet.rows["skyrim"].title.text(), SKYRIM_SE.name)
             self.assertTrue(sheet.rows["skyrim"].end.check)
             daggerfall = sheet.rows["daggerfall"]

@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from modsync import __version__, dfu, launchhook
+from modsync import __version__, cyberpunk, dfu, launchhook
 from modsync.games import SKYRIM_SE
 from modsync.state import State
 from modsync.service import ModSyncService
@@ -39,6 +39,7 @@ from modsync.ui import nav, theme, worker
 from modsync.ui.input import Action, DIRECTIONS, InputRouter
 from modsync.ui.overlays import ConfirmSheet, GameSheet, Overlay, PageSheet
 from modsync.ui.pages import Page
+from modsync.ui.pages.cyberpunk import CyberpunkPage
 from modsync.ui.pages.daggerfall import DaggerfallPage
 from modsync.ui.pages.game import GamePage
 from modsync.ui.pages.home import HomePage
@@ -62,12 +63,13 @@ _POLL_MS = 4000
 
 APP_ID = "io.github.skjiisa.ModSync"
 
-PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage, DaggerfallPage)
+PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage, DaggerfallPage, CyberpunkPage)
 TAB_KEYS = ("home", "sync", "system")
 # The games Home can show: key, the page that is their Home, name in the switcher.
-GAMES = (("skyrim", "home", "Skyrim"), ("daggerfall", "daggerfall", "Daggerfall Unity"))
+GAMES = (("skyrim", "home", "Skyrim"), ("daggerfall", "daggerfall", "Daggerfall Unity"),
+         ("cyberpunk", "cyberpunk", "Cyberpunk 2077"))
 GAME_PAGES = {key: page for key, page, _name in GAMES}
-_GAME_POLLS = 8  # how many polls apart Daggerfall is looked for while Home shows Skyrim
+_GAME_POLLS = 8  # how many polls apart the other games are looked for
 
 
 def alive(w: QWidget | None) -> bool:
@@ -77,6 +79,11 @@ def alive(w: QWidget | None) -> bool:
 def dfu_here(ov: dfu.Overview | None) -> bool:
     """Daggerfall is on this machine: Steam has it, or Daggerfall Unity is installed."""
     return ov is not None and (ov.dagger is not None or ov.install is not None)
+
+
+def cyberpunk_here(ov: cyberpunk.Overview | None) -> bool:
+    """Cyberpunk 2077 is on this machine: Heroic installed it."""
+    return ov is not None and ov.game is not None
 
 
 def app_mark(size: int) -> QWidget:
@@ -207,6 +214,7 @@ class MainWindow(QMainWindow):
         # still on this machine, the window may open on Skyrim instead.
         self._restored = self.game != "skyrim"
         self.dfu_overview: dfu.Overview | None = None
+        self.cyberpunk_overview: cyberpunk.Overview | None = None
         self._game_polls = 0
         self._call.connect(lambda fn: fn())
 
@@ -362,24 +370,50 @@ class MainWindow(QMainWindow):
         worker.run_async(State.update, home_game=value, on_failed=lambda _e: None)
 
     def _look_for_games(self) -> None:
-        """Read whether Daggerfall is here, off the UI thread (it reads Steam's libraries)."""
-        if self.steam_launch is None:
+        """Read whether the other games are here, off the UI thread (it reads
+        Steam's libraries and Heroic's files). The one shown reads itself."""
+        if self.steam_launch is not None:
+            return
+        if self.game != "daggerfall":
             worker.run_async(dfu.overview, hook=False, on_done=self.dfu_checked, on_failed=lambda _e: None)
+        if self.game != "cyberpunk":
+            worker.run_async(cyberpunk.overview, hook=False, on_done=self.cyberpunk_checked,
+                             on_failed=lambda _e: None)
+
+    def game_here(self, game: str) -> bool:
+        if game == "daggerfall":
+            return dfu_here(self.dfu_overview)
+        if game == "cyberpunk":
+            return cyberpunk_here(self.cyberpunk_overview)
+        return True
 
     def dfu_checked(self, ov: dfu.Overview) -> None:
         """Daggerfall Unity was read (here, or by its page): the picker says how it stands."""
         if not shiboken6.isValid(self):
             return
         self.dfu_overview = ov
-        if self._restored:
+        self._game_checked("daggerfall")
+
+    def cyberpunk_checked(self, ov: cyberpunk.Overview) -> None:
+        """Cyberpunk was read (here, or by its page): the picker says how it stands."""
+        if not shiboken6.isValid(self):
+            return
+        self.cyberpunk_overview = ov
+        self._game_checked("cyberpunk")
+
+    def _game_checked(self, game: str) -> None:
+        """The first read of the game the window reopened on: not on this machine,
+        and nothing pressed since, Home is Skyrim's this time."""
+        if self._restored and self.game == game:
             self._restored = False
-            if not dfu_here(ov) and self.router.last_input < self.opened_at:
+            if not self.game_here(game) and self.router.last_input < self.opened_at:
                 self._open_on_skyrim()
 
     def _open_on_skyrim(self) -> None:
-        """Reopened on Daggerfall, which this machine doesn't have: Home is Skyrim's
-        this time. The choice stays saved, for once Daggerfall is here."""
-        was_inside = alive(self.focusWidget()) and self.pages["daggerfall"].isAncestorOf(self.focusWidget())
+        """Reopened on a game this machine doesn't have: Home is Skyrim's this
+        time. The choice stays saved, for once the game is here."""
+        shown = self.pages[GAME_PAGES[self.game]]
+        was_inside = alive(self.focusWidget()) and shown.isAncestorOf(self.focusWidget())
         self.game = "skyrim"
         self._update_game_switch()
         if self._current == "home" and self.setup is None:
@@ -390,14 +424,15 @@ class MainWindow(QMainWindow):
     def game_choices(self) -> list[tuple[str, str, str, str, str]]:
         """Each game the picker offers, with how it stands."""
         return [("skyrim", SKYRIM_SE.name, *self.pages["home"].summary()),
-                ("daggerfall", "Daggerfall Unity", *DaggerfallPage.summary(self.dfu_overview))]
+                ("daggerfall", "Daggerfall Unity", *DaggerfallPage.summary(self.dfu_overview)),
+                ("cyberpunk", "Cyberpunk 2077", *CyberpunkPage.summary(self.cyberpunk_overview))]
 
     def open_game_picker(self) -> None:
         if not self.switchable or self.setup is not None or self.overlays:
             return
-        # Nothing to switch to while Daggerfall isn't here: focus stays, so X then A
+        # Nothing to switch to while no other game is here: focus stays, so X then A
         # doesn't head for Steam's install dialog.
-        here = self.game != "skyrim" or dfu_here(self.dfu_overview)
+        here = self.game != "skyrim" or any(self.game_here(key) for key in GAME_PAGES if key != "skyrim")
         GameSheet(self, self.game_choices(), self.game, lambda key: self.switch_game(key),
                   start=None if here else self.game).open()
 
@@ -683,9 +718,10 @@ class MainWindow(QMainWindow):
     def poll(self) -> None:
         for page in self.pages.values():
             page.poll()
-        # Now and then, so the picker knows about Daggerfall installed through Steam meanwhile.
+        # Now and then, so the picker knows about a game installed meanwhile
+        # (Daggerfall through Steam, Cyberpunk through Heroic).
         self._game_polls += 1
-        if self._game_polls % _GAME_POLLS == 0 and self.game != "daggerfall":
+        if self._game_polls % _GAME_POLLS == 0:
             self._look_for_games()
         for message in self.service.launcher.poll():
             self.notify(f"⚠ {message}")

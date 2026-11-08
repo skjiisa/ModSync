@@ -8,9 +8,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
-- First step toward Cyberpunk 2077 from GOG through the Heroic Games
-  Launcher: `modsync doctor` finds it, native or Flatpak Heroic, and shows
-  its folder, GOG build (and whether Heroic pins it), prefix and Proton.
+- Cyberpunk 2077 from GOG through the Heroic Games Launcher, with Mod
+  Organizer 2. Choose it in the game switcher (X): Home installs MO2 for it,
+  plays through it or opens it, switches Heroic's Play button, and turns
+  mods sync on and off. The commands below do the same from a terminal.
+- `modsync doctor` finds Cyberpunk 2077 in Heroic, native or Flatpak, and
+  shows its folder, GOG build (and whether Heroic pins it), prefix and Proton.
 - `modsync cyberpunk status | use <dir> | open | play` opens Cyberpunk's
   Mod Organizer 2, or plays through it, with Heroic's prefix and Proton
   (through umu-launcher, as Heroic runs the game). Play uses MO2's
