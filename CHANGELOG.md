@@ -11,6 +11,13 @@ All notable changes to ModSync are documented here. The format follows
 - First step toward Cyberpunk 2077 from GOG through the Heroic Games
   Launcher: `modsync doctor` finds it, native or Flatpak Heroic, and shows
   its folder, GOG build (and whether Heroic pins it), prefix and Proton.
+- `modsync cyberpunk status | use <dir> | open | play` opens Cyberpunk's
+  Mod Organizer 2, or plays through it, with Heroic's prefix and Proton
+  (through umu-launcher, as Heroic runs the game). Play uses MO2's
+  Cyberpunk executable, which deploys REDmod first and skips REDlauncher,
+  and every launch sets `WINEDLLOVERRIDES="winmm,version=n,b"` so Cyber
+  Engine Tweaks and RED4ext load. An instance MO2-LINT installed is found
+  by itself.
 
 ### Changed
 

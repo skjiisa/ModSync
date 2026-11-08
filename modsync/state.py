@@ -51,7 +51,7 @@ def _refuse_newer(p: Path, data: object) -> None:
 
 _FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "awaiting_vault_version",
            "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside", "dfu_path", "game_folders", "declined_folders", "paired",
-           "home_game")
+           "home_game", "cyberpunk_instance")
 
 
 @dataclass
@@ -92,6 +92,8 @@ class State:
     paired: bool = False
     # The game the app's Home shows ("" for Skyrim), so it opens where it was left.
     home_game: str = ""
+    # Cyberpunk 2077's MO2 instance (modsync.cyberpunk); "" for the one MO2-LINT installed.
+    cyberpunk_instance: str = ""
     # The version of the file's format this ModSync writes (SCHEMA); never read back.
     schema: int = SCHEMA
 

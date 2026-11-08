@@ -1127,6 +1127,74 @@ def _dfu_hook(args: list[str]) -> int:
     return 0
 
 
+def cyberpunk(args: list[str]) -> int:
+    """Cyberpunk 2077 from GOG through Heroic, modded with MO2."""
+    sub = args[0] if args else ""
+    rest = args[1:]
+    if sub == "status" and not rest:
+        return _cyberpunk_status()
+    if sub == "use" and len(rest) == 1:
+        return _cyberpunk_use(rest[0])
+    if sub in ("open", "play") and not rest:
+        return _cyberpunk_launch(play=sub == "play")
+    print(
+        "usage:\n"
+        "  modsync cyberpunk status          Cyberpunk 2077 in Heroic (GOG) and its MO2 instance\n"
+        "  modsync cyberpunk use <dir>       use this MO2 instance for Cyberpunk\n"
+        "  modsync cyberpunk open            open its Mod Organizer 2 with Heroic's Proton\n"
+        "  modsync cyberpunk play            play through MO2 (CET and RED4ext load; REDmod deploys first)"
+    )
+    return 2
+
+
+def _cyberpunk_status() -> int:
+    from modsync import cyberpunk
+
+    game = cyberpunk.find_game()
+    if game is None:
+        print("Cyberpunk 2077 (GOG):  not installed in Heroic")
+    else:
+        print(f"Cyberpunk 2077 (GOG):  {game.install_path}")
+        print(f"  GOG build:           {game.version or 'unknown'}{' (pinned in Heroic)' if game.pinned else ''}")
+        print(f"  Prefix:              {game.prefix}" + ("" if game.drive_c else "  (not created yet — launch it once from Heroic)"))
+        if game.wine is not None:
+            print(f"  Runs with:           {game.wine.name or game.wine.bin} ({game.wine.type})")
+    instance = cyberpunk.find_instance()
+    if instance is None:
+        print("MO2 instance:          none ('modsync cyberpunk use <dir>')")
+        return 1
+    problem = cyberpunk.instance_problem(instance)
+    print(f"MO2 instance:          {instance}")
+    if problem:
+        print(f"  ! {problem}")
+    return 0 if game is not None and not problem else 1
+
+
+def _cyberpunk_use(path: str) -> int:
+    from modsync import cyberpunk
+
+    try:
+        instance = cyberpunk.use_instance(path)
+    except cyberpunk.CyberpunkError as e:
+        print(f"error: {e}")
+        return 1
+    print(f"Cyberpunk's MO2 instance: {instance}")
+    return 0
+
+
+def _cyberpunk_launch(*, play: bool) -> int:
+    from modsync import cyberpunk
+    from modsync.mo2.launch import Launcher
+
+    try:
+        plan = cyberpunk.build_plan(cyberpunk.find_instance(), cyberpunk.find_game(), play=play)
+        print(Launcher().start(plan))
+    except (cyberpunk.CyberpunkError, RuntimeError, OSError) as e:
+        print(f"error: {e}")
+        return 1
+    return 0
+
+
 def launch(args: list[str]) -> int:
     """Open ModSync when the game is launched from Steam (the launch hook)."""
     from modsync import launchhook
