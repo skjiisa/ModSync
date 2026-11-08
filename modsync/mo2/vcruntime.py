@@ -289,6 +289,17 @@ def backup_prefix_runtime(system32: Path, dest: Path) -> Path:
     return dest
 
 
+# The redistributable's own success codes: 3010 (installed, reboot requested,
+# meaningless in a prefix) and 1638 (a newer one is already there). Wine hands
+# a Windows exit code to Linux, which keeps only its low eight bits, so they
+# arrive as 194 and 102.
+INSTALLER_OK = {0, 3010, 1638, 3010 & 0xFF, 1638 & 0xFF}
+
+
+def installer_succeeded(returncode: int) -> bool:
+    return returncode in INSTALLER_OK
+
+
 def redist_installer() -> Path:
     """The pinned, verified VC_redist.x64.exe, downloaded once."""
     path = cache_dir().parent / f"VC_redist.x64-{'.'.join(map(str, VERSION))}.exe"

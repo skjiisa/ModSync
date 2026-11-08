@@ -19,6 +19,12 @@ All notable changes to ModSync are documented here. The format follows
   Engine Tweaks and RED4ext load. An instance MO2-LINT installed is found
   by itself; one chosen with `use` wins, and a launch says so when it's
   missing instead of starting another.
+- `modsync cyberpunk install [<dir>]` installs MO2 for Cyberpunk 2077 from
+  GOG: MO2-LINT installs MO2 and Heroic's "Launch Mod Organizer" option,
+  then ModSync applies the prefix steps with the game's own runner
+  (`umu-run winetricks`; MO2-LINT's GOG path would run a host Wine on the
+  Proton prefix, or nothing on a Steam Deck), installs the VC++ runtime when
+  the prefix needs it, and adds the RootBuilder plugin set up for Cyberpunk.
 - Forget one paired machine: select it under Devices on the Sync page, or
   run `modsync sync forget <machine>`. If another machine passes it on
   again, ModSync removes it again. Entering its code or PIN pairs it again.
@@ -57,6 +63,10 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Installing the Visual C++ runtime into Skyrim's prefix no longer reports
+  a failure when the installer succeeds but asks for a reboot or finds a
+  newer runtime already there. Wine passes its exit codes (3010, 1638) on
+  as their low byte (194, 102), which ModSync didn't recognise.
 - Daggerfall Unity runs on the Steam Frame (#110). Its x86-64 Linux build
   now goes through Steam's FEX and Steam Linux Runtime 4.0, the way Steam
   runs any x86 Linux game on ARM, from both Steam's Play button and the

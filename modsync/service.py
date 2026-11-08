@@ -471,8 +471,7 @@ class ModSyncService:
         installer = vcruntime.redist_installer()
         log.info("installing the VC++ runtime into %s (backup in %s)", system32, backup)
         result = run_in_prefix(path, installer, ["/install", "/quiet", "/norestart"])
-        # 3010: installed, reboot requested (meaningless in a prefix); 1638: a newer one is there.
-        if result.returncode not in (0, 3010, 1638):
+        if not vcruntime.installer_succeeded(result.returncode):
             log.error("VC++ runtime install failed (%s): %s", result.returncode, result.stdout[-2000:])
             raise RuntimeError(
                 f"The Visual C++ runtime installer exited with code {result.returncode}. "

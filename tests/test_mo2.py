@@ -37,6 +37,36 @@ class IniHelperTests(unittest.TestCase):
         self.assertEqual(ini_mod.expand_tokens("%BASE_DIR%/mods", "/inst"), "/inst/mods")
         self.assertEqual(ini_mod.expand_tokens("%DOCUMENTS%/x", "/inst"), "%DOCUMENTS%/x")
 
+    def test_add_missing_adds_only_unset_keys_and_leaves_every_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ModOrganizer.ini"
+            path.write_text(INI + "\n[Plugins]\nRootBuilder\\backup=false\n")
+
+            added = ini_mod.add_missing(path, "Plugins", {"RootBuilder\\Backup": "true", "RootBuilder\\cache": "true"})
+            self.assertEqual(added, ["RootBuilder\\cache"])
+            self.assertEqual(ini_mod.add_missing(path, "General", {"first_start": "false"}), ["first_start"])
+            self.assertEqual(ini_mod.add_missing(path, "General", {"first_start": "true"}), [])
+
+            text = path.read_text()
+            self.assertIn(r"gamePath=@ByteArray(Z:\\home\\deck\\.local", text)  # byte for byte
+            self.assertIn("version=2.5.2\nfirst_start=false\n\n[Settings]", text)
+            self.assertTrue(text.endswith("[Plugins]\nRootBuilder\\backup=false\nRootBuilder\\cache=true\n"))
+            sections = ini_mod.read_ini(path)
+            self.assertEqual(sections["Plugins"]["RootBuilder\\backup"], "false")
+
+    def test_add_missing_keeps_windows_line_endings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ModOrganizer.ini"
+            path.write_bytes(b"[General]\r\nversion=2.5.2\r\n\r\n[Plugins]\r\na=1\r\n")
+            ini_mod.add_missing(path, "Plugins", {"b": "2"})
+            self.assertEqual(path.read_bytes(), b"[General]\r\nversion=2.5.2\r\n\r\n[Plugins]\r\na=1\r\nb=2\r\n")
+
+    def test_add_missing_creates_the_section_and_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "new.ini"
+            self.assertEqual(ini_mod.add_missing(path, "Plugins", {"a": "1"}), ["a"])
+            self.assertEqual(path.read_text(), "[Plugins]\na=1\n")
+
 
 class InstanceInspectTests(unittest.TestCase):
     def _make_instance(self, tmp: str) -> Path:

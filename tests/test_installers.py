@@ -103,6 +103,50 @@ class Mo2LintBackendTests(unittest.TestCase):
             self.assertEqual(seen["args"][:2], ["flatpak-spawn", "--host"])
             self.assertEqual(seen["args"][2], str(fake))
 
+    def test_launcher_and_environment_reach_mo2lint(self):
+        """Cyberpunk on GOG: --launcher gog, and Wine stand-ins in the environment
+        (modsync.cyberpunk.MO2LINT_ENV) — also through flatpak-spawn."""
+        from unittest.mock import patch
+
+        from modsync.games import CYBERPUNK
+        from modsync.mo2.installers import mo2lint
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            fake = _script(tmp / "fake-mo2-lint", FAKE_OK.replace(
+                'print("fake mo2-lint args:", sys.argv[1:])',
+                'import os; print("fake mo2-lint args:", sys.argv[1:], "WINE=" + os.environ.get("WINE", ""))'))
+            lines: list[str] = []
+            result = Mo2LintBackend(binary=fake).install(CYBERPUNK, tmp / "MO2", on_output=lines.append,
+                                                         launcher="gog", env={"WINE": "/bin/false"})
+            self.assertTrue(result.success, result.message)
+            joined = "\n".join(lines)
+            self.assertIn("'cyberpunk2077'", joined)
+            self.assertIn("'--launcher', 'gog'", joined)
+            self.assertIn("WINE=/bin/false", joined)
+
+            seen = {}
+
+            class FakeProc:
+                stdout = iter([])
+
+                def __init__(self, args, **kw):
+                    seen["args"], seen["env"] = args, kw.get("env")
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+                def wait(self):
+                    return 0
+
+            with patch.object(mo2lint.background, "in_flatpak", return_value=True), \
+                    patch.object(mo2lint.subprocess, "Popen", FakeProc):
+                Mo2LintBackend._run(["mo2-lint", "install"], None, {"WINE": "/bin/false"})
+            self.assertEqual(seen["args"], ["flatpak-spawn", "--host", "--env=WINE=/bin/false", "mo2-lint", "install"])
+
     def test_failure_leaves_no_empty_folder_behind(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -132,7 +176,7 @@ class Mo2LintBackendTests(unittest.TestCase):
             fake = _script(tmp / "fake-mo2-lint", FAKE_OK)
             calls = []
 
-            def run(args, on_output):
+            def run(args, on_output, env=None):
                 calls.append(args[1:])
                 if args[1] == "uninstall":
                     state.write_text('{"instances": []}')  # what mo2-lint uninstall does
@@ -180,7 +224,7 @@ class Mo2LintBackendTests(unittest.TestCase):
             state = self._registry(tmp, dest)
             fake = _script(tmp / "fake-mo2-lint", FAKE_OK)
             with patch.object(mo2lint, "mo2lint_state_path", return_value=state), \
-                    patch.object(Mo2LintBackend, "_run", staticmethod(lambda a, o: 0)) :
+                    patch.object(Mo2LintBackend, "_run", staticmethod(lambda a, o, env=None: 0)) :
                 result = Mo2LintBackend(binary=fake).install(SKYRIM_SE, dest)
             self.assertFalse(result.success)
             self.assertIn("stale", result.message)

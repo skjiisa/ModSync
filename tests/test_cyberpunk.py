@@ -48,6 +48,15 @@ size=2
 """
 
 
+@pytest.fixture(autouse=True)
+def _no_chosen_instance():
+    """The scratch config folder lasts the whole session; a choice one test
+    makes mustn't decide the next."""
+    cyberpunk._settings_path().unlink(missing_ok=True)
+    yield
+    cyberpunk._settings_path().unlink(missing_ok=True)
+
+
 @pytest.fixture
 def umu():
     with patch.object(cyberpunk, "_host_which", return_value="/usr/bin/umu-run"):
@@ -184,3 +193,208 @@ def test_cli_launch_reports_a_missing_chosen_instance(tmp_path, capsys):
     with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path)):
         assert main(["cyberpunk", "play"]) == 1
     assert "no ModOrganizer.exe" in capsys.readouterr().out
+
+
+# --- installing MO2 -----------------------------------------------------------
+
+
+class FakeRun:
+    """Stands in for run_in_prefix: answers list-installed, records the rest."""
+
+    def __init__(self, installed="", results=()):
+        self.installed, self.results, self.calls = installed, list(results), []
+
+    def __call__(self, game, args, **_kw):
+        from subprocess import CompletedProcess
+
+        self.calls.append(args)
+        if args[-1] == "list-installed":
+            return CompletedProcess(args, 0, self.installed, "")
+        return self.results.pop(0) if self.results else CompletedProcess(args, 0, "", "")
+
+
+def test_prepare_prefix_runs_only_the_missing_verbs_through_umu(tmp_path):
+    fake = FakeRun(installed="win10\narial\n")
+    with patch.object(cyberpunk, "run_in_prefix", fake), \
+            patch("modsync.mo2.vcruntime.prefix_runtime_problems", return_value=[]):
+        cyberpunk.prepare_prefix(make_game(tmp_path))
+
+    assert fake.calls == [["winetricks", "-q", "list-installed"],
+                          ["winetricks", "-q", "fontsmooth=rgb", "xaudio2_7=native", "d3dcompiler_47"]]
+
+
+def test_prepare_prefix_says_why_winetricks_failed(tmp_path):
+    from subprocess import CompletedProcess
+
+    fake = FakeRun(results=[CompletedProcess([], 1, "", "INFO: umu\nERROR: no network\n")])
+    with patch.object(cyberpunk, "run_in_prefix", fake), pytest.raises(cyberpunk.CyberpunkError, match="no network"):
+        cyberpunk.prepare_prefix(make_game(tmp_path))
+
+
+def test_prepare_prefix_installs_the_vc_runtime_only_when_needed(tmp_path):
+    from subprocess import CompletedProcess
+
+    installer = tmp_path / "VC_redist.x64.exe"
+    game = make_game(tmp_path)
+    # 3010 (installed, reboot requested) as Linux sees it: its low byte.
+    fake = FakeRun(installed="\n".join(cyberpunk.TRICKS), results=[CompletedProcess([], 3010 & 0xFF, "", "")])
+    with patch.object(cyberpunk, "run_in_prefix", fake), \
+            patch("modsync.mo2.vcruntime.prefix_runtime_problems", side_effect=[["msvcp140.dll is 14.0.24215.1"], []]), \
+            patch("modsync.mo2.vcruntime.redist_installer", return_value=installer), \
+            patch("modsync.mo2.vcruntime.backup_prefix_runtime", return_value=tmp_path / "backup") as backup:
+        cyberpunk.prepare_prefix(game)
+
+    assert fake.calls[-1] == [str(installer), "/install", "/quiet", "/norestart"]
+    assert backup.call_args.args[0] == game.drive_c / "windows" / "system32"
+
+    fake = FakeRun(installed="\n".join(cyberpunk.TRICKS), results=[CompletedProcess([], 0, "", "")])
+    with patch.object(cyberpunk, "run_in_prefix", fake), \
+            patch("modsync.mo2.vcruntime.prefix_runtime_problems", return_value=["msvcp140.dll is missing"]), \
+            patch("modsync.mo2.vcruntime.redist_installer", return_value=installer), \
+            patch("modsync.mo2.vcruntime.backup_prefix_runtime", return_value=tmp_path / "backup"), \
+            pytest.raises(cyberpunk.CyberpunkError, match="still has msvcp140.dll is missing"):
+        cyberpunk.prepare_prefix(game)
+
+    fake = FakeRun(installed="\n".join(cyberpunk.TRICKS), results=[CompletedProcess([], 1603 & 0xFF, "", "")])
+    with patch.object(cyberpunk, "run_in_prefix", fake), \
+            patch("modsync.mo2.vcruntime.prefix_runtime_problems", return_value=["msvcp140.dll is missing"]), \
+            patch("modsync.mo2.vcruntime.redist_installer", return_value=installer), \
+            patch("modsync.mo2.vcruntime.backup_prefix_runtime", return_value=tmp_path / "backup"), \
+            pytest.raises(cyberpunk.CyberpunkError, match="code 67"):
+        cyberpunk.prepare_prefix(game)
+
+
+def test_plain_wine_uses_the_hosts_winetricks_with_the_games_wine(tmp_path):
+    game = make_game(tmp_path, wine_type="wine")
+    with patch.object(cyberpunk, "_host_which", return_value="/usr/bin/winetricks"):
+        assert cyberpunk.winetricks_command(game, ["win10"]) == (
+            ["/usr/bin/winetricks", "-q", "win10"], {"WINE": "/usr/bin/wine"})
+    with patch.object(cyberpunk, "_host_which", return_value=None), pytest.raises(cyberpunk.CyberpunkError):
+        cyberpunk.winetricks_command(game, ["win10"])
+
+
+def make_rootbuilder_zip(path: Path) -> Path:
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("rootbuilder/", "")
+        archive.writestr("rootbuilder/__init__.py", "# plugin")
+        archive.writestr("rootbuilder/plugin/rootbuilder/core.py", "")
+        archive.writestr("rootbuilder/../../escaped.txt", "nope")
+        archive.writestr("README.md", "not a plugin file")
+    return path
+
+
+def test_rootbuilder_goes_into_plugins_set_up_for_cyberpunk(tmp_path):
+    instance = make_instance(tmp_path)
+    with open(instance / "ModOrganizer.ini", "a") as f:
+        f.write("\n[Plugins]\nRootBuilder\\linkmode=true\n")  # chosen in MO2: kept
+    with patch.object(cyberpunk, "_rootbuilder_zip", return_value=make_rootbuilder_zip(tmp_path / "rb.zip")):
+        cyberpunk.install_rootbuilder(instance)
+
+    assert (instance / "plugins/rootbuilder/__init__.py").read_text() == "# plugin"
+    assert (instance / "plugins/rootbuilder/plugin/rootbuilder/core.py").exists()
+    assert not (tmp_path / "escaped.txt").exists() and not (instance / "plugins/README.md").exists()
+    from modsync.mo2 import ini
+
+    plugins = ini.read_ini(instance / "ModOrganizer.ini")["Plugins"]
+    assert plugins["RootBuilder\\linkmode"] == "true"
+    assert plugins["RootBuilder\\autobuild"] == "true" and plugins["RootBuilder\\usvfsmode"] == "false"
+    assert plugins["RootBuilder\\exclusions"] == '"archive,setup_redlauncher.exe,tools"'
+    assert plugins["Cyberpunk%202077%20Support%20Plugin\\configure_RootBuilder"] == "false"
+
+
+def test_rootbuilder_download_must_match_its_checksum(tmp_path):
+    import io
+
+    with patch("urllib.request.urlopen", return_value=io.BytesIO(b"not the release")), \
+            pytest.raises(cyberpunk.CyberpunkError, match="checksum"):
+        cyberpunk._rootbuilder_zip()
+    from modsync import config
+
+    assert not list((config.data_dir() / "downloads").glob("rootbuilder.*"))
+
+
+class FakeBackend:
+    def __init__(self, tmp_path):
+        self.tmp_path, self.calls = tmp_path, []
+
+    def available(self):
+        return True, ""
+
+    def install(self, game, dest, **kw):
+        from modsync.mo2.installers.base import InstallResult
+
+        self.calls.append((game, dest, kw))
+        return InstallResult(True, 0, make_instance(self.tmp_path))
+
+
+def test_install_mo2_runs_mo2lint_for_gog_then_the_prefix_and_rootbuilder(tmp_path):
+    backend = FakeBackend(tmp_path)
+    game = make_game(tmp_path)
+    with patch.object(cyberpunk, "find_game", return_value=game), \
+            patch.object(cyberpunk, "game_running", return_value=False), \
+            patch.object(cyberpunk, "prepare_prefix") as prepare, \
+            patch.object(cyberpunk, "install_rootbuilder") as rootbuilder:
+        instance = cyberpunk.install_mo2(tmp_path / "dest", backend=backend)
+
+    (played, dest, kw), = backend.calls
+    assert played.mo2lint_key == "cyberpunk2077" and dest == tmp_path / "dest"
+    assert kw["launcher"] == "gog" and kw["env"] == cyberpunk.MO2LINT_ENV
+    prepare.assert_called_once_with(game, None)
+    rootbuilder.assert_called_once_with(instance)
+    assert cyberpunk.chosen_instance() == instance
+
+
+def test_install_again_after_a_failed_step_finishes_the_setup(tmp_path):
+    backend = FakeBackend(tmp_path)
+    game = make_game(tmp_path)
+    with patch.object(cyberpunk, "find_game", return_value=game), \
+            patch.object(cyberpunk, "game_running", return_value=False), \
+            patch.object(cyberpunk, "install_rootbuilder"):
+        with patch.object(cyberpunk, "prepare_prefix", side_effect=cyberpunk.CyberpunkError("winetricks exited with code 1.")), \
+                pytest.raises(cyberpunk.CyberpunkError, match="run the install again"):
+            cyberpunk.install_mo2(tmp_path / "ModOrganizer2-Cyberpunk2077", backend=backend)
+        assert cyberpunk.chosen_instance() is None
+        with patch.object(cyberpunk, "prepare_prefix") as prepare:
+            instance = cyberpunk.install_mo2(tmp_path / "ModOrganizer2-Cyberpunk2077", backend=backend)
+
+    assert len(backend.calls) == 1  # MO2-LINT ran once; the retry only finished the setup
+    prepare.assert_called_once()
+    assert cyberpunk.chosen_instance() == instance
+
+
+def test_install_over_another_games_instance_is_refused(tmp_path):
+    other = make_instance(tmp_path, "[General]\ngameName=Skyrim Special Edition\n")
+    with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path)), \
+            patch.object(cyberpunk, "game_running", return_value=False), \
+            pytest.raises(cyberpunk.CyberpunkError, match="manages Skyrim"):
+        cyberpunk.install_mo2(other, backend=FakeBackend(tmp_path))
+
+
+@pytest.mark.parametrize("running, prefix_ready, match", [
+    (True, True, "Close Cyberpunk 2077"),
+    (False, False, "Launch the game once"),
+])
+def test_install_mo2_refuses_when_the_prefix_is_busy_or_missing(tmp_path, running, prefix_ready, match):
+    backend = FakeBackend(tmp_path)
+    with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path, prefix_ready=prefix_ready)), \
+            patch.object(cyberpunk, "game_running", return_value=running), \
+            pytest.raises(cyberpunk.CyberpunkError, match=match):
+        cyberpunk.install_mo2(tmp_path / "dest", backend=backend)
+    assert backend.calls == []
+
+
+def test_game_running_matches_wine_processes_not_shells():
+    import re
+    from subprocess import CompletedProcess
+
+    with patch.object(cyberpunk.background, "run_host", return_value=CompletedProcess([], 0)) as run:
+        assert cyberpunk.game_running()
+    pattern = re.compile(run.call_args.args[0][-1])
+    assert pattern.search(r"Z:\home\deck\Games\Cyberpunk 2077\bin\x64\Cyberpunk2077.exe --launcher-skip -modded")
+    assert pattern.search(r"X:\ModOrganizer2-cyberpunk2077\ModOrganizer.exe -p Default run -e Cyberpunk 2077")
+    assert not pattern.search("zsh -c pgrep -f Cyberpunk2077.exe")
+    assert not pattern.search("c:\\windows\\system32\\umu.exe /home/deck/ModOrganizer2-cyberpunk2077/ModOrganizer.exe")
+    with patch.object(cyberpunk.background, "run_host", return_value=CompletedProcess([], 1)):
+        assert not cyberpunk.game_running()

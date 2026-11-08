@@ -1160,11 +1160,14 @@ def cyberpunk(args: list[str]) -> int:
         return _cyberpunk_status()
     if sub == "use" and len(rest) == 1:
         return _cyberpunk_use(rest[0])
+    if sub == "install" and len(rest) <= 1:
+        return _cyberpunk_install(rest[0] if rest else None)
     if sub in ("open", "play") and not rest:
         return _cyberpunk_launch(play=sub == "play")
     print(
         "usage:\n"
         "  modsync cyberpunk status          Cyberpunk 2077 in Heroic (GOG) and its MO2 instance\n"
+        "  modsync cyberpunk install [<dir>] install MO2 for it (default ~/ModOrganizer2-cyberpunk2077)\n"
         "  modsync cyberpunk use <dir>       use this MO2 instance for Cyberpunk\n"
         "  modsync cyberpunk open            open its Mod Organizer 2 with Heroic's Proton\n"
         "  modsync cyberpunk play            play through MO2 (CET and RED4ext load; REDmod deploys first)"
@@ -1205,6 +1208,23 @@ def _cyberpunk_use(path: str) -> int:
         print(f"error: {e}")
         return 1
     print(f"Cyberpunk's MO2 instance: {instance}")
+    return 0
+
+
+def _cyberpunk_install(dest: str | None) -> int:
+    import sys
+
+    from modsync import cyberpunk
+
+    target = Path(dest).expanduser() if dest else cyberpunk.default_instance_dir()
+    print(f"Installing Mod Organizer 2 for Cyberpunk 2077 to {target} … (this can take several minutes)")
+    try:
+        instance = cyberpunk.install_mo2(target, lambda line: print(f"  {line}", file=sys.stderr))
+    except (cyberpunk.CyberpunkError, RuntimeError, OSError) as e:
+        print(f"error: {e}")
+        return 1
+    print(f"Installed and now in use: {instance}")
+    print("Open MO2 with 'modsync cyberpunk open' to add mods, or play with 'modsync cyberpunk play'.")
     return 0
 
 
