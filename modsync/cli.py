@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 
 def doctor(args: list[str]) -> int:
@@ -892,8 +893,12 @@ def dfu(args: list[str]) -> int:
         return _dfu_hook(rest)
     if sub == "saves" and set(rest) <= {"--quiet", "--playing"}:
         return _dfu_saves(quiet="--quiet" in rest, playing="--playing" in rest)
-    if sub == "follow" and set(rest) <= {"--quiet"}:
-        return _dfu_follow(quiet="--quiet" in rest)
+    if sub == "follow":
+        launching = rest[rest.index("--from") + 1] if "--from" in rest[:-1] else None
+        if ("--from" in rest and launching is None) or set(rest) - {"--quiet", "--from", launching}:
+            print("usage: modsync dfu follow [--quiet] [--from <the Daggerfall folder Steam is starting>]")
+            return 2
+        return _dfu_follow(quiet="--quiet" in rest, launching=Path(launching) if launching else None)
     print(
         "usage:\n"
         "  modsync dfu status                   Steam's Daggerfall data and the Daggerfall Unity install\n"
@@ -1058,7 +1063,7 @@ def _dfu_install(args: list[str]) -> int:
     return 0
 
 
-def _dfu_follow(*, quiet: bool) -> int:
+def _dfu_follow(*, quiet: bool, launching: Path | None = None) -> int:
     from modsync import dfu
 
     inst = dfu.current_install()
@@ -1066,7 +1071,7 @@ def _dfu_follow(*, quiet: bool) -> int:
         print("Daggerfall Unity isn't installed yet; run 'modsync dfu install' first.")
         return 1
     try:
-        moved = dfu.follow_steam_data(inst)
+        moved = dfu.follow_steam_data(inst, launching)
     except Exception as exc:  # run by the Play hook: say so, never block the game
         print(f"Couldn't point Daggerfall Unity at Steam's data: {exc}")
         return 1

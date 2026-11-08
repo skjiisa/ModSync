@@ -43,19 +43,16 @@ if [[ -n "$native" && "$verb" == "waitforexitandrun" ]]; then
         cd "${native%/*}" || exit 1
         # Steam moving Daggerfall to another library (an SD card) empties the folder
         # DFU's settings point at, and DFU would open on its "set the path" screen.
-        # Only then is ModSync asked to point it at Steam's copy (modsync dfu follow).
-        data=$(sed -n 's/^[[:space:]]*MyDaggerfallPath[[:space:]]*=[[:space:]]*//p' \
-            PortableAppdata/settings.ini 2>/dev/null | head -n 1)
-        data="${data%$'\r'}"
-        if [[ -z "$data" || ! ( -d "$data/ARENA2" || -d "$data/arena2" ) ]]; then
-            follow=("${modsync[@]}")
-            if [[ -f /.flatpak-info ]] && command -v flatpak-spawn >/dev/null 2>&1; then
-                follow=(flatpak-spawn --host "${modsync[@]}")
-            fi
-            log "Daggerfall's data isn't at '${data}'; asking ModSync to point Daggerfall Unity at Steam's"
-            env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT timeout 60 "${follow[@]}" dfu follow --quiet \
-                </dev/null >>"$log_file" 2>&1 || log "WARNING: couldn't point Daggerfall Unity at Steam's data"
+        # ModSync checks the data the way DFU does and, only if it's gone, points
+        # DFU at Steam's copy, preferring the one Steam is starting (modsync dfu follow).
+        follow=("${modsync[@]}")
+        if [[ -f /.flatpak-info ]] && command -v flatpak-spawn >/dev/null 2>&1; then
+            follow=(flatpak-spawn --host "${modsync[@]}")
         fi
+        follow+=(dfu follow --quiet)
+        [[ -n "${STEAM_COMPAT_INSTALL_PATH:-}" ]] && follow+=(--from "$STEAM_COMPAT_INSTALL_PATH")
+        env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT timeout 30 "${follow[@]}" \
+            </dev/null >>"$log_file" 2>&1 || log "WARNING: couldn't check Daggerfall Unity's data path"
         # Daggerfall Unity's saves sync through a library ModSync keeps (modsync
         # dfu saves): bring the newest in before it starts, and store the new
         # ones once it exits. Only where saves sync has run; never blocking the game.

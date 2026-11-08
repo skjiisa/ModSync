@@ -99,12 +99,15 @@ def default_install_dir() -> Path:
 
 
 def steam_daggerfall() -> Path | None:
-    """The ``DF/DAGGER`` folder of Steam's Daggerfall, if Steam installed it."""
-    app = libs.find_app(libs.all_libraries(platforms.current().steam_roots()), DAGGERFALL_APPID)
-    if app is None:
-        return None
-    dagger = app.install_path / "DF" / "DAGGER"
-    return dagger if dagger.is_dir() else None
+    """The ``DF/DAGGER`` folder of Steam's Daggerfall, if Steam installed it.
+    Every library is looked in: one can still list Daggerfall after Steam moved
+    it (a stale manifest, files left over), so a copy DFU would accept wins."""
+    found = []
+    for lib in libs.all_libraries(platforms.current().steam_roots()):
+        app = libs.find_app([lib], DAGGERFALL_APPID)
+        if app is not None and (app.install_path / "DF" / "DAGGER").is_dir():
+            found.append(app.install_path / "DF" / "DAGGER")
+    return next((d for d in found if not data_problems(d)), found[0] if found else None)
 
 
 def arena2(dagger: Path) -> Path | None:
@@ -545,13 +548,14 @@ def adopt(path: Path | str) -> tuple[Existing, str | None]:
     return found, follow_install(inst)
 
 
-def follow_steam_data(inst: Install) -> Path | None:
+def follow_steam_data(inst: Install, launching: Path | None = None) -> Path | None:
     """Point ``inst`` at Steam's Daggerfall data when the data it uses is gone:
     Steam moving Daggerfall to another library (an SD card) empties the old
     folder, and DFU would open on its "set the path" screen. A path that still
     works is kept, Steam's or not (a GOG copy, say), and so is a broken one
-    when Steam's data isn't there either (the SD card is out). Returns the new
-    path when it changed."""
+    when Steam's data isn't there either (the SD card is out). ``launching`` is
+    the copy Steam is starting (``STEAM_COMPAT_INSTALL_PATH``), preferred when
+    DFU would accept it. Returns the new path when it changed."""
     if is_running():
         return None  # DFU writes settings.ini back when it exits
     configured = inst.daggerfall_path()
@@ -559,7 +563,9 @@ def follow_steam_data(inst: Install) -> Path | None:
         current = Path(configured) if Path(configured).is_absolute() else inst.path / configured
         if not data_problems(current):
             return None
-    dagger = steam_daggerfall()
+    dagger = launching / "DF" / "DAGGER" if launching else None
+    if dagger is None or data_problems(dagger):
+        dagger = steam_daggerfall()
     if dagger is None or data_problems(dagger):
         return None
     write_daggerfall_path(inst.settings_ini, dagger)
