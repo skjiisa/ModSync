@@ -823,6 +823,13 @@ class SyncSaves(unittest.TestCase):
         self.assertEqual(dfu.sync_saves().stored, ["Ellte: Ellte 1"])
         self.assertEqual(dfu.SAVES_FOLDER.path(), self.tmp / "data" / "modsync" / "dfu-saves")
 
+    def test_a_fresh_install_gets_the_saves_before_dfu_ever_ran(self):
+        State.update(game_folders={"dfu-saves": str(dfu.saves_library())})
+        dfu.sync_saves()  # the library has the save, as one synced from another machine would
+        shutil.rmtree(self.inst.data_dir / "Saves")  # a new install: DFU hasn't made its folder yet
+        self.assertEqual(dfu.sync_saves().placed, ["Ellte: Ellte 1"])
+        self.assertTrue((self.inst.data_dir / "Saves" / "SAVE0").is_dir())
+
     def test_waits_while_dfu_runs(self):
         State.update(game_folders={"dfu-saves": str(dfu.saves_library())})
         self.running = True
