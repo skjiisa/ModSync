@@ -21,7 +21,7 @@ from functools import partial
 
 import shiboken6
 
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
@@ -33,7 +33,7 @@ from modsync.ui import worker
 from modsync.ui.input import Action
 from modsync.ui.overlays import BeaconSheet, CodeSheet, KeyboardSheet, PinSheet
 from modsync.ui.pages import Page
-from modsync.ui.widgets import Panel, StatusRow, SyncMeter, Tile, clear_layout, label
+from modsync.ui.widgets import Panel, StatusRow, SyncMeter, Tile, clear_layout, discard, label
 
 
 def _validate_code(text: str) -> str | None:
@@ -599,11 +599,14 @@ class SyncPage(Page):
         ids = [dev.id for dev in devices]
         for did in [d for d in self._device_rows if d not in ids]:
             row = self._device_rows.pop(did)
+            if row.hasFocus():  # don't leave the focus on a row on its way out
+                after = next((r for d, r in self._device_rows.items() if d in ids), None) or self.pair_tile
+                after.setFocus(Qt.FocusReason.OtherFocusReason)
             self.devices.removeWidget(row)
-            row.deleteLater()
+            discard(row)
         if devices and self._no_devices is not None:
             self.devices.removeWidget(self._no_devices)
-            self._no_devices.deleteLater()
+            discard(self._no_devices)
             self._no_devices = None
         if not devices and self._no_devices is None:
             self._no_devices = label("No other devices yet. Pair one to start syncing.", "muted")

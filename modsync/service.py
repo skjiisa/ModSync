@@ -260,6 +260,7 @@ class ModSyncService:
         self._refresh_game_folders()
         self._clear_stand_in_names()
         self._introduce_one_way()
+        self._drop_forgotten()
 
     def _clear_stand_in_names(self) -> None:
         """Once: paired machines an older version named after the vault get
@@ -278,20 +279,49 @@ class ModSyncService:
         if cleared:
             log.info("paired machines take their own names when they connect: %s", ", ".join(d[:7] for d in cleared))
 
-    def _introduce_one_way(self) -> None:
+    def _introduce_one_way(self, *, required: bool = False) -> None:
         """Once: pairings made before each pair introduced only one way get
-        sorted out (see ``pairing.introduce_one_way``)."""
+        sorted out (see ``pairing.introduce_one_way``). It must happen before
+        this machine pairs with another, or it would turn the new pairing
+        around: so under the state's lock, rechecked there (the app and the
+        background service each run it), and ``required`` by every way of
+        pairing, which fails rather than go ahead without it."""
         if self.state.one_way_introducers:
             return
-        try:
+
+        def settle(st: State) -> None:
+            if st.one_way_introducers:
+                return
             with self.manager.client() as client:
                 changed = pairing.introduce_one_way(client)
+            st.one_way_introducers = True
+            if changed:
+                log.info("paired machines now introduce one way: %s", ", ".join(d[:7] for d in changed))
+
+        try:
+            self.state = State.change(settle)
         except Exception as exc:
+            if required:
+                raise RuntimeError(f"Syncthing didn't answer while getting ready to pair: {exc}") from exc
             log.info("could not settle which paired machines introduce the others: %s", exc)
-            return
-        self.update_state(one_way_introducers=True)
-        if changed:
-            log.info("paired machines now introduce one way: %s", ", ".join(d[:7] for d in changed))
+
+    def _drop_forgotten(self) -> list[str]:
+        """Remove forgotten machines another machine has passed on again.
+        Runs whenever ModSync talks to Syncthing, so one that's back has little
+        time to sync. Reads the list under the lock, so a machine being paired
+        again right now isn't removed after it was taken off the list."""
+        if not self.state.forgotten_devices:
+            return []
+        try:
+            with State.held() as st, self.manager.client() as client:
+                self.state = st
+                back = pairing.drop_forgotten(client, st.forgotten_devices)
+        except Exception as exc:
+            log.info("could not check for forgotten machines: %s", exc)
+            return []
+        for device_id in back:
+            log.info("forgot %s… again: another machine passed it on", device_id[:7])
+        return back
 
     _FOLDERS_REFRESH_S = 60.0
     _folders_refreshed_at: float | None = None
@@ -530,6 +560,8 @@ class ModSyncService:
                 shutil.move(local_meta, archive / local_meta.name)
             else:
                 local_meta.unlink()
+        self._introduce_one_way(required=True)
+        self._unforget(code.device_id)
         with self.manager.client() as client:
             pairing.add_peer_device(
                 client,
@@ -549,7 +581,6 @@ class ModSyncService:
                        copy_expected=-1 if merge or code.sequence is None else code.sequence,
                        copy_archive=str(archive) if archive else "", set_aside="",
                        awaiting_vault_version=True)
-        self._unforget(code.device_id)
         log.info("joined vault %s from device %s… into %s (%s)", code.folder_id, code.device_id[:7],
                  instance_path, "merge" if merge else "copy")
         return PairingCode(device_id, code.folder_id, label)
@@ -910,6 +941,8 @@ class ModSyncService:
         # A code carries the vault's label, not the machine's name: until the
         # machine connects and names itself, it goes by ``peer_name`` or its id.
         self.ensure_running()
+        self._introduce_one_way(required=True)
+        self._unforget(code.device_id)  # first: a forgotten one is removed again on sight
         with self.manager.client() as client:
             pairing.add_peer_device(
                 client,
@@ -924,11 +957,10 @@ class ModSyncService:
             if take_offers:
                 folders.take_offers(client)
         self.update_state(paired=True)
-        self._unforget(code.device_id)
 
     def _unforget(self, device_id: str) -> None:
         """Pairing with a machine on purpose takes it off the forgotten list."""
-        if device_id not in self.state.forgotten_devices:
+        if device_id not in State.load().forgotten_devices:
             return
 
         def change(st: State) -> None:
@@ -955,17 +987,15 @@ class ModSyncService:
         self.ensure_running()
         accepted: list[str] = []
         with self.manager.client() as client:
-            # A forgotten machine another one passed on again goes again.
-            for device_id in pairing.drop_forgotten(client, st.forgotten_devices):
-                log.info("forgot %s… again: another machine passed it on", device_id[:7])
             # Only a machine that shares something here hands out codes, so only
             # it accepts machines that come knocking. The one knocking entered
             # this machine's code, so it takes introductions from here, not
             # the other way round.
             pending = (client.pending_devices() or {}) if st.syncs_anything else {}
+            pending = {d: info for d, info in pending.items() if d not in st.forgotten_devices}
+            if pending:  # pairing with a forgotten one again takes entering its code here
+                self._introduce_one_way(required=True)
             for device_id, info in pending.items():
-                if device_id in st.forgotten_devices:
-                    continue  # pairing with it again takes entering its code here
                 name = (info or {}).get("name") or ""
                 pairing.add_peer_device(client, device_id, name, introducer=False)
                 if st.folder_id:
@@ -1012,19 +1042,20 @@ class ModSyncService:
             raise RuntimeError("This machine is still copying the vault from that one. "
                                "Let the copy finish, or leave the vault, first.")
         self.ensure_running()
-        with self.manager.client() as client:
-            me = client.my_id()
-            if device_id == me:
-                raise RuntimeError("That's this machine.")
-            pairing.forget_device(client, device_id)
-            left = [d for d in client.devices() if d.get("deviceID") not in (None, "", me)]
 
-        def change(st: State) -> None:
+        def forget(st: State) -> None:
+            # Under the state's lock, so pairing with it again can't interleave.
+            with self.manager.client() as client:
+                me = client.my_id()
+                if device_id == me:
+                    raise RuntimeError("That's this machine.")
+                pairing.forget_device(client, device_id)
+                left = [d for d in client.devices() if d.get("deviceID") not in (None, "", me)]
             st.forgotten_devices = [*(d for d in st.forgotten_devices if d != device_id), device_id]
             if not left:
                 st.paired = False
 
-        self.state = State.change(change)
+        self.state = State.change(forget)
         log.info("forgot %s…", device_id[:7])
 
     # --- the games' folders (see modsync.sync.folders) ---

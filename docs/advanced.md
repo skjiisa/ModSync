@@ -349,7 +349,9 @@ directly.
 Pairings made before ModSync passed machines on one way went both ways. The
 first time this version runs, it keeps one direction for each such pair:
 the machine whose device id sorts first passes on, and the other learns from
-it. Both machines apply the same rule, so they agree without talking.
+it. Both machines apply the same rule, so they agree without talking. A
+machine still on 2.1.0-beta1 makes every machine it's paired with pass on to
+it again each time it starts, so its pairs go both ways until it's updated.
 
 To unpair one machine, select it under Devices on the Sync page, or run
 `modsync sync forget <name or device id>`. It leaves every folder here, and
@@ -360,6 +362,13 @@ its code or PIN on this machine pairs it again. This is how to get rid of an
 identity that will never come back, such as a machine's old one after a
 reinstall. `modsync doctor` marks it "never connected" or shows when it was
 last seen.
+
+Forgetting isn't a lock-out. Until every machine has forgotten it, a machine
+that learns from another can be handed it again, and Syncthing adds it back
+to the folders they share. ModSync removes it within seconds, whenever it
+next talks to Syncthing, but a machine that is online and connects in that
+moment can sync briefly. For a lost or stolen device, forget it on every
+machine.
 
 Each machine appears under the name it gives itself, usually its hostname.
 Paired with a code, a machine shows as the start of its device id until it

@@ -460,6 +460,25 @@ class MachineWidePairing(GameFolderBase):
         ModSyncService(manager=self.st).ensure_running()
         self.assertTrue(self.st.devices["ZZZ"]["introducer"])
 
+    def test_settling_never_turns_around_a_pairing_made_since(self):
+        # The app and the background service each have a service; the one that
+        # still thinks nothing was settled must not settle a new pairing.
+        stale = ModSyncService(manager=self.st)
+        self.service.ensure_running()
+        self.service.pair(PairingCode("ZZZ", "", ""))  # sorts after ME, entered here: introducer
+        self.assertFalse(stale.state.one_way_introducers)
+        stale.ensure_running()
+        self.assertTrue(self.st.devices["ZZZ"]["introducer"])
+
+    def test_pairing_waits_for_settling(self):
+        from modsync.sync import pairing
+
+        with patch.object(pairing, "introduce_one_way", side_effect=OSError("Syncthing went away")):
+            with self.assertRaisesRegex(RuntimeError, "getting ready to pair"):
+                self.service.pair(PairingCode("ZZZ", "", ""))
+        self.assertNotIn("ZZZ", self.st.devices)
+        self.assertFalse(State.load().one_way_introducers)
+
     def test_a_connected_machine_made_an_introducer_reconnects(self):
         self.st.devices["DECK"] = {"deviceID": "DECK", "paused": False}
         self.st.devices["CPAUSED"] = {"deviceID": "CPAUSED", "paused": True}
@@ -533,6 +552,30 @@ class ForgetMachine(GameFolderBase):
         self.service.accept_pending()
         self.assertNotIn("OLD", self.st.devices)
         self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DECK"})
+
+    def test_any_call_to_syncthing_drops_a_forgotten_machine_that_is_back(self):
+        self.service.forget_machine("OLD")
+        self.st.devices["OLD"] = {"deviceID": "OLD", "introducedBy": "DECK"}
+        self.service.status()
+        self.assertNotIn("OLD", self.st.devices)
+
+    def test_pairing_again_while_the_background_service_looks(self):
+        from modsync.sync import pairing
+
+        self.service.forget_machine("OLD")
+        background = ModSyncService(manager=self.st)
+        background.reload_state()  # still lists OLD as forgotten
+        add = pairing.add_peer_device
+
+        def add_then_background_runs(*args, **kwargs):
+            device = add(*args, **kwargs)
+            background._drop_forgotten()
+            return device
+
+        with patch.object(pairing, "add_peer_device", add_then_background_runs):
+            self.service.pair(PairingCode("OLD", "", ""))
+        self.assertIn("OLD", self.st.devices)
+        self.assertEqual(State.load().forgotten_devices, [])
 
     def test_a_forgotten_machine_knocking_is_not_accepted(self):
         self.service.forget_machine("OLD")

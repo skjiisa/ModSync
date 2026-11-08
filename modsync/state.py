@@ -31,7 +31,10 @@ from modsync import config
 # The state file's version: bump it when what ModSync writes there changes in a
 # way an older ModSync would misread. Each copy on a machine shares the file
 # (see modsync.config), so an older one must leave a newer one's alone.
-SCHEMA = 1
+# 2: forgotten_devices and one_way_introducers, which an older one would drop
+# on its next write (bringing forgotten machines back, and settling pairings
+# made since all over again).
+SCHEMA = 2
 
 
 EXIT_NEWER_STATE = 3  # how a command ends on one; the background service isn't restarted for it
@@ -170,6 +173,15 @@ class State:
             fn(state)
             state._write()
         return state
+
+    @classmethod
+    @contextmanager
+    def held(cls):
+        """The state as it is now, with the lock held until the block ends and
+        nothing written: for acting on a field another process may be changing
+        (say, the forgotten machines) without writing the file every time."""
+        with cls._locked():
+            yield cls.load()
 
     @classmethod
     @contextmanager

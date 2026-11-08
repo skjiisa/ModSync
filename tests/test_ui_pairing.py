@@ -263,6 +263,24 @@ class ForgetMachineTests(UiTestCase):
         self.assertEqual(sync._device_rows, {})
         self.assertIsNotNone(sync._no_devices)
 
+    def test_a_removed_row_hands_the_focus_on_and_goes_away(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        State(instance_path=str(self.tmp), folder_id="modsync-x").save()
+        window = self.window()
+        window.go("sync")
+        sync = window.pages["sync"]
+        sync.on_status(self._status(("DECKDEC-1", "steamdeck", True), ("OLDOLDO-2", "", False)))
+        old = sync._device_rows["OLDOLDO-2"]
+        old.setFocus()
+        self.settle()
+        sync.on_status(self._status(("DECKDEC-1", "steamdeck", True)))
+        self.assertFalse(old.isVisible())
+        self.assertIs(window.focusWidget(), sync._device_rows["DECKDEC-1"])
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.settle()
+        self.assertEqual(list(sync._device_rows), ["DECKDEC-1"])
+
     def test_cancel_forgets_nothing(self):
         State(instance_path=str(self.tmp), folder_id="modsync-x").save()
         window = self.window()
