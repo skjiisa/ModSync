@@ -101,6 +101,11 @@ class SyncthingClient:
     def connections(self) -> dict[str, Any]:
         return self._http.get("/rest/system/connections").raise_for_status().json()
 
+    def device_stats(self) -> dict[str, Any]:
+        """``{device_id: {"lastSeen": ISO time, ...}}``; a device never seen has
+        a time in 1970 (or year 1)."""
+        return self._http.get("/rest/stats/device").raise_for_status().json()
+
     def pending_devices(self) -> dict[str, Any]:
         """Devices that have tried to connect but aren't configured yet."""
         return (

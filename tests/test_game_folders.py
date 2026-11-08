@@ -368,11 +368,12 @@ class MachineWidePairing(GameFolderBase):
         from modsync import pairing_lan
 
         host = pairing_lan.PairPayload("DESKTOP", "", "ModSync", host="192.0.2.5")
+        ann = pairing_lan.Announcement("desktop", "192.0.2.5", 21029, "s")
         with patch.object(pairing_lan, "join_pairing", return_value=host):
             with self.assertRaisesRegex(RuntimeError, "isn't offering a vault"):
-                self.service.join_via_network(object(), "1234", self.tmp / "MO2")
+                self.service.join_via_network(ann, "1234", self.tmp / "MO2")
             self.assertNotIn("DESKTOP", self.st.devices)
-            self.service.join_via_network(object(), "1234", self.tmp / "MO2", pair_only=True)
+            self.service.join_via_network(ann, "1234", self.tmp / "MO2", pair_only=True)
         self.assertIn("DESKTOP", self.st.devices)
         self.assertIsNone(State.load().folder_id)
 
@@ -425,6 +426,35 @@ class MachineWidePairing(GameFolderBase):
             device = self.st.devices[device_id]
             self.assertTrue(device["introducer"], device_id)
             self.assertTrue(device["skipIntroductionRemovals"], device_id)
+
+    def test_a_paired_machine_is_not_named_after_the_vault(self):
+        # A code carries the vault's label: Syncthing names the machine as it
+        # connects, from the name the machine gives itself.
+        self.service.share_game_folder("test-mods")
+        self.service.pair(PairingCode("DESKTOP", "", "Skyrim SE"))
+        self.service.add_peer(PairingCode("DECK", "", "Skyrim SE"), peer_name="steamdeck")
+        self.st.pending_devices["FRAME"] = {"name": "steamframe"}
+        self.st.pending_devices["NONAME"] = {}
+        self.service.accept_pending()
+        self.assertEqual({d: self.st.devices[d]["name"] for d in ("DESKTOP", "DECK", "FRAME", "NONAME")},
+                         {"DESKTOP": "", "DECK": "steamdeck", "FRAME": "steamframe", "NONAME": ""})
+
+    def test_lan_pairing_names_each_machine_after_itself(self):
+        from modsync import pairing_lan
+
+        self.service.share_game_folder("test-mods")
+        joiner = pairing_lan.PairPayload("LAPTOP", name="laptop")
+        with patch.object(pairing_lan, "host_pairing", return_value=joiner) as host:
+            self.service.host_network_pairing("desktop", "123456")
+        self.assertEqual(host.call_args.args[0].name, "desktop")  # the host says who it is too
+        self.assertEqual(self.st.devices["LAPTOP"]["name"], "laptop")  # not "desktop"
+
+        old_host = pairing_lan.PairPayload("DECK", "", "Skyrim SE")  # an older version sends no name
+        ann = pairing_lan.Announcement("steamdeck", "10.0.0.2", 21029, "s")
+        with patch.object(pairing_lan, "join_pairing", return_value=old_host) as join:
+            self.service.join_via_network(ann, "123456", self.tmp / "MO2", pair_only=True)
+        self.assertTrue(join.call_args.args[1].name)  # this machine's hostname
+        self.assertEqual(self.st.devices["DECK"]["name"], "steamdeck")  # from its announcement
 
     def test_machines_paired_before_become_introducers_once(self):
         self.st.devices["DESKTOP"] = {"deviceID": "DESKTOP", "name": "Desktop", "introducer": False,

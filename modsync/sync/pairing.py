@@ -45,6 +45,39 @@ def add_peer_device(
     return device
 
 
+# Names older versions gave a paired machine instead of its own.
+STAND_IN_NAMES = ("ModSync device", "ModSync peer", "ModSync", "Mod Organizer 2")
+
+
+def clear_stand_in_names(client: SyncthingClient, more: Iterable[str] = ()) -> list[str]:
+    """Clear the names older versions made up for paired machines, so
+    Syncthing fills in each machine's own the next time it connects (it does
+    for a device with no name). Those were a pairing code's label, which is a
+    folder's (the vault's "Skyrim SE"), the defaults in ``STAND_IN_NAMES``,
+    or, on the machine that showed the LAN PIN, its own name. Any other name,
+    such as one given in Syncthing, stays. A machine connected now is
+    reconnected to pick up its name. Returns the ids cleared."""
+    me = client.my_id()
+    devices = client.devices()
+    own = next((d.get("name") or "" for d in devices if d.get("deviceID") == me), "")
+    stand_ins = {*STAND_IN_NAMES, *(f.get("label") or "" for f in client.folders()), own, *more} - {""}
+    try:
+        conns = client.connections().get("connections", {})
+    except Exception:
+        conns = {}
+    cleared = []
+    for device in devices:
+        did = device.get("deviceID")
+        if did in (None, "", me) or device.get("name") not in stand_ins:
+            continue
+        device["name"] = ""
+        if (conns.get(did) or {}).get("connected") and not device.get("paused"):
+            client.put_device({**device, "paused": True})  # Syncthing reads the name as it connects
+        client.put_device(device)
+        cleared.append(did)
+    return cleared
+
+
 # Every paired machine introduces the machines it shares folders with: when
 # B and C have each paired with A, A tells B about C and C about B, and from
 # then on they sync with each other directly, with A offline. Syncthing

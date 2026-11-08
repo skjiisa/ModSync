@@ -37,6 +37,10 @@ All notable changes to ModSync are documented here. The format follows
   that wrote it leaves it alone instead of misreading it: the command line
   and the app say so, the background service stops, and a launch from
   Steam's Play button ends instead of going on without ModSync.
+- `modsync doctor` lists the paired machines and when each last connected.
+  It warns when Syncthing has two folders at one path, when a folder ModSync
+  uses is missing from Syncthing, and when no other machine has synced the
+  vault in 30 days.
 
 ### Fixed
 
@@ -45,6 +49,12 @@ All notable changes to ModSync are documented here. The format follows
   runs any x86 Linux game on ARM, from both Steam's Play button and the
   app. Before, Play did nothing there. ModSync also tells when DFU is
   running under FEX, so saves sync still waits for it to close.
+- Paired machines show the names they give themselves. Pairing with a code
+  named the other machine after the vault ("Skyrim SE"), and the machine that
+  showed the LAN PIN named the one that joined after itself. A new pairing
+  takes the other machine's own name, and machines paired before get theirs
+  the next time they connect. A name you gave a machine in Syncthing stays.
+
 - Moving Daggerfall to another Steam library, such as an SD card, no longer
   leaves Daggerfall Unity on its "set the path to your Daggerfall game files"
   screen. Play, in Steam or in the app, points it at Steam's new copy first,

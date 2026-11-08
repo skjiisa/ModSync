@@ -14,6 +14,7 @@ import logging
 import os
 import secrets
 import shutil
+import socket
 import threading
 import time
 from contextlib import contextmanager
@@ -257,7 +258,25 @@ class ModSyncService:
             self.manager.start(timeout=timeout)
         self._refresh_stignore()
         self._refresh_game_folders()
+        self._clear_stand_in_names()
         self._introduce_peers()
+
+    def _clear_stand_in_names(self) -> None:
+        """Once: paired machines an older version named after the vault get
+        their own names (see ``pairing.clear_stand_in_names``). Only once,
+        since a machine's own name can match too: two Decks both called
+        "steamdeck"."""
+        if self.state.stand_in_names_cleared:
+            return
+        try:
+            with self.manager.client() as client:
+                cleared = pairing.clear_stand_in_names(client, [self.state.instance_label, socket.gethostname()])
+        except Exception as exc:
+            log.info("could not check the paired machines' names: %s", exc)
+            return
+        self.update_state(stand_in_names_cleared=True)
+        if cleared:
+            log.info("paired machines take their own names when they connect: %s", ", ".join(d[:7] for d in cleared))
 
     _peers_introduced = False
 
@@ -478,6 +497,7 @@ class ModSyncService:
         instance_path: Path | str,
         *,
         peer_host: str | None = None,
+        peer_name: str = "",
         merge: bool = False,
     ) -> PairingCode:
         """Join a vault advertised by another machine's pairing code.
@@ -491,7 +511,8 @@ class ModSyncService:
         where a file differs, the newer one wins.
 
         ``peer_host`` is the address the peer was reached on during LAN pairing,
-        so Syncthing can connect without its own discovery."""
+        so Syncthing can connect without its own discovery, and ``peer_name``
+        the name it gave. Without one, Syncthing names the peer once it connects."""
         if not code.has_vault:
             raise RuntimeError("That code pairs machines that sync only games' folders, not Mod Organizer 2. "
                                "Use the code from the machine whose Mod Organizer 2 setup you want.")
@@ -515,7 +536,7 @@ class ModSyncService:
             pairing.add_peer_device(
                 client,
                 code.device_id,
-                label or "ModSync device",
+                peer_name,
                 addresses=pairing.static_addresses(peer_host),
             )
             pairing.share_instance_folder(
@@ -868,26 +889,29 @@ class ModSyncService:
             log.info("conflict on %s: kept the %s version, the other is in %s", c.relative(instance), keep, archive)
         return archive
 
-    def add_peer(self, code: PairingCode, *, peer_host: str | None = None) -> None:
+    def add_peer(self, code: PairingCode, *, peer_host: str | None = None, peer_name: str = "") -> None:
         """Pair another machine with this one, sharing the vault and every
         game folder synced here with it."""
         if not self.reload_state().syncs_anything:
             raise RuntimeError("no vault configured on this machine yet")
-        self._pair_device(code, peer_host)
+        self._pair_device(code, peer_host, peer_name)
 
-    def pair(self, code: PairingCode, *, peer_host: str | None = None) -> None:
+    def pair(self, code: PairingCode, *, peer_host: str | None = None, peer_name: str = "") -> None:
         """Pair with the machine a code names, without joining a vault: the
         two share every game folder each syncs."""
-        self._pair_device(code, peer_host, take_offers=True)
-        log.info("paired with %s… (%s)", code.device_id[:7], code.label or "no name")
+        self._pair_device(code, peer_host, peer_name, take_offers=True)
+        log.info("paired with %s… (%s)", code.device_id[:7], peer_name or "no name yet")
 
-    def _pair_device(self, code: PairingCode, peer_host: str | None, *, take_offers: bool = False) -> None:
+    def _pair_device(self, code: PairingCode, peer_host: str | None, peer_name: str = "", *,
+                     take_offers: bool = False) -> None:
+        # A code carries the vault's label, not the machine's name: until the
+        # machine connects and names itself, it goes by ``peer_name`` or its id.
         self.ensure_running()
         with self.manager.client() as client:
             pairing.add_peer_device(
                 client,
                 code.device_id,
-                code.label or "ModSync device",
+                peer_name,
                 addresses=pairing.static_addresses(peer_host),
             )
             if self.state.folder_id:
@@ -920,7 +944,7 @@ class ModSyncService:
             # it accepts machines that come knocking.
             pending = (client.pending_devices() or {}) if st.syncs_anything else {}
             for device_id, info in pending.items():
-                name = (info or {}).get("name") or "ModSync peer"
+                name = (info or {}).get("name") or ""
                 pairing.add_peer_device(client, device_id, name)
                 if st.folder_id:
                     self._add_to_vault(client, device_id)
@@ -1047,14 +1071,15 @@ class ModSyncService:
             raise RuntimeError("create a vault on this machine first")
         payload = pairing_lan.PairPayload(
             self.device_id(), self.state.folder_id or "", self.state.instance_label if self.state.folder_id else "ModSync",
-            sequence=self._folder_sequence(),
+            sequence=self._folder_sequence(), name=name,
         )
         peer = pairing_lan.host_pairing(
             payload, name, pin, on_ready=on_ready, stop=stop, timeout=timeout
         )
         self.add_peer(
-            PairingCode(peer.device_id, self.state.folder_id or "", peer.label or name),
+            PairingCode(peer.device_id, self.state.folder_id or "", peer.label),
             peer_host=peer.host,
+            peer_name=peer.name,  # ``name`` is this machine's
         )
         return peer
 
@@ -1076,18 +1101,20 @@ class ModSyncService:
         ``join_vault`` for ``merge``). A host that syncs only games' folders
         is refused unless ``pair_only``, when the two machines just pair. Blocks."""
         self.ensure_running()
-        payload = pairing_lan.PairPayload(self.device_id())
+        payload = pairing_lan.PairPayload(self.device_id(), name=socket.gethostname())
         peer = pairing_lan.join_pairing(announcement, payload, pin, timeout=timeout)
+        peer_name = peer.name or announcement.name
         if not peer.folder_id:
             if not pair_only:
                 raise RuntimeError("that machine isn't offering a vault to join")
             # It shares only games' folders: pair, and they're offered here.
-            self.pair(PairingCode(peer.device_id, "", peer.label), peer_host=peer.host)
+            self.pair(PairingCode(peer.device_id, "", peer.label), peer_host=peer.host, peer_name=peer_name)
             return peer
         self.join_vault(
             PairingCode(peer.device_id, peer.folder_id, peer.label, peer.sequence),
             instance_path,
             peer_host=peer.host,
+            peer_name=peer_name,
             merge=merge,
         )
         return peer

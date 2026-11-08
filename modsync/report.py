@@ -146,6 +146,7 @@ def build() -> Report:
         if vc.skse_note():
             line(f"  {'!' if vc.skse_suggests else '•'} {vc.skse_note()}")
 
+    _syncthing_section(line, state)
     return Report(out.getvalue(), True)
 
 
@@ -174,3 +175,26 @@ def _heroic_section(plat: platforms.Platform, line) -> None:
     if game.wine is not None:
         line(f"  • runs with: {game.wine.name or game.wine.bin} ({game.wine.type})")
     line()
+
+
+def _syncthing_section(line, state: State) -> None:
+    from modsync import config
+    from modsync.sync import health
+    from modsync.sync.folders import FOLDER_PREFIX
+
+    expected = state.syncs_anything
+    home = config.syncthing_home()
+    snap = health.snapshot(home)
+    if snap is None:
+        if expected:
+            line()
+            line("Syncthing:")
+            line(f"  ! its settings in {home} are missing or can't be read, so nothing syncs")
+        return
+    if not (expected or snap.folders or len(snap.devices) > 1):
+        return
+    game_ids = {key: FOLDER_PREFIX + key for key in state.game_folders}
+    line()
+    line("Syncthing:")
+    for text in health.lines(snap, state.folder_id if state.syncing else None, game_ids):
+        line(f"  {text}")

@@ -91,18 +91,24 @@ class PairPayload:
     host: str = ""
     # How far the host's list of the vault's files goes (see PairingCode).
     sequence: int | None = None
+    # The machine's own name (its hostname). ``label`` is the vault's. Older
+    # versions don't send it.
+    name: str = ""
 
     def to_bytes(self) -> bytes:
         data = {"device_id": self.device_id, "folder_id": self.folder_id, "label": self.label}
         if self.sequence is not None:
             data["sequence"] = self.sequence
+        if self.name:
+            data["name"] = self.name
         return json.dumps(data, separators=(",", ":")).encode()
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "PairPayload":
         d = json.loads(data.decode())
         return cls(d["device_id"], d.get("folder_id", ""), d.get("label", ""),
-                   sequence=None if d.get("sequence") is None else int(d["sequence"]))
+                   sequence=None if d.get("sequence") is None else int(d["sequence"]),
+                   name=str(d.get("name") or ""))
 
 
 def make_pin() -> str:
