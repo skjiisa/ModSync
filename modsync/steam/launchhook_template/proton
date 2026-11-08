@@ -104,6 +104,7 @@ if [[ -z "$native" && "$verb" == "waitforexitandrun" && -z "${MODSYNC_LAUNCH_HUB
     case "$rc" in
         0)  log "continue" ;;
         10) log "cancelled; ending the launch"; exit 0 ;;
+        3)  log "ModSync's setup is from a newer ModSync, so it refused (it said why); ending the launch"; exit 0 ;;
         *)  log "hub exited with $rc; launching anyway"; handoff=() ;;
     esac
     # The handoff: a tag, the Proton directory, the folder to start in, then the

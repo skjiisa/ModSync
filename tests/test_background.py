@@ -63,14 +63,16 @@ class ServiceUnit(unittest.TestCase):
     """The background service runs the setup it was installed from."""
 
     def test_a_separate_setup_goes_into_the_unit(self):
-        with patch.dict(os.environ, {"MODSYNC_HOME": "/home/me/dev 100%"}), \
+        with patch.dict(os.environ, {"MODSYNC_HOME": "/home/me/dev 100% $HOME"}), \
                 patch.object(background, "in_flatpak", lambda: False):
             native = background.unit_text()
-        self.assertIn('Environment="MODSYNC_HOME=/home/me/dev 100%%"\n', native)
+        self.assertIn('Environment="MODSYNC_HOME=/home/me/dev 100%% $HOME"\n', native)  # not expanded there
         self.assertIn(f"RestartPreventExitStatus={EXIT_NEWER_STATE}\n", native)
-        with patch.dict(os.environ, {"MODSYNC_HOME": "/home/me/dev", "FLATPAK_ID": "io.github.skjiisa.ModSync"}):
+        with patch.dict(os.environ, {"MODSYNC_HOME": "/home/me/dev-${USER}", "FLATPAK_ID": "io.github.skjiisa.ModSync"}):
             flatpak = background.unit_text()
-        self.assertIn('ExecStart=flatpak run "--env=MODSYNC_HOME=/home/me/dev" io.github.skjiisa.ModSync serve', flatpak)
+        # systemd expands $ in a command line even when it's quoted.
+        self.assertIn('ExecStart=flatpak run "--env=MODSYNC_HOME=/home/me/dev-$${USER}" io.github.skjiisa.ModSync serve',
+                      flatpak)
 
     def test_the_shared_setup_needs_nothing(self):
         with patch.dict(os.environ, {}, clear=False):

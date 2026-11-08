@@ -21,7 +21,8 @@ All notable changes to ModSync are documented here. The format follows
   `modsync dfu hook enable` makes it the copy you're running.
 - The state file records its format version. A ModSync older than the one
   that wrote it leaves it alone instead of misreading it: the command line
-  and the app say so, and the background service stops.
+  and the app say so, the background service stops, and a launch from
+  Steam's Play button ends instead of going on without ModSync.
 
 ## [2.1.0-beta1] - 2026-11-04
 
