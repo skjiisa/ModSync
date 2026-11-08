@@ -866,7 +866,10 @@ off leaves that access in place.
 
 5. `modsync sync share cp2077-mo2` syncs the instance's mods with every
    paired machine. A paired machine takes it up once it has an instance of
-   its own from `modsync cyberpunk install` or `use`; an MO2 instance ModSync
+   its own from `modsync cyberpunk install` or `use` with no mods installed
+   yet. One that has mods of its own waits: running `modsync sync share
+   cp2077-mo2` there too merges the two, which leaves both machines' mods
+   and a conflict copy of each profile both changed. An MO2 instance ModSync
    only found (one MO2-LINT installed) is played but never synced.
 
 ### Syncing Cyberpunk's mods
@@ -876,7 +879,8 @@ The `cp2077-mo2` folder follows the same rules as Skyrim's vault: `mods`,
 program, `ModOrganizer.ini` (it holds this machine's paths) and
 `nexusApiKey` never do. What playing leaves in `overwrite` stays out too:
 the game caches REDmod's deploy copies there (`r6/cache`), vkd3d's shader
-cache, the crash reporter's files and every `.log`. RootBuilder lives in
+cache, the crash reporter's files, every `.log`, and the databases CET mods
+keep while the game runs (`*.sqlite3`). RootBuilder lives in
 MO2's `plugins` folder, which each machine's install sets up.
 
 Saves don't sync: the game syncs its saves across GOG and Steam itself.
@@ -884,7 +888,8 @@ Saves don't sync: the game syncs its saves across GOG and Steam itself.
 The machine that starts syncing records the game version the mods are for
 (`modsync-cp2077-vault.json`), as the patch and the exact build:
 `Cyberpunk2077.exe` calls itself 2.5 in its ProductVersion, but its build is
-3.0.88.46235. When the game here is another build, `modsync cyberpunk
+3.0.88.46235. Two machines that each started syncing before they met keep
+both records. When the game here is another build than any of them, `modsync cyberpunk
 status`, `open` and `play` say so. Nothing else happens: whether to install
 another GOG build (in Heroic, under the game's settings) is up to you.
 

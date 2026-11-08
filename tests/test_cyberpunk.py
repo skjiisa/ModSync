@@ -427,6 +427,51 @@ def test_the_ignore_list_drops_play_leftovers_before_allowing_content():
     assert {"!/profiles", "!/downloads", "!/overwrite", f"!/{cyberpunk.VAULT_RECORD}"} <= set(lines)
 
 
+def test_an_offer_fills_only_an_instance_without_mods(tmp_path):
+    root = make_instance(tmp_path)
+    assert cyberpunk.MODS_FOLDER.accepts(root)  # a fresh install: no mods folder yet
+    (root / "mods").mkdir()
+    assert cyberpunk.MODS_FOLDER.accepts(root)
+    (root / "mods/Cyber Engine Tweaks").mkdir()
+    assert not cyberpunk.MODS_FOLDER.accepts(root)
+
+
+def test_cets_databases_stay_out():
+    lines = [line for line in cyberpunk.MODS_FOLDER.ignore if line and not line.startswith("//")]
+    assert lines.index("*.sqlite3*") < lines.index("!/overwrite")
+
+
+def test_a_record_owed_since_sharing_is_written_once_the_version_can_be_read(tmp_path):
+    root = make_instance(tmp_path)
+    with patch.object(cyberpunk, "game_version", return_value=None):
+        cyberpunk.MODS_FOLDER.on_share(root)
+        cyberpunk.MODS_FOLDER.tidy(root)
+    assert not (root / cyberpunk.VAULT_RECORD).exists()
+    with patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+        cyberpunk.MODS_FOLDER.tidy(root)
+    assert cyberpunk.vault_version(root) == ("2.5", "3.0.88.46235")
+    assert "record_owed" not in json.loads(cyberpunk._settings_path().read_text())
+
+
+def test_a_joining_machine_never_writes_the_record(tmp_path):
+    root = make_instance(tmp_path)
+    with patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+        cyberpunk.MODS_FOLDER.tidy(root)  # took up an offer: no record owed here
+    assert not (root / cyberpunk.VAULT_RECORD).exists()
+
+
+def test_every_recorded_version_counts_conflict_copies_too(tmp_path):
+    root = make_instance(tmp_path)
+    (root / cyberpunk.VAULT_RECORD).write_text(json.dumps({"game_version": "2.5", "build": "3.0.88.46235"}))
+    (root / "modsync-cp2077-vault.sync-conflict-20261108-101010-ABCDEFG.json").write_text(
+        json.dumps({"game_version": "2.3", "build": "3.0.80.1"}))
+
+    with patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+        problem = cyberpunk.version_problem(instance=root)
+    assert problem is not None and "set up for 2.3 (build 3.0.80.1)" in problem
+    assert f"!/{cyberpunk.RECORD_CONFLICTS}" in cyberpunk.MODS_FOLDER.ignore  # and they reach the others
+
+
 def test_the_sharing_machine_records_its_game_version_once(tmp_path):
     root = make_instance(tmp_path)
     with patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):

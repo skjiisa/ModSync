@@ -143,13 +143,26 @@ def _settings_path() -> Path:
     return config.config_dir() / "cyberpunk.json"
 
 
-def chosen_instance() -> Path | None:
-    """The instance ``modsync cyberpunk use`` chose, whether or not it's there now."""
+def _settings() -> dict:
     try:
         data = json.loads(_settings_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
-    chosen = data.get("instance") if isinstance(data, dict) else None
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _update_settings(**changes) -> None:
+    target = _settings_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    data = {**_settings(), **changes}
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({k: v for k, v in data.items() if v is not None}, indent=2), encoding="utf-8")
+    os.replace(tmp, target)
+
+
+def chosen_instance() -> Path | None:
+    """The instance ``modsync cyberpunk use`` chose, whether or not it's there now."""
+    chosen = _settings().get("instance")
     return Path(chosen) if isinstance(chosen, str) and chosen else None
 
 
@@ -176,11 +189,7 @@ def use_instance(path: Path | str) -> Path:
     problem = instance_problem(instance)
     if problem:
         raise CyberpunkError(problem)
-    target = _settings_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps({"instance": str(instance)}, indent=2), encoding="utf-8")
-    os.replace(tmp, target)
+    _update_settings(instance=str(instance))
     return instance
 
 
@@ -545,6 +554,7 @@ VAULT_RECORD = "modsync-cp2077-vault.json"  # which game version the synced mods
 # Before the content below, since Syncthing takes the first pattern that matches.
 PLAY_LEFTOVERS = (
     "*.log",
+    "*.sqlite3*",  # CET mods' databases and their journals, written while the game runs
     "/overwrite/r6/cache",  # the game's own caches, copied there by REDmod's deploy
     "/overwrite/Root/bin/x64/vkd3d-proton.cache*",
     "/overwrite/bin/x64/*.exe-*.txt",  # the crash reporter's registrations
@@ -570,19 +580,35 @@ def game_version(game: heroic.GogGame | None = None) -> tuple[str, str] | None:
     return product or ".".join(map(str, build)), ".".join(map(str, build))
 
 
+_RECORD_STEM, _RECORD_EXT = VAULT_RECORD.rsplit(".", 1)
+RECORD_CONFLICTS = f"{_RECORD_STEM}.sync-conflict-*.{_RECORD_EXT}"
+
+
 def _record_vault_version(root: Path) -> None:
-    """The machine that starts syncing the mods says which game version they're for."""
+    """The machine that starts syncing the mods says which game version they're
+    for. When it can't read the game's version yet, it remembers that it owes
+    the record (:func:`_owed_record`); a machine that joins never writes one."""
     record = root / VAULT_RECORD
+    if record.exists():
+        return
     version = game_version()
-    if not record.exists() and version is not None:
-        record.write_text(json.dumps({"game_version": version[0], "build": version[1]}, indent=2) + "\n",
-                          encoding="utf-8")
+    if version is None:
+        _update_settings(record_owed=True)
+        return
+    record.write_text(json.dumps({"game_version": version[0], "build": version[1]}, indent=2) + "\n",
+                      encoding="utf-8")
+    _update_settings(record_owed=None)
 
 
-def vault_version(instance: Path | None = None) -> tuple[str, str] | None:
-    instance = instance or _synced_instance()
+def _owed_record(root: Path) -> None:
+    """Run whenever the folder's status is read: write a record owed since sharing."""
+    if _settings().get("record_owed"):
+        _record_vault_version(root)
+
+
+def _read_record(path: Path) -> tuple[str, str] | None:
     try:
-        data = json.loads((instance / VAULT_RECORD).read_text(encoding="utf-8")) if instance else None
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if not isinstance(data, dict) or not isinstance(data.get("build"), str):
@@ -590,17 +616,43 @@ def vault_version(instance: Path | None = None) -> tuple[str, str] | None:
     return str(data.get("game_version") or data["build"]), data["build"]
 
 
+def vault_versions(instance: Path | None = None) -> list[tuple[str, str]]:
+    """Every version the synced records name: two machines that each started
+    sharing before they met leave a conflict copy of the record too."""
+    instance = instance or _synced_instance()
+    if instance is None:
+        return []
+    paths = [instance / VAULT_RECORD, *sorted(instance.glob(RECORD_CONFLICTS))]
+    return list(dict.fromkeys(v for p in paths if (v := _read_record(p))))
+
+
+def vault_version(instance: Path | None = None) -> tuple[str, str] | None:
+    return _read_record(instance / VAULT_RECORD) if (instance := instance or _synced_instance()) else None
+
+
 def version_problem(game: heroic.GogGame | None = None, instance: Path | None = None) -> str | None:
     """A note when the game here isn't the version the synced mods are for.
     Only a note: frameworks like CET and RED4ext need a version they support,
     but whether to change versions (Heroic can install older GOG builds) is
     the player's call."""
-    wanted, here = vault_version(instance), game_version(game)
-    if wanted is None or here is None or wanted[1] == here[1]:
+    here = game_version(game)
+    others = [v for v in vault_versions(instance) if here is not None and v[1] != here[1]]
+    if not others:
         return None
+    wanted = " or ".join(f"{v[0]} (build {v[1]})" for v in others)
     return (f"Cyberpunk 2077 here is {here[0]} (build {here[1]}), but the synced mods were set up for "
-            f"{wanted[0]} (build {wanted[1]}). Mods made for another version may not work, CET and RED4ext "
+            f"{wanted}. Mods made for another version may not work, CET and RED4ext "
             "especially. Heroic can install another GOG build under the game's settings.")
+
+
+def _accepts_offer(root: Path) -> bool:
+    """A paired machine's mods fill an instance by themselves only while it
+    has none installed: merging two setups (both machines' mods enabled in
+    each other's profiles) is for 'modsync sync share cp2077-mo2' to choose."""
+    try:
+        return not any((root / "mods").iterdir())
+    except OSError:
+        return True  # no mods folder: nothing to merge with
 
 
 MODS_FOLDER = FolderSpec(
@@ -617,6 +669,7 @@ MODS_FOLDER = FolderSpec(
         *(f"!/{name}" for name in stignore.CONTENT_DIRS),
         "!/categories.dat",
         f"!/{VAULT_RECORD}",
+        f"!/{RECORD_CONFLICTS}",
         "",
         "// Everything else at the instance root. Ignoring a folder skips what's in it.",
         "/*",
@@ -624,4 +677,6 @@ MODS_FOLDER = FolderSpec(
     content=(*stignore.CONTENT_DIRS, "categories.dat", VAULT_RECORD),
     on_share=_record_vault_version,
     in_use=lambda: game_running(),
+    tidy=_owed_record,
+    accepts=_accepts_offer,
 )

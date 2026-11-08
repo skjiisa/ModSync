@@ -33,8 +33,10 @@ All notable changes to ModSync are documented here. The format follows
 - Cyberpunk 2077's mods sync between machines: `modsync sync share
   cp2077-mo2`. Mods, profiles, downloads and overwrite sync, as in Skyrim's
   vault, but not what playing leaves in overwrite (REDmod's cache copies,
-  vkd3d's cache, logs). Only an instance from `modsync cyberpunk install` or
-  `use` syncs. A machine with another build of the game gets a warning in
+  vkd3d's cache, logs, CET mods' databases). Only an instance from
+  `modsync cyberpunk install` or `use` syncs, and another machine's mods
+  fill it by themselves only while it has none; otherwise `share` there
+  merges them. A machine with another build of the game gets a warning in
   `modsync cyberpunk status`, `open` and `play`. Saves don't sync; the game
   does that itself.
 - Forget one paired machine: select it under Devices on the Sync page, or

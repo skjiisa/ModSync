@@ -801,6 +801,8 @@ class SyncthingIntegration(unittest.TestCase):
                 "overwrite/bin/x64/plugins/cyber_engine_tweaks/mods/probe/settings.json": "{}",
                 # never synced:
                 "overwrite/bin/x64/plugins/cyber_engine_tweaks/mods/probe/probe.log": "log",
+                "overwrite/Root/bin/x64/plugins/cyber_engine_tweaks/mods/probe/db.sqlite3": "db",
+                "overwrite/Root/bin/x64/plugins/cyber_engine_tweaks/mods/probe/db.sqlite3-journal": "journal",
                 "overwrite/r6/cache/final.redscripts": "cache",
                 "overwrite/Root/bin/x64/vkd3d-proton.cache.write": "vkd3d",
                 "overwrite/Root/red4ext/logs/red4ext.txt": "log",
