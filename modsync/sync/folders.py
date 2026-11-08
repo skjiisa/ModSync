@@ -22,11 +22,13 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from modsync.state import State
 from modsync.sync import conflicts
-from modsync.sync.api import SyncthingClient
+
+if TYPE_CHECKING:  # `modsync doctor` reads FOLDER_PREFIX without httpx
+    from modsync.sync.api import SyncthingClient
 
 log = logging.getLogger(__name__)
 

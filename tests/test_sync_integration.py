@@ -397,6 +397,40 @@ class SyncthingIntegration(unittest.TestCase):
                 for mgr, _port in nodes.values():
                     mgr.stop()
 
+    def test_paired_machines_take_their_own_names_as_they_connect(self) -> None:
+        """A machine an older version named after the vault takes its own name
+        once that name is cleared; a name given by hand stays."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            nodes = dict(zip("AB", self._two_nodes(tmp, "AB")))
+            clients = {name: mgr.client() for name, (mgr, _port) in nodes.items()}
+            try:
+                ids = {name: c.my_id() for name, c in clients.items()}
+                for name, c in clients.items():
+                    me = next(d for d in c.devices() if d["deviceID"] == ids[name])
+                    c.put_device({**me, "name": f"machine-{name.lower()}"})
+                pairing.add_peer_device(clients["A"], ids["B"], "Skyrim SE",  # how a code named it before
+                                        addresses=[f"tcp://127.0.0.1:{nodes['B'][1]}"])
+                pairing.add_peer_device(clients["B"], ids["A"], "Living room",
+                                        addresses=[f"tcp://127.0.0.1:{nodes['A'][1]}"])
+                pairing.share_instance_folder(clients["A"], "modsync-v", tmp / "A", [ids["B"]], label="Skyrim SE",
+                                              write_ignore=False)
+
+                def name_of(on, other):
+                    return next(d.get("name") for d in clients[on].devices() if d["deviceID"] == ids[other])
+
+                connected = lambda: clients["A"].connections()["connections"].get(ids["B"], {}).get("connected")  # noqa: E731
+                self.assertTrue(self._wait(connected))
+                self.assertEqual(pairing.clear_stand_in_names(clients["A"]), [ids["B"]])
+                self.assertTrue(self._wait(lambda: name_of("A", "B") == "machine-b"), name_of("A", "B"))
+                self.assertEqual(name_of("B", "A"), "Living room")
+                self.assertEqual(pairing.clear_stand_in_names(clients["B"]), [])
+            finally:
+                for c in clients.values():
+                    c.close()
+                for mgr, _port in nodes.values():
+                    mgr.stop()
+
     def _mesh(self, tmp: Path):
         """Three isolated daemons and their REST clients, by name."""
         nodes = dict(zip("ABC", self._two_nodes(tmp, "ABC")))

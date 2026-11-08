@@ -345,6 +345,16 @@ ModSync get this the next time ModSync runs on them, and the shared machine
 has to be online once afterwards. If it never will be, "Add a machine by
 code…" on one of the others, with the other's code, pairs them directly.
 
+Each machine appears under the name it gives itself, usually its hostname.
+Paired with a code, a machine shows as the start of its device id until it
+first connects, when Syncthing takes its name from it. Older versions named a
+machine after the vault (such as "Skyrim SE"); this version clears those
+names once, and the machines get their own the next time they connect. A
+name you gave a machine in Syncthing stays. `modsync
+doctor` lists the paired machines and when each last connected. It also warns
+about two Syncthing folders at one path, a folder ModSync uses that is
+missing from Syncthing, and a vault no other machine has synced in 30 days.
+
 Games other than Skyrim sync through their own folders, each with a fixed
 Syncthing id (`modsync-<name>`). When a paired machine starts syncing one,
 the others are offered it. Each takes it up as soon as that game is set up

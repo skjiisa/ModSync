@@ -59,6 +59,12 @@ class Handshake(unittest.TestCase):
     def test_local_host_field_is_never_sent(self):
         self.assertNotIn(b"host", replace(HOST, host="10.0.0.1").to_bytes())
 
+    def test_the_machine_name_goes_along_when_known(self):
+        named = replace(JOINER, name="laptop")
+        self.assertEqual(PairPayload.from_bytes(named.to_bytes()), named)
+        self.assertNotIn(b"name", JOINER.to_bytes())  # older versions read it like before
+        self.assertEqual(PairPayload.from_bytes(b'{"device_id":"X"}').name, "")
+
     def test_wrong_pin_is_rejected_on_both_sides(self):
         results: dict = {}
         t = _run_host("123456", results, max_attempts=1)
