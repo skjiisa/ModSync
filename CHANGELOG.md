@@ -19,16 +19,16 @@ All notable changes to ModSync are documented here. The format follows
   Engine Tweaks and RED4ext load. An instance MO2-LINT installed is found
   by itself; one chosen with `use` wins, and a launch says so when it's
   missing instead of starting another.
-- Forget one paired machine: select it under Devices on the Sync page, or
-  run `modsync sync forget <machine>`. If another machine passes it on
-  again, ModSync removes it again. Entering its code or PIN pairs it again.
-  `modsync sync status` shows each machine's device id.
 - `modsync cyberpunk install [<dir>]` installs MO2 for Cyberpunk 2077 from
   GOG: MO2-LINT installs MO2 and Heroic's "Launch Mod Organizer" option,
   then ModSync applies the prefix steps with the game's own runner
   (`umu-run winetricks`; MO2-LINT's GOG path would run a host Wine on the
   Proton prefix, or nothing on a Steam Deck), installs the VC++ runtime when
   the prefix needs it, and adds the RootBuilder plugin set up for Cyberpunk.
+- Forget one paired machine: select it under Devices on the Sync page, or
+  run `modsync sync forget <machine>`. If another machine passes it on
+  again, ModSync removes it again. Entering its code or PIN pairs it again.
+  `modsync sync status` shows each machine's device id.
 
 ### Changed
 
