@@ -44,6 +44,7 @@ from typing import Callable
 
 from modsync import background, config
 from modsync.games import CYBERPUNK
+from modsync.heroic import hook as heroic_hook
 from modsync.heroic import library as heroic
 from modsync.mo2 import ini
 from modsync.mo2.launch import LaunchPlan, nested_desktop_display
@@ -275,6 +276,63 @@ def prefix_env(game: heroic.GogGame) -> dict[str, str]:
     return env
 
 
+# --- Heroic's Play button -----------------------------------------------------
+
+
+def hook_script(game: heroic.GogGame, instance: Path) -> str:
+    """The Play hook as it should be now. It passes no profile, so MO2 plays
+    whichever profile was last chosen in it."""
+    play_args, _ = _game_target(ini.read_ini(instance / "ModOrganizer.ini"), game.install_path)
+    return heroic_hook.render(game, game_name=CYBERPUNK.name, instance=instance.resolve(), play_args=play_args,
+                              open_args=[], disable_command="modsync cyberpunk hook disable")
+
+
+def hook_status() -> heroic_hook.HookStatus | None:
+    game, instance = find_game(), find_instance()
+    if game is None:
+        return None
+    expected = hook_script(game, instance) if instance is not None and _is_instance(instance) else None
+    return heroic_hook.status(game, expected)
+
+
+def enable_hook() -> list[str]:
+    game, instance = find_game(), find_instance()
+    if game is None:
+        raise CyberpunkError("Cyberpunk 2077 wasn't found in Heroic. Install it from GOG in Heroic first.")
+    if instance is None:
+        raise CyberpunkError("Install or choose Cyberpunk's MO2 instance first ('modsync cyberpunk install').")
+    problem = instance_problem(instance)
+    if problem:
+        raise CyberpunkError(problem)
+    try:
+        return heroic_hook.enable(game, hook_script(game, instance), instance.resolve())
+    except heroic_hook.HookError as e:
+        raise CyberpunkError(str(e)) from e
+
+
+def disable_hook() -> str:
+    game = find_game()
+    if game is None:
+        raise CyberpunkError("Cyberpunk 2077 wasn't found in Heroic.")
+    try:
+        return heroic_hook.disable(game)
+    except heroic_hook.HookError as e:
+        raise CyberpunkError(str(e)) from e
+
+
+def refresh_hook() -> bool:
+    """Keep an enabled hook's script in step with the instance (a new one, or
+    MO2 having saved its executables). Never raises: the hook still works."""
+    try:
+        game, instance = find_game(), find_instance()
+        if game is None or instance is None or instance_problem(instance):
+            return False
+        return heroic_hook.refresh(game, hook_script(game, instance))
+    except (OSError, CyberpunkError) as e:
+        log.warning("couldn't refresh Heroic's Play hook for Cyberpunk: %s", e)
+        return False
+
+
 # --- installing MO2 -----------------------------------------------------------
 
 
@@ -451,4 +509,6 @@ def install_mo2(dest: Path | str, on_output: OnOutput | None = None, *, backend=
         install_rootbuilder(instance)
     except (CyberpunkError, OSError, zipfile.BadZipFile) as e:
         raise CyberpunkError(f"{e} MO2 is installed in {instance}; run the install again to finish its setup.") from e
-    return use_instance(instance)
+    chosen = use_instance(instance)
+    refresh_hook()
+    return chosen

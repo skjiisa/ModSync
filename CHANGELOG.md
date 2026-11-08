@@ -25,6 +25,11 @@ All notable changes to ModSync are documented here. The format follows
   (`umu-run winetricks`; MO2-LINT's GOG path would run a host Wine on the
   Proton prefix, or nothing on a Steam Deck), installs the VC++ runtime when
   the prefix needs it, and adds the RootBuilder plugin set up for Cyberpunk.
+- `modsync cyberpunk hook enable | disable | status` makes Heroic's own Play
+  button on Cyberpunk play through MO2, as a wrapper in the game's settings
+  in Heroic: the game stays Heroic's launch, so Heroic tracks it and syncs
+  GOG cloud saves. MO2-LINT's "Launch Mod Organizer" option opens MO2.
+  Heroic's Flatpak gets access to an instance outside the folders it can see.
 - Forget one paired machine: select it under Devices on the Sync page, or
   run `modsync sync forget <machine>`. If another machine passes it on
   again, ModSync removes it again. Entering its code or PIN pairs it again.
