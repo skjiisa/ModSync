@@ -59,6 +59,35 @@ def file_version(path: Path | str) -> tuple[int, int, int, int] | None:
         return None
 
 
+def build_and_product(path: Path | str) -> tuple[tuple[int, int, int, int] | None, str | None]:
+    """The fixed struct's version and the ``ProductVersion`` text as written.
+    They can say different things: Cyberpunk 2077's are 3.0.88.46235, the exact
+    build, and "2.5", the patch players know (its ``FileVersion`` packs the build
+    into three numbers, so :func:`file_version` isn't the build there)."""
+    try:
+        with open(path, "rb") as fh:
+            try:
+                view: bytes | mmap.mmap = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+            except (ValueError, OSError):  # empty file / mmap unsupported
+                view = fh.read()
+            try:
+                pos = view.find(_SIGNATURE)
+                while pos >= 0:
+                    if pos + _FIXEDFILEINFO.size <= len(view):
+                        _, struc_version, ms, ls = _FIXEDFILEINFO.unpack_from(view, pos)
+                        if struc_version == _STRUC_VERSION:
+                            block = _version_block(view, pos)
+                            product = _string_text(block, "ProductVersion") if block else None
+                            return (ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF), product
+                    pos = view.find(_SIGNATURE, pos + 1)
+            finally:
+                if isinstance(view, mmap.mmap):
+                    view.close()
+    except OSError:
+        pass
+    return None, None
+
+
 def _scan(view: bytes | mmap.mmap) -> tuple[int, int, int, int] | None:
     pos = view.find(_SIGNATURE)
     while pos >= 0:
@@ -74,13 +103,9 @@ def _scan(view: bytes | mmap.mmap) -> tuple[int, int, int, int] | None:
 def _string_version(view: bytes | mmap.mmap, fixed_pos: int) -> tuple[int, int, int, int] | None:
     """The version named in the ``StringFileInfo`` table of the resource whose
     fixed struct sits at ``fixed_pos``, or None when there is no usable one."""
-    start = fixed_pos - _FIXED_OFFSET
-    if start < 0 or view[start + _ROOT_KEY_OFFSET : start + _ROOT_KEY_OFFSET + len(_ROOT_KEY)] != _ROOT_KEY:
+    block = _version_block(view, fixed_pos)
+    if block is None:
         return None
-    length, _, _ = _HEADER.unpack_from(view, start)
-    if length <= _FIXED_OFFSET:
-        length = _MAX_BLOCK
-    block = bytes(view[start : start + min(length, _MAX_BLOCK)])
     for key in _STRING_KEYS:
         parsed = _string_value(block, key)
         if parsed:
@@ -88,7 +113,18 @@ def _string_version(view: bytes | mmap.mmap, fixed_pos: int) -> tuple[int, int, 
     return None
 
 
-def _string_value(block: bytes, key: str) -> tuple[int, int, int, int] | None:
+def _version_block(view: bytes | mmap.mmap, fixed_pos: int) -> bytes | None:
+    """The VS_VERSIONINFO resource around the fixed struct at ``fixed_pos``."""
+    start = fixed_pos - _FIXED_OFFSET
+    if start < 0 or view[start + _ROOT_KEY_OFFSET : start + _ROOT_KEY_OFFSET + len(_ROOT_KEY)] != _ROOT_KEY:
+        return None
+    length, _, _ = _HEADER.unpack_from(view, start)
+    if length <= _FIXED_OFFSET:
+        length = _MAX_BLOCK
+    return bytes(view[start : start + min(length, _MAX_BLOCK)])
+
+
+def _string_texts(block: bytes, key: str):
     # A String struct is wLength, wValueLength (in WCHARs), wType, szKey, padding
     # to a 4-byte boundary, then the UTF-16 value.
     needle = key.encode("utf-16-le") + b"\x00\x00"
@@ -99,9 +135,17 @@ def _string_value(block: bytes, key: str) -> tuple[int, int, int, int] | None:
             _, value_len, _ = _HEADER.unpack_from(block, header)
             value_at = (at + len(needle) + 3) & ~3
             end = value_at + value_len * 2 if value_len else len(block)
-            text = block[value_at:end].decode("utf-16-le", errors="replace").split("\x00", 1)[0]
-            m = _VERSION_RE.search(text)
-            if m:
-                return (int(m[1]), int(m[2]), int(m[3]), int(m[4] or 0))
+            yield block[value_at:end].decode("utf-16-le", errors="replace").split("\x00", 1)[0]
         at = block.find(needle, at + 1)
+
+
+def _string_text(block: bytes, key: str) -> str | None:
+    return next((t.strip() for t in _string_texts(block, key) if t.strip()), None)
+
+
+def _string_value(block: bytes, key: str) -> tuple[int, int, int, int] | None:
+    for text in _string_texts(block, key):
+        m = _VERSION_RE.search(text)
+        if m:
+            return (int(m[1]), int(m[2]), int(m[3]), int(m[4] or 0))
     return None

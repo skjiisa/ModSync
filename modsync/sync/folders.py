@@ -59,9 +59,9 @@ class FolderSpec:
 
 def specs() -> list[FolderSpec]:
     """Every game folder ModSync knows. The games add theirs here."""
-    from modsync import dfu  # imports this module's users; loaded on first use
+    from modsync import cyberpunk, dfu  # import this module's users; loaded on first use
 
-    return [dfu.MODS_FOLDER, dfu.SAVES_FOLDER]
+    return [dfu.MODS_FOLDER, dfu.SAVES_FOLDER, cyberpunk.MODS_FOLDER]
 
 
 def spec_for(key: str) -> FolderSpec | None:

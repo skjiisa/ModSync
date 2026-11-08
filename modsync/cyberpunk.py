@@ -26,6 +26,14 @@ Proton prefix and stops at a Wine Mono dialog; none on a Steam Deck) and pass
 the VC++ installer and DLL overrides to winetricks as verbs, which fail.
 :data:`MO2LINT_ENV` makes each of those steps fail at once without touching the
 prefix, and :func:`prepare_prefix` does them with the game's own runner.
+
+:data:`MODS_FOLDER` syncs the instance's mods, profiles and downloads with
+paired machines (see :mod:`modsync.sync.folders`), under the same rules as
+Skyrim's vault, plus what the game, CET, RED4ext and vkd3d write into
+``overwrite`` while playing. Only an instance handed to ModSync (``install`` or
+``use``) is ever synced. Saves don't: the game syncs them across stores itself.
+The machine that starts syncing records the game version the mods are for, and
+a different version here is reported, never acted on.
 """
 
 from __future__ import annotations
@@ -48,6 +56,9 @@ from modsync.heroic import hook as heroic_hook
 from modsync.heroic import library as heroic
 from modsync.mo2 import ini
 from modsync.mo2.launch import LaunchPlan, nested_desktop_display
+from modsync.steam import pe
+from modsync.sync import stignore
+from modsync.sync.folders import FolderSpec
 
 log = logging.getLogger(__name__)
 
@@ -523,3 +534,94 @@ def install_mo2(dest: Path | str, on_output: OnOutput | None = None, *, backend=
     for note in refresh_hook():
         say(note)
     return chosen
+
+
+# --- syncing the mods -----------------------------------------------------------
+
+VAULT_RECORD = "modsync-cp2077-vault.json"  # which game version the synced mods are for; synced
+
+# Machine-local files the game, Cyber Engine Tweaks, RED4ext and vkd3d write
+# into MO2's overwrite while playing (seen on the desktop), and logs anywhere.
+# Before the content below, since Syncthing takes the first pattern that matches.
+PLAY_LEFTOVERS = (
+    "*.log",
+    "/overwrite/r6/cache",  # the game's own caches, copied there by REDmod's deploy
+    "/overwrite/Root/bin/x64/vkd3d-proton.cache*",
+    "/overwrite/bin/x64/*.exe-*.txt",  # the crash reporter's registrations
+    "/overwrite/Root/red4ext/logs",
+)
+
+
+def _synced_instance() -> Path | None:
+    """The instance handed to ModSync, never one it only found: syncing that
+    would change a folder nobody gave it."""
+    chosen = chosen_instance()
+    return chosen if chosen is not None and instance_problem(chosen) is None else None
+
+
+def game_version(game: heroic.GogGame | None = None) -> tuple[str, str] | None:
+    """The game here as (patch, build): ``("2.5", "3.0.88.46235")``."""
+    game = game or find_game()
+    if game is None:
+        return None
+    build, product = pe.build_and_product(game.install_path / CYBERPUNK.exe_name)
+    if build is None:
+        return None
+    return product or ".".join(map(str, build)), ".".join(map(str, build))
+
+
+def _record_vault_version(root: Path) -> None:
+    """The machine that starts syncing the mods says which game version they're for."""
+    record = root / VAULT_RECORD
+    version = game_version()
+    if not record.exists() and version is not None:
+        record.write_text(json.dumps({"game_version": version[0], "build": version[1]}, indent=2) + "\n",
+                          encoding="utf-8")
+
+
+def vault_version(instance: Path | None = None) -> tuple[str, str] | None:
+    instance = instance or _synced_instance()
+    try:
+        data = json.loads((instance / VAULT_RECORD).read_text(encoding="utf-8")) if instance else None
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("build"), str):
+        return None
+    return str(data.get("game_version") or data["build"]), data["build"]
+
+
+def version_problem(game: heroic.GogGame | None = None, instance: Path | None = None) -> str | None:
+    """A note when the game here isn't the version the synced mods are for.
+    Only a note: frameworks like CET and RED4ext need a version they support,
+    but whether to change versions (Heroic can install older GOG builds) is
+    the player's call."""
+    wanted, here = vault_version(instance), game_version(game)
+    if wanted is None or here is None or wanted[1] == here[1]:
+        return None
+    return (f"Cyberpunk 2077 here is {here[0]} (build {here[1]}), but the synced mods were set up for "
+            f"{wanted[0]} (build {wanted[1]}). Mods made for another version may not work, CET and RED4ext "
+            "especially. Heroic can install another GOG build under the game's settings.")
+
+
+MODS_FOLDER = FolderSpec(
+    key="cp2077-mo2",
+    label="Cyberpunk 2077 mods (ModSync)",
+    path=_synced_instance,
+    ignore=(
+        "// Managed by ModSync. Syncs Cyberpunk 2077's Mod Organizer 2 content: mods, profiles,",
+        "// downloads and overwrite. Never the MO2 program, ModOrganizer.ini, nexusApiKey,",
+        "// or what playing leaves behind.",
+        "",
+        *PLAY_LEFTOVERS,
+        "",
+        *(f"!/{name}" for name in stignore.CONTENT_DIRS),
+        "!/categories.dat",
+        f"!/{VAULT_RECORD}",
+        "",
+        "// Everything else at the instance root. Ignoring a folder skips what's in it.",
+        "/*",
+    ),
+    content=(*stignore.CONTENT_DIRS, "categories.dat", VAULT_RECORD),
+    on_share=_record_vault_version,
+    in_use=lambda: game_running(),
+)

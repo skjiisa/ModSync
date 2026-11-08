@@ -398,3 +398,62 @@ def test_game_running_matches_wine_processes_not_shells():
     assert not pattern.search("c:\\windows\\system32\\umu.exe /home/deck/ModOrganizer2-cyberpunk2077/ModOrganizer.exe")
     with patch.object(cyberpunk.background, "run_host", return_value=CompletedProcess([], 1)):
         assert not cyberpunk.game_running()
+
+
+# --- syncing the mods -----------------------------------------------------------
+
+
+def test_only_an_instance_handed_to_modsync_syncs(tmp_path):
+    """One MO2-LINT installed is played, but never synced unless chosen."""
+    from modsync.sync import folders
+
+    found = make_instance(tmp_path)
+    state_file = write_mo2lint_state(tmp_path, ("cyberpunk2077", found))
+    with patch("modsync.mo2.installers.mo2lint.mo2lint_state_path", return_value=state_file):
+        assert cyberpunk.find_instance() == found
+        assert cyberpunk.MODS_FOLDER.path() is None
+        cyberpunk.use_instance(found)
+        assert cyberpunk.MODS_FOLDER.path() == found.resolve()
+    (found / "ModOrganizer.exe").unlink()  # gone (an unmounted drive): nothing to sync
+    assert cyberpunk.MODS_FOLDER.path() is None
+    assert folders.spec_for("cp2077-mo2") is cyberpunk.MODS_FOLDER
+
+
+def test_the_ignore_list_drops_play_leftovers_before_allowing_content():
+    lines = [line for line in cyberpunk.MODS_FOLDER.ignore if line and not line.startswith("//")]
+    first_allowed = lines.index("!/mods")
+    assert set(cyberpunk.PLAY_LEFTOVERS) <= set(lines[:first_allowed])  # Syncthing: first match wins
+    assert lines[-1] == "/*"
+    assert {"!/profiles", "!/downloads", "!/overwrite", f"!/{cyberpunk.VAULT_RECORD}"} <= set(lines)
+
+
+def test_the_sharing_machine_records_its_game_version_once(tmp_path):
+    root = make_instance(tmp_path)
+    with patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+        cyberpunk.MODS_FOLDER.on_share(root)
+    with patch.object(cyberpunk, "game_version", return_value=("2.6", "3.0.90.1")):
+        cyberpunk.MODS_FOLDER.on_share(root)  # a later share doesn't rewrite it
+
+    assert cyberpunk.vault_version(root) == ("2.5", "3.0.88.46235")
+
+
+def test_another_game_version_here_is_only_reported(tmp_path):
+    root = make_instance(tmp_path)
+    (root / cyberpunk.VAULT_RECORD).write_text(json.dumps({"game_version": "2.5", "build": "3.0.88.46235"}))
+
+    with patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+        assert cyberpunk.version_problem(instance=root) is None
+    with patch.object(cyberpunk, "game_version", return_value=("2.6", "3.0.90.1")):
+        problem = cyberpunk.version_problem(instance=root)
+    assert "here is 2.6 (build 3.0.90.1)" in problem and "set up for 2.5 (build 3.0.88.46235)" in problem
+    with patch.object(cyberpunk, "game_version", return_value=None):
+        assert cyberpunk.version_problem(instance=root) is None  # can't tell: say nothing
+
+
+def test_game_version_reads_the_exe(tmp_path):
+    from tests.test_gameversion import fake_pe
+
+    game = make_game(tmp_path)
+    (game.install_path / "bin/x64/Cyberpunk2077.exe").write_bytes(
+        fake_pe(3, 0, 88, 46235, strings={"ProductVersion": "2.5"}))
+    assert cyberpunk.game_version(game) == ("2.5", "3.0.88.46235")

@@ -864,6 +864,30 @@ folder with `flatpak override --user --filesystem=<instance>
 com.heroicgameslauncher.hgl`; restart Heroic after that. Turning the hook
 off leaves that access in place.
 
+5. `modsync sync share cp2077-mo2` syncs the instance's mods with every
+   paired machine. A paired machine takes it up once it has an instance of
+   its own from `modsync cyberpunk install` or `use`; an MO2 instance ModSync
+   only found (one MO2-LINT installed) is played but never synced.
+
+### Syncing Cyberpunk's mods
+
+The `cp2077-mo2` folder follows the same rules as Skyrim's vault: `mods`,
+`profiles`, `downloads`, `overwrite` and `categories.dat` sync, and the MO2
+program, `ModOrganizer.ini` (it holds this machine's paths) and
+`nexusApiKey` never do. What playing leaves in `overwrite` stays out too:
+the game caches REDmod's deploy copies there (`r6/cache`), vkd3d's shader
+cache, the crash reporter's files and every `.log`. RootBuilder lives in
+MO2's `plugins` folder, which each machine's install sets up.
+
+Saves don't sync: the game syncs its saves across GOG and Steam itself.
+
+The machine that starts syncing records the game version the mods are for
+(`modsync-cp2077-vault.json`), as the patch and the exact build:
+`Cyberpunk2077.exe` calls itself 2.5 in its ProductVersion, but its build is
+3.0.88.46235. When the game here is another build, `modsync cyberpunk
+status`, `open` and `play` say so. Nothing else happens: whether to install
+another GOG build (in Heroic, under the game's settings) is up to you.
+
 Cyber Engine Tweaks and RED4ext load through `version.dll` and `winmm.dll`
 in the game's `bin/x64` folder, which Wine ignores unless told otherwise, so
 every launch sets `WINEDLLOVERRIDES="winmm,version=n,b"` (MO2-LINT's

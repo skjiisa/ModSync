@@ -30,6 +30,13 @@ All notable changes to ModSync are documented here. The format follows
   in Heroic: the game stays Heroic's launch, so Heroic tracks it and syncs
   GOG cloud saves. MO2-LINT's "Launch Mod Organizer" option opens MO2.
   Heroic's Flatpak gets access to an instance outside the folders it can see.
+- Cyberpunk 2077's mods sync between machines: `modsync sync share
+  cp2077-mo2`. Mods, profiles, downloads and overwrite sync, as in Skyrim's
+  vault, but not what playing leaves in overwrite (REDmod's cache copies,
+  vkd3d's cache, logs). Only an instance from `modsync cyberpunk install` or
+  `use` syncs. A machine with another build of the game gets a warning in
+  `modsync cyberpunk status`, `open` and `play`. Saves don't sync; the game
+  does that itself.
 - Forget one paired machine: select it under Devices on the Sync page, or
   run `modsync sync forget <machine>`. If another machine passes it on
   again, ModSync removes it again. Entering its code or PIN pairs it again.

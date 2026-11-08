@@ -56,6 +56,18 @@ def fake_pe(
 
 
 class PeVersionTests(unittest.TestCase):
+    def test_build_and_product_text_as_cyberpunk_writes_them(self):
+        """Cyberpunk 2077: the build in the fixed struct, the patch as ProductVersion,
+        and a FileVersion that packs the build into three numbers."""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "Cyberpunk2077.exe"
+            p.write_bytes(fake_pe(3, 0, 88, 46235, strings={"FileVersion": "3.0.5813403", "ProductVersion": "2.5"}))
+            self.assertEqual(pe.build_and_product(p), ((3, 0, 88, 46235), "2.5"))
+            self.assertEqual(pe.file_version(p), (3, 0, 5813403, 0))  # unchanged for the games using it
+            p.write_bytes(fake_pe(1, 6, 1170, 0))
+            self.assertEqual(pe.build_and_product(p), ((1, 6, 1170, 0), None))
+            self.assertEqual(pe.build_and_product(Path(tmp) / "missing.exe"), (None, None))
+
     def test_reads_version_from_fixedfileinfo(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "game.exe"
