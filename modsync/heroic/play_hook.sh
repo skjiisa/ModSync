@@ -29,6 +29,7 @@ game_exe=@@GAME_EXE@@             # MO2 executables running this play the game
 prefer=@@PREFER_ARGUMENT@@        # and the one with this argument wins
 direct=(@@DIRECT_ARGS@@)          # MO2's arguments when it has no such executable yet
 download_note=@@DOWNLOAD_NOTE@@
+download_taken=@@DOWNLOAD_TAKEN@@  # emptied once taken: its time is when MO2's launch began
 download_ttl=@@DOWNLOAD_TTL@@     # seconds
 
 say() { printf 'ModSync: %s\n' "$*" >&2; }  # Heroic keeps it in the game's log
@@ -85,12 +86,11 @@ program=$(unix_path "${launch[$target]}")
 program="${program##*/}"
 
 download=""
-taken="$download_note.$$"
-if [[ -f "$download_note" ]] && mv -f "$download_note" "$taken" 2>/dev/null; then  # taken whole, once
-    left=$(stat -c %Y "$taken" 2>/dev/null || echo 0)
+if [[ -f "$download_note" ]] && mv -f "$download_note" "$download_taken" 2>/dev/null; then  # taken whole, once
+    left=$(stat -c %Y "$download_taken" 2>/dev/null || echo 0)
     link=""
-    IFS= read -r link < "$taken" || true
-    rm -f "$taken"
+    IFS= read -r link < "$download_taken" || true
+    : > "$download_taken"
     if (( $(date +%s) - left <= download_ttl )) && [[ "${link,,}" == nxm://* ]]; then
         download=$link
     else

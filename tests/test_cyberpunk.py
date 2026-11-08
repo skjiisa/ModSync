@@ -714,8 +714,64 @@ def test_a_link_while_mo2_is_starting_waits_for_it_instead_of_launching_again(tm
         assert d.popen_mock.call_args.args[0][-1] == LINK + "2"
 
 
-def test_an_mo2_that_never_showed_up_is_opened_again(tmp_path):
-    with Downloading(tmp_path, hook_on=True), patch.object(cyberpunk, "MO2_START_WAIT", 0.0):
-        cyberpunk.download(LINK)  # the hook took the link, but MO2 is gone (or never came)
-        assert "through Heroic" in cyberpunk.download(LINK, poll=0)
+def no_waiting():
+    return patch("time.sleep", side_effect=AssertionError("waited"))
+
+
+def taken_ago(game, seconds: float) -> None:
+    """The hook took the link ``seconds`` ago."""
+    import os
+    import time
+
+    taken = cyberpunk.heroic_hook.download_taken(game)
+    taken.parent.mkdir(parents=True, exist_ok=True)
+    taken.write_text("")
+    os.utime(taken, (time.time() - seconds,) * 2)
+
+
+def test_an_mo2_that_never_showed_up_is_opened_again_at_once(tmp_path):
+    """The wait runs from when the hook took the link, for every link alike:
+    a link clicked well after that doesn't wait out a wait of its own."""
+    import os
+    import time
+
+    with Downloading(tmp_path, hook_on=True) as d, no_waiting():
+        cyberpunk.download(LINK)
+        record = cyberpunk._launch_record()
+        os.utime(record, (time.time() - 100,) * 2)
+        taken_ago(d.game, 99)  # and MO2 never came
+        assert "through Heroic" in cyberpunk.download(LINK)
         assert cyberpunk.heroic_hook.launch.call_count == 2
+
+
+def test_a_link_just_taken_by_the_hook_waits_for_mo2(tmp_path):
+    with Downloading(tmp_path, hook_on=True) as d:
+        cyberpunk.download(LINK)
+        taken_ago(d.game, 0)
+        cyberpunk.mo2_running.side_effect = [False, True, True]
+        assert cyberpunk.download(LINK + "2", poll=0) == "Passed the download to Mod Organizer 2."
+        assert cyberpunk.heroic_hook.launch.call_count == 1
+
+
+def test_a_failed_launch_leaves_nothing_to_wait_for(tmp_path):
+    with Downloading(tmp_path, hook_on=True) as d:
+        cyberpunk.heroic_hook.leave_download.side_effect = lambda game, url: (
+            cyberpunk.heroic_hook.download_note(game).parent.mkdir(parents=True, exist_ok=True),
+            cyberpunk.heroic_hook.download_note(game).write_text(url))
+        cyberpunk.heroic_hook.launch.side_effect = cyberpunk.heroic_hook.HookError("no Heroic")
+        with pytest.raises(cyberpunk.heroic_hook.HookError):
+            cyberpunk.download(LINK)
+        assert not cyberpunk.heroic_hook.download_note(d.game).exists()
+        cyberpunk.heroic_hook.launch.side_effect = None
+        with no_waiting():
+            assert "through Heroic" in cyberpunk.download(LINK)
+
+
+def test_a_direct_launch_gets_its_own_short_wait(tmp_path):
+    from modsync.mo2.launch import Launcher
+
+    with Downloading(tmp_path):
+        cyberpunk.download(LINK)
+        cyberpunk.mo2_running.side_effect = [False, True, True]
+        assert cyberpunk.download(LINK + "2", poll=0) == "Passed the download to Mod Organizer 2."
+        assert Launcher.start.call_count == 1

@@ -104,6 +104,22 @@ def test_a_failed_disable_keeps_everything_for_a_retry(desktop):
     assert desktop.default == MO2LINT
 
 
+def test_a_lookup_that_fails_is_not_taken_for_a_missing_handler(desktop):
+    mo2lint_entry(Path.home() / ".local/share")
+    nxm.enable()
+    real = desktop.__call__
+
+    def timing_out(cmd, **kw):
+        if cmd[0] == "sh" and nxm._PRINT_ENTRY in cmd:
+            raise subprocess.TimeoutExpired(cmd, 15)
+        return real(cmd, **kw)
+
+    with patch.object(nxm.background, "run_host", side_effect=timing_out):
+        with pytest.raises(nxm.NxmError, match="Couldn't look for"):
+            nxm.disable()
+    assert nxm.entry_path().exists() and nxm.status().previous == MO2LINT
+
+
 def test_disable_with_the_old_handler_gone_says_so(desktop):
     nxm.enable()  # MO2-LINT's entry isn't there
     assert "isn't installed anymore" in nxm.disable()

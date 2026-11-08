@@ -291,14 +291,19 @@ exit 1
 
 
 def entry_text(desktop_id: str) -> str | None:
-    """The desktop entry with this id, as the host's desktop would find it."""
+    """The desktop entry with this id, as the host's desktop would find it;
+    None when it isn't installed. Raises when the host couldn't be asked."""
     if not _DESKTOP_ID_RE.fullmatch(desktop_id):
         return None
     try:
         result = background.run_host(["sh", "-c", _PRINT_ENTRY, "sh", desktop_id], timeout=15)
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as e:
+        raise NxmError(f"Couldn't look for {desktop_id}: {e}") from e
+    if result.returncode == 1:
         return None
-    return result.stdout if result.returncode == 0 and result.stdout.strip() else None
+    if result.returncode != 0:
+        raise NxmError(f"Couldn't look for {desktop_id}: {(result.stderr or '').strip() or result.returncode}")
+    return result.stdout if result.stdout.strip() else None
 
 
 _DROPPED_CODES = {"%i", "%c", "%k", "%d", "%D", "%n", "%N", "%v", "%m"}

@@ -80,6 +80,12 @@ def download_note(game: GogGame) -> Path:
     return game.config_dir / "modsync" / f"download-{game.app_name}.txt"
 
 
+def download_taken(game: GogGame) -> Path:
+    """Where the hook moves a link it takes. It empties the file then, so the
+    file's time says when the launch for the link began."""
+    return download_note(game).with_suffix(".taken")
+
+
 def leave_download(game: GogGame, url: str) -> None:
     _write(download_note(game), url + "\n")
 
@@ -121,6 +127,7 @@ def render(game: GogGame, *, game_name: str, instance: Path, game_exe: str, pref
         "PREFER_ARGUMENT": shlex.quote(prefer_argument),
         "DIRECT_ARGS": " ".join(shlex.quote(a) for a in direct_args),
         "DOWNLOAD_NOTE": shlex.quote(str(download_note(game))),
+        "DOWNLOAD_TAKEN": shlex.quote(str(download_taken(game))),
         "DOWNLOAD_TTL": str(DOWNLOAD_TTL),
         "MARKER": MARKER,
     }.items():
@@ -237,6 +244,7 @@ def disable(game: GogGame) -> str:
     script = script_path(game)
     script.unlink(missing_ok=True)
     download_note(game).unlink(missing_ok=True)
+    download_taken(game).unlink(missing_ok=True)
     try:
         script.parent.rmdir()
     except OSError:

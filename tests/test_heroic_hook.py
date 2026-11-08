@@ -163,6 +163,8 @@ def test_a_download_link_left_by_modsync_opens_mo2_with_it_once(scene, program):
     assert calls[0]["overrides"] == "winmm,version=n,b"
     assert "for a Nexus Mods download" in said and "key=" not in said
     assert not note(scene).exists()
+    taken = note(scene).with_suffix(".taken")
+    assert taken.read_text() == ""  # emptied of the link; its time says when it was taken
     calls, _ = run(scene, str(scene["umu"]), scene["exe"])  # the next Play plays
     assert calls[-1]["argv"][1:] == ["run", "-e", "My Cyberpunk, renamed"]
 
