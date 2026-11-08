@@ -590,6 +590,19 @@ def _steam_default(env: SteamEnv, appid: int) -> CompatTool:
     return tool
 
 
+def _a_proton(env: SteamEnv, appid: int) -> CompatTool:
+    """Steam's default for the game when that's a Proton, else Valve's own: the
+    default can be a launcher too (Luxtorpeda picked for every game)."""
+    tool = _steam_default(env, appid)
+    if (tool.path / "proton").exists():
+        return tool
+    valve = compattools.default_valve_tool(env.root, env.libraries)
+    if valve is None:
+        raise RuntimeError(f"Steam's default, {tool.display_name}, isn't a Proton, and no Proton is installed. "
+                           "Install one (Proton Experimental, say) in Steam and try again")
+    return valve
+
+
 def _resolve_underlying(
     env: SteamEnv, appid: int, current: str | None, record: Record | None, through: str | None,
     native: bool = False,
@@ -608,8 +621,8 @@ def _resolve_underlying(
         if native and (tool is None or not (tool.path / "proton").exists()):
             # Play runs the native program, so the hook only hands on setup steps and the
             # original game, which need a Proton, not another launcher such as Luxtorpeda.
-            log.info("%s is not a Proton; the hook hands the rest to Steam's default", current)
-            tool = _steam_default(env, appid)
+            log.info("%s is not a Proton; the hook hands the rest to Steam's default Proton", current)
+            tool = _a_proton(env, appid)
         if tool is None:
             raise RuntimeError(
                 f"Steam launches the game with {current!r}, but that tool was not found on this machine"

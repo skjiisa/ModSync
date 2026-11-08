@@ -561,6 +561,14 @@ class DaggerfallOverLuxtorpeda(LaunchHookBase):
         self.assertIn("back to luxtorpeda", launchhook.disable(self.DF))
         self.assertEqual(self.df_mapping(), "luxtorpeda")
 
+    def test_luxtorpeda_as_steams_default_too_falls_back_to_valves_proton(self):
+        cfg = SteamConfig.load(self.root / "config/config.vdf")
+        cfg.set_compat_tool(0, "luxtorpeda")
+        cfg.save(backup=False)
+        launchhook.enable(self.DF, native=self.dfu)
+        self.assertEqual(launchhook.Record.load(self.DF).underlying_name, "proton_experimental")
+        self.assertIn("back to luxtorpeda", launchhook.disable(self.DF))
+
     def test_without_a_native_program_it_still_wants_a_proton(self):
         with self.assertRaisesRegex(RuntimeError, "has no 'proton' to run"):
             launchhook.enable(self.DF)
