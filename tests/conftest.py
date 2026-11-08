@@ -7,6 +7,7 @@ import os
 import tempfile
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -21,11 +22,13 @@ def _scratch_home():
 
 @pytest.fixture(autouse=True)
 def _isolated_state_and_config_home(_scratch_home):
-    """Logs and ModSync's state.json go to a scratch dir, so a test that misses
-    a patch can't overwrite the developer's real setup. Set before every test:
+    """Logs and ModSync's state and data go to a scratch dir, so a test that
+    misses a patch can't overwrite the developer's real setup. Set before every test:
     tests that point XDG_CONFIG_HOME at their own tmp dir unset it afterwards."""
-    previous = {name: os.environ.get(name) for name in ("XDG_STATE_HOME", "XDG_CONFIG_HOME")}
-    for name in previous:
+    names = ("XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME")
+    previous = {name: os.environ.get(name) for name in (*names, "MODSYNC_HOME")}
+    os.environ.pop("MODSYNC_HOME", None)
+    for name in names:
         os.environ[name] = str(_scratch_home / name)
     try:
         yield
@@ -35,6 +38,17 @@ def _isolated_state_and_config_home(_scratch_home):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+@pytest.fixture(autouse=True)
+def _no_flatpak_data(_scratch_home):
+    """Never the Flatpak's real folders, even on a machine that has it installed
+    (a Steam Deck) and in a test that unsets the XDG variables."""
+    from modsync import config
+
+    with patch.object(config, "flatpak_installed", lambda: False), \
+            patch.object(config, "flatpak_home", lambda: _scratch_home / "flatpak-home"):
+        yield
 
 
 @pytest.fixture(autouse=True, scope="session")
