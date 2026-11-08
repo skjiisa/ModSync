@@ -361,5 +361,51 @@ exit 3
         self.assertEqual(self.record("SteamLinuxRuntime_4")["argv"][:1], ["--verb=run"])
 
 
+    # --- the x86-64 release on an ARM machine (the Steam Frame) ---
+
+    def on_machine(self, arch, *, fex=True):
+        """DFU as the real one is, an x86-64 program, on a machine ``uname -m`` calls ``arch``."""
+        bindir = self.tmp / "bin"
+        fakesteam._executable(bindir / "uname", f"#!/usr/bin/env bash\necho {arch}\n")
+        self.dfu.write_bytes(b"\x7fELF\x02\x01\x01" + bytes(11) + b"\x3e\x00" + b"rest of the program")
+        self.fex_dir = self.root / "steamapps/common/FEX-Emu"
+        if fex:
+            (self.root / "steamapps/appmanifest_3127680.acf").write_text(
+                fakesteam._acf(3127680, "FEX", "FEX-Emu"))
+            fakesteam._executable(self.fex_dir / "fex-compat-tool", RECORDER)
+        return {"PATH": f"{bindir}:{os.environ['PATH']}", "STEAM_COMPAT_DATA_PATH": str(self.tmp / "compatdata")}
+
+    def test_on_arm_it_runs_through_steams_fex_in_the_runtime(self):
+        result = self.run_hook("waitforexitandrun", self.dosbox, extra_env=self.on_machine("aarch64"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        slr = self.root / "steamapps/common/SteamLinuxRuntime_4"
+        fex = self.record("FEX-Emu")
+        self.assertEqual(fex["argv"], ["waitforexitandrun", "--", str(slr / "_v2-entry-point"),
+                                       "--verb=waitforexitandrun", "--", str(self.dfu)])
+        self.assertEqual(fex["cwd"], str(self.dfu.parent))
+        self.assertEqual(fex["env"]["STEAM_COMPAT_DATA_PATH"], str(self.tmp / "compatdata"))  # Steam's, kept
+        self.assertEqual(fex["env"]["STEAM_COMPAT_TOOL_PATHS"], f"{self.fex_dir}:{slr}")
+        self.assertIsNone(self.record("SteamLinuxRuntime_4"))  # FEX starts it, not the hook
+        self.assertEqual(self.record("modsync-cmd")["argv"][:3], ["dfu", "follow", "--quiet"])  # no window, no hub
+
+    def test_on_arm_saves_sync_around_it_too(self):
+        (self.dfu.parent / ".modsync-saves").touch()
+        result = self.run_hook("waitforexitandrun", self.dosbox, extra_env=self.on_machine("aarch64"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.record("FEX-Emu")["argv"][-1], str(self.dfu))
+        self.assertEqual(self.record("modsync-cmd")["argv"], ["dfu", "saves", "--quiet", "--playing"])
+
+    def test_on_x86_it_runs_as_it_is(self):
+        self.run_hook("waitforexitandrun", self.dosbox, extra_env=self.on_machine("x86_64"))
+        self.assertIsNone(self.record("FEX-Emu"))
+        self.assertIn(f"exec {self.dfu} (in place of the game)", self.log())
+
+    def test_on_arm_without_fex_the_original_game_starts(self):
+        result = self.run_hook("waitforexitandrun", self.dosbox, extra_env=self.on_machine("aarch64", fex=False))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.record("SteamLinuxRuntime_4")["argv"][-1], self.dosbox)
+        self.assertIn("needs Steam's FEX and Steam Linux Runtime 4.0 on this aarch64 machine", self.log())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -163,6 +163,8 @@ class DaggerfallPage(Page):
             return "Not installed", "off", "Get Daggerfall in Steam first. It's free."
         if ov.install is None:
             return "Not installed", "off", "Set it up from Steam's Daggerfall."
+        if ov.emulation_problem:
+            return "Needs a look", "warn", ov.emulation_problem
         if (ov.problems and not ov.configured_ok) or ov.version_problem or ov.stale_path:
             return "Needs a look", "warn", ov.version_problem or "Its Daggerfall data needs attention."
         synced = [what for what, state in (("mods", ov.mods), ("saves", ov.saves)) if state == "on"]
@@ -209,7 +211,7 @@ class DaggerfallPage(Page):
                       "off": f"Press to sync your {what} with your paired machines.",
                       "stopping": "Finishes once Syncthing answers."}[state]
             row.set_state(word, tone, detail)
-        notes = [n for n in (ov.version_problem,) if n]
+        notes = [n for n in (ov.emulation_problem, ov.version_problem) if n]
         self.note.setText(" ".join(notes))
         self.note.setVisible(bool(notes))
         self.steam_tile.setVisible(inst is None and ov.dagger is None and not self._working)

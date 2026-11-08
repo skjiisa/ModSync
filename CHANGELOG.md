@@ -26,6 +26,11 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Daggerfall Unity runs on the Steam Frame (#110). Its x86-64 Linux build
+  now goes through Steam's FEX and Steam Linux Runtime 4.0, the way Steam
+  runs any x86 Linux game on ARM, from both Steam's Play button and the
+  app. Before, Play did nothing there. ModSync also tells when DFU is
+  running under FEX, so saves sync still waits for it to close.
 - Moving Daggerfall to another Steam library, such as an SD card, no longer
   leaves Daggerfall Unity on its "set the path to your Daggerfall game files"
   screen. Play, in Steam or in the app, points it at Steam's new copy first,

@@ -613,6 +613,13 @@ ModSync adds two things to the install:
     or not, is never changed, nor is a broken one while Steam's copy is
     missing too (the SD card is out).
 
+DFU's Linux build is for x86-64 only. On the Steam Frame and other ARM
+machines it runs the way Steam runs any x86 Linux game there: through
+Steam's FEX and Steam Linux Runtime 4.0. Both the Play hook and Play in
+ModSync do this. If either tool is missing, `modsync dfu status` and the app
+say so, and Play in Steam starts the original game. Install them from the
+Tools section of Steam's library.
+
 DFU's startup screen still opens. That's where the mod list and DFU's own
 settings are edited. Mods go in
 `DaggerfallUnity_Data/StreamingAssets/Mods`. Use the Linux build of a mod

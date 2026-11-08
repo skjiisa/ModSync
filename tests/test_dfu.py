@@ -1076,3 +1076,100 @@ class AdoptExisting(unittest.TestCase):
         with redirect_stdout(out), patch.object(dfu, "hook_status", _hook_off):
             self.assertEqual(cli.dfu(["status"]), 0)
         self.assertIn("its own copy, not Steam's", out.getvalue())
+
+
+# The first 20 bytes of an x86-64 Linux program, as far as needs_emulation reads.
+_X86_64_ELF = b"\x7fELF\x02\x01\x01" + bytes(11) + b"\x3e\x00"
+
+
+class OnArm(unittest.TestCase):
+    """The release is x86-64 only: on an ARM machine (the Steam Frame) it runs
+    through Steam's FEX-Emu in the Steam Linux Runtime, as Steam runs an x86
+    Linux game there."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.steam = self.tmp / "steam"
+        steamapps = self.steam / "steamapps"
+        steamapps.mkdir(parents=True)
+        (steamapps / "libraryfolders.vdf").write_text(vdf.dumps({"libraryfolders": {
+            "0": {"path": str(self.steam), "apps": {}}}}))
+        self.inst = dfu.Install(self.tmp / "Daggerfall Unity")
+        self.inst.path.mkdir()
+        self.inst.executable.write_bytes(_X86_64_ELF + b"rest of the program")
+        patcher = patch.object(dfu.platforms, "current", lambda: _Plat(self.steam))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _app(self, appid: int, installdir: str, program: str | None = None) -> Path:
+        steamapps = self.steam / "steamapps"
+        (steamapps / f"appmanifest_{appid}.acf").write_text(vdf.dumps({"AppState": {
+            "appid": str(appid), "name": installdir, "installdir": installdir}}))
+        folder = steamapps / "common" / installdir
+        folder.mkdir(parents=True)
+        if program:
+            (folder / program).write_text("#!/bin/sh\n")
+        return folder
+
+    def _tools(self) -> tuple[Path, Path]:
+        return (self._app(dfu.FEX_APPID, "FEX-Emu", "fex-compat-tool"),
+                self._app(4183110, "SteamLinuxRuntime_4", "_v2-entry-point"))
+
+    def test_only_an_x86_program_on_another_machine_needs_it(self):
+        script = self.tmp / "script"
+        script.write_bytes(b"#!/bin/sh\n")
+        with patch.object(dfu, "_host_is_x86", return_value=False):
+            self.assertTrue(dfu.needs_emulation(self.inst.executable))
+            self.assertFalse(dfu.needs_emulation(script))
+            self.assertFalse(dfu.needs_emulation(self.tmp / "missing"))
+        with patch.object(dfu, "_host_is_x86", return_value=True):
+            self.assertFalse(dfu.needs_emulation(self.inst.executable))
+
+    def test_finds_steams_fex_and_runtime(self):
+        self.assertIsNone(dfu.emulator())
+        fex, _ = self._tools()
+        sniper = self._app(1628350, "SteamLinuxRuntime_sniper", "_v2-entry-point")
+        emu = dfu.emulator()
+        self.assertEqual(emu.fex, fex)
+        self.assertEqual(emu.runtime.name, "SteamLinuxRuntime_4")  # 4.0 before 3.0
+        self.assertEqual(emu.command(self.inst.executable), [
+            str(fex / "fex-compat-tool"), "waitforexitandrun", "--",
+            str(self.steam / "steamapps/common/SteamLinuxRuntime_4/_v2-entry-point"),
+            "--verb=waitforexitandrun", "--", str(self.inst.executable)])
+        shutil.rmtree(self.steam / "steamapps/common/SteamLinuxRuntime_4")
+        self.assertEqual(dfu.emulator().runtime, sniper)
+
+    def test_says_what_is_missing(self):
+        with patch.object(dfu, "_host_is_x86", return_value=False):
+            self.assertIn("Steam's FEX", dfu.emulation_problem(self.inst))
+            self._tools()
+            self.assertIsNone(dfu.emulation_problem(self.inst))
+        self.assertIsNone(dfu.emulation_problem(dfu.Install(self.tmp / "elsewhere")))
+
+    def _launch(self, *, flatpak: bool):
+        with patch.object(dfu, "_host_is_x86", return_value=False), patch.object(dfu, "is_running", return_value=False), \
+                patch.object(dfu, "hook_status", _hook_off), \
+                patch.object(dfu, "sync_saves", return_value=dfu_saves.Report()), \
+                patch.object(dfu.background, "in_flatpak", return_value=flatpak), \
+                patch.object(dfu.subprocess, "Popen") as popen:
+            dfu.launch(self.inst)
+        return popen
+
+    def test_the_app_starts_it_through_fex(self):
+        fex, slr = self._tools()
+        self._app(dfu.DAGGERFALL_APPID, "The Elder Scrolls Daggerfall")
+        compat = self.steam / "steamapps/compatdata/1812390"
+        popen = self._launch(flatpak=False)
+        self.assertEqual(popen.call_args.args[0][:2], [str(fex / "fex-compat-tool"), "waitforexitandrun"])
+        self.assertEqual(popen.call_args.args[0][-1], str(self.inst.executable))
+        self.assertEqual(popen.call_args.kwargs["env"]["STEAM_COMPAT_DATA_PATH"], str(compat))  # as Steam's launches
+        self.assertTrue(compat.is_dir())
+        popen = self._launch(flatpak=True)
+        self.assertEqual(popen.call_args.args[0][:4], ["flatpak-spawn", "--host", f"--directory={self.inst.path}",
+                                                       f"--env=STEAM_COMPAT_DATA_PATH={compat}"])
+        self.assertEqual(popen.call_args.args[0][4], str(fex / "fex-compat-tool"))
+
+    def test_without_fex_it_says_so_and_starts_nothing(self):
+        with self.assertRaisesRegex(dfu.DfuError, "Steam's FEX"):
+            self._launch(flatpak=False)
