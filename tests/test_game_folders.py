@@ -339,6 +339,19 @@ class MachineWidePairing(GameFolderBase):
         self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DESKTOP"})
         self.assertEqual(State.load().game_folders, {"test-mods": str(root)})
 
+    def test_an_offer_waits_for_share_where_the_spec_refuses_it(self):
+        """A folder with content of its own (Cyberpunk: installed mods) isn't
+        filled by an offer; 'share' is the choice to merge."""
+        import dataclasses
+
+        self.spec = dataclasses.replace(self.spec, accepts=lambda root: False)
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.st.pending_folders["modsync-test-mods"] = {"offeredBy": {"DESKTOP": {"label": "Test mods"}}}
+        self.service.accept_pending()
+        self.assertNotIn("modsync-test-mods", self.st.folders)
+        self.service.share_game_folder("test-mods")
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DESKTOP"})
+
     def test_offers_of_a_stopped_folder_or_from_strangers_are_left_alone(self):
         self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
         self.service.share_game_folder("test-mods")

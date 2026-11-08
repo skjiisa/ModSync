@@ -48,6 +48,9 @@ class FolderSpec:
     in_use: Callable[[], bool] | None = None  # the game is running: settling a conflict waits
     tidy: Callable[[Path], object] | None = None  # run on the folder whenever its status is read
     on_stop: Callable[[], None] | None = None  # run once it has stopped syncing here
+    # Whether a paired machine's offer may fill the folder here by itself; when
+    # it says no, the offer waits for 'share' (None: always).
+    accepts: Callable[[Path], bool] | None = None
 
     @property
     def folder_id(self) -> str:
@@ -59,9 +62,9 @@ class FolderSpec:
 
 def specs() -> list[FolderSpec]:
     """Every game folder ModSync knows. The games add theirs here."""
-    from modsync import dfu  # imports this module's users; loaded on first use
+    from modsync import cyberpunk, dfu  # import this module's users; loaded on first use
 
-    return [dfu.MODS_FOLDER, dfu.SAVES_FOLDER]
+    return [dfu.MODS_FOLDER, dfu.SAVES_FOLDER, cyberpunk.MODS_FOLDER]
 
 
 def spec_for(key: str) -> FolderSpec | None:
@@ -340,6 +343,9 @@ def take_offers(client: SyncthingClient) -> list[str]:
         offered_by = [d for d in ((info or {}).get("offeredBy") or {}) if d in paired]
         root = spec.path()
         if not offered_by or root is None:
+            continue
+        if spec.accepts is not None and not spec.accepts(root):
+            log.info("%s is offered, but %s has content of its own; waiting for 'share'", folder_id, root)
             continue
         _put(client, spec, root, sorted(share | set(offered_by)))
         _remember(spec.key, root)

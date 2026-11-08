@@ -780,6 +780,83 @@ class SyncthingIntegration(unittest.TestCase):
                 a_mgr.stop()
                 b_mgr.stop()
 
+    def test_cyberpunk_mods_sync_and_play_leftovers_dont(self) -> None:
+        """The cp2077-mo2 folder against a real Syncthing: MO2's mods, profiles
+        and a CET mod's settings arrive; the MO2 program, ModOrganizer.ini,
+        nexusApiKey, RootBuilder, and what playing leaves in overwrite never do."""
+        from modsync import cyberpunk
+
+        def instance(root: Path) -> Path:
+            root.mkdir(parents=True)
+            (root / "ModOrganizer.exe").write_bytes(b"MZ")
+            (root / "ModOrganizer.ini").write_text(f"[General]\ngameName=Cyberpunk 2077\ngamePath={root}\n")
+            return root
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            a_root, b_root = instance(tmp / "A" / "MO2"), instance(tmp / "B" / "MO2")
+            files = {
+                "mods/Cyber Engine Tweaks/root/bin/x64/version.dll": "dll",
+                "profiles/Default/modlist.txt": "+Cyber Engine Tweaks\n",
+                "overwrite/bin/x64/plugins/cyber_engine_tweaks/mods/probe/settings.json": "{}",
+                # never synced:
+                "overwrite/bin/x64/plugins/cyber_engine_tweaks/mods/probe/probe.log": "log",
+                "overwrite/Root/bin/x64/plugins/cyber_engine_tweaks/mods/probe/db.sqlite3": "db",
+                "overwrite/Root/bin/x64/plugins/cyber_engine_tweaks/mods/probe/db.sqlite3-journal": "journal",
+                "overwrite/r6/cache/final.redscripts": "cache",
+                "overwrite/Root/bin/x64/vkd3d-proton.cache.write": "vkd3d",
+                "overwrite/Root/red4ext/logs/red4ext.txt": "log",
+                "overwrite/bin/x64/Cyberpunk2077.exe-20261107-232249-2012-2008.txt": "crash",
+                "plugins/rootbuilder/__init__.py": "plugin",
+                "nexusApiKey": "secret",
+            }
+            for rel, text in files.items():
+                (a_root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (a_root / rel).write_text(text)
+            (a_mgr, a_port), (b_mgr, b_port) = self._two_nodes(tmp)
+
+            @contextmanager
+            def on(name, root):
+                with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp / f"config-{name}")}):
+                    cyberpunk.use_instance(root)
+                    yield
+
+            try:
+                with on("A", a_root), patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+                    a = ModSyncService(manager=a_mgr)
+                    a.share_game_folder("cp2077-mo2")
+                    code = a.my_pairing_code()
+                with on("B", b_root):
+                    b = ModSyncService(manager=b_mgr)
+                    b.pair(code)
+                    with b_mgr.client() as client:
+                        pairing.add_peer_device(client, code.device_id, "A", addresses=[f"tcp://127.0.0.1:{a_port}"])
+                wanted = b_root / "overwrite/bin/x64/plugins/cyber_engine_tweaks/mods/probe/settings.json"
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline and not (wanted.exists() and (b_root / "profiles").exists()):
+                    with on("A", a_root):
+                        a.accept_pending()
+                    with on("B", b_root):
+                        b.accept_pending()
+                    time.sleep(0.5)
+                time.sleep(3)  # anything wrongly allowed would have arrived with these
+                for rel in list(files)[:3]:
+                    self.assertEqual((b_root / rel).read_text(), files[rel], rel)
+                self.assertEqual(json.loads((b_root / cyberpunk.VAULT_RECORD).read_text()),
+                                 {"game_version": "2.5", "build": "3.0.88.46235"})
+                for rel in list(files)[3:]:
+                    self.assertFalse((b_root / rel).exists(), rel)
+                self.assertIn(str(b_root), (b_root / "ModOrganizer.ini").read_text())
+            except Exception:
+                for name in ("A", "B"):
+                    path = tmp / f"{name}.log"
+                    if path.exists():
+                        print(path.name, path.read_text()[-6000:])
+                raise
+            finally:
+                a_mgr.stop()
+                b_mgr.stop()
+
     def test_daggerfall_unity_saves_never_mix(self) -> None:
         """Each machine makes a different SAVE0 and a QuickSave of the same
         character before they meet. Through the library, both end up with

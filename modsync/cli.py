@@ -1203,6 +1203,22 @@ def _cyberpunk_status() -> int:
     hook = cyberpunk.hook_status()
     if hook is not None:
         print(f"Play in Heroic:        {hook.summary()}")
+    from modsync.state import State
+    from modsync.sync import folders
+
+    st = State.load()
+    key = cyberpunk.MODS_FOLDER.key
+    if folders.stopping(key, st):
+        print("Mods sync:             stopping (once Syncthing answers)")
+    elif key in st.game_folders:
+        print("Mods sync:             on ('modsync sync status' shows how far along)")
+    elif cyberpunk.chosen_instance() is None:
+        print("Mods sync:             off (only for an instance from 'modsync cyberpunk install' or 'use')")
+    else:
+        print(f"Mods sync:             off ('modsync sync share {key}' turns it on)")
+    version = cyberpunk.version_problem(game)
+    if version:
+        print(f"  ! {version}")
     return 0 if game is not None and not problem else 1
 
 
@@ -1264,6 +1280,9 @@ def _cyberpunk_launch(*, play: bool) -> int:
 
     for note in cyberpunk.refresh_hook():
         print(note)
+    version = cyberpunk.version_problem()
+    if version:
+        print(f"warning: {version}")
     try:
         plan = cyberpunk.build_plan(cyberpunk.find_instance(), cyberpunk.find_game(), play=play)
         print(Launcher().start(plan))
