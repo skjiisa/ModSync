@@ -404,29 +404,92 @@ def _local_path(game: heroic.GogGame, windows: str) -> Path | None:
     return root.joinpath(*[part for part in rest.split("\\") if part])
 
 
+def _process_prefix(pid: str) -> Path | None:
+    """The Wine prefix a process runs in, from its environment, or None when
+    that can't be read."""
+    try:
+        result = background.run_host(["cat", f"/proc/{pid}/environ"], timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for entry in result.stdout.split("\0") if result.returncode == 0 else []:
+        if entry.startswith("WINEPREFIX=") and len(entry) > len("WINEPREFIX="):
+            return Path(entry[len("WINEPREFIX="):])
+    return None
+
+
 def mo2_running(game: heroic.GogGame, instance: Path) -> bool:
     """Whether this instance's MO2 is running in the game's prefix (open, or
-    running the game). Wine names its processes by their Windows path."""
+    running the game). Wine names its processes by their Windows path, which
+    only means this instance through this prefix's drive letters, so a match
+    must also run in this prefix (when its environment can be read)."""
     try:
         found = background.run_host(["pgrep", "-af", r"^[A-Za-z]:\\.*\\ModOrganizer\.exe"], timeout=10)
     except (OSError, subprocess.SubprocessError):
         return False
+    if game.drive_c is None:
+        return False
     target = str((instance / "ModOrganizer.exe").resolve()).lower()
+    wine_prefix = game.drive_c.parent.resolve()
     for line in found.stdout.splitlines():
-        _, _, command = line.partition(" ")
+        pid, _, command = line.partition(" ")
         match = re.match(r"([A-Za-z]:\\(?:.*?\\)?ModOrganizer\.exe)(?:\s|$)", command, re.IGNORECASE)
         local = _local_path(game, match[1]) if match else None
-        if local is not None and str(local.resolve()).lower() == target:
+        if local is None or str(local.resolve()).lower() != target:
+            continue
+        prefix = _process_prefix(pid)
+        if prefix is None or prefix.resolve() == wine_prefix:
             return True
     return False
 
 
-def download(url: str) -> str:
+def _launch_record() -> Path:
+    """When ModSync last opened MO2 for a download (its time is the file's)."""
+    return state_dir() / "cyberpunk-download-launch"
+
+
+def _pass_to_mo2(game: heroic.GogGame, instance: Path, url: str) -> str:
+    """Give an open MO2 the link. umu's default verb, waitforexitandrun, would
+    wait for MO2 to exit first, and "run" keeps Proton's launcher waiting on
+    it; runinprefix runs the program alone, in the same Wine session (it exits
+    once MO2 has the link)."""
+    argv, env = _prefix_command(game, [str(instance / "ModOrganizer.exe"), url], {"PROTON_VERB": "runinprefix"})
+    path = state_dir() / "mo2-launch.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("ab") as output:
+        output.write(b"\n--- ModSync: passing a download to Mod Organizer 2 ---\n")
+        output.flush()
+        proc = subprocess.Popen(argv, cwd=instance, env=env, stdin=subprocess.DEVNULL, stdout=output,
+                                stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        code = proc.wait(timeout=60)
+    except subprocess.TimeoutExpired:
+        return "Passed the download to Mod Organizer 2, which is slow to answer."
+    if code != 0:
+        raise CyberpunkError(f"Mod Organizer 2 didn't take the download (exit code {code}). Details: {path}")
+    return "Passed the download to Mod Organizer 2."
+
+
+# How long MO2 gets to show up once its launch has begun (the hook took the
+# link ModSync left), before a later link opens it again.
+MO2_START_WAIT = 45.0
+
+
+def download(url: str, *, poll: float = 2.0) -> str:
     """Hand a Nexus download to Cyberpunk's MO2. An open MO2 gets it from a
     second ModOrganizer.exe, which passes its link to the first and exits. A
     closed one is opened with the link: through Heroic while Heroic's Play hook
     is on, so the session is Heroic's (the hook finds the link ModSync left for
-    it), else as 'modsync cyberpunk open' opens it. Returns what happened."""
+    it), else as 'modsync cyberpunk open' opens it.
+
+    A link that comes while MO2 is still starting for an earlier one waits for
+    it rather than opening it again: Heroic ignores a second launch, and a
+    second link left for the hook would replace the first. It waits while the
+    earlier link is still waiting for the hook (as long as a link left for it
+    stays good), then :data:`MO2_START_WAIT` for MO2 to appear. Returns what
+    happened."""
+    import fcntl
+    import time
+
     game, instance = find_game(), find_instance()
     if game is None:
         raise CyberpunkError("Cyberpunk 2077 wasn't found in Heroic.")
@@ -437,25 +500,31 @@ def download(url: str) -> str:
         raise CyberpunkError(problem)
     if game.drive_c is None:
         raise CyberpunkError("Cyberpunk's prefix isn't set up yet. Launch the game once from Heroic first.")
-    if mo2_running(game, instance):
-        # umu's default verb, waitforexitandrun, would wait for MO2 to exit first,
-        # and "run" keeps Proton's launcher waiting on it; runinprefix runs the
-        # program alone, in the same Wine session (it exits once MO2 has the link).
-        argv, env = _prefix_command(game, [str(instance / "ModOrganizer.exe"), url], {"PROTON_VERB": "runinprefix"})
-        path = state_dir() / "mo2-launch.log"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("ab") as output:
-            output.write(b"\n--- ModSync: passing a download to Mod Organizer 2 ---\n")
-            output.flush()
-            proc = subprocess.Popen(argv, cwd=instance, env=env, stdin=subprocess.DEVNULL, stdout=output,
-                                    stderr=subprocess.STDOUT, start_new_session=True)
-        try:
-            code = proc.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            return "Passed the download to Mod Organizer 2, which is slow to answer."
-        if code != 0:
-            raise CyberpunkError(f"Mod Organizer 2 didn't take the download (exit code {code}). Details: {path}")
-        return "Passed the download to Mod Organizer 2."
+    note = heroic_hook.download_note(game)
+    record = _launch_record()
+    record.parent.mkdir(parents=True, exist_ok=True)
+    note_gone = None
+    while True:
+        with record.open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)  # one link at a time decides whether to open MO2
+            if mo2_running(game, instance):
+                lock.truncate(0)  # MO2 is up: no launch is under way any more
+                return _pass_to_mo2(game, instance, url)
+            now = time.time()
+            info = os.fstat(lock.fileno())
+            starting = info.st_size > 0 and now < info.st_mtime + heroic_hook.DOWNLOAD_TTL
+            if starting:
+                note_gone = None if note.exists() else (note_gone or now)
+                starting = note_gone is None or now - note_gone < MO2_START_WAIT
+            if not starting:
+                lock.truncate(0)
+                lock.write(f"{now}\n")
+                lock.flush()
+                return _open_mo2_with(game, instance, url)
+        time.sleep(poll)
+
+
+def _open_mo2_with(game: heroic.GogGame, instance: Path, url: str) -> str:
     refresh_hook()  # the script must be one that knows to look for the link
     hook = heroic_hook.status(game, hook_script(game, instance))
     if hook.enabled and hook.current:

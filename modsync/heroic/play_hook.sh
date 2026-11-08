@@ -85,10 +85,12 @@ program=$(unix_path "${launch[$target]}")
 program="${program##*/}"
 
 download=""
-if [[ -f "$download_note" ]]; then
-    left=$(stat -c %Y "$download_note" 2>/dev/null || echo 0)
-    IFS= read -r link < "$download_note" || true
-    rm -f "$download_note"
+taken="$download_note.$$"
+if [[ -f "$download_note" ]] && mv -f "$download_note" "$taken" 2>/dev/null; then  # taken whole, once
+    left=$(stat -c %Y "$taken" 2>/dev/null || echo 0)
+    link=""
+    IFS= read -r link < "$taken" || true
+    rm -f "$taken"
     if (( $(date +%s) - left <= download_ttl )) && [[ "${link,,}" == nxm://* ]]; then
         download=$link
     else

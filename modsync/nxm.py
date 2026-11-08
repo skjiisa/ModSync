@@ -36,6 +36,9 @@ log = logging.getLogger(__name__)
 
 SCHEME = "x-scheme-handler/nxm"
 DESKTOP_ID = "modsync-nxm-handler.desktop"
+# MO2-LINT's handler: today's, and the shell installer's before version 6.
+MO2LINT_IDS = ("mo2lint_nxm-handler.desktop", "modorganizer2-nxm-handler.desktop")
+_DESKTOP_ID_RE = re.compile(r"[A-Za-z0-9_.+-]+\.desktop")
 
 
 class NxmError(RuntimeError):
@@ -69,9 +72,15 @@ def game_of(url: str) -> str | None:
 
 
 def applications_dir() -> Path:
-    """The host's own folder for desktop entries, also from inside the Flatpak
-    (whose XDG_DATA_HOME is its own)."""
-    return Path.home() / ".local" / "share" / "applications"
+    """The folder for the user's own desktop entries, as the host sets it
+    (``$XDG_DATA_HOME/applications``). Asked of the host: the Flatpak's
+    XDG_DATA_HOME is its own."""
+    try:
+        result = background.run_host(["sh", "-c", 'printf %s "${XDG_DATA_HOME:-}"'], timeout=10)
+        data = result.stdout.strip() if result.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        data = ""
+    return (Path(data) if data.startswith("/") else Path.home() / ".local" / "share") / "applications"
 
 
 def entry_path() -> Path:
@@ -210,25 +219,27 @@ def enable() -> str:
 
 
 def disable() -> str:
-    """Hand nxm:// links back to the handler from before ModSync."""
-    settings = _settings()
-    previous = settings.get("previous")
-    try:
-        if default_handler() == DESKTOP_ID and isinstance(previous, str) and previous:
+    """Hand nxm:// links back to the handler from before ModSync. Nothing of
+    ModSync's is removed until that has worked, so a failure can be retried."""
+    previous = _settings().get("previous")
+    previous = previous if isinstance(previous, str) and _DESKTOP_ID_RE.fullmatch(previous) else None
+    message = "ModSync no longer opens nxm:// links."
+    if default_handler() == DESKTOP_ID:
+        if previous and entry_text(previous) is not None:
             _make_default(previous)
-    finally:
-        entry_path().unlink(missing_ok=True)
-        _settings_path().unlink(missing_ok=True)
-        _update_database()
-    if isinstance(previous, str) and previous:
-        return f"nxm:// links go to {previous} again."
-    return "ModSync no longer opens nxm:// links."
+            message = f"nxm:// links go to {previous} again."
+        elif previous:
+            message += f" {previous}, which opened them before, isn't installed anymore."
+    entry_path().unlink(missing_ok=True)
+    _settings_path().unlink(missing_ok=True)
+    _update_database()
+    return message
 
 
 def refresh() -> list[str]:
     """Keep an enabled handler in place: rewrite its entry if this ModSync
-    starts differently, and take the links back from the handler ModSync
-    replaced (MO2-LINT makes its own default again when it installs). Another
+    starts differently, and take the links back from MO2-LINT's handler,
+    which makes itself the default again whenever MO2-LINT installs. Any other
     program the user chose since is left alone. Never raises; returns what the
     user should know."""
     settings = _settings()
@@ -247,7 +258,7 @@ def refresh() -> list[str]:
             if command != settings.get("command"):
                 _write(_settings_path(), json.dumps({**settings, "command": command}, indent=2))
         current = default_handler()
-        if current != DESKTOP_ID and current is not None and current == settings.get("previous"):
+        if current in MO2LINT_IDS:
             _make_default(DESKTOP_ID)
             _update_database()
             notes.append(f"Took Nexus Mods downloads back from {current}, which had made itself their handler again.")
@@ -260,28 +271,34 @@ def refresh() -> list[str]:
 # --- opening a link ---------------------------------------------------------------
 
 
-def _entry_dirs() -> list[Path]:
-    """Where the host keeps desktop entries, as seen from here (the host's /usr
-    is /run/host/usr inside the Flatpak)."""
-    usr = Path("/run/host/usr") if config.in_flatpak() else Path("/usr")
-    dirs = [applications_dir(), Path.home() / ".local/share/flatpak/exports/share/applications",
-            Path("/var/lib/flatpak/exports/share/applications"), usr / "local/share/applications",
-            usr / "share/applications"]
-    if not config.in_flatpak():
-        for d in os.environ.get("XDG_DATA_DIRS", "").split(":"):
-            if d and Path(d, "applications") not in dirs:
-                dirs.append(Path(d, "applications"))
-    return dirs
+# Prints the desktop entry with the id in $1 from the host's data folders, as
+# the desktop looks it up (a foo-bar.desktop may be foo/bar.desktop). Run on
+# the host: from inside the Flatpak, neither the host's /usr nor its
+# XDG_DATA_DIRS are visible.
+_PRINT_ENTRY = r"""
+set -f
+id=$1
+nested=$(printf %s "$id" | sed 's|-|/|')
+IFS=:
+for d in ${XDG_DATA_HOME:-$HOME/.local/share} ${XDG_DATA_DIRS:-/usr/local/share:/usr/share} \
+         $HOME/.local/share/flatpak/exports/share /var/lib/flatpak/exports/share; do
+    for f in "$d/applications/$id" "$d/applications/$nested"; do
+        if [ -f "$f" ]; then cat "$f"; exit 0; fi
+    done
+done
+exit 1
+"""
 
 
-def find_entry(desktop_id: str) -> Path | None:
-    for d in _entry_dirs():
-        if (d / desktop_id).is_file():
-            return d / desktop_id
-        nested = d / desktop_id.replace("-", "/", 1)  # foo-bar.desktop may be foo/bar.desktop
-        if "-" in desktop_id and nested.is_file():
-            return nested
-    return None
+def entry_text(desktop_id: str) -> str | None:
+    """The desktop entry with this id, as the host's desktop would find it."""
+    if not _DESKTOP_ID_RE.fullmatch(desktop_id):
+        return None
+    try:
+        result = background.run_host(["sh", "-c", _PRINT_ENTRY, "sh", desktop_id], timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout if result.returncode == 0 and result.stdout.strip() else None
 
 
 _DROPPED_CODES = {"%i", "%c", "%k", "%d", "%D", "%n", "%N", "%v", "%m"}
@@ -327,11 +344,11 @@ def _split_exec(line: str) -> list[str]:
     return args
 
 
-def entry_command(entry: Path, url: str) -> list[str]:
-    """The command a desktop entry runs to open ``url``."""
+def entry_command(entry: str, url: str) -> list[str]:
+    """The command the desktop entry ``entry`` (its text) runs to open ``url``."""
     exec_line = None
     section = None
-    for line in entry.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in entry.splitlines():
         line = line.strip()
         if line.startswith("[") and line.endswith("]"):
             section = line[1:-1]
@@ -339,7 +356,7 @@ def entry_command(entry: Path, url: str) -> list[str]:
             exec_line = line[len("Exec="):]
             break
     if not exec_line:
-        raise NxmError(f"{entry} has no Exec line.")
+        raise NxmError("The desktop entry has no Exec line.")
     # The string escapes come first, then the quoting (the Desktop Entry spec).
     unescaped = re.sub(r"\\([sntr\\])", lambda m: {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}[m[1]],
                        exec_line)
@@ -366,7 +383,7 @@ def forward(url: str) -> str:
     if not isinstance(previous, str) or not previous or previous == DESKTOP_ID:
         raise NxmError(f"ModSync doesn't run Mod Organizer 2 for '{game_of(url)}', "
                        "and no other program was set up to open nxm:// links.")
-    entry = find_entry(previous)
+    entry = entry_text(previous)
     if entry is None:
         raise NxmError(f"{previous}, which opened nxm:// links before ModSync, isn't installed anymore.")
     argv = entry_command(entry, url)

@@ -932,7 +932,8 @@ A Cyberpunk link reaches MO2 in one of three ways:
 - When MO2 is closed and the hook is on, ModSync leaves the link beside the
   hook's script and asks Heroic to launch the game. The hook opens MO2 with
   the link instead of playing, so Heroic still tracks the session. It only
-  takes a link left in the last three minutes.
+  takes a link left in the last three minutes. Another link clicked while
+  MO2 is still starting waits for it and then goes to it directly.
 - When MO2 is closed and the hook is off, MO2 opens with the link the way
   `modsync cyberpunk open` opens it.
 
@@ -942,7 +943,8 @@ gives the links back to the one from before. Installing or updating MO2-LINT
 makes its handler the default again, and ModSync takes the links back the
 next time the app or the background service starts. A handler you chose
 yourself since is left alone. The handler is a desktop entry,
-`~/.local/share/applications/modsync-nxm-handler.desktop`.
+`modsync-nxm-handler.desktop` in `$XDG_DATA_HOME/applications` (usually
+`~/.local/share/applications`).
 
 ## Background service
 

@@ -16,14 +16,21 @@ MO2LINT_EXEC = """Exec=bash -c '"$HOME/.local/share/mo2-lint/nxm-handler" "$@"' 
 
 
 class FakeXdgMime:
-    """xdg-mime's default for nxm://, as run_host would reach it."""
+    """The host as run_host reaches it: xdg-mime's default for nxm:// faked,
+    shell lookups run for real in a scratch home with ``env``."""
 
-    def __init__(self, default: str | None = MO2LINT):
+    def __init__(self, home: Path, default: str | None = MO2LINT):
         self.default = default
         self.calls: list[list[str]] = []
+        self.env = {"HOME": str(home), "PATH": "/usr/bin:/bin"}
+        self.fail_set = False
 
     def __call__(self, cmd, **_kw):
         self.calls.append(cmd)
+        if cmd[0] == "sh":
+            return subprocess.run(cmd, env=self.env, capture_output=True, text=True, timeout=10)
+        if cmd[:2] == ["xdg-mime", "default"] and self.fail_set:
+            return subprocess.CompletedProcess(cmd, 1, "", "no")
         if cmd[:3] == ["xdg-mime", "query", "default"]:
             return subprocess.CompletedProcess(cmd, 0, (self.default or "") + "\n", "")
         if cmd[:2] == ["xdg-mime", "default"]:
@@ -35,7 +42,7 @@ class FakeXdgMime:
 def desktop(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     nxm._settings_path().unlink(missing_ok=True)
-    xdg = FakeXdgMime()
+    xdg = FakeXdgMime(tmp_path)
     with patch.object(nxm.background, "run_host", side_effect=xdg), \
             patch("modsync.launchhook.modsync_command", return_value=["/usr/bin/flatpak", "run", "io.github.skjiisa.ModSync"]):
         yield xdg
@@ -50,19 +57,24 @@ def test_the_game_is_the_links_first_part():
 
 @pytest.mark.parametrize("arg", ["/usr/bin/modsync", "/home/me/My Games/modsync", 'say "hi" $HOME `x`', "100%", "a\\b"])
 def test_an_exec_line_comes_back_as_the_same_arguments(tmp_path, arg):
-    entry = tmp_path / "e.desktop"
-    entry.write_text(nxm.render_entry([arg, "--flag"]))
-    assert nxm.entry_command(entry, LINK) == [arg, "--flag", "nxm", LINK]
+    assert nxm.entry_command(nxm.render_entry([arg, "--flag"]), LINK) == [arg, "--flag", "nxm", LINK]
 
 
-def test_mo2lints_entry_gets_the_link_where_it_says(tmp_path):
-    entry = tmp_path / MO2LINT
-    entry.write_text(f"[Desktop Entry]\nType=Application\n{MO2LINT_EXEC}\nMimeType=x-scheme-handler/nxm;\n")
+def test_mo2lints_entry_gets_the_link_where_it_says():
+    entry = f"[Desktop Entry]\nType=Application\n{MO2LINT_EXEC}\nMimeType=x-scheme-handler/nxm;\n"
     assert nxm.entry_command(entry, LINK) == [
         "bash", "-c", '"$HOME/.local/share/mo2-lint/nxm-handler" "$@"', "$HOME/.local/share/mo2-lint/nxm-handler", LINK]
 
 
+def mo2lint_entry(folder: Path) -> Path:
+    entry = folder / "applications" / MO2LINT
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text(f"[Desktop Entry]\n{MO2LINT_EXEC}\n")
+    return entry
+
+
 def test_enable_records_the_handler_it_replaces_and_disable_puts_it_back(desktop):
+    mo2lint_entry(Path.home() / ".local/share")
     message = nxm.enable()
     assert MO2LINT in message
     assert desktop.default == nxm.DESKTOP_ID
@@ -80,6 +92,37 @@ def test_enable_records_the_handler_it_replaces_and_disable_puts_it_back(desktop
     assert not nxm.status().enabled
 
 
+def test_a_failed_disable_keeps_everything_for_a_retry(desktop):
+    mo2lint_entry(Path.home() / ".local/share")
+    nxm.enable()
+    desktop.fail_set = True
+    with pytest.raises(nxm.NxmError):
+        nxm.disable()
+    assert nxm.entry_path().exists() and nxm.status().previous == MO2LINT
+    desktop.fail_set = False
+    nxm.disable()
+    assert desktop.default == MO2LINT
+
+
+def test_disable_with_the_old_handler_gone_says_so(desktop):
+    nxm.enable()  # MO2-LINT's entry isn't there
+    assert "isn't installed anymore" in nxm.disable()
+    assert not nxm.entry_path().exists()
+
+
+def test_entries_follow_the_hosts_data_folders(desktop, tmp_path):
+    desktop.env["XDG_DATA_HOME"] = str(tmp_path / "data")
+    desktop.env["XDG_DATA_DIRS"] = str(tmp_path / "system")
+    assert nxm.applications_dir() == tmp_path / "data/applications"
+    mo2lint_entry(tmp_path / "system")
+    assert MO2LINT_EXEC in nxm.entry_text(MO2LINT)
+    nested = tmp_path / "system/applications/org/example.desktop"  # org-example.desktop
+    nested.parent.mkdir(parents=True)
+    nested.write_text("[Desktop Entry]\nExec=x %u\n")
+    assert nxm.entry_text("org-example.desktop") is not None
+    assert nxm.entry_text("../../etc/passwd") is None
+
+
 def test_refresh_takes_the_links_back_from_mo2lint_only(desktop):
     assert nxm.refresh() == []  # never enabled: nothing to keep
     nxm.enable()
@@ -89,6 +132,14 @@ def test_refresh_takes_the_links_back_from_mo2lint_only(desktop):
     assert MO2LINT in note and desktop.default == nxm.DESKTOP_ID
 
     desktop.default = "some-other-handler.desktop"  # the user's own choice
+    assert nxm.refresh() == []
+    assert desktop.default == "some-other-handler.desktop"
+
+
+def test_refresh_leaves_a_non_mo2lint_previous_handler_alone(desktop):
+    desktop.default = "some-other-handler.desktop"
+    nxm.enable()
+    desktop.default = "some-other-handler.desktop"  # chosen again by the user
     assert nxm.refresh() == []
     assert desktop.default == "some-other-handler.desktop"
     assert nxm.status().summary().startswith("on, but some-other-handler.desktop opens them")
@@ -125,13 +176,21 @@ def test_a_game_modsync_runs_gets_its_own_links(desktop):
 @pytest.mark.parametrize("link", [LINK, "nxm://skyrimspecialedition/mods/1/files/2?key=k"])
 def test_other_links_go_to_the_handler_from_before(desktop, link):
     nxm.enable()
-    entry = Path.home() / ".local/share/applications" / MO2LINT
-    entry.write_text(f"[Desktop Entry]\n{MO2LINT_EXEC}\n")
+    mo2lint_entry(Path.home() / ".local/share")
+    started = []
+    real_popen = subprocess.Popen
+
+    def popen(argv, **kw):  # the host lookups run; the forwarded handler is only recorded
+        if argv[0] == "sh":
+            return real_popen(argv, **kw)
+        started.append((argv, kw))
+        return None
+
     with patch.dict(nxm.HANDLERS, {"cyberpunk2077": FakeHandler(claims=False).make}), \
-            patch.object(nxm.subprocess, "Popen") as popen:
+            patch.object(nxm.subprocess, "Popen", side_effect=popen):
         assert MO2LINT in nxm.handle(link)
-    assert popen.call_args.args[0][-1] == link
-    assert popen.call_args.kwargs["start_new_session"]
+    ((argv, kw),) = started
+    assert argv[0] == "bash" and argv[-1] == link and kw["start_new_session"]
 
 
 def test_a_link_nobody_else_handles_says_so(desktop):
