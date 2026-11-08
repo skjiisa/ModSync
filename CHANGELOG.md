@@ -17,7 +17,8 @@ All notable changes to ModSync are documented here. The format follows
   Cyberpunk executable, which deploys REDmod first and skips REDlauncher,
   and every launch sets `WINEDLLOVERRIDES="winmm,version=n,b"` so Cyber
   Engine Tweaks and RED4ext load. An instance MO2-LINT installed is found
-  by itself.
+  by itself; one chosen with `use` wins, and a launch says so when it's
+  missing instead of starting another.
 
 ### Changed
 

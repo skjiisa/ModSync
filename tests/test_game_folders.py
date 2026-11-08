@@ -379,13 +379,13 @@ class MachineWidePairing(GameFolderBase):
     def test_forgetting_mo2_keeps_the_other_games(self):
         self.service.share_game_folder("test-mods")
         State.update(instance_path=str(self.tmp / "MO2"), dfu_path="/games/dfu", paired=True,
-                     declined_folders=["other"], cyberpunk_instance="/games/MO2-Cyberpunk")
+                     declined_folders=["other"])
         self.service.reload_state()
         self.service.forget_instance()
         st = State.load()
         self.assertIsNone(st.instance_path)
-        self.assertEqual((st.game_folders, st.dfu_path, st.paired, st.declined_folders, st.cyberpunk_instance),
-                         ({"test-mods": str(self.root)}, "/games/dfu", True, ["other"], "/games/MO2-Cyberpunk"))
+        self.assertEqual((st.game_folders, st.dfu_path, st.paired, st.declined_folders),
+                         ({"test-mods": str(self.root)}, "/games/dfu", True, ["other"]))
 
     def test_add_peer_works_without_a_vault(self):
         with self.assertRaisesRegex(RuntimeError, "no vault"):

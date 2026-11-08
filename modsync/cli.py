@@ -1164,7 +1164,8 @@ def _cyberpunk_status() -> int:
         print("MO2 instance:          none ('modsync cyberpunk use <dir>')")
         return 1
     problem = cyberpunk.instance_problem(instance)
-    print(f"MO2 instance:          {instance}")
+    chosen = " (chosen with 'modsync cyberpunk use')" if instance == cyberpunk.chosen_instance() else ""
+    print(f"MO2 instance:          {instance}{chosen}")
     if problem:
         print(f"  ! {problem}")
     return 0 if game is not None and not problem else 1

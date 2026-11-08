@@ -8,7 +8,6 @@ import pytest
 
 from modsync import cyberpunk
 from modsync.heroic import library
-from modsync.state import State
 
 PROTON = Path("/opt/proton-cachyos-native/proton")
 
@@ -126,21 +125,62 @@ def test_launch_problems_say_what_to_do(tmp_path, umu, problem, match):
         cyberpunk.build_plan(instance, game)
 
 
+def write_mo2lint_state(tmp_path: Path, *instances: tuple[str, Path]) -> Path:
+    state_file = tmp_path / "mo2-lint-state.json"
+    state_file.write_text(json.dumps({"instances": [{"game": g, "instance_path": str(p)} for g, p in instances]}))
+    return state_file
+
+
 def test_instance_is_the_chosen_one_else_mo2lints(tmp_path):
     mo2lint = make_instance(tmp_path)
     other = tmp_path / "other"
     other.mkdir()
     (other / "ModOrganizer.exe").write_bytes(b"MZ")
-    state_file = tmp_path / "mo2-lint-state.json"
-    state_file.write_text(json.dumps({"instances": [
-        {"game": "skyrim_se", "instance_path": str(other)},
-        {"game": "cyberpunk2077", "instance_path": str(mo2lint)},
-    ]}))
+    state_file = write_mo2lint_state(tmp_path, ("skyrim_se", other), ("cyberpunk2077", mo2lint))
 
     with patch("modsync.mo2.installers.mo2lint.mo2lint_state_path", return_value=state_file):
         assert cyberpunk.find_instance() == mo2lint
         with pytest.raises(cyberpunk.CyberpunkError):
             cyberpunk.use_instance(tmp_path / "nothing-here")
+        assert cyberpunk.chosen_instance() is None
         assert cyberpunk.use_instance(other) == other.resolve()
-        assert State.load().cyberpunk_instance == str(other.resolve())
         assert cyberpunk.find_instance() == other.resolve()
+
+
+def test_a_chosen_instance_that_is_missing_is_not_swapped_for_another(tmp_path, umu):
+    chosen = make_instance(tmp_path)
+    cyberpunk.use_instance(chosen)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "ModOrganizer.exe").write_bytes(b"MZ")
+    (chosen / "ModOrganizer.exe").unlink()  # its drive isn't mounted
+    state_file = write_mo2lint_state(tmp_path, ("cyberpunk2077", elsewhere))
+
+    with patch("modsync.mo2.installers.mo2lint.mo2lint_state_path", return_value=state_file):
+        assert cyberpunk.find_instance() == chosen.resolve()
+        with pytest.raises(cyberpunk.CyberpunkError, match="no ModOrganizer.exe"):
+            cyberpunk.build_plan(cyberpunk.find_instance(), make_game(tmp_path))
+
+
+def test_the_choice_survives_state_file_writes(tmp_path):
+    """Kept apart from state.json, which a ModSync from before Cyberpunk
+    rewrites without fields it doesn't know."""
+    from modsync.state import State
+
+    cyberpunk.use_instance(make_instance(tmp_path))
+    State.update(home_game="daggerfall")
+
+    assert cyberpunk.chosen_instance() == (tmp_path / "ModOrganizer2-Cyberpunk2077").resolve()
+    assert "cyberpunk" not in State.path().read_text()
+
+
+def test_cli_launch_reports_a_missing_chosen_instance(tmp_path, capsys):
+    from modsync.__main__ import main
+
+    chosen = make_instance(tmp_path)
+    cyberpunk.use_instance(chosen)
+    (chosen / "ModOrganizer.exe").unlink()
+
+    with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path)):
+        assert main(["cyberpunk", "play"]) == 1
+    assert "no ModOrganizer.exe" in capsys.readouterr().out

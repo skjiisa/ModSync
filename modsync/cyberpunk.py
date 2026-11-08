@@ -26,12 +26,11 @@ import shutil
 import subprocess
 from pathlib import Path, PureWindowsPath
 
-from modsync import background
+from modsync import background, config
 from modsync.games import CYBERPUNK
 from modsync.heroic import library as heroic
 from modsync.mo2 import ini
 from modsync.mo2.launch import LaunchPlan, nested_desktop_display
-from modsync.state import State
 
 log = logging.getLogger(__name__)
 
@@ -80,12 +79,27 @@ def _mo2lint_instances() -> list[Path]:
             if isinstance(e, dict) and e.get("game") == CYBERPUNK.mo2lint_key and isinstance(e.get("instance_path"), str)]
 
 
+def _settings_path() -> Path:
+    """Cyberpunk's own settings. Not in the state file: a ModSync from before
+    Cyberpunk would drop a field it doesn't know the next time it wrote that."""
+    return config.config_dir() / "cyberpunk.json"
+
+
+def chosen_instance() -> Path | None:
+    """The instance ``modsync cyberpunk use`` chose, whether or not it's there now."""
+    try:
+        data = json.loads(_settings_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    chosen = data.get("instance") if isinstance(data, dict) else None
+    return Path(chosen) if isinstance(chosen, str) and chosen else None
+
+
 def find_instance() -> Path | None:
-    """The instance ``modsync cyberpunk use`` chose, else one MO2-LINT installed."""
-    chosen = State.load().cyberpunk_instance
-    if chosen and _is_instance(Path(chosen)):
-        return Path(chosen)
-    return next((p for p in _mo2lint_instances() if _is_instance(p)), None)
+    """The instance ``modsync cyberpunk use`` chose, else one MO2-LINT installed.
+    A chosen one that's missing (an unmounted drive) is still the answer, so a
+    launch says so instead of starting a different instance's mods."""
+    return chosen_instance() or next((p for p in _mo2lint_instances() if _is_instance(p)), None)
 
 
 def instance_problem(path: Path) -> str | None:
@@ -104,7 +118,11 @@ def use_instance(path: Path | str) -> Path:
     problem = instance_problem(instance)
     if problem:
         raise CyberpunkError(problem)
-    State.update(cyberpunk_instance=str(instance))
+    target = _settings_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"instance": str(instance)}, indent=2), encoding="utf-8")
+    os.replace(tmp, target)
     return instance
 
 
