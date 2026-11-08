@@ -167,8 +167,8 @@ def _heroic_section(plat: platforms.Platform, line) -> None:
     line(f"  ✓ installed: {game.install_path}")
     build = game.version or "(unknown)"
     line(f"  • GOG build: {build}{' (pinned in Heroic)' if game.pinned else ''}")
-    if game.prefix is None:
-        line("  • prefix: (none yet — game has not been run from Heroic)")
+    if game.drive_c is None:
+        line(f"  • prefix: {game.prefix}  (not created yet — launch the game once from Heroic)")
     else:
         line(f"  • prefix: {game.prefix}")
     if game.wine is not None:

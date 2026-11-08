@@ -11,7 +11,7 @@ PROTON = "/usr/share/steam/compatibilitytools.d/proton-cachyos-native/proton"
 
 
 def make_heroic(root: Path, *, installed: list[dict], games_config: dict[str, dict] | None = None,
-                default_wine: dict | None = None) -> Path:
+                default_wine: dict | None = None, default_prefix: str | None = None) -> Path:
     """A Heroic config folder laid out the way Heroic 2.22 writes it."""
     (root / "gog_store").mkdir(parents=True)
     (root / "gog_store" / "installed.json").write_text(json.dumps({"installed": installed}))
@@ -19,12 +19,16 @@ def make_heroic(root: Path, *, installed: list[dict], games_config: dict[str, di
     for app_name, settings in (games_config or {}).items():
         (root / "GamesConfig" / f"{app_name}.json").write_text(
             json.dumps({app_name: settings, "version": "v0", "explicit": True}))
-    defaults = {"defaultSettings": {"wineVersion": default_wine}} if default_wine else {"defaultSettings": {}}
-    (root / "config.json").write_text(json.dumps(defaults))
+    defaults: dict = {}
+    if default_wine:
+        defaults["wineVersion"] = default_wine
+    if default_prefix:
+        defaults["winePrefix"] = default_prefix
+    (root / "config.json").write_text(json.dumps({"defaultSettings": defaults}))
     return root
 
 
-def cyberpunk_entry(install_path: Path, **extra) -> dict:
+def cyberpunk_entry(install_path: Path | str, **extra) -> dict:
     return {
         "platform": "windows",
         "install_path": str(install_path),
@@ -56,16 +60,45 @@ def test_reads_install_build_prefix_and_proton(tmp_path):
     assert not game.flatpak
 
 
-def test_never_launched_game_has_no_prefix_and_uses_default_wine(tmp_path):
+def test_settings_the_game_leaves_out_come_from_heroics_defaults(tmp_path):
     game_dir = tmp_path / "Cyberpunk 2077"
     game_dir.mkdir()
+    shared = tmp_path / "Prefixes/shared"
+    (shared / "drive_c").mkdir(parents=True)
     heroic = make_heroic(tmp_path / "heroic", installed=[cyberpunk_entry(game_dir)],
-                         default_wine={"bin": PROTON, "name": "proton-cachyos", "type": "proton"})
+                         games_config={CYBERPUNK_GOG: {"showFps": False}},  # a partial file
+                         default_wine={"bin": PROTON, "name": "proton-cachyos", "type": "proton"},
+                         default_prefix=str(shared))
 
     game = library.find_gog_game(CYBERPUNK_GOG, [heroic])
 
-    assert game.prefix is None and game.drive_c is None
+    assert game.prefix == shared and game.drive_c == shared / "drive_c"
     assert game.wine.name == "proton-cachyos"
+
+
+def test_no_prefix_anywhere_is_heroics_shared_one(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    game_dir = tmp_path / "Cyberpunk 2077"
+    game_dir.mkdir()
+    heroic = make_heroic(tmp_path / "heroic", installed=[cyberpunk_entry(game_dir)])
+
+    game = library.find_gog_game(CYBERPUNK_GOG, [heroic])
+
+    assert game.prefix == tmp_path / "Games/Heroic/Prefixes/shared"
+    assert game.drive_c is None  # nothing has run in it yet
+    assert game.wine is None
+
+
+def test_tilde_means_home_the_way_heroic_reads_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / "Games/Cyberpunk 2077").mkdir(parents=True)
+    heroic = make_heroic(tmp_path / "heroic", installed=[cyberpunk_entry("~/Games/Cyberpunk 2077")],
+                         games_config={CYBERPUNK_GOG: {"winePrefix": "~/Prefixes/cp"}})
+
+    game = library.find_gog_game(CYBERPUNK_GOG, [heroic])
+
+    assert game.install_path == tmp_path / "Games/Cyberpunk 2077"
+    assert game.prefix == tmp_path / "Prefixes/cp"
 
 
 def test_skips_dlc_and_installs_whose_folder_is_gone(tmp_path):
@@ -92,14 +125,33 @@ def test_unreadable_or_missing_files_find_nothing(tmp_path):
     assert library.gog_games(tmp_path / "missing") == []
 
 
-def test_drive_c_and_flatpak(tmp_path):
-    config_dir = tmp_path / ".var/app/com.heroicgameslauncher.hgl/config/heroic"
-    prefix = tmp_path / "prefix"
-    (prefix / "drive_c").mkdir(parents=True)
-    game = library.GogGame(CYBERPUNK_GOG, tmp_path, "", "", False, config_dir, prefix=prefix)
+def test_drive_c_in_each_prefix_layout(tmp_path):
+    proton = library.WineVersion(Path(PROTON), "proton-cachyos", "proton")
+    wine = library.WineVersion(Path("/usr/bin/wine"), "wine", "wine")
 
-    assert game.flatpak
-    assert game.drive_c == prefix / "drive_c"
+    def game(prefix, runner):
+        return library.GogGame(CYBERPUNK_GOG, tmp_path, "", "", False, tmp_path, prefix=prefix, wine=runner)
+
+    plain = tmp_path / "wine"  # plain Wine: the folder is the prefix
+    (plain / "drive_c").mkdir(parents=True)
+    assert game(plain, wine).drive_c == plain / "drive_c"
+
+    compat = tmp_path / "proton"  # Proton's usual compat data, prefix in pfx/
+    (compat / "pfx/drive_c").mkdir(parents=True)
+    assert game(compat, proton).drive_c == compat / "pfx/drive_c"
+    assert game(compat, wine).drive_c == compat / "pfx/drive_c"
+
+    linked = tmp_path / "linked"  # Heroic's: pfx links back to the folder
+    (linked / "drive_c").mkdir(parents=True)
+    (linked / "pfx").symlink_to(".")
+    assert game(linked, proton).drive_c in (linked / "pfx/drive_c", linked / "drive_c")
+    assert game(linked, proton).drive_c.resolve() == (linked / "drive_c").resolve()
+
+
+def test_flatpak_heroic_is_recognised(tmp_path):
+    config_dir = tmp_path / ".var/app/com.heroicgameslauncher.hgl/config/heroic"
+    assert library.GogGame(CYBERPUNK_GOG, tmp_path, "", "", False, config_dir).flatpak
+    assert not library.GogGame(CYBERPUNK_GOG, tmp_path, "", "", False, tmp_path / ".config/heroic").flatpak
 
 
 def test_platform_finds_native_and_flatpak_heroic(tmp_path, monkeypatch):
@@ -136,3 +188,26 @@ def test_doctor_reports_cyberpunk_from_heroic_without_steam(tmp_path):
     assert f"✓ installed: {game_dir}" in result.text
     assert "GOG build: 2.5_RedModFix (pinned in Heroic)" in result.text
     assert "runs with: proton-cachyos-native (proton)" in result.text
+
+
+def test_doctor_survives_paths_heroic_would_never_write(tmp_path):
+    """``~user`` paths make Path.expanduser raise; one broken entry must not
+    break the report or hide another game."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from modsync import report
+
+    game_dir = tmp_path / "Cyberpunk 2077"
+    game_dir.mkdir()
+    heroic = make_heroic(tmp_path / "heroic", installed=[
+        {**cyberpunk_entry("~nonexistent_user/game"), "appName": "1207658924"},
+        cyberpunk_entry(game_dir),
+    ], games_config={CYBERPUNK_GOG: {"winePrefix": "~nonexistent_user/prefix"}})
+    plat = SimpleNamespace(name="linux", steam_roots=lambda: [], heroic_config_dirs=lambda: [heroic])
+
+    with patch.object(report.platforms, "current", return_value=plat):
+        result = report.build()
+
+    assert f"✓ installed: {game_dir}" in result.text
+    assert "not created yet" in result.text
