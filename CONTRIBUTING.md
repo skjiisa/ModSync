@@ -22,8 +22,8 @@ uv sync --extra dev
 `uv run modsync doctor` runs the CLI from the checkout. `uv run modsync` opens
 the GUI.
 
-With the Flatpak installed, the checkout uses the Flatpak's settings and data,
-so it acts on your real setup. Set `MODSYNC_HOME=~/modsync-dev` for a separate
+With the Flatpak installed, the checkout uses the Flatpak's settings and data
+(unless it has its own in `~/.config/modsync`), so it acts on your real setup. Set `MODSYNC_HOME=~/modsync-dev` for a separate
 one (see "Running from source" in `docs/advanced.md`). The tests never touch
 either.
 

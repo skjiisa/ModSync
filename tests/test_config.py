@@ -79,14 +79,29 @@ class Locations(unittest.TestCase):
         os.environ.update(MODSYNC_HOME="~/modsync-dev", XDG_CONFIG_HOME=str(self.home / "cfg"))
         self.assertEqual(self.where(), (self.home / "modsync-dev/config", self.home / "modsync-dev/data"))
 
-    def test_a_state_left_in_the_standard_folder_is_pointed_out(self):
-        standard = self.home / ".config" / "modsync" / "state.json"
-        standard.parent.mkdir(parents=True)
-        standard.write_text("{}")
-        self.assertIsNone(config.unused_standard_state())  # it's the one in use
-        self.install_flatpak()
-        self.assertEqual(config.unused_standard_state(), standard)
+    def write_state(self, folder: Path) -> Path:
+        folder.mkdir(parents=True)
+        (folder / "state.json").write_text("{}")
+        return folder
 
+    def test_a_copy_with_its_own_setup_keeps_it_when_the_flatpak_is_installed(self):
+        own = self.write_state(self.home / ".config" / "modsync")
+        self.install_flatpak()
+        self.assertEqual(self.where(), (own, self.home / ".local/share/modsync"))
+        self.assertIsNone(config.other_setup())  # the Flatpak has none yet
+
+    def test_two_setups_are_pointed_out_from_either_copy(self):
+        own = self.write_state(self.home / ".config" / "modsync")
+        flatpaks = self.write_state(self.var_app / "config" / "modsync")
+        self.assertEqual(config.config_dir(), own)  # never switched to the Flatpak's old one
+        self.assertEqual(config.other_setup(), flatpaks)
+        os.environ.update(FLATPAK_ID="io.github.skjiisa.ModSync", XDG_CONFIG_HOME=str(self.var_app / "config"))
+        self.assertEqual(config.other_setup(), own)
+
+    def test_a_shared_setup_has_no_other(self):
+        self.install_flatpak()
+        self.write_state(self.var_app / "config" / "modsync")
+        self.assertIsNone(config.other_setup())
 
 if __name__ == "__main__":
     unittest.main()

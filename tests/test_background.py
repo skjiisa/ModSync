@@ -1,3 +1,4 @@
+import os
 import subprocess
 import tempfile
 import unittest
@@ -5,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from modsync import background
+from modsync.state import EXIT_NEWER_STATE
 
 
 class BackgroundTests(unittest.TestCase):
@@ -56,3 +58,22 @@ class BackgroundTests(unittest.TestCase):
         self.assertTrue(status["installed"])
         self.assertEqual(status["active"], "failed")
         self.assertEqual(status["enabled"], "enabled")
+
+class ServiceUnit(unittest.TestCase):
+    """The background service runs the setup it was installed from."""
+
+    def test_a_separate_setup_goes_into_the_unit(self):
+        with patch.dict(os.environ, {"MODSYNC_HOME": "/home/me/dev 100%"}), \
+                patch.object(background, "in_flatpak", lambda: False):
+            native = background.unit_text()
+        self.assertIn('Environment="MODSYNC_HOME=/home/me/dev 100%%"\n', native)
+        self.assertIn(f"RestartPreventExitStatus={EXIT_NEWER_STATE}\n", native)
+        with patch.dict(os.environ, {"MODSYNC_HOME": "/home/me/dev", "FLATPAK_ID": "io.github.skjiisa.ModSync"}):
+            flatpak = background.unit_text()
+        self.assertIn('ExecStart=flatpak run "--env=MODSYNC_HOME=/home/me/dev" io.github.skjiisa.ModSync serve', flatpak)
+
+    def test_the_shared_setup_needs_nothing(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MODSYNC_HOME", None)
+            self.assertNotIn("MODSYNC_HOME", background.unit_text())
+

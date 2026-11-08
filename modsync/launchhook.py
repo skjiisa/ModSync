@@ -42,6 +42,7 @@ import re
 import shlex
 import shutil
 import stat
+import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -609,13 +610,21 @@ def _resolve_underlying(
 
 
 def _runnable(command: list[str]) -> bool:
-    """Whether a recorded way of starting ModSync still works here."""
+    """Whether a recorded way of starting ModSync still starts it here. The
+    program being there isn't enough (``python -m modsync`` with ModSync
+    gone), so it's asked for its version, which touches nothing."""
     program = Path(command[0])
     if not (program.is_file() and os.access(program, os.X_OK)):
         return False
-    if program.name == "flatpak" and command[1:2] == ["run"]:
-        return config.flatpak_installed()
-    return True
+    if program.name == "flatpak" and command[1:2] == ["run"] and not config.flatpak_installed():
+        return False
+    env = {k: v for k, v in os.environ.items() if k not in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT")}
+    try:
+        result = subprocess.run([*command, "--version"], stdin=subprocess.DEVNULL, capture_output=True,
+                                text=True, timeout=30, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and result.stdout.startswith("ModSync ")
 
 
 def _hook_command(record: "Record | None", here: list[str]) -> list[str]:

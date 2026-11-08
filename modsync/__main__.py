@@ -54,13 +54,25 @@ logs: ~/.local/state/modsync/modsync.log (MODSYNC_LOG_LEVEL=DEBUG for more).
 
 
 def main(argv: list[str] | None = None) -> int:
-    from modsync.state import NewerStateError
+    from modsync.state import EXIT_NEWER_STATE, NewerStateError
 
+    args = list(sys.argv[1:]) if argv is None else list(argv)
     try:
-        return _main(argv)
+        return _main(args)
     except NewerStateError as exc:
         print(f"ModSync: {exc}", file=sys.stderr)
-        return 1
+        if not args or args[:2] == ["launch", "hub"]:  # opened as a window: say it in one
+            _show_error(str(exc))
+        return EXIT_NEWER_STATE
+
+
+def _show_error(message: str) -> None:
+    try:
+        from PySide6.QtWidgets import QApplication, QMessageBox
+    except ImportError:
+        return
+    _app = QApplication.instance() or QApplication([])
+    QMessageBox.critical(None, "ModSync", message)
 
 
 def _main(argv: list[str] | None) -> int:

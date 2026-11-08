@@ -11,6 +11,9 @@ with two pairings. Where they are, first match wins:
    point under ``~/.var/app``, which is how the Flatpak gets its own.
 3. Outside the Flatpak, while it's installed (or has left its data behind),
    the Flatpak's: ``~/.var/app/io.github.skjiisa.ModSync/{config,data}/modsync``.
+   Not for a copy with a setup of its own in ``~/.config/modsync``, though:
+   switching would leave its pairing behind, or bring back an old one the
+   Flatpak kept. :func:`other_setup` points out the two.
 4. ``~/.config/modsync`` and ``~/.local/share/modsync``.
 """
 
@@ -38,9 +41,15 @@ def flatpak_installed() -> bool:
                for base in (Path.home() / ".local" / "share" / "flatpak", SYSTEM_FLATPAK))
 
 
+def _standard_config() -> Path:
+    return Path.home() / ".config" / APP_NAME
+
+
 def shares_flatpak_data() -> bool:
     """Whether this copy, run outside the Flatpak, uses the Flatpak's folders."""
-    return not in_flatpak() and (flatpak_installed() or (flatpak_home() / "config" / APP_NAME).is_dir())
+    if in_flatpak() or (_standard_config() / "state.json").is_file():
+        return False
+    return flatpak_installed() or (flatpak_home() / "config" / APP_NAME).is_dir()
 
 
 def _dir(env: str, standard_rel: str, kind: str) -> Path:
@@ -71,10 +80,12 @@ def syncthing_home() -> Path:
     return data_dir() / "syncthing"
 
 
-def unused_standard_state() -> Path | None:
-    """A ``state.json`` in ``~/.config/modsync`` that this copy doesn't use
-    because it shares the Flatpak's folders: left by a copy run before that."""
-    standard = Path.home() / ".config" / APP_NAME / "state.json"
-    if config_dir() == standard.parent or not standard.exists():
-        return None
-    return standard
+def other_setup() -> Path | None:
+    """Another copy's setup on this machine, which this one doesn't use: the
+    Flatpak's, or the one in ``~/.config/modsync``. Two setups are two
+    machines as far as pairing goes."""
+    mine = config_dir()
+    for candidate in (_standard_config(), flatpak_home() / "config" / APP_NAME):
+        if candidate != mine and (candidate / "state.json").is_file():
+            return candidate
+    return None

@@ -19,10 +19,10 @@ def doctor(args: list[str]) -> int:
     shared = not config.in_flatpak() and config.config_dir().is_relative_to(config.flatpak_home())
     print(f"Settings:        {config.config_dir()}")
     print(f"Data:            {config.data_dir()}" + ("   (the Flatpak's, shared with it)" if shared else ""))
-    unused = config.unused_standard_state()
-    if unused is not None:
-        print(f"Not in use:      {unused.parent}, from a copy run before it shared the Flatpak's. "
-              "Move it aside once nothing there is needed.")
+    other = config.other_setup()
+    if other is not None:
+        print(f"Another setup:   {other}, which this copy doesn't use. Two setups pair as two machines; "
+              "keep the one you use and move the other aside (see 'Running from source' in docs/advanced.md).")
     print(f"Log file:        {log_path()}")
     print(f"Launch hook log: {launch_hook_log_path()}")
     print("'modsync diagnostics' bundles this report with the recent logs for a bug report.")

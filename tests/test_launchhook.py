@@ -457,8 +457,9 @@ class KeepsItsCopy(LaunchHookBase):
 
     def setUp(self):
         super().setUp()
-        self.first = fakesteam._executable(self.tmp / "first" / "modsync", "#!/bin/sh\n")
-        self.second = fakesteam._executable(self.tmp / "second" / "modsync", "#!/bin/sh\n")
+        modsync = '#!/bin/sh\n[ "$1" = --version ] && echo "ModSync 9.9"\n'
+        self.first = fakesteam._executable(self.tmp / "first" / "modsync", modsync)
+        self.second = fakesteam._executable(self.tmp / "second" / "modsync", modsync)
 
     def enable_from(self, copy: Path, **kwargs) -> str:
         with patch.object(launchhook, "modsync_command", lambda: [str(copy)]):
@@ -490,6 +491,12 @@ class KeepsItsCopy(LaunchHookBase):
         self.enable_from(self.first)
         self.first.unlink()
         self.assertNotIn("--this-copy", self.enable_from(self.second))
+        self.assertEqual(self.started(), [str(self.second)])
+
+    def test_a_command_that_no_longer_starts_modsync_is_replaced(self):
+        self.enable_from(self.first)
+        self.first.write_text("#!/bin/sh\nexit 1\n")  # say, python -m modsync with ModSync uninstalled
+        self.enable_from(self.second)
         self.assertEqual(self.started(), [str(self.second)])
 
     def test_an_uninstalled_flatpak_is_replaced(self):

@@ -9,7 +9,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from modsync.__main__ import main
-from modsync.state import SCHEMA, NewerStateError, State
+from modsync.state import EXIT_NEWER_STATE, SCHEMA, NewerStateError, State
 
 
 class Schema(unittest.TestCase):
@@ -40,12 +40,25 @@ class Schema(unittest.TestCase):
             State.load()
         with self.assertRaises(NewerStateError):
             State.update(dfu_path="/elsewhere")
+        with self.assertRaises(NewerStateError):
+            State().save()  # a whole reset too
         self.assertEqual(State.path().read_text(), newer)
 
     def test_the_command_line_says_so(self):
         State.path().parent.mkdir(parents=True, exist_ok=True)
         State.path().write_text(json.dumps({"schema": SCHEMA + 1}))
         err = io.StringIO()
-        with redirect_stderr(err), redirect_stdout(io.StringIO()):
-            self.assertEqual(main(["dfu", "status"]), 1)
+        with redirect_stderr(err), redirect_stdout(io.StringIO()), \
+                patch("modsync.__main__._show_error") as window:
+            self.assertEqual(main(["dfu", "status"]), EXIT_NEWER_STATE)
         self.assertIn("is from a newer ModSync", err.getvalue())
+        window.assert_not_called()
+
+    def test_the_app_says_so_in_a_window(self):
+        State.path().parent.mkdir(parents=True, exist_ok=True)
+        State.path().write_text(json.dumps({"schema": SCHEMA + 1}))
+        with redirect_stderr(io.StringIO()), patch("modsync.cli.launch_gui", side_effect=lambda a: State.load()), \
+                patch("modsync.__main__._show_error") as window:
+            self.assertEqual(main([]), EXIT_NEWER_STATE)
+        self.assertIn("is from a newer ModSync", window.call_args.args[0])
+
