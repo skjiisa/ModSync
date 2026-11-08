@@ -48,6 +48,10 @@ usage:
   modsync dfu install [<dest-dir>]       install Daggerfall Unity using Steam's Daggerfall data
   modsync dfu hook enable | disable      make Steam's Play button on Daggerfall start Daggerfall Unity
 
+  modsync cyberpunk status               Cyberpunk 2077 in Heroic (GOG) and its MO2 instance
+  modsync cyberpunk use <dir>            use this MO2 instance for Cyberpunk
+  modsync cyberpunk open | play          open its MO2, or play through it, with Heroic's Proton
+
 sync create and join run headless and keep Syncthing alive until Ctrl-C.
 logs: ~/.local/state/modsync/modsync.log (MODSYNC_LOG_LEVEL=DEBUG for more).
 """
@@ -132,6 +136,11 @@ def _main(argv: list[str] | None) -> int:
         from modsync.cli import dfu
 
         return dfu(argv[1:])
+
+    if cmd == "cyberpunk":
+        from modsync.cli import cyberpunk
+
+        return cyberpunk(argv[1:])
 
     if cmd == "steam":
         from modsync.cli import steam
