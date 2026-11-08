@@ -46,6 +46,7 @@ import shutil
 import subprocess
 import urllib.request
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Callable
@@ -680,3 +681,58 @@ MODS_FOLDER = FolderSpec(
     tidy=_owed_record,
     accepts=_accepts_offer,
 )
+
+
+# --- for the app ------------------------------------------------------------------
+
+
+@dataclass
+class Overview:
+    """Everything the app shows about Cyberpunk, read in one go (off the UI
+    thread: it reads Heroic's files and the game's executable)."""
+
+    game: heroic.GogGame | None
+    instance: Path | None  # the MO2 instance in use: the one chosen, else one MO2-LINT installed
+    chosen: bool  # handed to ModSync (install or use): only that one syncs
+    instance_problem: str | None
+    hook: heroic_hook.HookStatus | None
+    mods: str  # "on" | "off" | "stopping"
+    version: tuple[str, str] | None  # the game here: (patch, build)
+    version_problem: str | None
+    prefix_ready: bool = False  # Heroic has made the game's prefix (read here, off the UI thread)
+    needs_setup: bool = False  # the instance lacks RootBuilder: an install stopped part way, or MO2-LINT's own
+
+
+def setup_finished(instance: Path) -> bool:
+    """Whether ``install_mo2`` got to its last step for this instance."""
+    return (instance / "plugins" / "rootbuilder" / "__init__.py").is_file()
+
+
+def overview(*, hook: bool = True) -> Overview:
+    """``hook``: also read the Play hook (Heroic's settings for the game)."""
+    from modsync.state import State
+    from modsync.sync import folders
+
+    game, instance = find_game(), find_instance()
+    st = State.load()
+    key = MODS_FOLDER.key
+    mods = "stopping" if folders.stopping(key, st) else "on" if key in st.game_folders else "off"
+    status = None
+    if hook and game is not None:
+        try:
+            status = hook_status()
+        except Exception as exc:  # Heroic's files unreadable: show the rest
+            log.warning("could not read Heroic's Play hook for Cyberpunk: %s", exc)
+    chosen = instance is not None and instance == chosen_instance()
+    problem = instance_problem(instance) if instance else None
+    return Overview(game, instance, chosen, problem, status, mods,
+                    game_version(game) if game else None, version_problem(game) if game else None,
+                    prefix_ready=game is not None and game.drive_c is not None,
+                    needs_setup=instance is not None and problem is None and not setup_finished(instance))
+
+
+def launch(launcher, *, play: bool) -> str:
+    """Open MO2, or play through it, from the app."""
+    refresh_hook()
+    plan = build_plan(find_instance(), find_game(), play=play)
+    return launcher.start(plan)

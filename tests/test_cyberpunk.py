@@ -502,3 +502,75 @@ def test_game_version_reads_the_exe(tmp_path):
     (game.install_path / "bin/x64/Cyberpunk2077.exe").write_bytes(
         fake_pe(3, 0, 88, 46235, strings={"ProductVersion": "2.5"}))
     assert cyberpunk.game_version(game) == ("2.5", "3.0.88.46235")
+
+
+# --- for the app ------------------------------------------------------------------
+
+
+def test_overview_reads_the_prefix_and_how_far_the_setup_got(tmp_path):
+    instance = make_instance(tmp_path)
+    cyberpunk.use_instance(instance)
+    for prefix_ready in (True, False):
+        with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path / str(prefix_ready),
+                                                                       prefix_ready=prefix_ready)), \
+                patch.object(cyberpunk, "hook_status", return_value=None):
+            ov = cyberpunk.overview()
+        assert ov.prefix_ready is prefix_ready
+        assert ov.needs_setup and ov.chosen
+    (instance / "plugins/rootbuilder").mkdir(parents=True)
+    (instance / "plugins/rootbuilder/__init__.py").write_text("")
+    with patch.object(cyberpunk, "find_game", return_value=None):
+        assert not cyberpunk.overview().needs_setup
+
+
+class TestUseAnotherInstance:
+    @pytest.fixture
+    def service(self):
+        from modsync.service import ModSyncService
+
+        svc = ModSyncService(manager=object())
+        with patch.object(svc, "ensure_running"), patch.object(cyberpunk, "refresh_hook", return_value=[]):
+            yield svc
+
+    def test_mods_sync_moves_along_before_it_returns(self, tmp_path, service):
+        from modsync.state import State
+
+        new = make_instance(tmp_path)
+        State.update(game_folders={"cp2077-mo2": "/old/instance"})
+
+        def moved(*, force):
+            assert force
+            State.update(game_folders={"cp2077-mo2": str(new.resolve())})
+
+        with patch.object(cyberpunk, "game_running", return_value=False), \
+                patch.object(service, "_refresh_game_folders", side_effect=moved) as refresh:
+            notes = service.use_cyberpunk_instance(new)
+        refresh.assert_called_once()
+        assert notes == [f"Using Mod Organizer 2 in {new.resolve()}."]
+
+    def test_a_move_still_pending_is_said(self, tmp_path, service):
+        from modsync.state import State
+
+        State.update(game_folders={"cp2077-mo2": "/old/instance"})
+        with patch.object(cyberpunk, "game_running", return_value=False), \
+                patch.object(service, "_refresh_game_folders"):
+            notes = service.use_cyberpunk_instance(make_instance(tmp_path))
+        assert "wait a moment before playing" in notes[-1]
+
+    def test_refused_while_the_game_runs_with_sync_on(self, tmp_path, service):
+        from modsync.state import State
+
+        State.update(game_folders={"cp2077-mo2": "/old/instance"})
+        with patch.object(cyberpunk, "game_running", return_value=True), \
+                pytest.raises(RuntimeError, match="Close Cyberpunk 2077"):
+            service.use_cyberpunk_instance(make_instance(tmp_path))
+        assert cyberpunk.chosen_instance() is None
+
+    def test_without_sync_nothing_needs_to_move(self, tmp_path, service):
+        from modsync.state import State
+
+        State.update(game_folders={})
+        with patch.object(cyberpunk, "game_running", return_value=True), \
+                patch.object(service, "_refresh_game_folders") as refresh:
+            service.use_cyberpunk_instance(make_instance(tmp_path))
+        refresh.assert_not_called()

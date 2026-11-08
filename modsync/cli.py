@@ -1225,14 +1225,17 @@ def _cyberpunk_status() -> int:
 def _cyberpunk_use(path: str) -> int:
     from modsync import cyberpunk
 
+    from modsync.service import ModSyncService
+
+    service = ModSyncService()
     try:
-        instance = cyberpunk.use_instance(path)
-    except cyberpunk.CyberpunkError as e:
+        for note in service.use_cyberpunk_instance(path):
+            print(note)
+    except (cyberpunk.CyberpunkError, RuntimeError) as e:
         print(f"error: {e}")
         return 1
-    print(f"Cyberpunk's MO2 instance: {instance}")
-    for note in cyberpunk.refresh_hook():
-        print(note)
+    finally:
+        service.shutdown()
     return 0
 
 

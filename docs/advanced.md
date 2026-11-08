@@ -810,12 +810,15 @@ so report problems with a ModSync-installed DFU to ModSync.
 
 ## Cyberpunk 2077 (GOG, through Heroic)
 
-Support for Cyberpunk 2077 from GOG, installed with the
-[Heroic Games Launcher](https://heroicgameslauncher.com/), is under way and
-only on the command line so far. ModSync reads Heroic's own settings (native
-or the Flatpak) for the game's folder, prefix and Proton, and runs Mod
-Organizer 2 the way Heroic runs the game: `umu-run` with Heroic's prefix and
-Proton.
+ModSync sets up Cyberpunk 2077 from GOG, installed with the
+[Heroic Games Launcher](https://heroicgameslauncher.com/), with Mod
+Organizer 2. In the app, choose Cyberpunk 2077 in the game switcher beside
+the ModSync name (or press X), and Home shows all of it: installing MO2,
+Play and Open Mod Organizer 2, Heroic's Play button, and mods sync. The
+commands below do the same from a terminal. ModSync reads Heroic's own
+settings (native or the Flatpak) for the game's folder, prefix and Proton,
+and runs Mod Organizer 2 the way Heroic runs the game: `umu-run` with
+Heroic's prefix and Proton.
 
 1. Install Cyberpunk 2077 in Heroic and launch it once, so Heroic creates
    its prefix.
