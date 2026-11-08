@@ -15,6 +15,7 @@ from pathlib import Path
 from modsync import launchhook
 from modsync.games import DAGGERFALL, SKYRIM_SE
 from modsync.mo2.launch import LaunchPlan
+from modsync.state import EXIT_NEWER_STATE
 from modsync.steam import libraries as libs
 from modsync.steam.compattools import CompatTool
 from tests import fakesteam
@@ -168,7 +169,7 @@ class RenderedScript(unittest.TestCase):
         handoff = launchhook.encode_handoff(self.mo2_plan())
         self.run_hook("waitforexitandrun", self.game_exe, hub_exit=launchhook.EXIT_CANCEL, handoff=handoff)
         self.assertIsNone(self.record("SteamLinuxRuntime_4"))
-        self.run_hook("waitforexitandrun", self.game_exe, hub_exit=3, handoff=handoff)
+        self.run_hook("waitforexitandrun", self.game_exe, hub_exit=1, handoff=handoff)
         self.assertEqual(self.record("SteamLinuxRuntime_4")["argv"][-1], self.game_exe)
 
     def test_unusable_handoffs_launch_the_game(self):
@@ -188,8 +189,15 @@ class RenderedScript(unittest.TestCase):
         self.assertIsNone(self.record("SteamLinuxRuntime_4"))
         self.assertIn("cancelled", self.log())
 
+    def test_a_setup_from_a_newer_modsync_ends_the_launch(self):
+        # ModSync showed why; launching Skyrim without MO2 after that would surprise.
+        result = self.run_hook("waitforexitandrun", self.game_exe, hub_exit=EXIT_NEWER_STATE)
+        self.assertEqual(result.returncode, 0)
+        self.assertIsNone(self.record("SteamLinuxRuntime_4"))
+        self.assertIn("ending the launch", self.log())
+
     def test_hub_failure_never_blocks_the_game(self):
-        result = self.run_hook("waitforexitandrun", self.game_exe, hub_exit=3)
+        result = self.run_hook("waitforexitandrun", self.game_exe, hub_exit=1)
         self.assertEqual(result.returncode, 0)
         self.assertIsNotNone(self.record("SteamLinuxRuntime_4"))
         self.assertIn("launching anyway", self.log())

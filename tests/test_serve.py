@@ -7,7 +7,7 @@ from unittest.mock import patch
 from modsync import gameversion, launchhook
 from modsync.serve import Server
 from modsync.service import DeviceStatus, PinOutcome, SyncStatus
-from modsync.state import State
+from modsync.state import NewerStateError, State
 
 
 class FakeService:
@@ -51,6 +51,17 @@ class ServerTests(unittest.TestCase):
         lines, notes = [], []
         server = Server(svc, log=lines.append, notify=lambda t, b: notes.append((t, b)))
         return svc, server, lines, notes
+
+    def test_a_newer_modsync_taking_over_the_state_stops_it(self):
+        svc, server, _, _ = self.make(State(instance_path="/mo2"))
+
+        def newer():
+            raise NewerStateError("state.json is from a newer ModSync")
+
+        svc.reload_state = newer
+        with patch.object(Server, "start", lambda self: None), self.assertRaises(NewerStateError):
+            server.run(interval=0)
+        self.assertEqual(svc.stopped, 1)  # and its Syncthing with it
 
     def test_without_vault_never_starts_syncthing(self):
         svc, server, lines, _ = self.make(State(instance_path="/mo2"))

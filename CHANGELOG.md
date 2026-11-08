@@ -6,11 +6,30 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Copies of ModSync on a machine share one setup. While the Flatpak is
+  installed, a copy run from source or installed with pip uses the
+  Flatpak's settings and data, unless it already has a setup of its own in
+  `~/.config/modsync`. `MODSYNC_HOME` gives a separate setup for
+  development, which a background service installed meanwhile keeps using.
+  `modsync doctor` shows the folders in use and any other setup on the
+  machine.
+- Turning a Play hook on again keeps the copy of ModSync it starts, so a
+  copy run from source doesn't take Steam's Play button from the Flatpak.
+  The Flatpak takes it back, and `--this-copy` on `modsync launch enable` or
+  `modsync dfu hook enable` makes it the copy you're running.
+- The state file records its format version. A ModSync older than the one
+  that wrote it leaves it alone instead of misreading it: the command line
+  and the app say so, the background service stops, and a launch from
+  Steam's Play button ends instead of going on without ModSync.
+
 ### Fixed
 
 - `modsync dfu hook enable` works when Steam already starts Daggerfall with
   Luxtorpeda or another launcher that isn't a Proton. Setup steps and the
-  original game go to Steam's default Proton, and turning the hook off gives
+  original game go to Steam's default Proton (Valve's, when the default is a
+  launcher too), and turning the hook off gives
   Daggerfall back to that launcher. `modsync dfu status` names it while the
   hook is off.
 - A new Daggerfall Unity install gets the saves synced from other machines

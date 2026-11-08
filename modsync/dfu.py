@@ -556,10 +556,11 @@ def hook_status() -> launchhook.LaunchHookStatus:
     return launchhook.status(DAGGERFALL_APPID)
 
 
-def enable_hook(inst: Install) -> str:
+def enable_hook(inst: Install, *, this_copy: bool = False) -> str:
     """Make Steam's Play button on Daggerfall start ``inst`` instead of the
-    original game. Queued until Steam closes when it's running."""
-    return launchhook.enable(DAGGERFALL_APPID, native=inst.executable)
+    original game. Queued until Steam closes when it's running. ``this_copy``:
+    the hook starts this ModSync (for saves sync), not the one it started before."""
+    return launchhook.enable(DAGGERFALL_APPID, native=inst.executable, this_copy=this_copy)
 
 
 def disable_hook() -> str:

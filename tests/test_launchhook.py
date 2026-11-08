@@ -450,6 +450,61 @@ class LegacyName(LaunchHookBase):
         self.assertFalse(self.legacy_dir.exists())
 
 
+class KeepsItsCopy(LaunchHookBase):
+    """Every copy of ModSync on a machine shares one setup, so turning a hook on
+    again from another copy (one run from source) leaves Play starting the copy
+    it was set up with. The Flatpak takes it back, and so does --this-copy."""
+
+    def setUp(self):
+        super().setUp()
+        modsync = '#!/bin/sh\n[ "$1" = --version ] && echo "ModSync 9.9"\n'
+        self.first = fakesteam._executable(self.tmp / "first" / "modsync", modsync)
+        self.second = fakesteam._executable(self.tmp / "second" / "modsync", modsync)
+
+    def enable_from(self, copy: Path, **kwargs) -> str:
+        with patch.object(launchhook, "modsync_command", lambda: [str(copy)]):
+            return launchhook.enable(**kwargs)
+
+    def started(self) -> list[str]:
+        return launchhook.Record.load().command
+
+    def test_another_copy_turning_it_on_again_keeps_the_first(self):
+        self.enable_from(self.first)
+        msg = self.enable_from(self.second)
+        self.assertEqual(self.started(), [str(self.first)])
+        self.assertIn(str(self.first), (self.tool_dir / "proton").read_text())
+        self.assertIn("add --this-copy", msg)
+
+    def test_this_copy_takes_it(self):
+        self.enable_from(self.first)
+        msg = self.enable_from(self.second, this_copy=True)
+        self.assertEqual(self.started(), [str(self.second)])
+        self.assertNotIn("--this-copy", msg)
+
+    def test_the_flatpak_takes_it_back(self):
+        self.enable_from(self.first)
+        with patch.dict(os.environ, {"FLATPAK_ID": "io.github.skjiisa.ModSync"}):
+            launchhook.enable()  # modsync_command is the Flatpak's in these tests
+        self.assertEqual(self.started(), ["/usr/bin/flatpak", "run", "io.github.skjiisa.ModSync"])
+
+    def test_a_copy_that_is_gone_is_replaced(self):
+        self.enable_from(self.first)
+        self.first.unlink()
+        self.assertNotIn("--this-copy", self.enable_from(self.second))
+        self.assertEqual(self.started(), [str(self.second)])
+
+    def test_a_command_that_no_longer_starts_modsync_is_replaced(self):
+        self.enable_from(self.first)
+        self.first.write_text("#!/bin/sh\nexit 1\n")  # say, python -m modsync with ModSync uninstalled
+        self.enable_from(self.second)
+        self.assertEqual(self.started(), [str(self.second)])
+
+    def test_an_uninstalled_flatpak_is_replaced(self):
+        launchhook.enable()  # started with flatpak run; tests/conftest.py says it isn't installed
+        self.enable_from(self.second)
+        self.assertEqual(self.started(), [str(self.second)])
+
+
 class DaggerfallHook(LaunchHookBase):
     """For Daggerfall, Play runs Daggerfall Unity (a native program) and opens
     no window; the hook has its own record and queue next to Skyrim's."""

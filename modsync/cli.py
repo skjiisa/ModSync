@@ -14,6 +14,15 @@ def doctor(args: list[str]) -> int:
     print(report.text)
     from modsync.logging_setup import launch_hook_log_path, log_path
 
+    from modsync import config
+
+    shared = not config.in_flatpak() and config.config_dir().is_relative_to(config.flatpak_home())
+    print(f"Settings:        {config.config_dir()}")
+    print(f"Data:            {config.data_dir()}" + ("   (the Flatpak's, shared with it)" if shared else ""))
+    other = config.other_setup()
+    if other is not None:
+        print(f"Another setup:   {other}, which this copy doesn't use. Two setups pair as two machines; "
+              "keep the one you use and move the other aside (see 'Running from source' in docs/advanced.md).")
     print(f"Log file:        {log_path()}")
     print(f"Launch hook log: {launch_hook_log_path()}")
     print("'modsync diagnostics' bundles this report with the recent logs for a bug report.")
@@ -1060,20 +1069,21 @@ def _dfu_saves(*, quiet: bool, playing: bool = False) -> int:
 def _dfu_hook(args: list[str]) -> int:
     from modsync import dfu
 
-    sub = args[0] if len(args) == 1 else ""
+    this_copy = args[1:] == ["--this-copy"] and args[:1] == ["enable"]
+    sub = args[0] if len(args) == 1 or this_copy else ""
     if sub == "enable":
         inst = _dfu_install_in_use()
         if inst is None:
             print("Daggerfall Unity isn't installed yet; run 'modsync dfu install' first.")
             return 1
-        action = lambda: dfu.enable_hook(inst)  # noqa: E731
+        action = lambda: dfu.enable_hook(inst, this_copy=this_copy)  # noqa: E731
     elif sub == "disable":
         action = dfu.disable_hook
     elif sub == "status" or not args:
         print(dfu.hook_status().summary())
         return 0
     else:
-        print("usage: modsync dfu hook [status] | enable | disable")
+        print("usage: modsync dfu hook [status] | enable [--this-copy] | disable")
         return 2
     try:
         print(action())
@@ -1100,15 +1110,18 @@ def launch(args: list[str]) -> int:
         return 0 if st.enabled else 1
     if sub == "enable":
         through = None
+        this_copy = False
         i = 0
         while i < len(rest):
             if rest[i] == "--through" and i + 1 < len(rest):
                 through, i = rest[i + 1], i + 2
+            elif rest[i] == "--this-copy":
+                this_copy, i = True, i + 1
             else:
-                print("usage: modsync launch enable [--through <compat-tool-name>]")
+                print("usage: modsync launch enable [--through <compat-tool-name>] [--this-copy]")
                 return 2
         try:
-            print(launchhook.enable(through=through))
+            print(launchhook.enable(through=through, this_copy=this_copy))
         except RuntimeError as exc:
             print(f"Cannot enable the launch hook: {exc}")
             return 1
@@ -1125,7 +1138,8 @@ def launch(args: list[str]) -> int:
     print(
         "usage:\n"
         "  modsync launch status                show whether Play opens ModSync first\n"
-        "  modsync launch enable [--through T]  open ModSync when the game is launched from Steam\n"
+        "  modsync launch enable [--through T] [--this-copy]\n"
+        "                                       open ModSync when the game is launched from Steam\n"
         "  modsync launch disable               restore the previous launch behaviour\n"
         "  modsync launch hub --appid N         (run by Steam) open ModSync before the game"
     )

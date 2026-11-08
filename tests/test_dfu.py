@@ -340,7 +340,7 @@ class FollowInstall(unittest.TestCase):
         with patch.object(dfu, "hook_status", lambda: on), patch.object(dfu.launchhook, "enable") as enable:
             enable.return_value = "Launch hook refreshed."
             self.assertEqual(dfu.follow_install(inst), "Launch hook refreshed.")
-        enable.assert_called_once_with(dfu.DAGGERFALL_APPID, native=inst.executable)
+        enable.assert_called_once_with(dfu.DAGGERFALL_APPID, native=inst.executable, this_copy=False)  # keeps its copy
 
     def test_nothing_to_do_when_off_or_already_there(self):
         inst = dfu.Install(Path("/games/dfu"))

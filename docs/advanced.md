@@ -22,6 +22,31 @@ python3 -m venv .venv && .venv/bin/pip install .
 .venv/bin/modsync
 ```
 
+Copies of ModSync on one machine share one setup: the same pairing, folders
+and Play hooks. While the Flatpak is installed, a copy run from source or
+installed with pip uses the Flatpak's folders,
+`~/.var/app/io.github.skjiisa.ModSync/config/modsync` and `.../data/modsync`.
+Without the Flatpak it uses `~/.config/modsync` and `~/.local/share/modsync`.
+A copy that already has a setup of its own in `~/.config/modsync` keeps it,
+though: switching would leave its pairing behind. For a separate setup while
+developing, set `MODSYNC_HOME`, which gets a `config` and a `data` folder (a
+background service installed meanwhile keeps using it):
+
+```sh
+MODSYNC_HOME=~/modsync-dev uv run modsync
+```
+
+`modsync doctor` shows which folders are in use, and any other copy's setup
+on the machine. Two setups pair as two machines. To keep one, close every
+ModSync and move the other's `modsync` folders aside. To keep the one in
+`~/.config/modsync` with the Flatpak, move it into the Flatpak's folders
+instead, then fix the paths that point at the old data folder (`state.json`
+and the Syncthing `config.xml`) and, if Daggerfall Unity's saves sync, the
+`.modsync-saves-*` files in its `Saves` folder.
+
+A copy that shares the Flatpak's never takes Steam's Play button from it by
+turning a hook on again (see "How the launch hook works").
+
 Outside the Flatpak, ModSync downloads a Syncthing binary and the MO2-LINT
 installer into its data directory on first use. A downgrade needs `xdelta3`
 and a 7z extractor (`7z`, `7zz` or `bsdtar`, which SteamOS ships) on the
@@ -542,6 +567,12 @@ without a controller in hand.
 
 `modsync launch enable --through <tool>` chains to a named compatibility tool
 instead of the detected one.
+
+Turning a hook on again keeps the copy of ModSync it starts, while that copy
+is still installed, so a copy run from source can't take the Play button from
+the Flatpak by accident. The Flatpak takes it back whenever it turns the hook
+on. To have Play start the copy you're running, add `--this-copy`:
+`modsync launch enable --this-copy` or `modsync dfu hook enable --this-copy`.
 
 ## Daggerfall Unity
 
