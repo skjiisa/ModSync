@@ -123,9 +123,10 @@ def _norm(path: str) -> str:
 
 
 def lines(snap: Snapshot, vault_id: str | None, game_folder_ids: dict[str, str],
-          now: datetime | None = None) -> list[str]:
+          now: datetime | None = None, forgotten: list[str] = ()) -> list[str]:
     """The doctor's lines: ``• `` for facts, ``! `` for problems.
-    ``game_folder_ids`` maps each game folder ModSync syncs to its id."""
+    ``game_folder_ids`` maps each game folder ModSync syncs to its id;
+    ``forgotten`` are the machines forgotten here."""
     now = now or datetime.now(timezone.utc)
     out: list[str] = []
     names = {d["deviceID"]: d.get("name") or "" for d in snap.devices}
@@ -149,9 +150,12 @@ def lines(snap: Snapshot, vault_id: str | None, game_folder_ids: dict[str, str],
     if snap.me:
         out.append(f"• this machine: {snap.me[:7]}…")
     peers = [d["deviceID"] for d in snap.devices if d.get("deviceID") and d["deviceID"] != snap.me]
+    introducers = {d["deviceID"] for d in snap.devices if d.get("introducer")}
     for did in peers:
-        note = seen(did)
-        out.append(f"• paired: {who(did)}" + (f", {note}" if note else ""))
+        notes = [n for n in (seen(did), "passes on the machines it knows" if did in introducers else "") if n]
+        out.append(f"• paired: {who(did)}" + "".join(f", {n}" for n in notes))
+    if forgotten:
+        out.append(f"• forgotten here: {', '.join(d[:7] + '…' for d in forgotten)}")
     if not snap.running:
         out.append("• Syncthing isn't running, so when each machine was last seen isn't shown")
     elif not snap.seen_known:

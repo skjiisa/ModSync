@@ -112,6 +112,9 @@ class SyncthingClient:
             self._http.get("/rest/cluster/pending/devices").raise_for_status().json()
         )
 
+    def dismiss_pending_device(self, device_id: str) -> None:
+        self._http.delete("/rest/cluster/pending/devices", params={"device": device_id}).raise_for_status()
+
     def pending_folders(self) -> dict[str, Any]:
         """Folders paired devices offer that aren't configured here yet:
         ``{folder_id: {"offeredBy": {device_id: {"time", "label", ...}}}}``."""

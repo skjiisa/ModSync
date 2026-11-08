@@ -334,16 +334,41 @@ Pairing is between machines, not between folders. Machines that have paired,
 by joining the MO2 vault, with the LAN PIN or with a code, share every folder
 ModSync syncs on either one. A vault created later is shared with them too.
 
-Each paired machine also passes on the machines it shares folders with
-(Syncthing calls it an introducer). When a Steam Deck and a laptop have both
-paired with the desktop, the desktop tells each about the other the next time
-they connect to it. After that, the Deck and the laptop sync with each other
-directly, even with the desktop off. The desktop passes them on through a
-folder it syncs with both, and once they know each other they share every
-folder, including a game's folder the desktop doesn't sync. Machines paired with an older
-ModSync get this the next time ModSync runs on them, and the shared machine
-has to be online once afterwards. If it never will be, "Add a machine by
-code…" on one of the others, with the other's code, pairs them directly.
+A machine also learns about the machines another one shares folders with
+(Syncthing calls the one passing them on an introducer). This goes one way
+per pair: the machine that enters another's code or PIN learns from it. When
+a Steam Deck and a laptop have both paired with the desktop, the desktop tells
+each about the other the next time they connect to it. After that, the Deck
+and the laptop sync with each other directly, even with the desktop off. The
+desktop passes them on through a folder it syncs with both. Once a machine
+passed on this way has connected, it gets every game's folder too, including
+one the desktop doesn't sync. If the desktop will never be online again, "Add
+a machine by code…" on one of the others, with the other's code, pairs them
+directly.
+
+Pairings made before ModSync passed machines on one way went both ways. The
+first time this version runs, it keeps one direction for each such pair:
+the machine whose device id sorts first passes on, and the other learns from
+it. Both machines apply the same rule, so they agree without talking. A
+machine still on 2.1.0-beta1 makes every machine it's paired with pass on to
+it again each time it starts, so its pairs go both ways until it's updated.
+
+To unpair one machine, select it under Devices on the Sync page, or run
+`modsync sync forget <name or device id>`. It leaves every folder here, and
+if another machine passes it on again, ModSync removes it again. Forget it on
+each of your machines that lists it, since a machine that learns from another
+gets it back until that one forgets it too. No files are deleted. Entering
+its code or PIN on this machine pairs it again. This is how to get rid of an
+identity that will never come back, such as a machine's old one after a
+reinstall. `modsync doctor` marks it "never connected" or shows when it was
+last seen.
+
+Forgetting isn't a lock-out. Until every machine has forgotten it, a machine
+that learns from another can be handed it again, and Syncthing adds it back
+to the folders they share. ModSync removes it within seconds, whenever it
+next talks to Syncthing, but a machine that is online and connects in that
+moment can sync briefly. For a lost or stolen device, forget it on every
+machine.
 
 Each machine appears under the name it gives itself, usually its hostname.
 Paired with a code, a machine shows as the start of its device id until it
@@ -365,6 +390,7 @@ modsync sync share <folder>    # start syncing one of a game's folders here
 modsync sync stop <folder>     # stop; the files stay, and offers of it are left alone
 modsync sync code              # this machine's code
 modsync sync join <code>       # pair with a machine that syncs only games' folders
+modsync sync forget <machine>  # unpair one machine here, by name or device id
 ```
 
 A machine that syncs only games' folders gives out a code starting with

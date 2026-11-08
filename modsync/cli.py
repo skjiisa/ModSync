@@ -197,6 +197,8 @@ def vault(args: list[str]) -> int:
         return _sync_game_folder(sub, rest[0])
     if sub == "code" and not rest:
         return _sync_code()
+    if sub == "forget" and len(rest) == 1:
+        return _sync_forget(rest[0])
     if sub == "serve":  # kept for units installed by older versions
         return serve(rest)
     print(
@@ -206,6 +208,7 @@ def vault(args: list[str]) -> int:
         "  modsync sync join <machine-code>    pair with a machine that syncs only games' folders\n"
         "  modsync sync share | stop <folder>  start or stop syncing a game's folder (e.g. dfu-mods)\n"
         "  modsync sync code                   this machine's pairing code\n"
+        "  modsync sync forget <machine>       unpair one machine here (its name or device id)\n"
         "  modsync sync status\n"
         "  modsync sync conflicts [keep current|other <file>]\n"
         "  modsync serve                       keep syncing / watching in the foreground"
@@ -243,6 +246,24 @@ def _sync_game_folder(action: str, key: str) -> int:
     return 0
 
 
+def _sync_forget(machine: str) -> int:
+    from modsync.service import ModSyncService
+
+    service = ModSyncService()
+    try:
+        device_id = service.find_machine(machine)
+        service.forget_machine(device_id)
+    except RuntimeError as exc:
+        print(exc)
+        return 1
+    finally:
+        service.shutdown()
+    print(f"Forgot {device_id}. It no longer syncs with this machine, and if another machine")
+    print("passes it on again, ModSync removes it again. Forget it on the other machines too,")
+    print("or they keep it. Entering its pairing code here pairs it again.")
+    return 0
+
+
 def _sync_code() -> int:
     from modsync.service import ModSyncService
 
@@ -256,6 +277,10 @@ def _sync_code() -> int:
         return 1
     print(code.encode())
     return 0
+
+
+def _machine(d) -> str:
+    return f"{d.name} ({d.id[:7]})" if d.name else d.id[:7]
 
 
 def _sync_status() -> int:
@@ -282,7 +307,7 @@ def _sync_status() -> int:
               + (f", {fs.conflicts} conflict(s)" if fs.conflicts else ""))
     if not service.state.syncing:
         for d in st.devices:
-            print(f"Machine:    {d.name or d.id[:7]}  {'connected' if d.connected else 'offline'}")
+            print(f"Machine:    {_machine(d)}  {'connected' if d.connected else 'offline'}")
         if not st.devices:
             print("Machines:   none paired yet")
         return 0
@@ -300,7 +325,7 @@ def _sync_status() -> int:
         print(f"State:      {st.folder_state or 'starting'}, {pct}% here"
               + (f", {st.need_items} item(s) still to arrive" if st.need_items else ""))
     for d in st.devices:
-        print(f"Machine:    {d.name or d.id[:7]}  {'connected' if d.connected else 'offline'}")
+        print(f"Machine:    {_machine(d)}  {'connected' if d.connected else 'offline'}")
     if not st.devices:
         print("Machines:   none paired yet")
     n = len(service.conflicts())

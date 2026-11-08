@@ -74,7 +74,7 @@ class SyncStatusCli(_Vault):
         self.assertEqual(code, 0)
         self.assertIn("Vault:      modsync-v", out)
         self.assertIn("State:      idle, 100% here", out)
-        self.assertIn("Machine:    Desktop  connected", out)
+        self.assertIn("Machine:    Desktop (SRCDEVI)  connected", out)
         self.assertIn("Conflicts:  2  ('modsync sync conflicts' lists them)", out)
 
     def test_paused(self):

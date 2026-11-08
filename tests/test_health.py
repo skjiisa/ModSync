@@ -86,6 +86,13 @@ class LinesTests(unittest.TestCase):
         self.assertIn("• paired: modorganizer2 (OLDOLDO…), last seen "
                       f"{(NOW - timedelta(days=2)).astimezone().date().isoformat()} (2 days ago)", out)
 
+    def test_machines_passing_on_others_and_forgotten_ones(self):
+        s = snap([folder("modsync-v", "/m", DECK)], connected=[DECK])
+        s.devices[1]["introducer"] = True
+        out = health.lines(s, "modsync-v", {}, now=NOW, forgotten=["2LFPXRM-RKWI4S2"])
+        self.assertIn("• paired: steamdeck (DECKDEC…), connected, passes on the machines it knows", out)
+        self.assertIn("• forgotten here: 2LFPXRM…", out)
+
     def test_never_connected(self):
         out = health.lines(snap([folder("modsync-v", "/m", DECK)], connected=[DECK]), "modsync-v", {}, now=NOW)
         self.assertIn("• paired: modorganizer2 (OLDOLDO…), never connected", out)
@@ -143,7 +150,7 @@ class FromConfigTests(unittest.TestCase):
         self.assertFalse(s.running)
         self.assertEqual(s.me, CERT_ID)
         self.assertEqual([d["deviceID"] for d in s.folders[0]["devices"]], [CERT_ID, DECK])
-        self.assertEqual(health.lines(s, "modsync-v", {})[1], "• paired: steamdeck (DECKDEC…)")
+        self.assertEqual(health.lines(s, "modsync-v", {})[1], "• paired: steamdeck (DECKDEC…), passes on the machines it knows")
 
 
 class StandInNamesTests(unittest.TestCase):

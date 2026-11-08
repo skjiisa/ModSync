@@ -94,6 +94,24 @@ def peers(client: SyncthingClient) -> list[str]:
     return [d["deviceID"] for d in client.devices() if d.get("deviceID") and d["deviceID"] != me]
 
 
+def seen_peers(client: SyncthingClient) -> list[str]:
+    """The paired machines that have connected here at least once, leaving out
+    forgotten ones. Another machine passes on every machine it lists, which
+    can include an identity that will never connect again (a reinstalled
+    machine's old one); the games' folders aren't shared with those."""
+    from modsync.sync.health import seen_at  # stdlib only; health imports nothing from here
+
+    forgotten = set(State.load().forgotten_devices)
+    everyone = [d for d in peers(client) if d not in forgotten]
+    try:
+        stats = client.device_stats()
+        conns = client.connections().get("connections", {})
+    except Exception as exc:
+        log.info("can't tell which machines have connected (%s); counting them all", exc)
+        return everyone
+    return [d for d in everyone if (conns.get(d) or {}).get("connected") or seen_at(stats.get(d) or {}) is not None]
+
+
 def write_stignore(spec: FolderSpec, root: Path) -> None:
     target = root / ".stignore"
     text = spec.stignore_text()
@@ -274,10 +292,11 @@ def share_with(client: SyncthingClient, device_id: str) -> list[str]:
 
 
 def share_with_peers(client: SyncthingClient) -> list[str]:
-    """Add every paired machine to every game folder synced here. A machine
-    another one introduced arrives without being paired here, so nothing
-    else shares the folders with it. Returns the keys changed."""
-    return _share_with_all(client, peers(client))
+    """Add every paired machine that has connected here to every game folder
+    synced here. A machine another one introduced arrives without being
+    paired here, so nothing else shares the folders with it; it gets them
+    once it has connected. Returns the keys changed."""
+    return _share_with_all(client, seen_peers(client))
 
 
 def _share_with_all(client: SyncthingClient, device_ids: list[str]) -> list[str]:
@@ -311,7 +330,8 @@ def take_offers(client: SyncthingClient) -> list[str]:
         log.info("pending folders unavailable: %s", exc)
         return []
     st = State.load()
-    paired = set(peers(client))
+    paired = set(peers(client)) - set(st.forgotten_devices)
+    share = set(seen_peers(client))
     taken = []
     for folder_id, info in pending.items():
         spec = _spec_for_id(folder_id)
@@ -321,7 +341,7 @@ def take_offers(client: SyncthingClient) -> list[str]:
         root = spec.path()
         if not offered_by or root is None:
             continue
-        _put(client, spec, root, sorted(paired))
+        _put(client, spec, root, sorted(share | set(offered_by)))
         _remember(spec.key, root)
         taken.append(spec.key)
         log.info("took up %s from %s at %s", folder_id, ", ".join(d[:7] for d in offered_by), root)

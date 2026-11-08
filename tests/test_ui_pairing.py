@@ -232,3 +232,61 @@ class SyncThenVersionTests(UiTestCase):
         sync.on_status(status("syncing", 80.0))  # more mods arriving...
         sync.on_status(status("idle", 100.0))  # ...and done again
         self.assertEqual(synced, [True, True])
+
+
+class ForgetMachineTests(UiTestCase):
+    def _status(self, *devices):
+        from modsync.service import DeviceStatus
+
+        return SyncStatus("ME", "modsync-x", True, "idle", 100.0, [DeviceStatus(*d) for d in devices])
+
+    def test_a_machine_row_offers_to_forget_it(self):
+        State(instance_path=str(self.tmp), folder_id="modsync-x").save()
+        window = self.window()
+        sync = window.pages["sync"]
+        sync.on_status(self._status(("DECKDEC-1", "steamdeck", True), ("OLDOLDO-2", "", False)))
+        rows = sync._device_rows
+        self.assertEqual([(r.text(), r.badge.text()) for r in rows.values()],
+                         [("steamdeck", "Connected"), ("OLDOLDO-2", "Offline")])
+        deck = rows["DECKDEC-1"]
+        sync.on_status(self._status(("DECKDEC-1", "steamdeck", False), ("OLDOLDO-2", "", False)))
+        self.assertIs(sync._device_rows["DECKDEC-1"], deck)  # updated in place, so focus stays
+        self.assertEqual(deck.badge.text(), "Offline")
+        rows["OLDOLDO-2"].click()
+        self.assertEqual(window.top_overlay.title.text(), "Forget OLDOLDO-2?")
+        with patch("modsync.ui.pages.sync.worker.run_async") as run:
+            window.top_overlay.choose("forget")
+        self.assertEqual(run.call_args.args[:2], (window.service.forget_machine, "OLDOLDO-2"))
+        sync.on_status(self._status(("DECKDEC-1", "steamdeck", True)))
+        self.assertEqual(list(sync._device_rows), ["DECKDEC-1"])
+        sync.on_status(self._status())
+        self.assertEqual(sync._device_rows, {})
+        self.assertIsNotNone(sync._no_devices)
+
+    def test_a_removed_row_hands_the_focus_on_and_goes_away(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        State(instance_path=str(self.tmp), folder_id="modsync-x").save()
+        window = self.window()
+        window.go("sync")
+        sync = window.pages["sync"]
+        sync.on_status(self._status(("DECKDEC-1", "steamdeck", True), ("OLDOLDO-2", "", False)))
+        old = sync._device_rows["OLDOLDO-2"]
+        old.setFocus()
+        self.settle()
+        sync.on_status(self._status(("DECKDEC-1", "steamdeck", True)))
+        self.assertFalse(old.isVisible())
+        self.assertIs(window.focusWidget(), sync._device_rows["DECKDEC-1"])
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.settle()
+        self.assertEqual(list(sync._device_rows), ["DECKDEC-1"])
+
+    def test_cancel_forgets_nothing(self):
+        State(instance_path=str(self.tmp), folder_id="modsync-x").save()
+        window = self.window()
+        sync = window.pages["sync"]
+        sync.on_status(self._status(("DECKDEC-1", "steamdeck", True)))
+        sync._device_rows["DECKDEC-1"].click()
+        with patch("modsync.ui.pages.sync.worker.run_async") as run:
+            window.top_overlay.choose("cancel")
+        run.assert_not_called()
