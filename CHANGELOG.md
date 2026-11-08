@@ -26,6 +26,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Moving Daggerfall to another Steam library, such as an SD card, no longer
+  leaves Daggerfall Unity on its "set the path to your Daggerfall game files"
+  screen. Play, in Steam or in the app, points it at Steam's new copy first,
+  and `modsync dfu follow` does it by hand. A data path that still works is
+  never changed.
+
 - `modsync dfu hook enable` works when Steam already starts Daggerfall with
   Luxtorpeda or another launcher that isn't a Proton. Setup steps and the
   original game go to Steam's default Proton (Valve's, when the default is a

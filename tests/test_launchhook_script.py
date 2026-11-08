@@ -276,6 +276,14 @@ class NativeProgramScript(unittest.TestCase):
             native=self.dfu,
         )
         self.dosbox = str(self.tmp / "The Elder Scrolls Daggerfall/DOSBox-0.74/DOSBox.exe")
+        self.dagger = self.tmp / "The Elder Scrolls Daggerfall" / "DF" / "DAGGER"
+        (self.dagger / "ARENA2").mkdir(parents=True)
+        self.point_at(self.dagger)
+
+    def point_at(self, dagger) -> None:
+        ini = self.dfu.parent / "PortableAppdata" / "settings.ini"
+        ini.parent.mkdir(parents=True, exist_ok=True)
+        ini.write_text(f"[Daggerfall]\r\nMyDaggerfallPath = {dagger}\r\n")  # DFU writes CRLF
 
     def test_play_runs_daggerfall_unity_in_its_folder_with_steams_environment(self):
         result = self.run_hook("waitforexitandrun", self.dosbox, "-conf", "df.conf")
@@ -286,6 +294,20 @@ class NativeProgramScript(unittest.TestCase):
         self.assertEqual(dfu["env"]["LD_PRELOAD"], "/fake/gameoverlayrenderer.so")  # Steam's overlay
         self.assertIsNone(self.record("modsync-cmd"))  # no window
         self.assertIsNone(self.record("SteamLinuxRuntime_4"))
+
+    def test_data_moved_to_another_library_asks_modsync_to_follow_it(self):
+        self.point_at(self.tmp / "emptied" / "DF" / "DAGGER")  # Steam moved Daggerfall to an SD card
+        result = self.run_hook("waitforexitandrun", self.dosbox)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.record("modsync-cmd")["argv"], ["dfu", "follow", "--quiet"])
+        self.assertIsNotNone(self.record("Daggerfall Unity"))  # and starts it either way
+        self.assertIn("asking ModSync to point Daggerfall Unity at Steam's", self.log())
+
+    def test_a_relative_data_path_counts_from_dfus_folder(self):
+        (self.dfu.parent / "data" / "arena2").mkdir(parents=True)
+        self.point_at("./data")
+        self.run_hook("waitforexitandrun", self.dosbox)
+        self.assertIsNone(self.record("modsync-cmd"))
 
     def test_original_game_on_request(self):
         result = self.run_hook("waitforexitandrun", self.dosbox, extra_env={"MODSYNC_ORIGINAL_GAME": "1"})

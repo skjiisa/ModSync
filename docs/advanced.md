@@ -606,6 +606,12 @@ ModSync adds two things to the install:
     the data path, so it skips that step here. Without this, it falls back to
     1920×1080, which looks stretched on a screen of another shape.
   - To change the resolution later, use Advanced on DFU's startup screen.
+  - Moving Daggerfall to another Steam library (an SD card, say) empties the
+    folder `MyDaggerfallPath` points at. Play, in Steam or in the app, then
+    points it at Steam's new copy before DFU starts, as does `modsync dfu
+    follow` or `modsync dfu install`. A data path that still works, Steam's
+    or not, is never changed, nor is a broken one while Steam's copy is
+    missing too (the SD card is out).
 
 DFU's startup screen still opens. That's where the mod list and DFU's own
 settings are edited. Mods go in
