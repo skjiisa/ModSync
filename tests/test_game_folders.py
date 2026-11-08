@@ -27,6 +27,8 @@ class FakeSyncthing:
         self.pending_folders: dict[str, dict] = {}
         self.running = True
         self.refuse_delete = False
+        self.stats: dict | None = None  # /rest/stats/device; None: Syncthing doesn't answer it
+        self.connected: set[str] = set()
 
     # SyncthingManager
     def start(self, timeout=0):
@@ -98,7 +100,15 @@ class _Client:
         return {"completion": 100}
 
     def connections(self):
-        return {"connections": {}}
+        return {"connections": {d: {"connected": True} for d in self.st.connected}}
+
+    def device_stats(self):
+        if self.st.stats is None:
+            raise OSError("no stats")
+        return copy.deepcopy(self.st.stats)
+
+    def dismiss_pending_device(self, device_id):
+        self.st.pending_devices.pop(device_id, None)
 
 
 def folder_devices(st: FakeSyncthing, folder_id: str) -> set[str]:
@@ -416,84 +426,145 @@ class MachineWidePairing(GameFolderBase):
         self.assertNotIn("DECK", self.st.devices)
         self.assertFalse(State.load().paired)
 
-    def test_every_way_of_pairing_makes_the_other_machine_an_introducer(self):
-        self.service.share_game_folder("test-mods")
-        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
-        self.service.add_peer(PairingCode("DECK", "", "Deck"))
-        self.st.pending_devices["FRAME"] = {"name": "Steam Frame"}
-        self.service.accept_pending()
-        for device_id in ("DESKTOP", "DECK", "FRAME"):
-            device = self.st.devices[device_id]
-            self.assertTrue(device["introducer"], device_id)
-            self.assertTrue(device["skipIntroductionRemovals"], device_id)
-
-    def test_a_paired_machine_is_not_named_after_the_vault(self):
-        # A code carries the vault's label: Syncthing names the machine as it
-        # connects, from the name the machine gives itself.
-        self.service.share_game_folder("test-mods")
-        self.service.pair(PairingCode("DESKTOP", "", "Skyrim SE"))
-        self.service.add_peer(PairingCode("DECK", "", "Skyrim SE"), peer_name="steamdeck")
-        self.st.pending_devices["FRAME"] = {"name": "steamframe"}
-        self.st.pending_devices["NONAME"] = {}
-        self.service.accept_pending()
-        self.assertEqual({d: self.st.devices[d]["name"] for d in ("DESKTOP", "DECK", "FRAME", "NONAME")},
-                         {"DESKTOP": "", "DECK": "steamdeck", "FRAME": "steamframe", "NONAME": ""})
-
-    def test_lan_pairing_names_each_machine_after_itself(self):
+    def test_the_machine_entering_a_code_takes_introductions_from_the_other(self):
         from modsync import pairing_lan
 
         self.service.share_game_folder("test-mods")
-        joiner = pairing_lan.PairPayload("LAPTOP", name="laptop")
-        with patch.object(pairing_lan, "host_pairing", return_value=joiner) as host:
-            self.service.host_network_pairing("desktop", "123456")
-        self.assertEqual(host.call_args.args[0].name, "desktop")  # the host says who it is too
-        self.assertEqual(self.st.devices["LAPTOP"]["name"], "laptop")  # not "desktop"
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.service.add_peer(PairingCode("DECK", "", "Deck"))
+        self.st.pending_devices["FRAME"] = {"name": "Steam Frame"}  # it entered this machine's code
+        self.service.accept_pending()
+        with patch.object(pairing_lan, "host_pairing", return_value=pairing_lan.PairPayload("LAPTOP")):
+            self.service.host_network_pairing("me", "123456")  # LAPTOP entered the PIN shown here
+        flags = {d: (self.st.devices[d]["introducer"], self.st.devices[d]["skipIntroductionRemovals"])
+                 for d in ("DESKTOP", "DECK", "FRAME", "LAPTOP")}
+        self.assertEqual(flags, {"DESKTOP": (True, True), "DECK": (True, True),
+                                 "FRAME": (False, False), "LAPTOP": (False, False)})
 
-        old_host = pairing_lan.PairPayload("DECK", "", "Skyrim SE")  # an older version sends no name
-        ann = pairing_lan.Announcement("steamdeck", "10.0.0.2", 21029, "s")
-        with patch.object(pairing_lan, "join_pairing", return_value=old_host) as join:
-            self.service.join_via_network(ann, "123456", self.tmp / "MO2", pair_only=True)
-        self.assertTrue(join.call_args.args[1].name)  # this machine's hostname
-        self.assertEqual(self.st.devices["DECK"]["name"], "steamdeck")  # from its announcement
-
-    def test_machines_paired_before_become_introducers_once(self):
-        self.st.devices["DESKTOP"] = {"deviceID": "DESKTOP", "name": "Desktop", "introducer": False,
-                                      "paused": True}
-        self.service.ensure_running()  # nothing syncs or is paired here yet: left alone
-        self.assertFalse(self.st.devices["DESKTOP"]["introducer"])
-        State.update(paired=True)
-        self.service.reload_state()
+    def test_pairings_from_before_introduce_one_way_once(self):
+        # Before, both machines of a pair introduced each other (or, before
+        # that, neither did). Both apply the same rule: the lower id introduces.
+        self.st.devices["AAA"] = {"deviceID": "AAA", "introducer": True, "skipIntroductionRemovals": True,
+                                  "paused": True}
+        self.st.devices["ZZZ"] = {"deviceID": "ZZZ", "introducer": True, "skipIntroductionRemovals": True}
+        self.st.devices["BBB"] = {"deviceID": "BBB"}
         self.service.ensure_running()
-        desktop = self.st.devices["DESKTOP"]
-        self.assertEqual((desktop["introducer"], desktop["skipIntroductionRemovals"], desktop["paused"]),
-                         (True, True, True))
+        flags = {d: (self.st.devices[d].get("introducer"), self.st.devices[d].get("skipIntroductionRemovals"))
+                 for d in ("AAA", "BBB", "ZZZ")}
+        self.assertEqual(flags, {"AAA": (True, True), "BBB": (True, True), "ZZZ": (False, False)})
+        self.assertTrue(self.st.devices["AAA"]["paused"])  # the user paused it
         self.assertNotIn("introducer", self.st.devices["ME"])
-        self.st.devices["DESKTOP"]["introducer"] = False
-        self.service.ensure_running()  # once per run
-        self.assertFalse(self.st.devices["DESKTOP"]["introducer"])
+        self.assertTrue(State.load().one_way_introducers)
+        # Once: a pairing made afterwards keeps the way it was made.
+        self.st.devices["ZZZ"]["introducer"] = True
+        ModSyncService(manager=self.st).ensure_running()
+        self.assertTrue(self.st.devices["ZZZ"]["introducer"])
 
     def test_a_connected_machine_made_an_introducer_reconnects(self):
         self.st.devices["DECK"] = {"deviceID": "DECK", "paused": False}
-        self.st.devices["PAUSED"] = {"deviceID": "PAUSED", "paused": True}
+        self.st.devices["CPAUSED"] = {"deviceID": "CPAUSED", "paused": True}
+        self.st.devices["ZZZ"] = {"deviceID": "ZZZ", "paused": False, "introducer": True}
         written = []
         put = _Client.put_device
 
         def record(client, device):
-            written.append((device["deviceID"], device.get("paused")))
+            written.append((device["deviceID"], device.get("paused"), device.get("introducer")))
             put(client, device)
 
-        State.update(paired=True)
-        self.service.reload_state()
         with patch.object(_Client, "put_device", record):
             self.service.ensure_running()
-        # Syncthing reads what an introducer passes on only as it connects.
-        self.assertEqual(written, [("DECK", True), ("DECK", False), ("PAUSED", True)])
+        # Syncthing reads what an introducer passes on only as it connects; one
+        # that stops being an introducer needn't reconnect.
+        self.assertEqual(written, [("DECK", True, True), ("DECK", False, True), ("CPAUSED", True, True),
+                                   ("ZZZ", False, False)])
 
     def test_a_machine_introduced_by_another_gets_the_games_folders(self):
         self.service.share_game_folder("test-mods")
         self.st.devices["LAPTOP"] = {"deviceID": "LAPTOP", "introducer": True}  # Syncthing added it
         self.service.accept_pending()
         self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "LAPTOP"})
+
+    def test_an_introduced_machine_gets_the_games_folders_once_it_has_connected(self):
+        self.service.share_game_folder("test-mods")
+        never = {"lastSeen": "1970-01-01T00:00:00Z"}
+        self.st.stats = {"LAPTOP": never, "OLD": never, "FRAME": {"lastSeen": "2026-11-01T10:00:00Z"}}
+        for did in ("LAPTOP", "OLD", "FRAME"):
+            self.st.devices[did] = {"deviceID": did}  # another machine passed them on
+        self.service.accept_pending()
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "FRAME"})
+        self.st.connected.add("LAPTOP")
+        self.service.accept_pending()
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "FRAME", "LAPTOP"})
+
+    def test_a_game_folder_taken_up_skips_machines_that_never_connected(self):
+        self.st.stats = {"OLD": {"lastSeen": "1970-01-01T00:00:00Z"}}
+        self.st.devices["OLD"] = {"deviceID": "OLD"}
+        self.st.devices["DECK"] = {"deviceID": "DECK"}
+        self.st.connected.add("DECK")
+        self.st.pending_folders["modsync-test-mods"] = {"offeredBy": {"DECK": {}}}
+        State.update(paired=True)
+        self.service.reload_state()
+        self.service.accept_pending()
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DECK"})
+
+
+class ForgetMachine(GameFolderBase):
+    def setUp(self):
+        super().setUp()
+        self.service.share_game_folder("test-mods")
+        self.service.pair(PairingCode("DECK", "", ""))
+        self.service.pair(PairingCode("OLD", "", ""))
+        self.st.devices["OLD"]["name"] = "modorganizer2"
+
+    def test_forgetting_removes_it_everywhere_here(self):
+        self.service.forget_machine("OLD")
+        self.assertNotIn("OLD", self.st.devices)
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DECK"})
+        self.assertEqual(State.load().forgotten_devices, ["OLD"])
+        self.assertTrue(State.load().paired)  # DECK is still paired
+        self.service.forget_machine("DECK")
+        self.assertFalse(State.load().paired)
+
+    def test_a_forgotten_machine_passed_on_again_goes_again(self):
+        self.service.forget_machine("OLD")
+        self.st.devices["OLD"] = {"deviceID": "OLD", "introducedBy": "DECK"}  # the Deck still lists it
+        self.st.folders["modsync-test-mods"]["devices"].append({"deviceID": "OLD"})
+        self.st.connected.add("OLD")
+        self.service.accept_pending()
+        self.assertNotIn("OLD", self.st.devices)
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DECK"})
+
+    def test_a_forgotten_machine_knocking_is_not_accepted(self):
+        self.service.forget_machine("OLD")
+        self.st.pending_devices["OLD"] = {"name": "modorganizer2"}
+        self.assertEqual(self.service.accept_pending(), [])
+        self.assertNotIn("OLD", self.st.devices)
+
+    def test_entering_its_code_again_pairs_it_again(self):
+        self.service.forget_machine("OLD")
+        self.service.pair(PairingCode("OLD", "", ""))
+        self.assertIn("OLD", self.st.devices)
+        self.assertEqual(State.load().forgotten_devices, [])
+
+    def test_this_machine_and_the_copy_source_cant_be_forgotten(self):
+        with self.assertRaisesRegex(RuntimeError, "this machine"):
+            self.service.forget_machine("ME")
+        State.update(instance_path=str(self.tmp / "MO2"), folder_id="modsync-abc", copy_phase="receiving",
+                     copy_source="DECK")
+        with self.assertRaisesRegex(RuntimeError, "still copying"):
+            self.service.forget_machine("DECK")
+        self.assertIn("DECK", self.st.devices)
+
+    def test_finding_a_machine(self):
+        self.st.devices["DECK2"] = {"deviceID": "DECKDEC-ABCDEFG", "name": "steamdeck"}
+        self.st.devices["DECKDEC-ABCDEFG"] = self.st.devices.pop("DECK2")
+        self.assertEqual(self.service.find_machine("modorganizer2"), "OLD")
+        self.assertEqual(self.service.find_machine("SteamDeck"), "DECKDEC-ABCDEFG")
+        self.assertEqual(self.service.find_machine("deckdec-a"), "DECKDEC-ABCDEFG")
+        with self.assertRaisesRegex(RuntimeError, "No paired machine"):
+            self.service.find_machine("laptop")
+        with self.assertRaisesRegex(RuntimeError, "No paired machine"):
+            self.service.find_machine("ME")  # not this machine
 
     def test_status_lists_the_games_folders(self):
         self.service.share_game_folder("test-mods")
@@ -523,6 +594,18 @@ class Cli(GameFolderBase):
         code, out = self._run("share", "nope")
         self.assertEqual(code, 2)
         self.assertIn("known: test-mods", out)
+
+    def test_forget(self):
+        self.service.share_game_folder("test-mods")
+        self.service.pair(PairingCode("OLDOLDO-RKWI4S2", "", ""))
+        self.st.devices["OLDOLDO-RKWI4S2"]["name"] = "modorganizer2"
+        code, out = self._run("forget", "laptop")
+        self.assertEqual(code, 1)
+        self.assertIn("No paired machine is called 'laptop'", out)
+        code, out = self._run("forget", "oldoldo")
+        self.assertEqual(code, 0, out)
+        self.assertIn("Forgot OLDOLDO-RKWI4S2.", out)
+        self.assertNotIn("OLDOLDO-RKWI4S2", self.st.devices)
 
     def test_join_with_a_machine_code_that_fails_says_so(self):
         text = PairingCode("DESKTOP", "", "ModSync").encode()

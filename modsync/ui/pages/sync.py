@@ -21,7 +21,7 @@ from functools import partial
 
 import shiboken6
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
@@ -33,7 +33,7 @@ from modsync.ui import worker
 from modsync.ui.input import Action
 from modsync.ui.overlays import BeaconSheet, CodeSheet, KeyboardSheet, PinSheet
 from modsync.ui.pages import Page
-from modsync.ui.widgets import Dot, Panel, SyncMeter, Tile, clear_layout, label
+from modsync.ui.widgets import Panel, StatusRow, SyncMeter, Tile, clear_layout, label
 
 
 def _validate_code(text: str) -> str | None:
@@ -294,6 +294,8 @@ class SyncPage(Page):
         devices.add(label("Devices", "heading", wrap=False))
         self.devices = QVBoxLayout()
         self.devices.setSpacing(10)
+        self._device_rows: dict[str, StatusRow] = {}
+        self._no_devices = None
         devices.layout_.addLayout(self.devices)
         left.addWidget(devices)
         left.addStretch(1)
@@ -395,17 +397,7 @@ class SyncPage(Page):
             n = status.conflicts
             self.conflicts_tile.setText(f"{n} file{' was' if n == 1 else 's were'} changed on two machines")
             self.conflicts_tile.set_description("MO2 uses the newer version of each. Choose which to keep.")
-        clear_layout(self.devices)
-        if not status.devices:
-            self.devices.addWidget(label("No other devices yet. Pair one to start syncing.", "muted"))
-        for dev in status.devices:
-            row = QHBoxLayout()
-            row.setSpacing(12)
-            row.addWidget(Dot("ok" if dev.connected else "off"), 0, Qt.AlignmentFlag.AlignVCenter)
-            row.addWidget(label(dev.name or dev.id[:13], wrap=False), 1)
-            row.addWidget(label("Connected" if dev.connected else "Offline", "ok" if dev.connected else "muted",
-                                wrap=False))
-            self.devices.addLayout(row)
+        self._show_devices(status.devices)
 
         if status.copy is not None:
             self._show_copy(status)
@@ -598,6 +590,52 @@ class SyncPage(Page):
     def set_paused(self, paused: bool) -> None:
         self.host.change_setup(self.service.pause_sync, paused,
                                message="Pausing sync…" if paused else "Resuming sync…")
+
+    def _show_devices(self, devices) -> None:
+        # Rows are updated in place: the status refreshes every few seconds,
+        # and rebuilding them would take the focus off the one selected.
+        if not shiboken6.isValid(self.devices):
+            return
+        ids = [dev.id for dev in devices]
+        for did in [d for d in self._device_rows if d not in ids]:
+            row = self._device_rows.pop(did)
+            self.devices.removeWidget(row)
+            row.deleteLater()
+        if devices and self._no_devices is not None:
+            self.devices.removeWidget(self._no_devices)
+            self._no_devices.deleteLater()
+            self._no_devices = None
+        if not devices and self._no_devices is None:
+            self._no_devices = label("No other devices yet. Pair one to start syncing.", "muted")
+            self.devices.addWidget(self._no_devices)
+        for dev in devices:
+            row = self._device_rows.get(dev.id)
+            if row is None:
+                row = StatusRow("", "devices")
+                row.clicked.connect(lambda _=False, did=dev.id: self.forget_device(did))
+                self._device_rows[dev.id] = row
+                self.devices.addWidget(row)
+            row.setText(dev.name or dev.id[:13])
+            row.set_state("Connected" if dev.connected else "Offline", "ok" if dev.connected else "off",
+                          dev.id[:7] if dev.name else "")
+
+    def forget_device(self, device_id: str) -> None:
+        row = self._device_rows.get(device_id)
+        name = row.text() if row is not None else device_id[:7]
+
+        def chosen(key: str | None) -> None:
+            if key == "forget":
+                worker.run_async(self.service.forget_machine, device_id,
+                                 on_done=lambda _: (self.host.notify(f"Forgot {name}.", "ok"), self.refresh()),
+                                 on_failed=lambda m: self.host.notify(f"⚠ {m}"))
+
+        self.host.confirm(
+            f"Forget {name}?",
+            f"{name} stops syncing with this machine, and if another machine passes it on again, ModSync "
+            "removes it again. Forget it on your other machines too, or they keep syncing with it. No files "
+            "are deleted on either machine. To pair with it again, enter its code here.",
+            [("forget", "Forget this machine", "", "danger", "trash"), ("cancel", "Cancel", "", "normal", "close")],
+            chosen, default="cancel")
 
     def stop_copy(self) -> None:
         def chosen(key: str | None) -> None:

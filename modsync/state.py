@@ -51,7 +51,7 @@ def _refuse_newer(p: Path, data: object) -> None:
 
 _FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "awaiting_vault_version",
            "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside", "dfu_path", "game_folders", "declined_folders", "paired",
-           "home_game", "stand_in_names_cleared")
+           "home_game", "stand_in_names_cleared", "forgotten_devices", "one_way_introducers")
 
 
 @dataclass
@@ -95,6 +95,12 @@ class State:
     # Paired machines older versions named after the vault have had those
     # names cleared, once (see modsync.sync.pairing.clear_stand_in_names).
     stand_in_names_cleared: bool = False
+    # Machines forgotten here (device ids). One that another machine passes on
+    # again is removed again; pairing with it on purpose takes it off the list.
+    forgotten_devices: list[str] = field(default_factory=list)
+    # Pairings made before each pair introduced only one way have been sorted
+    # out (see modsync.sync.pairing.introduce_one_way).
+    one_way_introducers: bool = False
     # The version of the file's format this ModSync writes (SCHEMA); never read back.
     schema: int = SCHEMA
 
@@ -115,6 +121,8 @@ class State:
                     state.game_folders = {}
                 if not isinstance(state.declined_folders, list):
                     state.declined_folders = []
+                if not isinstance(state.forgotten_devices, list):
+                    state.forgotten_devices = []
                 return state
             except (OSError, ValueError, TypeError):
                 pass

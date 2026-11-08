@@ -19,6 +19,10 @@ All notable changes to ModSync are documented here. The format follows
   Engine Tweaks and RED4ext load. An instance MO2-LINT installed is found
   by itself; one chosen with `use` wins, and a launch says so when it's
   missing instead of starting another.
+- Forget one paired machine: select it under Devices on the Sync page, or
+  run `modsync sync forget <machine>`. If another machine passes it on
+  again, ModSync removes it again. Entering its code or PIN pairs it again.
+  `modsync sync status` shows each machine's device id.
 
 ### Changed
 
@@ -41,6 +45,15 @@ All notable changes to ModSync are documented here. The format follows
   It warns when Syncthing has two folders at one path, when a folder ModSync
   uses is missing from Syncthing, and when no other machine has synced the
   vault in 30 days.
+
+- Machines pass on the machines they know one way per pair: the machine
+  that entered the other's code or PIN learns from it. Before, both did, so a
+  machine removed on one came back from the other, and Syncthing logged
+  "only one should be introducer to the other" on every connection. Pairings
+  made before keep one direction, chosen the same way on both machines.
+- A machine passed on by another gets the games' folders once it has
+  connected, not before. An identity that never connects, like a
+  reinstalled machine's old one, isn't shared anything.
 
 ### Fixed
 

@@ -259,7 +259,7 @@ class ModSyncService:
         self._refresh_stignore()
         self._refresh_game_folders()
         self._clear_stand_in_names()
-        self._introduce_peers()
+        self._introduce_one_way()
 
     def _clear_stand_in_names(self) -> None:
         """Once: paired machines an older version named after the vault get
@@ -278,22 +278,20 @@ class ModSyncService:
         if cleared:
             log.info("paired machines take their own names when they connect: %s", ", ".join(d[:7] for d in cleared))
 
-    _peers_introduced = False
-
-    def _introduce_peers(self) -> None:
-        """Once per run: machines paired before ModSync made them introducers
-        become introducers, so the machines paired with them find each other."""
-        if self._peers_introduced or not self.state.active:
+    def _introduce_one_way(self) -> None:
+        """Once: pairings made before each pair introduced only one way get
+        sorted out (see ``pairing.introduce_one_way``)."""
+        if self.state.one_way_introducers:
             return
         try:
             with self.manager.client() as client:
-                changed = pairing.introduce_peers(client)
+                changed = pairing.introduce_one_way(client)
         except Exception as exc:
-            log.info("could not make the paired machines introducers: %s", exc)
+            log.info("could not settle which paired machines introduce the others: %s", exc)
             return
-        self._peers_introduced = True
+        self.update_state(one_way_introducers=True)
         if changed:
-            log.info("paired machines now introduce the others: %s", ", ".join(d[:7] for d in changed))
+            log.info("paired machines now introduce one way: %s", ", ".join(d[:7] for d in changed))
 
     _FOLDERS_REFRESH_S = 60.0
     _folders_refreshed_at: float | None = None
@@ -538,6 +536,7 @@ class ModSyncService:
                 code.device_id,
                 peer_name,
                 addresses=pairing.static_addresses(peer_host),
+                introducer=True,
             )
             pairing.share_instance_folder(
                 client, code.folder_id, instance_path, [code.device_id], label=label,
@@ -550,6 +549,7 @@ class ModSyncService:
                        copy_expected=-1 if merge or code.sequence is None else code.sequence,
                        copy_archive=str(archive) if archive else "", set_aside="",
                        awaiting_vault_version=True)
+        self._unforget(code.device_id)
         log.info("joined vault %s from device %s… into %s (%s)", code.folder_id, code.device_id[:7],
                  instance_path, "merge" if merge else "copy")
         return PairingCode(device_id, code.folder_id, label)
@@ -889,12 +889,15 @@ class ModSyncService:
             log.info("conflict on %s: kept the %s version, the other is in %s", c.relative(instance), keep, archive)
         return archive
 
-    def add_peer(self, code: PairingCode, *, peer_host: str | None = None, peer_name: str = "") -> None:
+    def add_peer(self, code: PairingCode, *, peer_host: str | None = None, peer_name: str = "",
+                 introducer: bool = True) -> None:
         """Pair another machine with this one, sharing the vault and every
-        game folder synced here with it."""
+        game folder synced here with it. Entering its code here makes it pass
+        on the machines it knows; the machine showing the LAN PIN adds the one
+        that entered it with ``introducer=False``."""
         if not self.reload_state().syncs_anything:
             raise RuntimeError("no vault configured on this machine yet")
-        self._pair_device(code, peer_host, peer_name)
+        self._pair_device(code, peer_host, peer_name, introducer=introducer)
 
     def pair(self, code: PairingCode, *, peer_host: str | None = None, peer_name: str = "") -> None:
         """Pair with the machine a code names, without joining a vault: the
@@ -903,7 +906,7 @@ class ModSyncService:
         log.info("paired with %s… (%s)", code.device_id[:7], peer_name or "no name yet")
 
     def _pair_device(self, code: PairingCode, peer_host: str | None, peer_name: str = "", *,
-                     take_offers: bool = False) -> None:
+                     introducer: bool = True, take_offers: bool = False) -> None:
         # A code carries the vault's label, not the machine's name: until the
         # machine connects and names itself, it goes by ``peer_name`` or its id.
         self.ensure_running()
@@ -913,6 +916,7 @@ class ModSyncService:
                 code.device_id,
                 peer_name,
                 addresses=pairing.static_addresses(peer_host),
+                introducer=introducer,
             )
             if self.state.folder_id:
                 self._add_to_vault(client, code.device_id)
@@ -920,6 +924,17 @@ class ModSyncService:
             if take_offers:
                 folders.take_offers(client)
         self.update_state(paired=True)
+        self._unforget(code.device_id)
+
+    def _unforget(self, device_id: str) -> None:
+        """Pairing with a machine on purpose takes it off the forgotten list."""
+        if device_id not in self.state.forgotten_devices:
+            return
+
+        def change(st: State) -> None:
+            st.forgotten_devices = [d for d in st.forgotten_devices if d != device_id]
+
+        self.state = State.change(change)
 
     def _add_to_vault(self, client, device_id: str) -> None:
         folder = client.get_folder(self.state.folder_id)
@@ -940,12 +955,19 @@ class ModSyncService:
         self.ensure_running()
         accepted: list[str] = []
         with self.manager.client() as client:
+            # A forgotten machine another one passed on again goes again.
+            for device_id in pairing.drop_forgotten(client, st.forgotten_devices):
+                log.info("forgot %s… again: another machine passed it on", device_id[:7])
             # Only a machine that shares something here hands out codes, so only
-            # it accepts machines that come knocking.
+            # it accepts machines that come knocking. The one knocking entered
+            # this machine's code, so it takes introductions from here, not
+            # the other way round.
             pending = (client.pending_devices() or {}) if st.syncs_anything else {}
             for device_id, info in pending.items():
+                if device_id in st.forgotten_devices:
+                    continue  # pairing with it again takes entering its code here
                 name = (info or {}).get("name") or ""
-                pairing.add_peer_device(client, device_id, name)
+                pairing.add_peer_device(client, device_id, name, introducer=False)
                 if st.folder_id:
                     self._add_to_vault(client, device_id)
                 folders.share_with(client, device_id)
@@ -959,6 +981,51 @@ class ModSyncService:
         if accepted or taken:
             self.update_state(paired=True)
         return accepted
+
+    def find_machine(self, text: str) -> str:
+        """The device id of the paired machine ``text`` names: its device id,
+        the start of it (at least 7 characters), or its name."""
+        want = text.strip().upper().replace("-", "")
+        self.ensure_running()
+        with self.manager.client() as client:
+            me = client.my_id()
+            devices = [d for d in client.devices() if d.get("deviceID") not in (None, "", me)]
+        if not want:
+            raise RuntimeError("Name a machine: its name or the start of its device id.")
+        named = [d["deviceID"] for d in devices if (d.get("name") or "").strip().upper() == text.strip().upper()]
+        by_id = [d["deviceID"] for d in devices if len(want) >= 7 and d["deviceID"].replace("-", "").startswith(want)]
+        found = list(dict.fromkeys(by_id or named))
+        if len(found) == 1:
+            return found[0]
+        if not found:
+            raise RuntimeError(f"No paired machine is called {text!r} or has a device id starting with it.")
+        raise RuntimeError(f"More than one paired machine matches {text!r}: "
+                           f"{', '.join(d[:7] for d in found)}. Use more of the device id.")
+
+    def forget_machine(self, device_id: str) -> None:
+        """Unpair one machine here: it leaves every folder and Syncthing's list,
+        and if another machine passes it on again, it's removed again. Its
+        files and this machine's stay. Pairing with it on purpose (entering
+        its code or PIN here) undoes this."""
+        st = self.reload_state()
+        if st.copying and st.copy_source == device_id:
+            raise RuntimeError("This machine is still copying the vault from that one. "
+                               "Let the copy finish, or leave the vault, first.")
+        self.ensure_running()
+        with self.manager.client() as client:
+            me = client.my_id()
+            if device_id == me:
+                raise RuntimeError("That's this machine.")
+            pairing.forget_device(client, device_id)
+            left = [d for d in client.devices() if d.get("deviceID") not in (None, "", me)]
+
+        def change(st: State) -> None:
+            st.forgotten_devices = [*(d for d in st.forgotten_devices if d != device_id), device_id]
+            if not left:
+                st.paired = False
+
+        self.state = State.change(change)
+        log.info("forgot %s…", device_id[:7])
 
     # --- the games' folders (see modsync.sync.folders) ---
     def share_game_folder(self, key: str) -> Path:
@@ -1080,6 +1147,7 @@ class ModSyncService:
             PairingCode(peer.device_id, self.state.folder_id or "", peer.label),
             peer_host=peer.host,
             peer_name=peer.name,  # ``name`` is this machine's
+            introducer=False,  # the one entering the PIN takes introductions from here
         )
         return peer
 

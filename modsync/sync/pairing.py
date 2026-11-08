@@ -33,14 +33,17 @@ def add_peer_device(
     device_id: str,
     name: str,
     addresses: Iterable[str] | None = None,
+    *,
+    introducer: bool = False,
 ) -> dict:
-    """Register a peer device (so we'll connect to it), as an introducer."""
+    """Register a peer device (so we'll connect to it). ``introducer`` when
+    this machine entered the peer's code or PIN (see ``INTRODUCER``)."""
     device = client.default_device()
     device["deviceID"] = device_id
     device["name"] = name
     if addresses:
         device["addresses"] = list(addresses)
-    device.update(INTRODUCER)
+    device.update(INTRODUCER if introducer else NOT_INTRODUCER)
     client.put_device(device)
     return device
 
@@ -78,34 +81,77 @@ def clear_stand_in_names(client: SyncthingClient, more: Iterable[str] = ()) -> l
     return cleared
 
 
-# Every paired machine introduces the machines it shares folders with: when
-# B and C have each paired with A, A tells B about C and C about B, and from
-# then on they sync with each other directly, with A offline. Syncthing
-# carries over the addresses A has for them. A machine that stops sharing a
-# folder with A, or that A forgets, stays paired here.
+# Machines pass on the machines they share folders with, one way per pair
+# (Syncthing calls the one passing them on an introducer): the machine that
+# enters another's code or PIN takes introductions from it, and the other
+# doesn't. When B and C have each paired with A, A tells B about C and C
+# about B, and from then on they sync with each other directly, with A
+# offline. Syncthing carries over the addresses A has for them.
+#
+# One way only, because two machines introducing each other hand back every
+# machine either still lists, including one the other has just removed, and
+# Syncthing logs an error on every connection. A machine that stops sharing a
+# folder with A, or that A forgets, stays paired here (skipIntroductionRemovals),
+# so B and C keep syncing if A is wiped or leaves.
 INTRODUCER = {"introducer": True, "skipIntroductionRemovals": True}
+NOT_INTRODUCER = {"introducer": False, "skipIntroductionRemovals": False}
 
 
-def introduce_peers(client: SyncthingClient) -> list[str]:
-    """Make every paired machine an introducer, for machines paired before
-    ModSync did that. Returns the ids changed.
+def _set_introducer(client: SyncthingClient, device: dict, flags: dict) -> None:
+    becomes = flags["introducer"] and not device.get("introducer")
+    device.update(flags)
+    if becomes and not device.get("paused"):
+        # Syncthing reads what an introducer passes on only as it connects, so
+        # a machine connected already is disconnected and connected again:
+        # pausing it and resuming it does that.
+        client.put_device({**device, "paused": True})
+    client.put_device(device)
 
-    Syncthing reads what an introducer passes on only as it connects, so a
-    machine connected already is disconnected and connected again: pausing
-    it and resuming it does that. One the user paused stays paused."""
+
+def introduce_one_way(client: SyncthingClient) -> list[str]:
+    """Settle which way each existing pair introduces: pairings from before
+    went both ways (or neither). Nothing says which machine paired with
+    which, so both sides apply the same rule to the two device ids: the one
+    that sorts first introduces. Returns the ids changed. One the user
+    paused stays paused."""
     me = client.my_id()
     changed = []
     for device in client.devices():
-        if device.get("deviceID") in (None, "", me) or all(device.get(k) == v for k, v in INTRODUCER.items()):
+        did = device.get("deviceID")
+        if did in (None, "", me):
             continue
-        device.update(INTRODUCER)
-        if device.get("paused"):
-            client.put_device(device)
-        else:
-            client.put_device({**device, "paused": True})
-            client.put_device(device)
-        changed.append(device["deviceID"])
+        flags = INTRODUCER if did < me else NOT_INTRODUCER
+        if all(device.get(k) == v for k, v in flags.items()):
+            continue
+        _set_introducer(client, device, flags)
+        changed.append(did)
     return changed
+
+
+def forget_device(client: SyncthingClient, device_id: str) -> None:
+    """Remove a machine from every folder and from Syncthing, and drop it if
+    it's waiting to be accepted. The folders' files stay."""
+    for folder in client.folders():
+        devices = folder.get("devices", [])
+        if any(d.get("deviceID") == device_id for d in devices):
+            folder["devices"] = [d for d in devices if d.get("deviceID") != device_id]
+            client.put_folder(folder)
+    if any(d.get("deviceID") == device_id for d in client.devices()):
+        client.delete_device(device_id)
+    try:
+        client.dismiss_pending_device(device_id)
+    except Exception:
+        pass  # nothing pending, or an older Syncthing
+
+
+def drop_forgotten(client: SyncthingClient, forgotten: Iterable[str]) -> list[str]:
+    """Remove forgotten machines that are back (another machine passed them
+    on). Returns their ids."""
+    forgotten = set(forgotten)
+    back = [d["deviceID"] for d in client.devices() if d.get("deviceID") in forgotten]
+    for did in back:
+        forget_device(client, did)
+    return back
 
 
 def share_instance_folder(

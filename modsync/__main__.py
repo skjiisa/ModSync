@@ -33,6 +33,7 @@ usage:
   modsync sync create <instance-dir>     optional: share this setup; prints a pairing code
   modsync sync join <code> <instance>    optional: copy another machine's setup here
   modsync sync status                    the vault, its machines, and conflicts waiting
+  modsync sync forget <machine>          unpair one machine here, by name or device id
   modsync sync conflicts [keep current|other <file>]
                                          list files changed on two machines, or keep one version
   modsync serve                          keep syncing (if set up) and watching Steam, in the foreground

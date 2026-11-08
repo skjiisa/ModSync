@@ -361,9 +361,9 @@ class SyncthingIntegration(unittest.TestCase):
             try:
                 ids = {name: c.my_id() for name, c in clients.items()}
                 address = {name: [f"tcp://127.0.0.1:{port}"] for name, (_mgr, port) in nodes.items()}
-                for joiner in "BC":
+                for joiner in "BC":  # each entered A's code: it takes introductions from A
                     pairing.add_peer_device(clients["A"], ids[joiner], joiner, addresses=address[joiner])
-                    pairing.add_peer_device(clients[joiner], ids["A"], "A", addresses=address["A"])
+                    pairing.add_peer_device(clients[joiner], ids["A"], "A", addresses=address["A"], introducer=True)
                     pairing.share_instance_folder(clients[joiner], "modsync-mesh", inst[joiner], [ids["A"]])
                 pairing.share_instance_folder(clients["A"], "modsync-mesh", inst["A"], [ids["B"], ids["C"]])
 
@@ -446,40 +446,117 @@ class SyncthingIntegration(unittest.TestCase):
             time.sleep(0.5)
         return check()
 
-    def test_machines_paired_before_find_each_other_without_reconnecting(self) -> None:
-        """B and C paired with A before ModSync made machines introducers, and
-        stay connected while ModSync turns that on: they still find each other."""
+    def test_pairings_from_before_end_up_introducing_one_way(self) -> None:
+        """B and C paired with A when every machine introduced every other, and
+        found each other that way. Settling which way each pair introduces
+        leaves no pair introducing both ways, and B and C still know each other."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             inst = {name: tmp / name / "MO2" for name in "ABC"}
             for root in inst.values():
                 (root / "mods").mkdir(parents=True)
             nodes, clients, ids, address = self._mesh(tmp)
-
-            def old_pairing(client, device_id, name, addresses):
-                device = pairing.add_peer_device(client, device_id, name, addresses=addresses)
-                client.put_device({**device, "introducer": False, "skipIntroductionRemovals": False})
-
             try:
-                for joiner in "BC":
-                    old_pairing(clients["A"], ids[joiner], joiner, address[joiner])
-                    old_pairing(clients[joiner], ids["A"], "A", address["A"])
+                for joiner in "BC":  # how 2.1.0-beta1 paired: introducers both ways
+                    pairing.add_peer_device(clients["A"], ids[joiner], joiner, addresses=address[joiner],
+                                            introducer=True)
+                    pairing.add_peer_device(clients[joiner], ids["A"], "A", addresses=address["A"], introducer=True)
                     pairing.share_instance_folder(clients[joiner], "modsync-old", inst[joiner], [ids["A"]])
                 pairing.share_instance_folder(clients["A"], "modsync-old", inst["A"], [ids["B"], ids["C"]])
-
-                def connected(name, other):
-                    return clients[name].connections()["connections"].get(ids[other], {}).get("connected")
-
-                self.assertTrue(self._wait(lambda: connected("B", "A") and connected("C", "A")))
-                time.sleep(3)  # the cluster configs are exchanged by now
-                self.assertNotIn(ids["C"], {d["deviceID"] for d in clients["B"].devices()})
-                for name in "BC":
-                    self.assertEqual(pairing.introduce_peers(clients[name]), [ids["A"]])
                 knows = lambda name, other: ids[other] in {d["deviceID"] for d in clients[name].devices()}  # noqa: E731
-                self.assertTrue(self._wait(lambda: knows("B", "C") and knows("C", "B")),
-                                "B and C stayed strangers after becoming introducers")
+                self.assertTrue(self._wait(lambda: knows("B", "C") and knows("C", "B")), "A never introduced B and C")
+                for name in "ABC":
+                    pairing.introduce_one_way(clients[name])
+                flags = {name: {d["deviceID"]: d.get("introducer") for d in clients[name].devices()} for name in "ABC"}
+                for x in "ABC":
+                    for y in "ABC":
+                        if x < y and ids[y] in flags[x] and ids[x] in flags[y]:
+                            self.assertNotEqual(flags[x][ids[y]], flags[y][ids[x]],
+                                                f"{x} and {y} introduce both ways or neither")
+                time.sleep(3)
+                self.assertTrue(knows("B", "C") and knows("C", "B"))
             except Exception:
                 for name in "ABC":
+                    path = tmp / f"{name}.log"
+                    if path.exists():
+                        print(path.name, path.read_text()[-6000:])
+                raise
+            finally:
+                for c in clients.values():
+                    c.close()
+                for mgr, _port in nodes.values():
+                    mgr.stop()
+
+    def test_a_retired_machine_forgotten_on_both_stays_gone(self) -> None:
+        """The desktop and Deck on 2026-11-07: both list the Deck's retired
+        identity X, which will never connect. Forgetting X on A doesn't bring
+        it back from B (B doesn't introduce to A); B, which takes A's
+        introductions, drops X again whenever A passes it on, and once A has
+        forgotten it too, it stays gone on both."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            ghost = _generate_device_id(self.binary, tmp / "ghost-home")
+            nodes = dict(zip("AB", self._two_nodes(tmp, "AB")))
+            clients = {name: mgr.client() for name, (mgr, _port) in nodes.items()}
+            services = {}
+
+            @contextmanager
+            def on(name):
+                with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp / f"config-{name}")}):
+                    yield
+
+            try:
+                ids = {name: c.my_id() for name, c in clients.items()}
+                for name, root in (("A", tmp / "A" / "MO2"), ("B", tmp / "B" / "MO2")):
+                    root.mkdir(parents=True)
+                    with on(name):
+                        State.update(paired=True, one_way_introducers=True)
+                        services[name] = ModSyncService(manager=nodes[name][0])
+                pairing.add_peer_device(clients["A"], ids["B"], "B", addresses=[f"tcp://127.0.0.1:{nodes['B'][1]}"])
+                pairing.add_peer_device(clients["B"], ids["A"], "A", addresses=[f"tcp://127.0.0.1:{nodes['A'][1]}"],
+                                        introducer=True)  # B entered A's code
+                pairing.add_peer_device(clients["A"], ghost, "modorganizer2")
+                pairing.share_instance_folder(clients["A"], "modsync-v", tmp / "A" / "MO2", [ids["B"], ghost])
+                pairing.share_instance_folder(clients["B"], "modsync-v", tmp / "B" / "MO2", [ids["A"]])
+                lists = lambda name: ghost in {d["deviceID"] for d in clients[name].devices()}  # noqa: E731
+                self.assertTrue(self._wait(lambda: lists("B")), "A never passed X on to B")
+
+                def reconnect():
+                    for name, other in (("A", "B"), ("B", "A")):
+                        dev = next(d for d in clients[name].devices() if d["deviceID"] == ids[other])
+                        clients[name].put_device({**dev, "paused": True})
+                        clients[name].put_device({**dev, "paused": False})
+                    connected = lambda: clients["A"].connections()["connections"].get(ids["B"], {}).get("connected")  # noqa: E731
+                    self.assertTrue(self._wait(connected), "A and B didn't reconnect")
+                    time.sleep(3)  # the cluster configs are exchanged by now
+
+                with on("A"):
+                    services["A"].forget_machine(ghost)
+                reconnect()
+                self.assertFalse(lists("A"), "B handed X back to A")
+                self.assertTrue(lists("B"))  # B keeps it until it's forgotten there too
+
+                # Forgotten on B while A still lists it, A passes it on again;
+                # B removes it again the next time it looks.
+                with on("A"):
+                    State.update(forgotten_devices=[])
+                pairing.add_peer_device(clients["A"], ghost, "modorganizer2")
+                folder = clients["A"].get_folder("modsync-v")
+                folder["devices"].append({"deviceID": ghost, "introducedBy": "", "encryptionPassword": ""})
+                clients["A"].put_folder(folder)
+                with on("B"):
+                    services["B"].forget_machine(ghost)
+                    self.assertFalse(lists("B"))
+                    reconnect()  # Syncthing reads introductions only as a connection opens
+                    self.assertTrue(self._wait(lambda: lists("B")), "A didn't pass X on again")
+                    services["B"].accept_pending()
+                    self.assertFalse(lists("B"))
+                with on("A"):
+                    services["A"].forget_machine(ghost)
+                reconnect()
+                self.assertFalse(lists("A") or lists("B"))
+            except Exception:
+                for name in "AB":
                     path = tmp / f"{name}.log"
                     if path.exists():
                         print(path.name, path.read_text()[-6000:])
@@ -517,7 +594,8 @@ class SyncthingIntegration(unittest.TestCase):
                 with patch.object(folders, "specs", lambda: [spec]):
                     def join(joiner):
                         pairing.add_peer_device(clients["A"], ids[joiner], joiner, addresses=address[joiner])
-                        pairing.add_peer_device(clients[joiner], ids["A"], "A", addresses=address["A"])
+                        pairing.add_peer_device(clients[joiner], ids["A"], "A", addresses=address["A"],
+                                                introducer=True)
                         pairing.share_instance_folder(clients[joiner], "modsync-vault", inst[joiner], [ids["A"]])
                         pairing.share_instance_folder(clients["A"], "modsync-vault", inst["A"],
                                                       [d for d in (ids["B"], ids["C"]) if d in
@@ -525,11 +603,13 @@ class SyncthingIntegration(unittest.TestCase):
 
                     join("B")
                     with on("B"):
+                        # These pairings are this version's: nothing from before to settle.
+                        State.update(one_way_introducers=True)
                         services["B"] = ModSyncService(manager=nodes["B"][0])
                         services["B"].share_game_folder("it-mods")
                         (roots["B"] / "kept.txt").write_text("from B")
                     with on("C"):
-                        State.update(paired=True)
+                        State.update(paired=True, one_way_introducers=True)
                         services["C"] = ModSyncService(manager=nodes["C"][0])
                     join("C")
                     knows = lambda name, other: ids[other] in {d["deviceID"] for d in clients[name].devices()}  # noqa: E731

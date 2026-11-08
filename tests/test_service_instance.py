@@ -149,7 +149,8 @@ class InstanceLifecycleTests(unittest.TestCase):
         svc.choose_instance(self.instance)
         self.assertIsNone(gameversion.VaultMeta.load(self.instance))
         # ...and Syncthing is told where the peer is, not left to discover it.
-        self.assertEqual(self.manager.devices[0]["addresses"], ["tcp://192.0.2.7:22000", "dynamic"])
+        added = next(d for d in self.manager.devices if "addresses" in d)  # not the introducer settling
+        self.assertEqual(added["addresses"], ["tcp://192.0.2.7:22000", "dynamic"])
 
     def test_cannot_switch_instance_while_syncing(self):
         State(instance_path=str(self.instance), folder_id="modsync-1").save()
