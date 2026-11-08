@@ -608,16 +608,55 @@ def _resolve_underlying(
     return tool
 
 
+def _runnable(command: list[str]) -> bool:
+    """Whether a recorded way of starting ModSync still works here."""
+    program = Path(command[0])
+    if not (program.is_file() and os.access(program, os.X_OK)):
+        return False
+    if program.name == "flatpak" and command[1:2] == ["run"]:
+        return config.flatpak_installed()
+    return True
+
+
+def _hook_command(record: "Record | None", here: list[str]) -> list[str]:
+    """How a hook turned on again starts ModSync: the copy it already starts,
+    while that still works. Every copy on a machine shares one setup (see
+    modsync.config), so a copy run from source must not take Steam's Play
+    button from the Flatpak by turning the hook on again. The Flatpak, the
+    copy users install, takes it back."""
+    if config.in_flatpak() or record is None or not record.command or not _runnable(record.command):
+        return here
+    return record.command
+
+
 def enable(
     appid: int = SKYRIM_SE.appid,
     *,
     through: str | None = None,
     command: list[str] | None = None,
     native: Path | str | None = None,
+    this_copy: bool = False,
 ) -> str:
     """Install the hook for the game and make Steam use it. Returns what happened.
-    ``command`` is how the hook starts ModSync; by default, the way this ModSync runs.
-    ``native`` is a program Play runs in place of the game (Daggerfall Unity)."""
+    ``command`` is how the hook starts ModSync; by default the copy a hook set up
+    already starts (see :func:`_hook_command`), else this one. ``this_copy`` makes
+    it this one regardless. ``native`` is a program Play runs in place of the game
+    (Daggerfall Unity)."""
+    here = modsync_command()
+    kept = False
+    if command is None:
+        env = steam_env()
+        record = load_record(env.installed_tool_dir(appid), appid) if env else None
+        command = here if this_copy else _hook_command(record, here)
+        kept = command != here
+    message = _enable(appid, through=through, command=command, native=native)
+    if kept:
+        message += (f" Play still starts ModSync with '{shlex.join(command)}', the copy the hook was set up "
+                    "with; add --this-copy to make it start this one.")
+    return message
+
+
+def _enable(appid: int, *, through: str | None, command: list[str], native: Path | str | None) -> str:
     game = hook_game(appid)
     env = steam_env()
     if env is None:
@@ -635,7 +674,6 @@ def enable(
     # the user had before ModSync ever touched it.
     previous = record.previous if (record and _is_ours(current, appid)) else current_entry
 
-    command = command or modsync_command()
     target = env.tool_dir(appid)
     render(
         target,
