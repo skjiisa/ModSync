@@ -1216,7 +1216,7 @@ class ModSyncService:
         self,
         announcement: pairing_lan.Announcement,
         pin: str,
-        instance_path: Path | str,
+        instance_path: Path | str | None,
         *,
         timeout: float = 15.0,
         merge: bool = False,
@@ -1224,15 +1224,17 @@ class ModSyncService:
     ) -> pairing_lan.PairPayload:
         """Pair with a discovered host via PIN and join its vault (see
         ``join_vault`` for ``merge``). A host that syncs only games' folders
-        is refused unless ``pair_only``, when the two machines just pair. Blocks."""
+        is refused unless ``pair_only``, when the two machines just pair.
+        Without ``instance_path`` (no Mod Organizer 2 here to join a vault
+        into) they just pair, whatever the host offers. Blocks."""
         self.ensure_running()
         payload = pairing_lan.PairPayload(self.device_id(), name=socket.gethostname())
         peer = pairing_lan.join_pairing(announcement, payload, pin, timeout=timeout)
         peer_name = peer.name or announcement.name
-        if not peer.folder_id:
-            if not pair_only:
+        if not peer.folder_id or instance_path is None:
+            if not peer.folder_id and not pair_only and instance_path is not None:
                 raise RuntimeError("that machine isn't offering a vault to join")
-            # It shares only games' folders: pair, and they're offered here.
+            # Only games' folders: pair, and they're offered here.
             self.pair(PairingCode(peer.device_id, "", peer.label), peer_host=peer.host, peer_name=peer_name)
             return peer
         self.join_vault(

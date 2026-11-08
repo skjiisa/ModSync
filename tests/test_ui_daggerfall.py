@@ -306,6 +306,14 @@ class DaggerfallUiTests(UiTestCase):
         stop.assert_called_once_with("dfu-saves")
         self.assertIn("Nothing was deleted", window.messages[-1])
 
+    def test_sync_on_with_no_machine_paired_points_at_sync(self):
+        window, page = self.open_sheet(overview(installed=True, saves="on"))
+        self.assertEqual(page.saves_row.description, "No machine is paired yet. Pair one under Sync.")
+        State.update(paired=True)
+        page.refresh()
+        self.settle(4)
+        self.assertEqual(page.saves_row.description, "Your saves sync with your paired machines.")
+
     def test_play_starts_it(self):
         window, page = self.open_sheet(overview(installed=True))
         self.assertIs(page.preferred_focus(), page.play)

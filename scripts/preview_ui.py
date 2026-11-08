@@ -31,6 +31,7 @@ from modsync.pairing_lan import Announcement
 from modsync.service import DeviceStatus, GameStatus, ModSyncService, SyncStatus
 from modsync.state import State
 from modsync.sync import conflicts
+from modsync.sync.folders import FolderStatus
 from modsync.ui.app import _application
 from modsync.ui.input import InputRouter
 from modsync.ui.main_window import MainWindow
@@ -87,6 +88,7 @@ def main():
         patch.object(State, "load", return_value=State()),
         # Nothing is written: choosing a game is remembered nowhere.
         patch.object(State, "update", lambda **changes: State()),
+        patch.object(ModSyncService, "reload_state", lambda self: self.state),  # each shot keeps its own
         patch.object(ModSyncService, "game_status", return_value=game),
         patch.object(ModSyncService, "game_version_check", return_value=check),
         patch.object(ModSyncService, "status", return_value=SyncStatus(
@@ -274,7 +276,7 @@ def main():
                 w.top_overlay.cancel()
                 settle()
         router.pad_style = "xbox"
-        w.pages["sync"].add_device()
+        w.pages["sync"].pair_join.enter_code()
         capture(w, "keyboard")
         keyboard = w.top_overlay
         keyboard.shift.click()
@@ -301,6 +303,24 @@ def main():
         w.pages["sync"].beacon.set_address("192.168.1.20")
         capture(w, "pair-beacon")
         w.pages["sync"].cancel_pairing()
+        w.close()
+
+        # A machine with Daggerfall Unity and no Mod Organizer 2.
+        w = window_for(State(), mode="gamepad")
+        w.go("sync")
+        capture(w, "sync-pair")
+        dfu_root = "/home/you/Games/Daggerfall Unity"
+        games = SyncStatus("DEMO", None, False, None, None, [DeviceStatus("DEMO-DESKTOP", "desktop", True)],
+                           game_folders=[FolderStatus(dfu.MODS_FOLDER, dfu_root, "idle", 100.0),
+                                         FolderStatus(dfu.SAVES_FOLDER, f"{dfu_root}/modsync-saves", "syncing", 72.0,
+                                                      need_items=4)])
+        with patch.object(ModSyncService, "status", return_value=games), \
+                patch.object(ModSyncService, "my_pairing_code", return_value=PairingCode("DEMO-DEVICE", "", "ModSync")):
+            w.close()
+            w = window_for(State(game_folders={"dfu-mods": dfu_root, "dfu-saves": f"{dfu_root}/modsync-saves"},
+                                 paired=True), mode="gamepad")
+            w.go("sync")
+            capture(w, "sync-games")
         w.close()
 
         steam = launchhook.SteamLaunch(SKYRIM_SE, "mo2_489830_redirector")

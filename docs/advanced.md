@@ -342,9 +342,9 @@ each about the other the next time they connect to it. After that, the Deck
 and the laptop sync with each other directly, even with the desktop off. The
 desktop passes them on through a folder it syncs with both. Once a machine
 passed on this way has connected, it gets every game's folder too, including
-one the desktop doesn't sync. If the desktop will never be online again, "Add
-a machine by code…" on one of the others, with the other's code, pairs them
-directly.
+one the desktop doesn't sync. If the desktop will never be online again, "Pair
+with another machine" on one of the others, with the other's PIN or code,
+pairs them directly.
 
 Pairings made before ModSync passed machines on one way went both ways. The
 first time this version runs, it keeps one direction for each such pair:
@@ -397,6 +397,20 @@ A machine that syncs only games' folders gives out a code starting with
 `MODSYNC2-`. A machine with the vault gives the vault's `MODSYNC1-` code, which
 joins the vault as before. Versions from before machine-wide pairing reject a
 `MODSYNC2-` code rather than misreading it.
+
+The Sync page pairs these machines too. Without a vault, it lists each game's
+folder and how it stands, and the paired machines. "Pair with another
+machine" takes the other machine's PIN or code and only pairs, even with a
+machine that has the vault: there's no Mod Organizer 2 here to copy it into.
+Once a game's folder syncs here, "Pair over network" and "Show pairing code"
+offer this machine's own PIN and `MODSYNC2-` code. Until then they're hidden,
+because a machine accepts a machine that enters its code only while something
+syncs there. On a machine with Mod Organizer 2 that isn't shared yet, this is
+one row under the vault's two choices until something pairs or syncs.
+"Copy from another machine" pairs with a machine that has no vault rather
+than refusing it, and so does its `MODSYNC2-` code. On the vault's page,
+"Pair with another machine" takes another machine's PIN or code and pairs
+the two, so every Sync page can enter a PIN or code that only pairs.
 
 If Syncthing isn't answering when a folder is stopped, the folder shows as
 stopping and is let go the next time ModSync reaches Syncthing. Leaving the

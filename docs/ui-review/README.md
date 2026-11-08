@@ -101,6 +101,18 @@ focus.
 
 ![Editing text](keyboard-editing.png)
 
+A machine without Mod Organizer 2 and nothing synced yet can still pair:
+"Pair with another machine" takes the other machine's PIN or code. It has no
+code or PIN of its own until a game's folder syncs here.
+
+![Pairing without a vault](sync-pair.png)
+
+Once Daggerfall Unity's mods and saves sync, the page lists each game's folder
+and how it stands, and the paired machines. Pressing a folder opens its
+game. This machine's PIN is now the one blue action.
+
+![Games' folders syncing](sync-games.png)
+
 ## Settings
 
 Short descriptions keep the actions visible together. "How these settings work" and

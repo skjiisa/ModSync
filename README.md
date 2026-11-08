@@ -61,6 +61,7 @@ ModSync allows syncing mod lists between multiple systems.
 - For easy pairing, have the host click "Pair over network", then on the other machine, press "Scan network" to have them find each other
   - Enter the pairing code to confirm the connection
   - You may need to allow ModSync through the firewall. If you see a warning, simply click "Allow in firewall..." to proceed.
+- A machine that syncs only another game, such as Daggerfall Unity, pairs with "Pair with another machine" on the Sync page. Turn on that game's sync on its page first to get a PIN or code on that machine.
 
 Mod list syncing uses [Syncthing](https://github.com/syncthing/syncthing) under the hood 
 

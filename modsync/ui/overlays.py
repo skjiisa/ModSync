@@ -1051,10 +1051,19 @@ class FolderSheet(Overlay):
 # --- pairing --------------------------------------------------------------------------------
 
 
+def _choices(vault: bool, open_: str, close: str) -> str:
+    """Which Sync choice takes this machine's PIN or code. Every Sync page
+    can pair; one with Mod Organizer 2 not yet shared can copy a vault."""
+    pair = f"{open_}Pair with another machine{close}"
+    if not vault:
+        return pair
+    return f"{open_}Copy from another machine{close} to copy these mods, or {pair} to pair only"
+
+
 class BeaconSheet(Overlay):
     """The host side of network pairing: one huge PIN to read across a room."""
 
-    def __init__(self, host, pin: str, name: str, on_cancel: Callable[[], None]) -> None:
+    def __init__(self, host, pin: str, name: str, on_cancel: Callable[[], None], *, vault: bool = True) -> None:
         super().__init__(host, "", width=820)
         self._cancelled = on_cancel
         self.pin_label = QLabel(f"{pin[:3]} {pin[3:]}")
@@ -1064,8 +1073,8 @@ class BeaconSheet(Overlay):
         self.pin_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.body.addWidget(self.pin_label)
         self.steps = label(
-            "On the other machine, open <b>Sync</b>, choose <b>Copy from another machine</b>, "
-            f"pick <b>{name}</b> from the list and enter this PIN.", "secondary")
+            f"On the other machine, open <b>Sync</b> and choose {_choices(vault, '<b>', '</b>')}, "
+            f"then pick <b>{name}</b> from the list and enter this PIN.", "secondary")
         self.steps.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.body.addWidget(self.steps)
         self.address = label("Starting…", "muted", selectable=True)
@@ -1105,8 +1114,11 @@ class CodeSheet(Overlay):
         qr.setStyleSheet("background: white; border-radius: 4px;")
         row.addWidget(qr, 0, Qt.AlignmentFlag.AlignTop)
         col = QVBoxLayout()
-        col.addWidget(label("On another machine, choose \"Copy from another machine\", then "
-                            "\"Paste a pairing code\", or scan this code.", "secondary"))
+        # A machine's own code (no vault) only pairs; a vault's can be copied too.
+        choices = _choices(not code.startswith("MODSYNC2-"), "\"", "\"")
+        self.steps = label(f"On another machine, open Sync and choose {choices}, then \"Paste a pairing "
+                           "code\", or scan this code.", "secondary")
+        col.addWidget(self.steps)
         self.code = label(code, "", selectable=True)
         self.code.setFont(QFont("monospace", 11))
         self.code.setStyleSheet(f"color: {theme.C['text']};")

@@ -9,6 +9,12 @@ bar follows it instead, and nothing else can be paired. "Stop syncing" pauses
 the vault or leaves it, keeping the instance either way. Files changed on two
 machines at once, and files a copy set aside, are offered for review here.
 
+Without a vault, the page pairs machines for the games' folders: it lists
+them and the paired machines, takes another machine's PIN or code, and once a
+game's folder syncs here, shows this machine's own. Beside the vault's two
+choices that's one row until something pairs or syncs. The vault's page lists
+the games' folders too, when there are any.
+
 ``JoinPanel`` (scan, pick a machine, enter its PIN, or paste a code) is also
 part of the setup flow's sync step.
 """
@@ -28,33 +34,80 @@ from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from modsync import pairing_lan
 from modsync.pairing_code import PairingCode
 from modsync.service import COPY_ARCHIVE_DIR, SyncStatus
-from modsync.sync import conflicts
+from modsync.sync import conflicts, folders
 from modsync.ui import worker
 from modsync.ui.input import Action
 from modsync.ui.overlays import BeaconSheet, CodeSheet, KeyboardSheet, PinSheet
 from modsync.ui.pages import Page
+from modsync.ui.pages.daggerfall import _short
 from modsync.ui.widgets import Panel, StatusRow, SyncMeter, Tile, clear_layout, discard, label
+
+
+_FOLDER_PAGES = {"dfu": "daggerfall", "cp2077": "cyberpunk"}  # a folder key's first part: its game's page
+
+
+def _folder_words(fs: folders.FolderStatus) -> tuple[str, str, str]:
+    """How one of a game's folders stands: value word, tone, detail."""
+    where = _short(fs.path)
+    if fs.stopping:
+        return "Stopping", "busy", "Finishes once Syncthing answers."
+    if fs.conflicts:
+        n = fs.conflicts
+        return (f"{n} conflict{'' if n == 1 else 's'}", "warn",
+                f"{'A file' if n == 1 else f'{n} files'} changed on two machines. The newer version is in use, "
+                "and the other is kept next to it.")
+    state = fs.state
+    if state is None:
+        return "Starting", "off", where
+    if state == "error":
+        return "Error", "warn", "Open Syncthing UI shows why."
+    pct = int(round(fs.completion or 0))
+    if state.startswith("sync"):
+        n = fs.need_items
+        return f"Syncing {pct}%", "busy", f"{n:,} item{'' if n == 1 else 's'} to go." if n else where
+    if state.startswith("scan"):
+        return "Scanning", "busy", where
+    if state == "idle":
+        if fs.completion is None or pct >= 100:
+            return "Up to date", "ok", where
+        return f"{pct}% here", "off", "The rest arrives once a machine that has it is online."
+    return state.capitalize(), "off", where
 
 
 def _validate_code(text: str) -> str | None:
     try:
         PairingCode.decode(text)
     except Exception:
-        return "That doesn't look like a valid pairing code. It starts with MODSYNC1-."
+        return "That doesn't look like a valid pairing code. It starts with MODSYNC1- or MODSYNC2-."
     return None
+
+
+def _vault_joined(host, peer: pairing_lan.PairPayload, name: str) -> None:
+    """A join from "Copy from another machine" is done. A machine with no
+    vault to copy has only paired."""
+    if peer.folder_id:
+        host.vault_joined()
+    else:
+        host.machine_paired(f"Paired with {peer.name or name}. It doesn't share Mod Organizer 2, so only "
+                            "games' folders sync with it.")
 
 
 class JoinPanel(QWidget):
     """Copy the setup from the machine that has it: scan the network and pick
     it (then type its PIN), type its address, or paste its pairing code.
 
+    ``machine`` pairs the two machines instead, for the games' folders, and
+    never joins a vault: there's no Mod Organizer 2 here to copy it into.
+    Without it, a machine that has no vault, or its MODSYNC2- code, pairs too.
+
     Only real scan results become choosable tiles. "Scanning…" and error lines
     are plain text, so a stale or placeholder row can never be picked."""
 
-    def __init__(self, host) -> None:
+    def __init__(self, host, *, machine: bool = False) -> None:
         super().__init__()
         self.host = host
         self.service = host.service
+        self.machine = machine
         self.announcements: list[pairing_lan.Announcement] = []
         self.machine_tiles: list[Tile] = []
         self._scanning = False
@@ -62,8 +115,8 @@ class JoinPanel(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(12)
         head = QHBoxLayout()
-        head.addWidget(label("Pick the machine with the mods. It must be showing a PIN under "
-                             "\"Pair over network\".", "secondary"), 1)
+        head.addWidget(label(f"Pick {'the other machine' if machine else 'the machine with the mods'}. It must be "
+                             "showing a PIN under \"Pair over network\".", "secondary"), 1)
         v.addLayout(head)
         self.scan_tile = Tile("Scan network", "Look for machines showing a pairing PIN.", "radar", size="compact")
         self.scan_tile.clicked.connect(self.scan)
@@ -75,8 +128,8 @@ class JoinPanel(QWidget):
                                  "network\" on that machine.", "globe", size="compact")
         self.address_tile.clicked.connect(lambda: self.ask_pin(None))
         v.addWidget(self.address_tile)
-        self.code_tile = Tile("Paste a pairing code…", "Join with the MODSYNC1-… code from the other machine.",
-                              "qr", size="compact")
+        self.code_tile = Tile("Paste a pairing code…", "Pair with the code from the other machine." if machine else
+                              "Join with the MODSYNC1-… code from the other machine.", "qr", size="compact")
         self.code_tile.clicked.connect(self.enter_code)
         v.addWidget(self.code_tile)
 
@@ -165,28 +218,36 @@ class JoinPanel(QWidget):
             chosen, default="copy")
 
     def join_network(self, target: pairing_lan.Announcement, pin: str) -> None:
-        path = self.service.state.instance_path
-        if not path:
-            return
         if len(pin) != 6 or not pin.isdigit():
             self.host.notify("⚠ Enter the 6-digit PIN shown on the other machine.")
             return
         host = self.host
+        if self.machine:
+            host.sync_started(f"Pairing with {target.name}…")
+            worker.run_async(self.service.join_via_network, target, pin, None,
+                             on_done=lambda peer: host.machine_paired(
+                                 f"Paired with {peer.name or target.name}. The games you sync here now sync "
+                                 "with it too."),
+                             on_failed=host.sync_failed)
+            return
+        path = self.service.state.instance_path
+        if not path:
+            return
 
         def join(merge: bool) -> None:
             host.sync_started(f"Pairing with {target.name}…")
-            worker.run_async(self.service.join_via_network, target, pin, path, merge=merge,
-                             on_done=lambda _: host.vault_joined(), on_failed=host.sync_failed)
+            worker.run_async(self.service.join_via_network, target, pin, path, merge=merge, pair_only=True,
+                             on_done=lambda peer: _vault_joined(host, peer, target.name), on_failed=host.sync_failed)
 
         self.choose_mode(path, join)
 
     def enter_code(self) -> None:
         KeyboardSheet(self.host, "Pairing code", "Paste the pairing code from the other machine.",
-                      self.join_code, placeholder="MODSYNC1-…", validate=_validate_code).open()
+                      self.join_code, placeholder="MODSYNC…", validate=_validate_code).open()
 
     def join_code(self, text: str) -> None:
         path = self.service.state.instance_path
-        if not path:
+        if not path and not self.machine:
             return
         try:
             code = PairingCode.decode(text)
@@ -194,6 +255,15 @@ class JoinPanel(QWidget):
             self.host.notify("⚠ That doesn't look like a valid pairing code.")
             return
         host = self.host
+        if self.machine or not code.has_vault:
+            # The other machine accepts this one while ModSync runs there.
+            done = ("Paired. The games you sync here sync with that machine once ModSync is open there."
+                    if self.machine else "Paired. That machine doesn't share Mod Organizer 2, so only games' "
+                    "folders sync with it.")
+            host.sync_started("Pairing…")
+            worker.run_async(self.service.pair, code, on_done=lambda _: host.machine_paired(done),
+                             on_failed=host.sync_failed)
+            return
 
         def join(merge: bool) -> None:
             host.sync_started("Joining…")
@@ -232,17 +302,15 @@ class SyncPage(Page):
         self._pair_stop: threading.Event | None = None
         self._code: str = ""
         self._was_complete: bool | None = None
+        self._code_requested = False
         self.header("Sync", "Keep the same mods, load order and downloads on more than one machine, such as a "
                             "desktop and a Steam Deck. Each keeps its own game paths.")
         if self.live:
             self._build_live()
-        elif state.has_instance:
-            self._build_offer()
         else:
-            self.choose_first = Tile("Choose Mod Organizer 2 first", "Sync shares an MO2 instance, so pick or "
-                                     "install one before pairing.", "box", chevron=True)
-            self.choose_first.clicked.connect(lambda: host.go("mods"))
-            self.content_layout.addWidget(self.choose_first)
+            if state.has_instance:
+                self._build_offer()
+            self._build_machine()
         self.finish_layout()
 
     # --- offer --------------------------------------------------------------------
@@ -278,7 +346,155 @@ class SyncPage(Page):
             if self.conflicts_tile.isVisibleTo(self):
                 return self.conflicts_tile
             return self.resume_tile or self.pair_tile
-        return getattr(self, "share", None) or getattr(self, "choose_first", None)
+        if self.service.state.has_instance:
+            return self.share
+        return self.pair_tile if self.service.state.syncs_anything else self.join_tile
+
+    # --- pairing without a vault ------------------------------------------------------
+    def _build_machine(self) -> None:
+        """Pairing for the games' folders, which needs no vault: the games and
+        the paired machines, and ways to pair. A machine whose games' folders
+        sync gives out a code and a PIN; any machine can enter another's.
+        Beside the Mod Organizer 2 choice, until something pairs or syncs,
+        that's one row."""
+        state = self.service.state
+        self.pair_only_tile = Tile("Pair with another machine for games only…", "Enter the PIN it shows, or "
+                                   "paste its code.", "devices", size="compact", chevron=True)
+        self.pair_only_tile.clicked.connect(self.toggle_pair_join)
+        self.content_layout.addWidget(self.pair_only_tile)
+        self.machine_box = QWidget()
+        row = QHBoxLayout(self.machine_box)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(24)
+        left, right = QVBoxLayout(), QVBoxLayout()
+        left.setSpacing(16)
+        right.setSpacing(4)
+        row.addLayout(left, 1)
+        row.addLayout(right, 1)
+        self.content_layout.addWidget(self.machine_box)
+        self.games_panel = self._games_panel()
+        left.addWidget(self.games_panel)
+        left.addWidget(self._devices_panel())
+        left.addStretch(1)
+        self.pair_tile = Tile("Pair over network…", "Show a PIN that another machine can enter.", "radar")
+        self.pair_tile.clicked.connect(self.pair_network)
+        self.code_tile = Tile("Show pairing code", "A code and QR code for another machine.", "qr", size="compact")
+        self.code_tile.clicked.connect(self.show_code)
+        self.join_tile = Tile("Pair with another machine…",
+                              ("For the games' folders only. " if state.has_instance else "")
+                              + "Enter the PIN it shows, or paste its code.", "devices", chevron=True)
+        self.join_tile.clicked.connect(self.toggle_pair_join)
+        tiles = [self.pair_tile, self.code_tile, self.join_tile]
+        if not state.has_instance:
+            self.choose_first = Tile("Sync Skyrim's Mod Organizer 2", "Pick or install MO2 first, then share it "
+                                     "from here.", "box", size="compact", chevron=True)
+            self.choose_first.clicked.connect(lambda: self.host.go("mods"))
+            tiles.append(self.choose_first)
+        self.ui_tile = Tile("Open Syncthing UI", "The sync engine's own page, in your browser.", "globe",
+                            size="compact")
+        self.ui_tile.clicked.connect(self.open_ui)
+        tiles.append(self.ui_tile)
+        for tile in tiles:
+            right.addWidget(tile)
+        right.addStretch(1)
+        self._add_pair_join()
+        self._show_devices([])
+        self._update_machine()
+        if state.active:
+            self.refresh()
+
+    def _update_machine(self) -> None:
+        """A code and a PIN once a game's folder syncs here (another machine
+        only accepts this one then). One blue action, and none beside the
+        Mod Organizer 2 choice."""
+        st = self.service.state
+        hosts = st.syncs_anything
+        brief = st.has_instance and not st.active
+        self.pair_only_tile.setVisible(brief)
+        self.machine_box.setVisible(not brief)
+        self.pair_tile.setVisible(hosts)
+        self.code_tile.setVisible(hosts)
+        self.ui_tile.setVisible(st.active)
+        self.pair_tile.set_role("primary" if hosts and not st.has_instance else "normal")
+        self.join_tile.set_role("primary" if not hosts and not st.has_instance else "normal")
+        if hosts and not self._code_requested:
+            self._code_requested = True
+            self._load_code()
+
+    def _add_pair_join(self) -> None:
+        """Entering another machine's PIN or code only pairs: whatever the
+        two sync is shared between them."""
+        self.pair_join = JoinPanel(self.host, machine=True)
+        self.pair_join_panel = Panel()
+        self.pair_join_panel.add(self.pair_join)
+        self.pair_join_panel.setVisible(False)
+        self.content_layout.addWidget(self.pair_join_panel)
+
+    def toggle_pair_join(self) -> None:
+        show = not self.pair_join_panel.isVisible()
+        self.pair_join_panel.setVisible(show)
+        if show:
+            self.pair_join.scan()
+            self.pair_join.scan_tile.setFocus()
+
+    def _on_machine_status(self, status: SyncStatus) -> None:
+        if not shiboken6.isValid(self) or self.live:
+            return
+        self._show_games(status.game_folders)
+        self._show_devices(status.devices)
+
+    def _games_panel(self) -> Panel:
+        panel = Panel()
+        panel.add(label("Games", "heading", wrap=False))
+        self.games = QVBoxLayout()
+        self.games.setSpacing(10)
+        self._game_rows: dict[str, StatusRow] = {}
+        self._no_games = label("No game's folders sync here yet. Turn on mods or saves sync on a game's page.",
+                               "muted")
+        self.games.addWidget(self._no_games)
+        panel.layout_.addLayout(self.games)
+        return panel
+
+    def _devices_panel(self) -> Panel:
+        panel = Panel()
+        panel.add(label("Devices", "heading", wrap=False))
+        self.devices = QVBoxLayout()
+        self.devices.setSpacing(10)
+        self._device_rows: dict[str, StatusRow] = {}
+        self._no_devices = None
+        panel.layout_.addLayout(self.devices)
+        return panel
+
+    def _show_games(self, statuses: list[folders.FolderStatus]) -> None:
+        # Updated in place, like the devices, so the focus stays put.
+        if not shiboken6.isValid(self.games):
+            return
+        keys = [fs.spec.key for fs in statuses]
+        for key in [k for k in self._game_rows if k not in keys]:
+            row = self._game_rows.pop(key)
+            self._hand_focus_on(row, [r for k, r in self._game_rows.items() if k in keys])
+            self.games.removeWidget(row)
+            discard(row)
+        self._no_games.setVisible(not statuses)
+        for fs in statuses:
+            row = self._game_rows.get(fs.spec.key)
+            if row is None:
+                row = StatusRow(fs.spec.label.removesuffix(" (ModSync)"), "sync")
+                page = _FOLDER_PAGES.get(fs.spec.key.split("-")[0])
+                if page is not None:
+                    row.clicked.connect(lambda _=False, p=page: self.host.go(p))
+                self._game_rows[fs.spec.key] = row
+                self.games.addWidget(row)
+            row.set_state(*_folder_words(fs))
+        if self.live:  # the vault's page shows them only when there are any
+            self.games_panel.setVisible(bool(statuses))
+
+    def _hand_focus_on(self, row, rows) -> None:
+        """Don't leave the focus on a row on its way out."""
+        if row.hasFocus():
+            after = next(iter(rows), None) or self.preferred_focus()
+            if after is not None:
+                after.setFocus(Qt.FocusReason.OtherFocusReason)
 
     # --- live ----------------------------------------------------------------------
     def _build_live(self) -> None:
@@ -290,14 +506,10 @@ class SyncPage(Page):
         self.meter.set_value(0, "starting", busy=True)
         self.folder_detail = gauge.add(label("", "secondary"))
         left.addWidget(gauge)
-        devices = Panel()
-        devices.add(label("Devices", "heading", wrap=False))
-        self.devices = QVBoxLayout()
-        self.devices.setSpacing(10)
-        self._device_rows: dict[str, StatusRow] = {}
-        self._no_devices = None
-        devices.layout_.addLayout(self.devices)
-        left.addWidget(devices)
+        self.games_panel = self._games_panel()
+        self.games_panel.setVisible(False)
+        left.addWidget(self.games_panel)
+        left.addWidget(self._devices_panel())
         left.addStretch(1)
 
         state = self.service.state
@@ -326,11 +538,12 @@ class SyncPage(Page):
             self.pair_tile.clicked.connect(self.pair_network)
             code = Tile("Show pairing code", "A code and QR code for another machine.", "qr", size="compact")
             code.clicked.connect(self.show_code)
-            add = Tile("Add a machine by code…", "Paste the other machine's pairing code.", "plus", size="compact")
-            add.clicked.connect(self.add_device)
+            self.join_tile = Tile("Pair with another machine…", "Enter the PIN it shows, or paste its code.",
+                                  "devices", size="compact", chevron=True)
+            self.join_tile.clicked.connect(self.toggle_pair_join)
             rescan = Tile("Rescan", "Look for changed files now.", "refresh", size="compact")
             rescan.clicked.connect(self.rescan)
-            tiles = [self.pair_tile, code, add, rescan]
+            tiles = [self.pair_tile, code, self.join_tile, rescan]
             if state.sync_paused:
                 self.resume_tile = Tile("Resume syncing", "Carry over what changed on each machine meanwhile.",
                                         "play", role="primary")
@@ -347,6 +560,8 @@ class SyncPage(Page):
         for tile in tiles:
             right.addWidget(tile)
         right.addStretch(1)
+        if not state.copying:
+            self._add_pair_join()
         self._load_code()
         self.refresh()
         self._accept_pending()
@@ -362,7 +577,14 @@ class SyncPage(Page):
 
     def poll(self) -> None:
         if not self.live:
-            return
+            self.service.reload_state()  # a game's page may have turned its sync on or off
+            self._update_machine()
+            if not self.service.state.active:
+                # The last folder stopped or the last machine was forgotten:
+                # nothing is left to show, and Syncthing isn't started to say so.
+                self._show_games([])
+                self._show_devices([])
+                return
         self.refresh()
         self._accept_pending()
 
@@ -377,6 +599,9 @@ class SyncPage(Page):
     def refresh(self) -> None:
         if self.live:
             worker.run_async(self._poll_status, on_done=self.on_status,
+                             on_failed=lambda m: self.host.notify(f"⚠ {m}"))
+        elif self.service.state.active:
+            worker.run_async(self.service.status, on_done=self._on_machine_status,
                              on_failed=lambda m: self.host.notify(f"⚠ {m}"))
 
     def _poll_status(self) -> SyncStatus:
@@ -398,6 +623,7 @@ class SyncPage(Page):
             self.conflicts_tile.setText(f"{n} file{' was' if n == 1 else 's were'} changed on two machines")
             self.conflicts_tile.set_description("MO2 uses the newer version of each. Choose which to keep.")
         self._show_devices(status.devices)
+        self._show_games(status.game_folders)
 
         if status.copy is not None:
             self._show_copy(status)
@@ -486,16 +712,6 @@ class SyncPage(Page):
             return
         CodeSheet(self.host, self._code).open()
 
-    def add_device(self) -> None:
-        def add(text: str) -> None:
-            code = PairingCode.decode(text)
-            worker.run_async(self.service.add_peer, code,
-                             on_done=lambda _: (self.host.notify("Device added.", "ok"), self.refresh()),
-                             on_failed=lambda m: self.host.notify(f"⚠ {m}"))
-
-        KeyboardSheet(self.host, "Add a machine", "Paste the pairing code from the other machine.", add,
-                      placeholder="MODSYNC1-…", validate=_validate_code).open()
-
     def pair_network(self) -> None:
         if self._pairing:
             self.cancel_pairing()
@@ -504,7 +720,7 @@ class SyncPage(Page):
         self._pair_stop = threading.Event()
         self._pairing = True
         name = socket.gethostname() or "this machine"
-        self.beacon = BeaconSheet(self.host, pin, name, self.cancel_pairing)
+        self.beacon = BeaconSheet(self.host, pin, name, self.cancel_pairing, vault=self.live)
         self.beacon.open()
         self.host.notify(f"Waiting for another machine to enter PIN {pin[:3]} {pin[3:]}…")
         beacon = self.beacon
@@ -599,9 +815,7 @@ class SyncPage(Page):
         ids = [dev.id for dev in devices]
         for did in [d for d in self._device_rows if d not in ids]:
             row = self._device_rows.pop(did)
-            if row.hasFocus():  # don't leave the focus on a row on its way out
-                after = next((r for d, r in self._device_rows.items() if d in ids), None) or self.pair_tile
-                after.setFocus(Qt.FocusReason.OtherFocusReason)
+            self._hand_focus_on(row, [r for d, r in self._device_rows.items() if d in ids])
             self.devices.removeWidget(row)
             discard(row)
         if devices and self._no_devices is not None:

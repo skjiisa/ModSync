@@ -205,9 +205,11 @@ class DaggerfallPage(Page):
             self.hook_row.set_state("Daggerfall Unity", "ok", "Press to have it start the original game again.")
         else:
             self.hook_row.set_state("Original game", "off", "Press to have it start Daggerfall Unity.")
+        paired = self.service.reload_state().paired
         for row, state, what in ((self.mods_row, ov.mods, "mods"), (self.saves_row, ov.saves, "saves")):
             word, tone = _SYNC_WORDS[state]
-            detail = {"on": f"Your {what} sync with your paired machines.",
+            detail = {"on": f"Your {what} sync with your paired machines." if paired else
+                      "No machine is paired yet. Pair one under Sync.",
                       "off": f"Press to sync your {what} with your paired machines.",
                       "stopping": "Finishes once Syncthing answers."}[state]
             row.set_state(word, tone, detail)
