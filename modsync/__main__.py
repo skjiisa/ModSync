@@ -54,6 +54,16 @@ logs: ~/.local/state/modsync/modsync.log (MODSYNC_LOG_LEVEL=DEBUG for more).
 
 
 def main(argv: list[str] | None = None) -> int:
+    from modsync.state import NewerStateError
+
+    try:
+        return _main(argv)
+    except NewerStateError as exc:
+        print(f"ModSync: {exc}", file=sys.stderr)
+        return 1
+
+
+def _main(argv: list[str] | None) -> int:
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     cmd = argv[0] if argv else None
 
