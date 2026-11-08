@@ -8,7 +8,8 @@ from io import StringIO
 from pathlib import Path
 
 from modsync import gameversion, launchhook, platforms
-from modsync.games import SKYRIM_SE
+from modsync.games import CYBERPUNK, SKYRIM_SE
+from modsync.heroic import library as heroic
 from modsync.mo2 import discover as mo2_discover
 from modsync.mo2 import instance as mo2_instance
 from modsync.mo2 import launch as mo2_launch
@@ -38,6 +39,8 @@ def build() -> Report:
     roots = plat.steam_roots()
     if not roots:
         line("✗ No Steam installation found.")
+        line()
+        _heroic_section(plat, line)
         return Report(out.getvalue(), False)
 
     line("Steam roots:")
@@ -65,6 +68,8 @@ def build() -> Report:
     else:
         line("  ✗ not installed")
     line()
+
+    _heroic_section(plat, line)
 
     usvfs_messages: dict[Path, str] = {}
 
@@ -142,3 +147,30 @@ def build() -> Report:
             line(f"  {'!' if vc.skse_suggests else '•'} {vc.skse_note()}")
 
     return Report(out.getvalue(), True)
+
+
+def _heroic_section(plat: platforms.Platform, line) -> None:
+    """Heroic and the GOG games ModSync supports, when Heroic is installed."""
+    config_dirs = plat.heroic_config_dirs()
+    if not config_dirs:
+        return
+    line("Heroic config:")
+    for d in config_dirs:
+        line(f"  • {d}")
+    line()
+    game = heroic.find_gog_game(CYBERPUNK.gog_id, config_dirs)
+    line(f"{CYBERPUNK.name} (GOG {CYBERPUNK.gog_id}, Heroic):")
+    if game is None:
+        line("  ✗ not installed")
+        line()
+        return
+    line(f"  ✓ installed: {game.install_path}")
+    build = game.version or "(unknown)"
+    line(f"  • GOG build: {build}{' (pinned in Heroic)' if game.pinned else ''}")
+    if game.drive_c is None:
+        line(f"  • prefix: {game.prefix}  (not created yet — launch the game once from Heroic)")
+    else:
+        line(f"  • prefix: {game.prefix}")
+    if game.wine is not None:
+        line(f"  • runs with: {game.wine.name or game.wine.bin} ({game.wine.type})")
+    line()
