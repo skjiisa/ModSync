@@ -173,8 +173,8 @@ class DiagnosticsCommandTests(_StateHome):
         # doctor stops early without Steam; give it an empty one so CI gets as far.
         steam = self.tmp / "steam"
         (steam / "steamapps").mkdir(parents=True)
-        plat = SimpleNamespace(name="linux", steam_roots=lambda: [steam], mo2_broad_roots=lambda: [],
-                               mo2_known_roots=lambda: [])
+        plat = SimpleNamespace(name="linux", steam_roots=lambda: [steam], heroic_config_dirs=lambda: [],
+                               mo2_broad_roots=lambda: [], mo2_known_roots=lambda: [])
         with (patch("modsync.report.platforms.current", return_value=plat),
               patch.object(usvfs, "is_arm64", return_value=True), redirect_stdout(out)):
             main(["doctor"])

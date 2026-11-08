@@ -6,6 +6,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- First step toward Cyberpunk 2077 from GOG through the Heroic Games
+  Launcher: `modsync doctor` finds it, native or Flatpak Heroic, and shows
+  its folder, GOG build (and whether Heroic pins it), prefix and Proton.
+
 ### Changed
 
 - Copies of ModSync on a machine share one setup. While the Flatpak is

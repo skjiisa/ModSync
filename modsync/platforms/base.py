@@ -15,6 +15,10 @@ class Platform(abc.ABC):
         """Candidate Steam root dirs that actually exist, canonicalised."""
 
     @abc.abstractmethod
+    def heroic_config_dirs(self) -> list[Path]:
+        """Heroic Games Launcher config dirs that actually exist, canonicalised."""
+
+    @abc.abstractmethod
     def mo2_broad_roots(self) -> list[Path]:
         """Dirs to search broadly for MO2 instances (shallow; hidden dirs pruned)."""
 
