@@ -284,8 +284,23 @@ class NativeProgramScript(unittest.TestCase):
         self.assertEqual(dfu["argv"], [])  # DOSBox's arguments mean nothing to it
         self.assertEqual(dfu["cwd"], str(self.dfu.parent))
         self.assertEqual(dfu["env"]["LD_PRELOAD"], "/fake/gameoverlayrenderer.so")  # Steam's overlay
-        self.assertIsNone(self.record("modsync-cmd"))  # no window
+        self.assertEqual(self.record("modsync-cmd")["argv"][:3], ["dfu", "follow", "--quiet"])  # no window, no hub
         self.assertIsNone(self.record("SteamLinuxRuntime_4"))
+
+    def test_play_has_modsync_check_dfus_data_against_the_copy_steam_starts(self):
+        # Steam may have moved Daggerfall to another library (an SD card); ModSync decides.
+        sd = str(self.tmp / "sdcard" / "The Elder Scrolls Daggerfall")
+        result = self.run_hook("waitforexitandrun", self.dosbox, extra_env={"STEAM_COMPAT_INSTALL_PATH": sd})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.record("modsync-cmd")["argv"], ["dfu", "follow", "--quiet", "--from", sd])
+        self.assertIsNotNone(self.record("Daggerfall Unity"))
+
+    def test_a_failing_check_never_blocks_dfu(self):
+        fakesteam._executable(self.modsync_dir / "modsync", "#!/bin/sh\nexit 1\n")
+        result = self.run_hook("waitforexitandrun", self.dosbox)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(self.record("Daggerfall Unity"))
+        self.assertIn("couldn't check Daggerfall Unity's data path", self.log())
 
     def test_original_game_on_request(self):
         result = self.run_hook("waitforexitandrun", self.dosbox, extra_env={"MODSYNC_ORIGINAL_GAME": "1"})
@@ -311,15 +326,20 @@ echo "modsync $* preload=${{LD_PRELOAD-}}" >> "{calls}"
 echo "dfu preload=${{LD_PRELOAD-}} cwd=$PWD" >> "{calls}"
 exit 3
 """)
-        result = self.run_hook("waitforexitandrun", self.dosbox)
+        installed = str(self.tmp / "The Elder Scrolls Daggerfall")
+        follow = f"modsync dfu follow --quiet --from {installed} preload="  # no overlay in ModSync
+        steam = {"STEAM_COMPAT_INSTALL_PATH": installed}
+        result = self.run_hook("waitforexitandrun", self.dosbox, extra_env=steam)
         self.assertEqual(result.returncode, 3, result.stderr)  # exec'd: DFU's own exit code
-        self.assertEqual(calls.read_text().splitlines(), [f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}"])
+        self.assertEqual(calls.read_text().splitlines(),
+                         [follow, f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}"])
         calls.unlink()
         (self.dfu.parent / ".modsync-saves").touch()
-        result = self.run_hook("waitforexitandrun", self.dosbox)
+        result = self.run_hook("waitforexitandrun", self.dosbox, extra_env=steam)
         self.assertEqual(result.returncode, 3, result.stderr)  # DFU's own exit code
         self.assertEqual(calls.read_text().splitlines(), [
-            "modsync dfu saves --quiet --playing preload=",  # no overlay in ModSync
+            follow,
+            "modsync dfu saves --quiet --playing preload=",
             f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}",
             "modsync dfu saves --quiet --playing preload=",
         ])

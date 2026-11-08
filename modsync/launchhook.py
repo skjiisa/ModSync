@@ -62,8 +62,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-TEMPLATE_VERSION = 5  # 2: the MO2 launch the window hands back; 3: a native program; 4: DFU's saves around it;
-# 5: a newer setup (state.EXIT_NEWER_STATE) ends the launch
+TEMPLATE_VERSION = 6  # 2: the MO2 launch the window hands back; 3: a native program; 4: DFU's saves around it;
+# 5: a newer setup (state.EXIT_NEWER_STATE) ends the launch; 6: DFU follows Daggerfall to another library
 TEMPLATE_DIR = Path(__file__).parent / "steam" / "launchhook_template"
 MARKER = ".modsync-launch-hook"  # only directories carrying this are ever removed
 

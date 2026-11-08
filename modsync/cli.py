@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 
 def doctor(args: list[str]) -> int:
@@ -892,14 +893,22 @@ def dfu(args: list[str]) -> int:
         return _dfu_hook(rest)
     if sub == "saves" and set(rest) <= {"--quiet", "--playing"}:
         return _dfu_saves(quiet="--quiet" in rest, playing="--playing" in rest)
+    if sub == "follow":
+        launching = rest[rest.index("--from") + 1] if "--from" in rest[:-1] else None
+        if ("--from" in rest and launching is None) or set(rest) - {"--quiet", "--from", launching}:
+            print("usage: modsync dfu follow [--quiet] [--from <the Daggerfall folder Steam is starting>]")
+            return 2
+        return _dfu_follow(quiet="--quiet" in rest, launching=Path(launching) if launching else None)
     print(
         "usage:\n"
         "  modsync dfu status                   Steam's Daggerfall data and the Daggerfall Unity install\n"
         "  modsync dfu install [<dest-dir>]     install Daggerfall Unity using Steam's Daggerfall data\n"
-        "        (run it again to follow Daggerfall to another Steam library)\n"
+        "        (run it again to repair an install)\n"
         "  modsync dfu use <dir>                use a Daggerfall Unity that's already installed\n"
         "  modsync dfu hook enable | disable    make Steam's Play button on Daggerfall start Daggerfall Unity\n"
-        "  modsync dfu saves                    sync the saves now (Play in Steam does it before and after)"
+        "  modsync dfu saves                    sync the saves now (Play in Steam does it before and after)\n"
+        "  modsync dfu follow                   point it at Steam's Daggerfall data if its own is gone\n"
+        "        (after Steam moved Daggerfall to another library; Play in Steam does it too)"
     )
     return 2
 
@@ -937,7 +946,8 @@ def _dfu_status() -> int:
     else:
         print(f"  Data:               {configured}")
         if dagger is not None:
-            print("  ! That isn't where Steam has Daggerfall now; 'modsync dfu install' points it there.")
+            print("  ! That isn't where Steam has Daggerfall now. Play points it there first, "
+                  "or run 'modsync dfu follow'.")
         else:
             print("  ! DFU can't use that; it asks for Daggerfall's data on its startup screen.")
     if not inst.portable:
@@ -1050,6 +1060,25 @@ def _dfu_install(args: list[str]) -> int:
         print(followed)
     elif not dfu.hook_status().installed:
         print("Run 'modsync dfu hook enable' so Steam's Play button on Daggerfall starts it.")
+    return 0
+
+
+def _dfu_follow(*, quiet: bool, launching: Path | None = None) -> int:
+    from modsync import dfu
+
+    inst = dfu.current_install()
+    if inst is None:
+        print("Daggerfall Unity isn't installed yet; run 'modsync dfu install' first.")
+        return 1
+    try:
+        moved = dfu.follow_steam_data(inst, launching)
+    except Exception as exc:  # run by the Play hook: say so, never block the game
+        print(f"Couldn't point Daggerfall Unity at Steam's data: {exc}")
+        return 1
+    if moved is not None:
+        print(f"Daggerfall Unity's data had moved; pointed it at {moved}")
+    elif not quiet:
+        print(f"Daggerfall Unity uses {inst.daggerfall_path() or 'no Daggerfall data yet'}; nothing to change.")
     return 0
 
 

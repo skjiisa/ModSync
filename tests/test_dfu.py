@@ -102,6 +102,12 @@ class SteamData(unittest.TestCase):
             self.assertIsNone(dfu.steam_daggerfall())  # manifest, but no files yet
             dagger = _dagger(library / "steamapps" / "common" / "The Elder Scrolls Daggerfall")
             self.assertEqual(dfu.steam_daggerfall(), dagger)
+            # Steam moved it here from the first library, which still has a manifest and leftovers.
+            (steam / "steamapps" / f"appmanifest_{dfu.DAGGERFALL_APPID}.acf").write_text(
+                (library / "steamapps" / f"appmanifest_{dfu.DAGGERFALL_APPID}.acf").read_text())
+            (steam / "steamapps" / "common" / "The Elder Scrolls Daggerfall" / "DF" / "DAGGER" / "ARENA2").mkdir(
+                parents=True)
+            self.assertEqual(dfu.steam_daggerfall(), dagger)  # the copy DFU would accept
 
 
 class SettingsIni(unittest.TestCase):
@@ -649,6 +655,16 @@ class ModsFolderReview(_ModsFolderBase):
 class Launch(unittest.TestCase):
     def setUp(self):
         self.inst = dfu.Install(Path("/games/Daggerfall Unity"))
+        self.followed = []
+        follow = patch.object(dfu, "follow_steam_data", lambda inst: self.followed.append(inst.path))
+        follow.start()  # never this machine's Steam
+        self.addCleanup(follow.stop)
+
+    def test_it_follows_daggerfall_to_another_library_first(self):
+        with patch.object(dfu, "is_running", return_value=False), patch.object(dfu, "hook_status", lambda: self._hook(False)), \
+                patch.object(dfu, "sync_saves", return_value=dfu_saves.Report()), patch.object(dfu.subprocess, "Popen"):
+            dfu.launch(self.inst)
+        self.assertEqual(self.followed, [self.inst.path])
 
     def _hook(self, on: bool):
         return launchhook.LaunchHookStatus(DAGGERFALL, on, None, on, None, None, True, None, False, True,
@@ -795,6 +811,96 @@ class BuiltVersion(unittest.TestCase):
         State.update(dfu_path="")
         with patch.object(dfu, "default_install_dir", lambda: self.tmp):
             self.assertIsNone(dfu.current_install())
+
+
+class FollowSteamData(unittest.TestCase):
+    """Steam moving Daggerfall to another library (an SD card) empties the folder
+    DFU points at; ModSync points it at Steam's copy, and leaves a working one."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.inst = dfu.Install(self.tmp / "DFU")
+        self.inst.executable.parent.mkdir(parents=True)
+        self.inst.executable.touch()
+        self.sd = _dagger(self.tmp / "sdcard" / "steamapps" / "common" / "Daggerfall")
+        self.steam = self.sd
+        self.running = False
+        for p in (patch.object(dfu, "steam_daggerfall", lambda: self.steam),
+                  patch.object(dfu, "is_running", lambda: self.running)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def point_at(self, path) -> None:
+        dfu.write_daggerfall_path(self.inst.settings_ini, path)
+
+    def test_an_emptied_folder_follows_steam(self):
+        self.point_at(self.tmp / "internal" / "DF" / "DAGGER")  # Steam's uninstall emptied it
+        self.assertEqual(dfu.follow_steam_data(self.inst), self.sd)
+        self.assertEqual(self.inst.daggerfall_path(), str(self.sd))
+        self.assertIsNone(dfu.follow_steam_data(self.inst))  # once is enough
+
+    def test_a_folder_left_with_only_some_files_follows_steam_too(self):
+        leftover = self.tmp / "internal" / "DF" / "DAGGER"
+        (leftover / "ARENA2").mkdir(parents=True)
+        (leftover / "ARENA2" / "MAPS.BSA").touch()  # say, a user-added file Steam left behind
+        self.point_at(leftover)
+        self.assertEqual(dfu.follow_steam_data(self.inst), self.sd)
+
+    def test_the_copy_steam_is_starting_wins(self):
+        launching = self.tmp / "other" / "The Elder Scrolls Daggerfall"
+        _dagger(launching)
+        self.point_at(self.tmp / "gone")
+        self.assertEqual(dfu.follow_steam_data(self.inst, launching), launching / "DF" / "DAGGER")
+
+    def test_a_copy_steam_is_starting_without_data_falls_back(self):
+        self.point_at(self.tmp / "gone")
+        self.assertEqual(dfu.follow_steam_data(self.inst, self.tmp / "nothing here"), self.sd)
+
+    def test_no_path_yet_gets_steams(self):
+        self.assertEqual(dfu.follow_steam_data(self.inst), self.sd)
+
+    def test_a_working_path_is_kept_even_if_it_isnt_steams(self):
+        gog = _dagger(self.tmp / "gog")
+        self.point_at(gog)
+        self.assertIsNone(dfu.follow_steam_data(self.inst))
+        self.assertEqual(self.inst.daggerfall_path(), str(gog))
+
+    def test_a_relative_path_counts_from_the_install(self):
+        _dagger(self.inst.path / "data")
+        dfu.write_settings(self.inst.settings_ini, "Daggerfall", {"MyDaggerfallPath": "./data/DF/DAGGER"})
+        self.assertIsNone(dfu.follow_steam_data(self.inst))
+
+    def test_nothing_changes_while_steams_copy_is_missing_too(self):
+        self.point_at(self.sd)
+        self.steam = None  # the SD card is out
+        shutil.rmtree(self.sd)
+        self.assertIsNone(dfu.follow_steam_data(self.inst))
+        self.assertEqual(self.inst.daggerfall_path(), str(self.sd))  # right again once it's back
+
+    def test_not_while_dfu_runs(self):
+        self.point_at(self.tmp / "gone")
+        self.running = True  # it writes settings.ini back when it exits
+        self.assertIsNone(dfu.follow_steam_data(self.inst))
+
+    def test_the_command_line(self):
+        self.point_at(self.tmp / "gone")
+        with patch.object(dfu, "current_install", lambda: self.inst):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(cli.dfu(["follow", "--quiet"]), 0)
+            self.assertIn(f"pointed it at {self.sd}", out.getvalue())
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(cli.dfu(["follow", "--quiet"]), 0)
+            self.assertEqual(out.getvalue(), "")  # quiet when there's nothing to do
+            launching = _dagger(self.tmp / "launching").parent.parent
+            self.point_at(self.tmp / "gone")
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.dfu(["follow", "--quiet", "--from", str(launching)]), 0)
+            self.assertEqual(self.inst.daggerfall_path(), str(launching / "DF" / "DAGGER"))
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.dfu(["follow", "--from"]), 2)
 
 
 class AdoptExisting(unittest.TestCase):

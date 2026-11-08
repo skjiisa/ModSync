@@ -99,12 +99,15 @@ def default_install_dir() -> Path:
 
 
 def steam_daggerfall() -> Path | None:
-    """The ``DF/DAGGER`` folder of Steam's Daggerfall, if Steam installed it."""
-    app = libs.find_app(libs.all_libraries(platforms.current().steam_roots()), DAGGERFALL_APPID)
-    if app is None:
-        return None
-    dagger = app.install_path / "DF" / "DAGGER"
-    return dagger if dagger.is_dir() else None
+    """The ``DF/DAGGER`` folder of Steam's Daggerfall, if Steam installed it.
+    Every library is looked in: one can still list Daggerfall after Steam moved
+    it (a stale manifest, files left over), so a copy DFU would accept wins."""
+    found = []
+    for lib in libs.all_libraries(platforms.current().steam_roots()):
+        app = libs.find_app([lib], DAGGERFALL_APPID)
+        if app is not None and (app.install_path / "DF" / "DAGGER").is_dir():
+            found.append(app.install_path / "DF" / "DAGGER")
+    return next((d for d in found if not data_problems(d)), found[0] if found else None)
 
 
 def arena2(dagger: Path) -> Path | None:
@@ -536,17 +539,38 @@ def adopt(path: Path | str) -> tuple[Existing, str | None]:
         _copy_missing(found.data_from, inst.data_dir)
         log.info("copied Daggerfall Unity's data from %s into %s", found.data_from, inst.data_dir)
     (inst.path / "Portable.txt").touch()
-    configured = inst.daggerfall_path()
-    if not configured or data_problems(Path(configured)):
-        dagger = steam_daggerfall()
-        if not data_problems(dagger):
-            write_daggerfall_path(inst.settings_ini, dagger)
+    follow_steam_data(inst)
     previous = current_install()
     if previous is not None and previous.path != inst.path:
         _release_saves()  # the saves library syncs with the new install's Saves from now on
     State.update(dfu_path=str(inst.path))
     log.info("using the Daggerfall Unity in %s (%s)", inst.path, inst.version or "version unknown")
     return found, follow_install(inst)
+
+
+def follow_steam_data(inst: Install, launching: Path | None = None) -> Path | None:
+    """Point ``inst`` at Steam's Daggerfall data when the data it uses is gone:
+    Steam moving Daggerfall to another library (an SD card) empties the old
+    folder, and DFU would open on its "set the path" screen. A path that still
+    works is kept, Steam's or not (a GOG copy, say), and so is a broken one
+    when Steam's data isn't there either (the SD card is out). ``launching`` is
+    the copy Steam is starting (``STEAM_COMPAT_INSTALL_PATH``), preferred when
+    DFU would accept it. Returns the new path when it changed."""
+    if is_running():
+        return None  # DFU writes settings.ini back when it exits
+    configured = inst.daggerfall_path()
+    if configured:
+        current = Path(configured) if Path(configured).is_absolute() else inst.path / configured
+        if not data_problems(current):
+            return None
+    dagger = launching / "DF" / "DAGGER" if launching else None
+    if dagger is None or data_problems(dagger):
+        dagger = steam_daggerfall()
+    if dagger is None or data_problems(dagger):
+        return None
+    write_daggerfall_path(inst.settings_ini, dagger)
+    log.info("Daggerfall Unity's data path %s is gone; pointed it at Steam's, %s", configured or "(unset)", dagger)
+    return dagger
 
 
 # --- Steam's Play button -----------------------------------------------------------
@@ -890,6 +914,10 @@ def launch(inst: Install) -> str:
     next sync status). Returns what happened."""
     if is_running():
         return "Daggerfall Unity is already running."
+    try:
+        follow_steam_data(inst)
+    except OSError as exc:  # DFU says so itself if its data is gone: start it anyway
+        log.warning("could not point Daggerfall Unity at Steam's data: %s", exc)
     st = hook_status()
     if st.enabled and st.native == str(inst.executable):
         result = background.run_host(["xdg-open", f"steam://rungameid/{DAGGERFALL_APPID}"], timeout=15)
