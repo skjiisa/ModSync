@@ -54,6 +54,13 @@ class IniHelperTests(unittest.TestCase):
             sections = ini_mod.read_ini(path)
             self.assertEqual(sections["Plugins"]["RootBuilder\\backup"], "false")
 
+    def test_add_missing_keeps_windows_line_endings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ModOrganizer.ini"
+            path.write_bytes(b"[General]\r\nversion=2.5.2\r\n\r\n[Plugins]\r\na=1\r\n")
+            ini_mod.add_missing(path, "Plugins", {"b": "2"})
+            self.assertEqual(path.read_bytes(), b"[General]\r\nversion=2.5.2\r\n\r\n[Plugins]\r\na=1\r\nb=2\r\n")
+
     def test_add_missing_creates_the_section_and_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "new.ini"

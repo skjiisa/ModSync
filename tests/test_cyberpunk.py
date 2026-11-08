@@ -48,6 +48,15 @@ size=2
 """
 
 
+@pytest.fixture(autouse=True)
+def _no_chosen_instance():
+    """The scratch config folder lasts the whole session; a choice one test
+    makes mustn't decide the next."""
+    cyberpunk._settings_path().unlink(missing_ok=True)
+    yield
+    cyberpunk._settings_path().unlink(missing_ok=True)
+
+
 @pytest.fixture
 def umu():
     with patch.object(cyberpunk, "_host_which", return_value="/usr/bin/umu-run"):
@@ -227,9 +236,10 @@ def test_prepare_prefix_installs_the_vc_runtime_only_when_needed(tmp_path):
 
     installer = tmp_path / "VC_redist.x64.exe"
     game = make_game(tmp_path)
-    fake = FakeRun(installed="\n".join(cyberpunk.TRICKS), results=[CompletedProcess([], 3010, "", "")])
+    # 3010 (installed, reboot requested) as Linux sees it: its low byte.
+    fake = FakeRun(installed="\n".join(cyberpunk.TRICKS), results=[CompletedProcess([], 3010 & 0xFF, "", "")])
     with patch.object(cyberpunk, "run_in_prefix", fake), \
-            patch("modsync.mo2.vcruntime.prefix_runtime_problems", return_value=["msvcp140.dll is 14.0.24215.1"]), \
+            patch("modsync.mo2.vcruntime.prefix_runtime_problems", side_effect=[["msvcp140.dll is 14.0.24215.1"], []]), \
             patch("modsync.mo2.vcruntime.redist_installer", return_value=installer), \
             patch("modsync.mo2.vcruntime.backup_prefix_runtime", return_value=tmp_path / "backup") as backup:
         cyberpunk.prepare_prefix(game)
@@ -237,12 +247,20 @@ def test_prepare_prefix_installs_the_vc_runtime_only_when_needed(tmp_path):
     assert fake.calls[-1] == [str(installer), "/install", "/quiet", "/norestart"]
     assert backup.call_args.args[0] == game.drive_c / "windows" / "system32"
 
-    fake = FakeRun(installed="\n".join(cyberpunk.TRICKS), results=[CompletedProcess([], 1603, "", "")])
+    fake = FakeRun(installed="\n".join(cyberpunk.TRICKS), results=[CompletedProcess([], 0, "", "")])
     with patch.object(cyberpunk, "run_in_prefix", fake), \
             patch("modsync.mo2.vcruntime.prefix_runtime_problems", return_value=["msvcp140.dll is missing"]), \
             patch("modsync.mo2.vcruntime.redist_installer", return_value=installer), \
             patch("modsync.mo2.vcruntime.backup_prefix_runtime", return_value=tmp_path / "backup"), \
-            pytest.raises(cyberpunk.CyberpunkError, match="1603"):
+            pytest.raises(cyberpunk.CyberpunkError, match="still has msvcp140.dll is missing"):
+        cyberpunk.prepare_prefix(game)
+
+    fake = FakeRun(installed="\n".join(cyberpunk.TRICKS), results=[CompletedProcess([], 1603 & 0xFF, "", "")])
+    with patch.object(cyberpunk, "run_in_prefix", fake), \
+            patch("modsync.mo2.vcruntime.prefix_runtime_problems", return_value=["msvcp140.dll is missing"]), \
+            patch("modsync.mo2.vcruntime.redist_installer", return_value=installer), \
+            patch("modsync.mo2.vcruntime.backup_prefix_runtime", return_value=tmp_path / "backup"), \
+            pytest.raises(cyberpunk.CyberpunkError, match="code 67"):
         cyberpunk.prepare_prefix(game)
 
 
@@ -326,6 +344,32 @@ def test_install_mo2_runs_mo2lint_for_gog_then_the_prefix_and_rootbuilder(tmp_pa
     prepare.assert_called_once_with(game, None)
     rootbuilder.assert_called_once_with(instance)
     assert cyberpunk.chosen_instance() == instance
+
+
+def test_install_again_after_a_failed_step_finishes_the_setup(tmp_path):
+    backend = FakeBackend(tmp_path)
+    game = make_game(tmp_path)
+    with patch.object(cyberpunk, "find_game", return_value=game), \
+            patch.object(cyberpunk, "game_running", return_value=False), \
+            patch.object(cyberpunk, "install_rootbuilder"):
+        with patch.object(cyberpunk, "prepare_prefix", side_effect=cyberpunk.CyberpunkError("winetricks exited with code 1.")), \
+                pytest.raises(cyberpunk.CyberpunkError, match="run the install again"):
+            cyberpunk.install_mo2(tmp_path / "ModOrganizer2-Cyberpunk2077", backend=backend)
+        assert cyberpunk.chosen_instance() is None
+        with patch.object(cyberpunk, "prepare_prefix") as prepare:
+            instance = cyberpunk.install_mo2(tmp_path / "ModOrganizer2-Cyberpunk2077", backend=backend)
+
+    assert len(backend.calls) == 1  # MO2-LINT ran once; the retry only finished the setup
+    prepare.assert_called_once()
+    assert cyberpunk.chosen_instance() == instance
+
+
+def test_install_over_another_games_instance_is_refused(tmp_path):
+    other = make_instance(tmp_path, "[General]\ngameName=Skyrim Special Edition\n")
+    with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path)), \
+            patch.object(cyberpunk, "game_running", return_value=False), \
+            pytest.raises(cyberpunk.CyberpunkError, match="manages Skyrim"):
+        cyberpunk.install_mo2(other, backend=FakeBackend(tmp_path))
 
 
 @pytest.mark.parametrize("running, prefix_ready, match", [

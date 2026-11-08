@@ -325,6 +325,11 @@ class InstallPrefixRuntimeTests(unittest.TestCase):
         (backup,) = self.backups()
         self.assertEqual((backup / "msvcp140.dll").read_bytes(), fake_dll(version=(14, 0, 24215, 1)))
 
+    def test_success_codes_arrive_through_wine_as_their_low_byte(self):
+        """3010 (reboot requested) and 1638 (newer present) reach Linux as 194 and 102."""
+        for self.code in (194, 102):
+            self.assertIn("Installed", self.service.install_prefix_runtime())
+
     def test_a_failed_install_says_where_the_backup_is(self):
         self.installs, self.code = False, 1603
         with self.assertRaisesRegex(RuntimeError, "code 1603.*backed up in"):

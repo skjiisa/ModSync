@@ -63,6 +63,10 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Installing the Visual C++ runtime into Skyrim's prefix no longer reports
+  a failure when the installer succeeds but asks for a reboot or finds a
+  newer runtime already there. Wine passes its exit codes (3010, 1638) on
+  as their low byte (194, 102), which ModSync didn't recognise.
 - Daggerfall Unity runs on the Steam Frame (#110). Its x86-64 Linux build
   now goes through Steam's FEX and Steam Linux Runtime 4.0, the way Steam
   runs any x86 Linux game on ARM, from both Steam's Play button and the

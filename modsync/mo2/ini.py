@@ -106,9 +106,11 @@ def add_missing(path: Path | str, section: str, values: dict[str, str]) -> list[
     it is. Returns the keys added."""
     path = Path(path)
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        text = path.read_bytes().decode("utf-8")
     except FileNotFoundError:
-        lines = []
+        text = ""
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.splitlines()
     header = end = None
     present: set[str] = set()
     for i, line in enumerate(lines):
@@ -132,6 +134,6 @@ def add_missing(path: Path | str, section: str, values: dict[str, str]) -> list[
             at -= 1
         lines[at:at] = new
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    tmp.write_bytes((newline.join(lines) + newline).encode("utf-8"))
     os.replace(tmp, path)
     return added

@@ -826,6 +826,8 @@ Proton.
    `umu-run winetricks`, installs Microsoft's VC++ runtime into the prefix
    when it's missing or old, and adds the
    [RootBuilder](https://github.com/Kezyma/ModOrganizer-Plugins) plugin.
+   If a step after MO2-LINT's fails, run the same command again: it finishes
+   setting up the MO2 that's already there, which also repairs an instance.
    An instance installed with MO2-LINT earlier is found by itself;
    `modsync cyberpunk use <dir>` picks another.
 3. `modsync cyberpunk open` opens MO2, and `modsync cyberpunk play` plays

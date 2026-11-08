@@ -365,11 +365,14 @@ def prepare_prefix(game: heroic.GogGame, on_output: OnOutput | None = None) -> N
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = vcruntime.backup_prefix_runtime(system32, config.data_dir() / "backups" / f"cyberpunk-vcruntime-{stamp}")
     result = run_in_prefix(game, [str(vcruntime.redist_installer()), "/install", "/quiet", "/norestart"])
-    # 3010: installed, reboot requested (meaningless in a prefix); 1638: a newer one is there.
-    if result.returncode not in (0, 3010, 1638):
+    if not vcruntime.installer_succeeded(result.returncode):
         log.error("VC++ runtime install failed (%s): %s\n%s", result.returncode, result.stdout[-2000:], result.stderr[-2000:])
         raise CyberpunkError(f"The Visual C++ runtime installer exited with code {result.returncode}. "
                              f"The previous DLLs are backed up in {backup}.")
+    left = vcruntime.prefix_runtime_problems(system32)
+    if left:
+        raise CyberpunkError("The Visual C++ runtime installer finished, but the prefix still has "
+                             + "; ".join(left) + f". The previous DLLs are backed up in {backup}.")
 
 
 def _run_host(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
@@ -420,19 +423,32 @@ def default_instance_dir() -> Path:
 def install_mo2(dest: Path | str, on_output: OnOutput | None = None, *, backend=None) -> Path:
     """A Cyberpunk MO2 instance in ``dest``: MO2-LINT's install (MO2, its config
     and Heroic's "Launch Mod Organizer" entry), the prefix steps, RootBuilder.
-    Then it's the instance in use."""
+    Then it's the instance in use. A Cyberpunk instance already in ``dest``
+    (an install a later step stopped, or one to repair) skips MO2-LINT and gets
+    the rest, each step doing only what's missing."""
     from modsync.mo2.installers import Mo2LintBackend
 
     say = on_output or (lambda _line: None)
     game = _ready_game()
-    backend = backend or Mo2LintBackend()
-    ok, reason = backend.available()
-    if not ok:
-        raise CyberpunkError(f"Cannot install: {reason}")
-    result = backend.install(CYBERPUNK, Path(dest).expanduser(), launcher="gog", env=MO2LINT_ENV, on_output=on_output)
-    if not result.success or result.instance_path is None:
-        raise CyberpunkError(f"Install failed: {result.message}")
-    prepare_prefix(game, on_output)
-    say("Adding the RootBuilder plugin (it puts CET's and RED4ext's DLLs next to the game while you play)…")
-    install_rootbuilder(result.instance_path)
-    return use_instance(result.instance_path)
+    instance = Path(dest).expanduser()
+    if _is_instance(instance):
+        problem = instance_problem(instance)
+        if problem:
+            raise CyberpunkError(problem)
+        say(f"MO2 is already in {instance}; finishing its setup.")
+    else:
+        backend = backend or Mo2LintBackend()
+        ok, reason = backend.available()
+        if not ok:
+            raise CyberpunkError(f"Cannot install: {reason}")
+        result = backend.install(CYBERPUNK, instance, launcher="gog", env=MO2LINT_ENV, on_output=on_output)
+        if not result.success or result.instance_path is None:
+            raise CyberpunkError(f"Install failed: {result.message}")
+        instance = result.instance_path
+    try:
+        prepare_prefix(game, on_output)
+        say("Adding the RootBuilder plugin (it puts CET's and RED4ext's DLLs next to the game while you play)…")
+        install_rootbuilder(instance)
+    except (CyberpunkError, OSError, zipfile.BadZipFile) as e:
+        raise CyberpunkError(f"{e} MO2 is installed in {instance}; run the install again to finish its setup.") from e
+    return use_instance(instance)
