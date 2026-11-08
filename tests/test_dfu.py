@@ -102,6 +102,12 @@ class SteamData(unittest.TestCase):
             self.assertIsNone(dfu.steam_daggerfall())  # manifest, but no files yet
             dagger = _dagger(library / "steamapps" / "common" / "The Elder Scrolls Daggerfall")
             self.assertEqual(dfu.steam_daggerfall(), dagger)
+            # Steam moved it here from the first library, which still has a manifest and leftovers.
+            (steam / "steamapps" / f"appmanifest_{dfu.DAGGERFALL_APPID}.acf").write_text(
+                (library / "steamapps" / f"appmanifest_{dfu.DAGGERFALL_APPID}.acf").read_text())
+            (steam / "steamapps" / "common" / "The Elder Scrolls Daggerfall" / "DF" / "DAGGER" / "ARENA2").mkdir(
+                parents=True)
+            self.assertEqual(dfu.steam_daggerfall(), dagger)  # the copy DFU would accept
 
 
 class SettingsIni(unittest.TestCase):
@@ -340,7 +346,7 @@ class FollowInstall(unittest.TestCase):
         with patch.object(dfu, "hook_status", lambda: on), patch.object(dfu.launchhook, "enable") as enable:
             enable.return_value = "Launch hook refreshed."
             self.assertEqual(dfu.follow_install(inst), "Launch hook refreshed.")
-        enable.assert_called_once_with(dfu.DAGGERFALL_APPID, native=inst.executable)
+        enable.assert_called_once_with(dfu.DAGGERFALL_APPID, native=inst.executable, this_copy=False)  # keeps its copy
 
     def test_nothing_to_do_when_off_or_already_there(self):
         inst = dfu.Install(Path("/games/dfu"))
@@ -649,6 +655,16 @@ class ModsFolderReview(_ModsFolderBase):
 class Launch(unittest.TestCase):
     def setUp(self):
         self.inst = dfu.Install(Path("/games/Daggerfall Unity"))
+        self.followed = []
+        follow = patch.object(dfu, "follow_steam_data", lambda inst: self.followed.append(inst.path))
+        follow.start()  # never this machine's Steam
+        self.addCleanup(follow.stop)
+
+    def test_it_follows_daggerfall_to_another_library_first(self):
+        with patch.object(dfu, "is_running", return_value=False), patch.object(dfu, "hook_status", lambda: self._hook(False)), \
+                patch.object(dfu, "sync_saves", return_value=dfu_saves.Report()), patch.object(dfu.subprocess, "Popen"):
+            dfu.launch(self.inst)
+        self.assertEqual(self.followed, [self.inst.path])
 
     def _hook(self, on: bool):
         return launchhook.LaunchHookStatus(DAGGERFALL, on, None, on, None, None, True, None, False, True,
@@ -736,9 +752,330 @@ class Launch(unittest.TestCase):
                     patch.object(dfu, "steam_daggerfall", lambda: Path(tmp)), \
                     patch.object(dfu, "data_problems", lambda d: []), patch.object(dfu, "install", fake_install), \
                     patch.object(dfu, "display_resolution", lambda: None), \
-                    patch.object(dfu, "follow_install", lambda inst: None):
-                dfu.setup()
-            self.assertEqual(calls, [default.path])
+                    patch.object(dfu, "follow_install", lambda inst: None), \
+                    patch.object(dfu, "is_running", lambda: False):
+                result, _ = dfu.setup()
+            self.assertEqual(calls, [])  # the one in use is only pointed at Steam's data again
+            self.assertEqual(result.install.path, default.path)
+            self.assertEqual(default.daggerfall_path(), tmp)
+            self.assertEqual(State.load().dfu_path, str(default.path))
+
+
+def _us_heap(*strings: str, offset: int = 0) -> bytes:
+    """Bytes laid out like a .NET assembly's user-string heap: each string
+    UTF-16, after its length and before a flag byte."""
+    out = bytearray(b"\x00" * offset)
+    for s in strings:
+        data = s.encode("utf-16-le")
+        out += bytes([len(data) + 1]) + data + b"\x00"
+    return bytes(out)
+
+
+class BuiltVersion(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.dll = self.tmp / "DaggerfallUnity_Data" / "Managed" / "Assembly-CSharp.dll"
+        self.dll.parent.mkdir(parents=True)
+
+    def test_read_from_the_game_code_at_either_alignment(self):
+        for offset in (0, 1, 2, 3):
+            with self.subTest(offset=offset):
+                self.dll.write_bytes(_us_heap("{0} {1} {2}", "Daggerfall Unity", "Release", "1.1.1", "LGBK00I0.IMG",
+                                              offset=offset) + b"\x00" * offset)
+                self.assertEqual(dfu.built_version(self.tmp), "1.1.1")
+
+    def test_an_older_build_with_another_status_word(self):
+        self.dll.write_bytes(_us_heap("Daggerfall Unity", "Beta", "0.10.25"))
+        self.assertEqual(dfu.built_version(self.tmp), "0.10.25")
+
+    def test_unknown_without_the_code_or_the_strings(self):
+        self.assertIsNone(dfu.built_version(self.tmp))
+        self.dll.write_bytes(_us_heap("Something else", "1.9.2"))
+        self.assertIsNone(dfu.built_version(self.tmp))
+
+    def test_an_install_modsync_made_says_its_recorded_version(self):
+        self.dll.write_bytes(_us_heap("Daggerfall Unity", "Release", "1.1.1"))
+        inst = dfu.Install(self.tmp)
+        self.assertEqual(inst.version, "1.1.1")
+        self.assertIsNone(inst.recorded_version)  # found, not installed by ModSync
+        (self.tmp / dfu.RECORD_NAME).write_text('{"version": "1.2.0"}')
+        self.assertEqual(inst.version, "1.2.0")
+
+    def test_a_built_version_never_makes_one_in_the_default_folder_modsyncs(self):
+        """Only an install ModSync made there is taken without being chosen."""
+        self.dll.write_bytes(_us_heap("Daggerfall Unity", "Release", "1.1.1"))
+        inst = dfu.Install(self.tmp)
+        inst.executable.touch()
+        (self.tmp / "Portable.txt").touch()
+        State.update(dfu_path="")
+        with patch.object(dfu, "default_install_dir", lambda: self.tmp):
+            self.assertIsNone(dfu.current_install())
+
+
+class FollowSteamData(unittest.TestCase):
+    """Steam moving Daggerfall to another library (an SD card) empties the folder
+    DFU points at; ModSync points it at Steam's copy, and leaves a working one."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.inst = dfu.Install(self.tmp / "DFU")
+        self.inst.executable.parent.mkdir(parents=True)
+        self.inst.executable.touch()
+        self.sd = _dagger(self.tmp / "sdcard" / "steamapps" / "common" / "Daggerfall")
+        self.steam = self.sd
+        self.running = False
+        for p in (patch.object(dfu, "steam_daggerfall", lambda: self.steam),
+                  patch.object(dfu, "is_running", lambda: self.running)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def point_at(self, path) -> None:
+        dfu.write_daggerfall_path(self.inst.settings_ini, path)
+
+    def test_an_emptied_folder_follows_steam(self):
+        self.point_at(self.tmp / "internal" / "DF" / "DAGGER")  # Steam's uninstall emptied it
+        self.assertEqual(dfu.follow_steam_data(self.inst), self.sd)
+        self.assertEqual(self.inst.daggerfall_path(), str(self.sd))
+        self.assertIsNone(dfu.follow_steam_data(self.inst))  # once is enough
+
+    def test_a_folder_left_with_only_some_files_follows_steam_too(self):
+        leftover = self.tmp / "internal" / "DF" / "DAGGER"
+        (leftover / "ARENA2").mkdir(parents=True)
+        (leftover / "ARENA2" / "MAPS.BSA").touch()  # say, a user-added file Steam left behind
+        self.point_at(leftover)
+        self.assertEqual(dfu.follow_steam_data(self.inst), self.sd)
+
+    def test_the_copy_steam_is_starting_wins(self):
+        launching = self.tmp / "other" / "The Elder Scrolls Daggerfall"
+        _dagger(launching)
+        self.point_at(self.tmp / "gone")
+        self.assertEqual(dfu.follow_steam_data(self.inst, launching), launching / "DF" / "DAGGER")
+
+    def test_a_copy_steam_is_starting_without_data_falls_back(self):
+        self.point_at(self.tmp / "gone")
+        self.assertEqual(dfu.follow_steam_data(self.inst, self.tmp / "nothing here"), self.sd)
+
+    def test_no_path_yet_gets_steams(self):
+        self.assertEqual(dfu.follow_steam_data(self.inst), self.sd)
+
+    def test_a_working_path_is_kept_even_if_it_isnt_steams(self):
+        gog = _dagger(self.tmp / "gog")
+        self.point_at(gog)
+        self.assertIsNone(dfu.follow_steam_data(self.inst))
+        self.assertEqual(self.inst.daggerfall_path(), str(gog))
+
+    def test_a_relative_path_counts_from_the_install(self):
+        _dagger(self.inst.path / "data")
+        dfu.write_settings(self.inst.settings_ini, "Daggerfall", {"MyDaggerfallPath": "./data/DF/DAGGER"})
+        self.assertIsNone(dfu.follow_steam_data(self.inst))
+
+    def test_nothing_changes_while_steams_copy_is_missing_too(self):
+        self.point_at(self.sd)
+        self.steam = None  # the SD card is out
+        shutil.rmtree(self.sd)
+        self.assertIsNone(dfu.follow_steam_data(self.inst))
+        self.assertEqual(self.inst.daggerfall_path(), str(self.sd))  # right again once it's back
+
+    def test_not_while_dfu_runs(self):
+        self.point_at(self.tmp / "gone")
+        self.running = True  # it writes settings.ini back when it exits
+        self.assertIsNone(dfu.follow_steam_data(self.inst))
+
+    def test_the_command_line(self):
+        self.point_at(self.tmp / "gone")
+        with patch.object(dfu, "current_install", lambda: self.inst):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(cli.dfu(["follow", "--quiet"]), 0)
+            self.assertIn(f"pointed it at {self.sd}", out.getvalue())
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(cli.dfu(["follow", "--quiet"]), 0)
+            self.assertEqual(out.getvalue(), "")  # quiet when there's nothing to do
+            launching = _dagger(self.tmp / "launching").parent.parent
+            self.point_at(self.tmp / "gone")
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.dfu(["follow", "--quiet", "--from", str(launching)]), 0)
+            self.assertEqual(self.inst.daggerfall_path(), str(launching / "DF" / "DAGGER"))
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.dfu(["follow", "--from"]), 2)
+
+
+class AdoptExisting(unittest.TestCase):
+    """A Daggerfall Unity the user installed, chosen instead of installing one."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.inst = dfu.Install(self.tmp / "My DFU")
+        self.inst.executable.parent.mkdir(parents=True)
+        self.inst.executable.touch()
+        self.unity = self.tmp / "config" / "unity3d" / "Daggerfall Workshop" / "Daggerfall Unity"
+        self.steam = _dagger(self.tmp / "steam")
+        self.followed = []
+        State.update(dfu_path="")
+        for p in (
+            patch.object(dfu, "unity_data_dir", lambda: self.unity),
+            patch.object(dfu, "steam_daggerfall", lambda: self.steam),
+            patch.object(dfu, "is_running", lambda: False),
+            patch.object(dfu, "follow_install", lambda inst: self.followed.append(inst.path) or None),
+            patch.object(dfu, "default_install_dir", lambda: self.tmp / "default"),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _unity_data(self):
+        (self.unity / "Saves" / "SAVE0").mkdir(parents=True)
+        (self.unity / "Saves" / "SAVE0" / "SaveInfo.txt").write_text("my save")
+        (self.unity / "Mods" / "GameData").mkdir(parents=True)
+        (self.unity / "Mods" / "GameData" / "Mods.json").write_text("[]")
+        (self.unity / "settings.ini").write_text("[Daggerfall]\nMyDaggerfallPath = /gone\n")
+        (self.unity / "prefs").write_text("unity's")
+        (self.unity / "Player.log").write_text("log")
+
+    def test_only_a_linux_dfu_folder_that_can_be_changed(self):
+        with self.assertRaisesRegex(dfu.DfuError, "no Daggerfall Unity"):
+            dfu.examine(self.tmp)
+        windows = self.tmp / "Windows DFU"
+        windows.mkdir()
+        (windows / "DaggerfallUnity.exe").touch()
+        with self.assertRaisesRegex(dfu.DfuError, "Windows build"):
+            dfu.examine(windows)
+        with patch.object(dfu.os, "access", lambda path, mode: False):
+            with self.assertRaisesRegex(dfu.DfuError, "can't change"):
+                dfu.examine(self.inst.path)
+        self.assertIsNone(State.load().dfu_path or None)
+
+    def test_says_whether_its_data_gets_copied(self):
+        self.assertIsNone(dfu.examine(self.inst.path).data_from)  # nothing in ~/.config
+        self.unity.mkdir(parents=True)
+        (self.unity / "prefs").write_text("unity's")  # Unity's own, there for portable DFUs too
+        self.assertIsNone(dfu.examine(self.inst.path).data_from)
+        self._unity_data()
+        self.assertEqual(dfu.examine(self.inst.path).data_from, self.unity)
+        (self.inst.path / "Portable.txt").touch()
+        self.assertIsNone(dfu.examine(self.inst.path).data_from)  # it uses its own already
+
+    def test_a_dfu_that_isnt_portable_brings_its_data_in(self):
+        self._unity_data()
+        (self.inst.data_dir / "Saves").mkdir(parents=True)
+        (self.inst.data_dir / "Saves" / "kept.txt").write_text("already here")
+        (self.inst.data_dir / "settings.ini").write_text("[Daggerfall]\nMyDaggerfallPath = /also-gone\n")
+        found, _ = dfu.adopt(self.inst.path)
+        self.assertEqual(found.data_from, self.unity)
+        self.assertTrue(self.inst.portable)
+        self.assertEqual((self.inst.data_dir / "Saves" / "SAVE0" / "SaveInfo.txt").read_text(), "my save")
+        self.assertEqual((self.inst.data_dir / "Mods" / "GameData" / "Mods.json").read_text(), "[]")
+        self.assertEqual((self.inst.data_dir / "Saves" / "kept.txt").read_text(), "already here")
+        self.assertFalse((self.inst.data_dir / "prefs").exists())
+        self.assertFalse((self.inst.data_dir / "Player.log").exists())
+        # Its settings.ini was there already and stays, with the data path fixed.
+        self.assertEqual(self.inst.daggerfall_path(), str(self.steam))
+        self.assertTrue((self.unity / "Saves" / "SAVE0" / "SaveInfo.txt").exists())  # the originals stay
+        self.assertEqual(dfu.current_install().path, self.inst.path)
+        self.assertEqual(self.followed, [self.inst.path])
+
+    def test_a_save_whose_slot_is_taken_is_copied_whole_into_a_free_one(self):
+        """Never a mix of two saves: one from an earlier portable run sits in SAVE0 already."""
+        self._unity_data()
+        (self.unity / "Saves" / "SAVE0" / "SaveData.txt").write_text("current data")
+        (self.unity / "Saves" / "SAVE0" / "QuestData.txt").write_text("current quests")
+        (self.unity / "Saves" / "SAVE2").mkdir()
+        (self.unity / "Saves" / "SAVE2" / "SaveInfo.txt").write_text("another")
+        old = self.inst.data_dir / "Saves"
+        (old / "SAVE0").mkdir(parents=True)
+        (old / "SAVE0" / "SaveInfo.txt").write_text("old save")
+        (old / "SAVE0" / "SaveData.txt").write_text("old data")
+        (old / "SAVE1").mkdir()
+        dfu.adopt(self.inst.path)
+
+        def files(slot):
+            return {p.name: p.read_text() for p in (old / slot).iterdir()}
+
+        self.assertEqual(files("SAVE0"), {"SaveInfo.txt": "old save", "SaveData.txt": "old data"})
+        self.assertEqual(files("SAVE1"), {})
+        self.assertEqual(files("SAVE2"), {"SaveInfo.txt": "another"})
+        self.assertEqual(files("SAVE3"), {"SaveInfo.txt": "my save", "SaveData.txt": "current data",
+                                          "QuestData.txt": "current quests"})
+        self.assertEqual(sorted(p.name for p in old.iterdir()), ["SAVE0", "SAVE1", "SAVE2", "SAVE3"])
+        # An attempt that stopped short and is run again copies nothing twice.
+        (self.inst.path / "Portable.txt").unlink()
+        dfu.adopt(self.inst.path)
+        self.assertEqual(sorted(p.name for p in old.iterdir()), ["SAVE0", "SAVE1", "SAVE2", "SAVE3"])
+
+    def test_daggerfall_data_it_already_uses_is_kept(self):
+        gog = _dagger(self.tmp / "gog")
+        dfu.write_daggerfall_path(self.inst.settings_ini, gog)
+        (self.inst.path / "Portable.txt").touch()
+        dfu.adopt(self.inst.path)
+        self.assertEqual(self.inst.daggerfall_path(), str(gog))
+        ov = dfu.overview(hook=False)
+        self.assertTrue(ov.configured_ok)
+        self.assertTrue(ov.own_data)
+        self.assertFalse(ov.stale_path)
+
+    def test_without_usable_data_anywhere_it_is_still_used(self):
+        self.steam = None
+        dfu.adopt(self.inst.path)
+        self.assertIsNone(self.inst.daggerfall_path())  # DFU asks for it on its startup screen
+        self.assertEqual(dfu.current_install().path, self.inst.path)
+
+    def test_never_while_dfu_runs(self):
+        self._unity_data()
+        with patch.object(dfu, "is_running", lambda: True):
+            with self.assertRaisesRegex(dfu.DfuError, "Close Daggerfall Unity"):
+                dfu.adopt(self.inst.path)
+        self.assertFalse(self.inst.portable)
+        self.assertFalse(self.inst.data_dir.exists())
+
+    def test_the_saves_library_lets_go_of_the_install_it_replaces(self):
+        old = dfu.Install(self.tmp / "old")
+        old.executable.parent.mkdir(parents=True)
+        old.executable.touch()
+        (old.path / "Portable.txt").touch()
+        State.update(dfu_path=str(old.path))
+        released = []
+        with patch.object(dfu_saves, "release", lambda saves, library: released.append(saves)):
+            dfu.adopt(self.inst.path)
+        self.assertEqual(released, [old.data_dir / "Saves"])
+        self.assertEqual(State.load().dfu_path, str(self.inst.path))
+
+    def test_a_data_path_gone_with_steams_daggerfall_there_is_stale(self):
+        dfu.write_daggerfall_path(self.inst.settings_ini, self.tmp / "gone")
+        (self.inst.path / "Portable.txt").touch()
+        State.update(dfu_path=str(self.inst.path))
+        ov = dfu.overview(hook=False)
+        self.assertFalse(ov.configured_ok)
+        self.assertTrue(ov.stale_path)
+        self.assertFalse(ov.own_data)
+        dfu.write_daggerfall_path(self.inst.settings_ini, self.steam)
+        ov = dfu.overview(hook=False)
+        self.assertTrue(ov.configured_ok)
+        self.assertFalse(ov.stale_path or ov.own_data)
+
+    def test_the_cli_uses_it_and_says_what_it_did(self):
+        self._unity_data()
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(cli.dfu(["use", str(self.inst.path)]), 0)
+        self.assertIn(f"Using Daggerfall Unity (version unknown) in {self.inst.path}", out.getvalue())
+        self.assertIn("Copied its settings and saves in", out.getvalue())
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(cli.dfu(["use", str(self.tmp)]), 1)
+        self.assertIn("no Daggerfall Unity", out.getvalue())
+
+    def test_the_cli_status_accepts_its_own_copy_of_the_data(self):
+        gog = _dagger(self.tmp / "gog")
+        dfu.write_daggerfall_path(self.inst.settings_ini, gog)
+        (self.inst.path / "Portable.txt").touch()
+        State.update(dfu_path=str(self.inst.path))
+        out = io.StringIO()
+        with redirect_stdout(out), patch.object(dfu, "hook_status", _hook_off):
+            self.assertEqual(cli.dfu(["status"]), 0)
+        self.assertIn("its own copy, not Steam's", out.getvalue())
 
 
 # The first 20 bytes of an x86-64 Linux program, as far as needs_emulation reads.

@@ -15,6 +15,7 @@ from pathlib import Path
 from modsync import launchhook
 from modsync.games import DAGGERFALL, SKYRIM_SE
 from modsync.mo2.launch import LaunchPlan
+from modsync.state import EXIT_NEWER_STATE
 from modsync.steam import libraries as libs
 from modsync.steam.compattools import CompatTool
 from tests import fakesteam
@@ -168,7 +169,7 @@ class RenderedScript(unittest.TestCase):
         handoff = launchhook.encode_handoff(self.mo2_plan())
         self.run_hook("waitforexitandrun", self.game_exe, hub_exit=launchhook.EXIT_CANCEL, handoff=handoff)
         self.assertIsNone(self.record("SteamLinuxRuntime_4"))
-        self.run_hook("waitforexitandrun", self.game_exe, hub_exit=3, handoff=handoff)
+        self.run_hook("waitforexitandrun", self.game_exe, hub_exit=1, handoff=handoff)
         self.assertEqual(self.record("SteamLinuxRuntime_4")["argv"][-1], self.game_exe)
 
     def test_unusable_handoffs_launch_the_game(self):
@@ -188,8 +189,15 @@ class RenderedScript(unittest.TestCase):
         self.assertIsNone(self.record("SteamLinuxRuntime_4"))
         self.assertIn("cancelled", self.log())
 
+    def test_a_setup_from_a_newer_modsync_ends_the_launch(self):
+        # ModSync showed why; launching Skyrim without MO2 after that would surprise.
+        result = self.run_hook("waitforexitandrun", self.game_exe, hub_exit=EXIT_NEWER_STATE)
+        self.assertEqual(result.returncode, 0)
+        self.assertIsNone(self.record("SteamLinuxRuntime_4"))
+        self.assertIn("ending the launch", self.log())
+
     def test_hub_failure_never_blocks_the_game(self):
-        result = self.run_hook("waitforexitandrun", self.game_exe, hub_exit=3)
+        result = self.run_hook("waitforexitandrun", self.game_exe, hub_exit=1)
         self.assertEqual(result.returncode, 0)
         self.assertIsNotNone(self.record("SteamLinuxRuntime_4"))
         self.assertIn("launching anyway", self.log())
@@ -276,8 +284,23 @@ class NativeProgramScript(unittest.TestCase):
         self.assertEqual(dfu["argv"], [])  # DOSBox's arguments mean nothing to it
         self.assertEqual(dfu["cwd"], str(self.dfu.parent))
         self.assertEqual(dfu["env"]["LD_PRELOAD"], "/fake/gameoverlayrenderer.so")  # Steam's overlay
-        self.assertIsNone(self.record("modsync-cmd"))  # no window
+        self.assertEqual(self.record("modsync-cmd")["argv"][:3], ["dfu", "follow", "--quiet"])  # no window, no hub
         self.assertIsNone(self.record("SteamLinuxRuntime_4"))
+
+    def test_play_has_modsync_check_dfus_data_against_the_copy_steam_starts(self):
+        # Steam may have moved Daggerfall to another library (an SD card); ModSync decides.
+        sd = str(self.tmp / "sdcard" / "The Elder Scrolls Daggerfall")
+        result = self.run_hook("waitforexitandrun", self.dosbox, extra_env={"STEAM_COMPAT_INSTALL_PATH": sd})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.record("modsync-cmd")["argv"], ["dfu", "follow", "--quiet", "--from", sd])
+        self.assertIsNotNone(self.record("Daggerfall Unity"))
+
+    def test_a_failing_check_never_blocks_dfu(self):
+        fakesteam._executable(self.modsync_dir / "modsync", "#!/bin/sh\nexit 1\n")
+        result = self.run_hook("waitforexitandrun", self.dosbox)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(self.record("Daggerfall Unity"))
+        self.assertIn("couldn't check Daggerfall Unity's data path", self.log())
 
     def test_original_game_on_request(self):
         result = self.run_hook("waitforexitandrun", self.dosbox, extra_env={"MODSYNC_ORIGINAL_GAME": "1"})
@@ -303,15 +326,20 @@ echo "modsync $* preload=${{LD_PRELOAD-}}" >> "{calls}"
 echo "dfu preload=${{LD_PRELOAD-}} cwd=$PWD" >> "{calls}"
 exit 3
 """)
-        result = self.run_hook("waitforexitandrun", self.dosbox)
+        installed = str(self.tmp / "The Elder Scrolls Daggerfall")
+        follow = f"modsync dfu follow --quiet --from {installed} preload="  # no overlay in ModSync
+        steam = {"STEAM_COMPAT_INSTALL_PATH": installed}
+        result = self.run_hook("waitforexitandrun", self.dosbox, extra_env=steam)
         self.assertEqual(result.returncode, 3, result.stderr)  # exec'd: DFU's own exit code
-        self.assertEqual(calls.read_text().splitlines(), [f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}"])
+        self.assertEqual(calls.read_text().splitlines(),
+                         [follow, f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}"])
         calls.unlink()
         (self.dfu.parent / ".modsync-saves").touch()
-        result = self.run_hook("waitforexitandrun", self.dosbox)
+        result = self.run_hook("waitforexitandrun", self.dosbox, extra_env=steam)
         self.assertEqual(result.returncode, 3, result.stderr)  # DFU's own exit code
         self.assertEqual(calls.read_text().splitlines(), [
-            "modsync dfu saves --quiet --playing preload=",  # no overlay in ModSync
+            follow,
+            "modsync dfu saves --quiet --playing preload=",
             f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}",
             "modsync dfu saves --quiet --playing preload=",
         ])
@@ -358,7 +386,7 @@ exit 3
         self.assertEqual(fex["env"]["STEAM_COMPAT_DATA_PATH"], str(self.tmp / "compatdata"))  # Steam's, kept
         self.assertEqual(fex["env"]["STEAM_COMPAT_TOOL_PATHS"], f"{self.fex_dir}:{slr}")
         self.assertIsNone(self.record("SteamLinuxRuntime_4"))  # FEX starts it, not the hook
-        self.assertIsNone(self.record("modsync-cmd"))
+        self.assertEqual(self.record("modsync-cmd")["argv"][:3], ["dfu", "follow", "--quiet"])  # no window, no hub
 
     def test_on_arm_saves_sync_around_it_too(self):
         (self.dfu.parent / ".modsync-saves").touch()

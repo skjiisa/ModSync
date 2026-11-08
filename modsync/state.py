@@ -28,6 +28,27 @@ except ImportError:  # pragma: no cover - not on Windows
 
 from modsync import config
 
+# The state file's version: bump it when what ModSync writes there changes in a
+# way an older ModSync would misread. Each copy on a machine shares the file
+# (see modsync.config), so an older one must leave a newer one's alone.
+SCHEMA = 1
+
+
+EXIT_NEWER_STATE = 3  # how a command ends on one; the background service isn't restarted for it
+
+
+class NewerStateError(RuntimeError):
+    """The state file was written by a newer ModSync than this one."""
+
+
+def _refuse_newer(p: Path, data: object) -> None:
+    written = data.get("schema", 0) if isinstance(data, dict) else 0
+    if isinstance(written, int) and written > SCHEMA:
+        raise NewerStateError(
+            f"{p} is from a newer ModSync (state version {written}; this one knows up to {SCHEMA}), "
+            "so this one leaves it alone. Update this copy of ModSync, or use the newer one.")
+
+
 _FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "awaiting_vault_version",
            "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside", "dfu_path", "game_folders", "declined_folders", "paired",
            "home_game")
@@ -71,6 +92,8 @@ class State:
     paired: bool = False
     # The game the app's Home shows ("" for Skyrim), so it opens where it was left.
     home_game: str = ""
+    # The version of the file's format this ModSync writes (SCHEMA); never read back.
+    schema: int = SCHEMA
 
     @staticmethod
     def path() -> Path:
@@ -82,6 +105,7 @@ class State:
         if p.exists():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
+                _refuse_newer(p, data)
                 state = cls(**{k: data[k] for k in _FIELDS if k in data})
                 # A hand-edited or damaged file must not take the rest with it.
                 if not isinstance(state.game_folders, dict):
@@ -100,7 +124,14 @@ class State:
             self._write()
 
     def _write(self) -> None:
+        """Under the lock. Every write checks what's there now, so even a
+        whole reset (``save``) leaves a newer ModSync's file alone."""
         p = self.path()
+        try:
+            on_disk = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            on_disk = None
+        _refuse_newer(p, on_disk)
         tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
         tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
         os.replace(tmp, p)

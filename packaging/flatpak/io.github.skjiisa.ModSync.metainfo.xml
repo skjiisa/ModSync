@@ -34,6 +34,12 @@
   <url type="homepage">https://github.com/skjiisa/ModSync</url>
   <url type="bugtracker">https://github.com/skjiisa/ModSync/issues</url>
   <releases>
+    <release version="2.1.0~beta1" date="2026-11-04" type="development">
+      <url>https://github.com/skjiisa/ModSync/releases/tag/v2.1.0-beta1</url>
+      <description>
+        <p>Daggerfall Unity, set up from Steam's free Daggerfall and started from its Play button, with its mods and saves synced between machines. A game switcher picks Skyrim or Daggerfall Unity. Pairing covers the whole machine, and machines paired through a third one sync with each other directly.</p>
+      </description>
+    </release>
     <release version="2.0.0" date="2026-10-28" type="stable">
       <url>https://github.com/skjiisa/ModSync/releases/tag/v2.0.0</url>
       <description>

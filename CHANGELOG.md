@@ -6,6 +6,58 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Copies of ModSync on a machine share one setup. While the Flatpak is
+  installed, a copy run from source or installed with pip uses the
+  Flatpak's settings and data, unless it already has a setup of its own in
+  `~/.config/modsync`. `MODSYNC_HOME` gives a separate setup for
+  development, which a background service installed meanwhile keeps using.
+  `modsync doctor` shows the folders in use and any other setup on the
+  machine.
+- Turning a Play hook on again keeps the copy of ModSync it starts, so a
+  copy run from source doesn't take Steam's Play button from the Flatpak.
+  The Flatpak takes it back, and `--this-copy` on `modsync launch enable` or
+  `modsync dfu hook enable` makes it the copy you're running.
+- The state file records its format version. A ModSync older than the one
+  that wrote it leaves it alone instead of misreading it: the command line
+  and the app say so, the background service stops, and a launch from
+  Steam's Play button ends instead of going on without ModSync.
+
+### Fixed
+
+- Daggerfall Unity runs on the Steam Frame (#110). Its x86-64 Linux build
+  now goes through Steam's FEX and Steam Linux Runtime 4.0, the way Steam
+  runs any x86 Linux game on ARM, from both Steam's Play button and the
+  app. Before, Play did nothing there. ModSync also tells when DFU is
+  running under FEX, so saves sync still waits for it to close.
+- Moving Daggerfall to another Steam library, such as an SD card, no longer
+  leaves Daggerfall Unity on its "set the path to your Daggerfall game files"
+  screen. Play, in Steam or in the app, points it at Steam's new copy first,
+  and `modsync dfu follow` does it by hand. A data path that still works is
+  never changed.
+
+- `modsync dfu hook enable` works when Steam already starts Daggerfall with
+  Luxtorpeda or another launcher that isn't a Proton. Setup steps and the
+  original game go to Steam's default Proton (Valve's, when the default is a
+  launcher too), and turning the hook off gives
+  Daggerfall back to that launcher. `modsync dfu status` names it while the
+  hook is off.
+- A new Daggerfall Unity install gets the saves synced from other machines
+  before its first launch. Before, saves sync waited for DFU to make its
+  Saves folder, so the first Play started without them.
+- Syncing no longer fails to start the first time after a Syncthing release:
+  Syncthing upgrades itself and exits, and ModSync now starts it again.
+
+## [2.1.0-beta1] - 2026-11-04
+
+Daggerfall Unity joins Skyrim. ModSync installs it from Steam's free
+*The Elder Scrolls II: Daggerfall*, starts it from Steam's Play button, and
+syncs its mods and saves between machines. Pairing now covers the whole
+machine, and machines paired through a third one sync with each other.
+Daggerfall Unity was tested on the desktop; the Steam Deck (#109) and Steam
+Frame (#110) are still to be tested.
+
 ### Added
 
 - Daggerfall Unity, set up from Steam's free *The Elder Scrolls II:
@@ -13,8 +65,8 @@ All notable changes to ModSync are documented here. The format follows
   build and points it at Steam's data. `modsync dfu hook enable` makes
   Steam's Play button on Daggerfall start it, through the same launch hook
   as Skyrim, and `modsync dfu status` shows the setup. Its startup screen,
-  where mods are turned on and off, still opens. Command line only for now.
-  See "Daggerfall Unity" in `docs/advanced.md`.
+  where mods are turned on and off, still opens. See "Daggerfall Unity" in
+  `docs/advanced.md`.
 - Machine-wide pairing (#104). Paired machines share every folder ModSync
   syncs, and games other than Skyrim get their own folders. A machine that
   starts syncing one offers it to the others, and each takes it up once the
@@ -41,11 +93,11 @@ All notable changes to ModSync are documented here. The format follows
   folder, and turns mods and saves sync on and off. ModSync reopens on the
   game last shown, or on Skyrim while that game isn't installed; opened by
   Skyrim's Play button, it shows only Skyrim.
-- Daggerfall Unity on the Steam Frame. Its x86-64 Linux build runs
-  through Steam's FEX and Steam Linux Runtime 4.0, the way Steam runs any
-  x86 Linux game on ARM, from both Steam's Play button and the app.
-  ModSync can now tell when DFU is running under FEX, so saves sync still
-  waits for it to close.
+- A Daggerfall Unity you installed yourself can be used instead of
+  installing one: "Use an existing installation…" on its Home, or
+  `modsync dfu use <dir>`. If it keeps its data in `~/.config`, the data is
+  copied into its folder first, and the originals stay. Daggerfall data it
+  already uses, like a GOG copy, is kept.
 - Machines paired through a third one sync with each other directly. When
   a Deck and a laptop have both paired with the desktop, the desktop
   introduces them, and they keep syncing with the desktop off. Machines

@@ -336,6 +336,44 @@ class SyncthingPortConflict(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 5)
         self.assertFalse(mgr.running)
 
+    def test_syncthing_that_upgraded_itself_is_started_once_more(self):
+        address = self.serve(404, b"not found")
+        runs = self.tmp / "runs"
+        # The first run upgrades and exits 4; the new binary then fails for its own reason.
+        mgr = self.manager(address, f'echo x >> "{runs}"; [ "$(wc -l < "{runs}")" -gt 1 ] && exit 3; exit 4')
+        with self.assertRaisesRegex(SyncthingError, r"exited early \(code 3\)"):
+            mgr.start(timeout=5)
+        self.assertEqual(len(runs.read_text().splitlines()), 2)
+
+    def test_syncthing_that_upgraded_itself_comes_up_as_the_new_version(self):
+        ready, runs, log = self.tmp / "ready", self.tmp / "runs", self.tmp / "syncthing.log"
+
+        class Pong(_Canned):  # Syncthing's API answers once the new version is up
+            def do_GET(self):  # noqa: N802 (http.server API)
+                self.status, self.body = (200, b'{"ping": "pong"}') if ready.exists() else (404, b"")
+                super().do_GET()
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Pong)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        mgr = self.manager(f"127.0.0.1:{server.server_address[1]}",
+                           f'echo "run $$"; echo x >> "{runs}"\n'
+                           f'[ "$(wc -l < "{runs}")" -gt 1 ] && {{ touch "{ready}"; exec sleep 30; }}\nexit 4')
+        mgr._log_file = log
+        mgr.start(timeout=5)
+        self.assertTrue(mgr.running)
+        self.assertEqual(len([line for line in log.read_text().splitlines() if line.startswith("run ")]), 2)
+        replacement = mgr._proc
+        mgr.stop()
+        self.assertIsNotNone(replacement.poll())  # stopping stops the new version, not just the first
+
+    def test_syncthing_that_keeps_upgrading_is_not_restarted_forever(self):
+        address = self.serve(404, b"not found")
+        mgr = self.manager(address, "exit 4")
+        with self.assertRaisesRegex(SyncthingError, r"exited early \(code 4\)"):
+            mgr.start(timeout=5)
+
     def test_port_owner_that_answers_garbage_is_not_mistaken_for_syncthing(self):
         address = self.serve(200, b"<html>hello from some other app</html>")
         mgr = self.manager(address, "exit 3")

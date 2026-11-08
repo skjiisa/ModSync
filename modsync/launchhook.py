@@ -42,6 +42,7 @@ import re
 import shlex
 import shutil
 import stat
+import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -61,7 +62,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-TEMPLATE_VERSION = 5  # 2: the MO2 launch the window hands back; 3: a native program; 4: DFU's saves around it; 5: through FEX on ARM
+TEMPLATE_VERSION = 7  # 2: the MO2 launch the window hands back; 3: a native program; 4: DFU's saves around it;
+# 5: a newer setup (state.EXIT_NEWER_STATE) ends the launch; 6: DFU follows Daggerfall to another library;
+# 7: an x86-64 DFU through Steam's FEX on ARM
 TEMPLATE_DIR = Path(__file__).parent / "steam" / "launchhook_template"
 MARKER = ".modsync-launch-hook"  # only directories carrying this are ever removed
 
@@ -288,6 +291,7 @@ class LaunchHookStatus:
     outdated: bool = False
     legacy: bool = False  # Steam still launches through the hook's old, cloud-breaking name
     native: str | None = None  # what Play runs in place of the game, for Daggerfall
+    other_launcher: str | None = None  # the current tool's name when it isn't a Proton (Luxtorpeda)
 
     @property
     def enabled(self) -> bool:
@@ -344,6 +348,8 @@ class LaunchHookStatus:
             )
         if self.current_mapping and compattools.MO2LINT_TOOL_RE.match(self.current_mapping):
             return "Off. Steam's Play button opens Mod Organizer 2 (MO2-LINT) directly."
+        if self.other_launcher:
+            return f"Off. Steam's Play button starts {g} with {self.other_launcher}."
         return f"Off. Steam's Play button starts {g} directly."
 
 
@@ -433,7 +439,15 @@ def status(appid: int = SKYRIM_SE.appid) -> LaunchHookStatus:
         outdated=outdated,
         legacy=current == legacy_tool_id(appid),
         native=_installed_native(tool_dir, record) if installed else None,
+        other_launcher=_other_launcher(env, current, appid),
     )
+
+
+def _other_launcher(env: SteamEnv, current: str | None, appid: int) -> str | None:
+    if not current or _is_ours(current, appid):
+        return None
+    tool = compattools.find_tool(current, env.root, env.libraries)
+    return tool.display_name if tool and not (tool.path / "proton").exists() else None
 
 
 def _installed_native(tool_dir: Path, record: Record | None) -> str | None:
@@ -568,8 +582,33 @@ def _arm64_fallback(env: SteamEnv, appid: int) -> CompatTool | None:
     return compattools.steam_default_tool(appid, env.root, env.libraries, global_choice=default)
 
 
+def _steam_default(env: SteamEnv, appid: int) -> CompatTool:
+    default = SteamConfig.load(env.config_vdf).compat_tool_name(0) if env.config_vdf.exists() else None
+    tool = compattools.steam_default_tool(appid, env.root, env.libraries, global_choice=default)
+    if tool is None:
+        raise RuntimeError(
+            "could not tell which Proton Steam uses for the game; pick one under "
+            "Properties, then Compatibility in Steam, and try again"
+        )
+    return tool
+
+
+def _a_proton(env: SteamEnv, appid: int) -> CompatTool:
+    """Steam's default for the game when that's a Proton, else Valve's own: the
+    default can be a launcher too (Luxtorpeda picked for every game)."""
+    tool = _steam_default(env, appid)
+    if (tool.path / "proton").exists():
+        return tool
+    valve = compattools.default_valve_tool(env.root, env.libraries)
+    if valve is None:
+        raise RuntimeError(f"Steam's default, {tool.display_name}, isn't a Proton, and no Proton is installed. "
+                           "Install one (Proton Experimental, say) in Steam and try again")
+    return valve
+
+
 def _resolve_underlying(
-    env: SteamEnv, appid: int, current: str | None, record: Record | None, through: str | None
+    env: SteamEnv, appid: int, current: str | None, record: Record | None, through: str | None,
+    native: bool = False,
 ) -> CompatTool:
     ours = tool_id(appid)
     if through:
@@ -582,6 +621,11 @@ def _resolve_underlying(
         tool = compattools.find_tool(current, env.root, env.libraries)
         if tool is None and compattools.is_arm64():
             tool = _arm64_fallback(env, appid)
+        if native and (tool is None or not (tool.path / "proton").exists()):
+            # Play runs the native program, so the hook only hands on setup steps and the
+            # original game, which need a Proton, not another launcher such as Luxtorpeda.
+            log.info("%s is not a Proton; the hook hands the rest to Steam's default Proton", current)
+            tool = _a_proton(env, appid)
         if tool is None:
             raise RuntimeError(
                 f"Steam launches the game with {current!r}, but that tool was not found on this machine"
@@ -594,18 +638,41 @@ def _resolve_underlying(
                 "pick a Proton for the game in Steam, then turn the hook on again"
             )
     else:
-        default = SteamConfig.load(env.config_vdf).compat_tool_name(0) if env.config_vdf.exists() else None
-        tool = compattools.steam_default_tool(appid, env.root, env.libraries, global_choice=default)
-        if tool is None:
-            raise RuntimeError(
-                "could not tell which Proton Steam uses for the game; pick one under "
-                "Properties, then Compatibility in Steam, and try again"
-            )
+        tool = _steam_default(env, appid)
     if tool.name == ours or _TOOL_ID_RE.match(tool.name):
         raise RuntimeError("the hook cannot hand off to itself")
     if not (tool.path / "proton").exists():
         raise RuntimeError(f"{tool.display_name} at {tool.path} has no 'proton' to run")
     return tool
+
+
+def _runnable(command: list[str]) -> bool:
+    """Whether a recorded way of starting ModSync still starts it here. The
+    program being there isn't enough (``python -m modsync`` with ModSync
+    gone), so it's asked for its version, which touches nothing."""
+    program = Path(command[0])
+    if not (program.is_file() and os.access(program, os.X_OK)):
+        return False
+    if program.name == "flatpak" and command[1:2] == ["run"] and not config.flatpak_installed():
+        return False
+    env = {k: v for k, v in os.environ.items() if k not in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT")}
+    try:
+        result = subprocess.run([*command, "--version"], stdin=subprocess.DEVNULL, capture_output=True,
+                                text=True, timeout=30, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and result.stdout.startswith("ModSync ")
+
+
+def _hook_command(record: "Record | None", here: list[str]) -> list[str]:
+    """How a hook turned on again starts ModSync: the copy it already starts,
+    while that still works. Every copy on a machine shares one setup (see
+    modsync.config), so a copy run from source must not take Steam's Play
+    button from the Flatpak by turning the hook on again. The Flatpak, the
+    copy users install, takes it back."""
+    if config.in_flatpak() or record is None or not record.command or not _runnable(record.command):
+        return here
+    return record.command
 
 
 def enable(
@@ -614,10 +681,28 @@ def enable(
     through: str | None = None,
     command: list[str] | None = None,
     native: Path | str | None = None,
+    this_copy: bool = False,
 ) -> str:
     """Install the hook for the game and make Steam use it. Returns what happened.
-    ``command`` is how the hook starts ModSync; by default, the way this ModSync runs.
-    ``native`` is a program Play runs in place of the game (Daggerfall Unity)."""
+    ``command`` is how the hook starts ModSync; by default the copy a hook set up
+    already starts (see :func:`_hook_command`), else this one. ``this_copy`` makes
+    it this one regardless. ``native`` is a program Play runs in place of the game
+    (Daggerfall Unity)."""
+    here = modsync_command()
+    kept = False
+    if command is None:
+        env = steam_env()
+        record = load_record(env.installed_tool_dir(appid), appid) if env else None
+        command = here if this_copy else _hook_command(record, here)
+        kept = command != here
+    message = _enable(appid, through=through, command=command, native=native)
+    if kept:
+        message += (f" Play still starts ModSync with '{shlex.join(command)}', the copy the hook was set up "
+                    "with; add --this-copy to make it start this one.")
+    return message
+
+
+def _enable(appid: int, *, through: str | None, command: list[str], native: Path | str | None) -> str:
     game = hook_game(appid)
     env = steam_env()
     if env is None:
@@ -630,12 +715,11 @@ def enable(
     ours = tool_id(appid)
     record = load_record(env.installed_tool_dir(appid), appid)
 
-    underlying = _resolve_underlying(env, appid, current, record, through)
+    underlying = _resolve_underlying(env, appid, current, record, through, native=bool(native))
     # Keep the very first "previous" across re-enables, so disable restores what
     # the user had before ModSync ever touched it.
     previous = record.previous if (record and _is_ours(current, appid)) else current_entry
 
-    command = command or modsync_command()
     target = env.tool_dir(appid)
     render(
         target,

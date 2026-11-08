@@ -20,6 +20,7 @@ from typing import Callable
 
 from modsync import gameversion, launchhook
 from modsync.games import SKYRIM_SE
+from modsync.state import NewerStateError
 
 Log = Callable[[str], None]
 
@@ -88,6 +89,8 @@ class Server:
         try:
             # The app may have joined, left or paused a vault since the last tick.
             self.service.reload_state()
+        except NewerStateError:
+            raise  # a newer ModSync took over the setup: stop (and stop syncing) rather than act on a stale one
         except Exception as exc:
             self.log(f"  (state unreadable: {exc})")
         try:

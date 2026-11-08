@@ -24,15 +24,40 @@ def in_flatpak() -> bool:
     return bool(os.environ.get("FLATPAK_ID")) or Path("/.flatpak-info").exists()
 
 
+def _systemd_quote(value: str, *, command: bool = False) -> str:
+    """A double-quoted value for the unit file. In a command line systemd also
+    expands ``$NAME`` and ``${NAME}``, quoted or not, so there ``$`` is doubled."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    if command:
+        escaped = escaped.replace("$", "$$")
+    return f'"{escaped}"'
+
+
+def _modsync_home() -> str | None:
+    """A separate setup the service must keep using (see modsync.config): the
+    user manager that runs it doesn't have this shell's environment."""
+    home = os.environ.get("MODSYNC_HOME")
+    return str(Path(home).expanduser().absolute()) if home else None
+
+
 def _exec_start() -> str:
     flatpak_id = os.environ.get("FLATPAK_ID")
+    home = _modsync_home()
     if flatpak_id or Path("/.flatpak-info").exists():
-        return f"flatpak run {flatpak_id or 'io.github.skjiisa.ModSync'} serve"
+        env = f" {_systemd_quote(f'--env=MODSYNC_HOME={home}', command=True)}" if home else ""
+        return f"flatpak run{env} {flatpak_id or 'io.github.skjiisa.ModSync'} serve"
     # Native: current interpreter + module form (works inside a venv too).
     return f"{sys.executable} -m modsync serve"
 
 
+def _environment() -> str:
+    home = _modsync_home()
+    return f"Environment={_systemd_quote(f'MODSYNC_HOME={home}')}\n" if home else ""
+
+
 def unit_text() -> str:
+    from modsync.state import EXIT_NEWER_STATE
+
     return f"""\
 [Unit]
 Description=ModSync background service (vault sync, Steam pin, update watch)
@@ -40,9 +65,10 @@ Documentation=https://github.com/skjiisa/ModSync
 
 [Service]
 Type=simple
-ExecStart={_exec_start()}
+{_environment()}ExecStart={_exec_start()}
 Restart=on-failure
 RestartSec=10
+RestartPreventExitStatus={EXIT_NEWER_STATE}
 
 [Install]
 WantedBy=default.target

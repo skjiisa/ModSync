@@ -19,9 +19,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from modsync import platforms
+from modsync import config, platforms
 
-MODSYNC_FLATPAK_ID = "io.github.skjiisa.ModSync"
+MODSYNC_FLATPAK_ID = config.FLATPAK_APP_ID
 
 # binary KeyValues type tags
 _MAP = 0x00

@@ -450,6 +450,61 @@ class LegacyName(LaunchHookBase):
         self.assertFalse(self.legacy_dir.exists())
 
 
+class KeepsItsCopy(LaunchHookBase):
+    """Every copy of ModSync on a machine shares one setup, so turning a hook on
+    again from another copy (one run from source) leaves Play starting the copy
+    it was set up with. The Flatpak takes it back, and so does --this-copy."""
+
+    def setUp(self):
+        super().setUp()
+        modsync = '#!/bin/sh\n[ "$1" = --version ] && echo "ModSync 9.9"\n'
+        self.first = fakesteam._executable(self.tmp / "first" / "modsync", modsync)
+        self.second = fakesteam._executable(self.tmp / "second" / "modsync", modsync)
+
+    def enable_from(self, copy: Path, **kwargs) -> str:
+        with patch.object(launchhook, "modsync_command", lambda: [str(copy)]):
+            return launchhook.enable(**kwargs)
+
+    def started(self) -> list[str]:
+        return launchhook.Record.load().command
+
+    def test_another_copy_turning_it_on_again_keeps_the_first(self):
+        self.enable_from(self.first)
+        msg = self.enable_from(self.second)
+        self.assertEqual(self.started(), [str(self.first)])
+        self.assertIn(str(self.first), (self.tool_dir / "proton").read_text())
+        self.assertIn("add --this-copy", msg)
+
+    def test_this_copy_takes_it(self):
+        self.enable_from(self.first)
+        msg = self.enable_from(self.second, this_copy=True)
+        self.assertEqual(self.started(), [str(self.second)])
+        self.assertNotIn("--this-copy", msg)
+
+    def test_the_flatpak_takes_it_back(self):
+        self.enable_from(self.first)
+        with patch.dict(os.environ, {"FLATPAK_ID": "io.github.skjiisa.ModSync"}):
+            launchhook.enable()  # modsync_command is the Flatpak's in these tests
+        self.assertEqual(self.started(), ["/usr/bin/flatpak", "run", "io.github.skjiisa.ModSync"])
+
+    def test_a_copy_that_is_gone_is_replaced(self):
+        self.enable_from(self.first)
+        self.first.unlink()
+        self.assertNotIn("--this-copy", self.enable_from(self.second))
+        self.assertEqual(self.started(), [str(self.second)])
+
+    def test_a_command_that_no_longer_starts_modsync_is_replaced(self):
+        self.enable_from(self.first)
+        self.first.write_text("#!/bin/sh\nexit 1\n")  # say, python -m modsync with ModSync uninstalled
+        self.enable_from(self.second)
+        self.assertEqual(self.started(), [str(self.second)])
+
+    def test_an_uninstalled_flatpak_is_replaced(self):
+        launchhook.enable()  # started with flatpak run; tests/conftest.py says it isn't installed
+        self.enable_from(self.second)
+        self.assertEqual(self.started(), [str(self.second)])
+
+
 class DaggerfallHook(LaunchHookBase):
     """For Daggerfall, Play runs Daggerfall Unity (a native program) and opens
     no window; the hook has its own record and queue next to Skyrim's."""
@@ -525,6 +580,53 @@ class DaggerfallHook(LaunchHookBase):
         self.assertTrue(launchhook.refresh_if_outdated(self.DF))
         self.assertIn(f"native='{self.dfu}'", (self.df_dir / "proton").read_text())
         self.assertEqual(launchhook.Record.load(self.DF).native, str(self.dfu))
+
+
+class DaggerfallOverLuxtorpeda(LaunchHookBase):
+    """Steam already starts Daggerfall with Luxtorpeda, a launcher with no
+    Proton in it (it runs its own Daggerfall Unity), as many Decks have it."""
+
+    DF = DaggerfallHook.DF
+    LUX = {"name": "luxtorpeda", "config": "", "priority": "250"}
+    mapping = {1812390: LUX}
+    df_mapping = DaggerfallHook.df_mapping
+
+    def setUp(self):
+        super().setUp()
+        self.dfu = self.tmp / "Daggerfall Unity" / "DaggerfallUnity.x86_64"
+        fakesteam._executable(self.dfu, "#!/bin/sh\n")
+        lux = self.root / "compatibilitytools.d" / "luxtorpeda"
+        fakesteam._executable(lux / "luxtorpeda.sh", "#!/bin/sh\n")
+        (lux / "compatibilitytool.vdf").write_text(
+            '"compatibilitytools"\n{\n  "compat_tools"\n  {\n    "luxtorpeda"\n    {\n'
+            '      "install_path" "."\n      "display_name" "Luxtorpeda"\n'
+            '      "from_oslist"  "windows"\n      "to_oslist"    "linux"\n    }\n  }\n}\n'
+        )
+
+    def test_status_names_it(self):
+        self.assertEqual(launchhook.status(self.DF).summary(),
+                         "Off. Steam's Play button starts The Elder Scrolls II: Daggerfall with Luxtorpeda.")
+
+    def test_enable_hands_the_rest_to_steams_default_and_disable_restores_it(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        record = launchhook.Record.load(self.DF)
+        self.assertEqual(record.underlying_name, "proton_experimental")
+        self.assertEqual(record.previous, self.LUX)
+        self.assertEqual(self.df_mapping(), "modsync_1812390_proton")
+        self.assertIn("back to luxtorpeda", launchhook.disable(self.DF))
+        self.assertEqual(self.df_mapping(), "luxtorpeda")
+
+    def test_luxtorpeda_as_steams_default_too_falls_back_to_valves_proton(self):
+        cfg = SteamConfig.load(self.root / "config/config.vdf")
+        cfg.set_compat_tool(0, "luxtorpeda")
+        cfg.save(backup=False)
+        launchhook.enable(self.DF, native=self.dfu)
+        self.assertEqual(launchhook.Record.load(self.DF).underlying_name, "proton_experimental")
+        self.assertIn("back to luxtorpeda", launchhook.disable(self.DF))
+
+    def test_without_a_native_program_it_still_wants_a_proton(self):
+        with self.assertRaisesRegex(RuntimeError, "has no 'proton' to run"):
+            launchhook.enable(self.DF)
 
 
 class DaggerfallHookFollowsInstall(DaggerfallHook):
