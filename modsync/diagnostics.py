@@ -28,6 +28,8 @@ _PAIRING_CODE = re.compile(r"MODSYNC1-[A-Za-z0-9_\-=]+")
 _DEVICE_ID = re.compile(r"\b([A-Z2-7]{7})(?:-[A-Z2-7]{7}){7}\b")
 _API_KEY_FIELD = re.compile(r"(?i)((?:x-)?api[-_ ]?key\b[\s\"':=>]*)([A-Za-z0-9\-_]{8,})")
 _API_KEY_XML = re.compile(r"(?i)(<apikey>)[^<]*(</apikey>)")
+# A Nexus download link's query holds its key and the account: nxm://game/mods/1/files/2?key=…&user_id=…
+_NXM_QUERY = re.compile(r"(?i)(nxm://[^\s?]*)\?\S*")
 
 
 def known_secrets() -> list[str]:
@@ -50,7 +52,7 @@ def known_secrets() -> list[str]:
 
 
 def redact(text: str, secrets: list[str] | None = None) -> str:
-    """Strip pairing codes, API keys and full device ids out of ``text``."""
+    """Strip pairing codes, API keys, Nexus download keys and full device ids out of ``text``."""
     if not text:
         return text
     for secret in secrets if secrets is not None else known_secrets():
@@ -58,6 +60,7 @@ def redact(text: str, secrets: list[str] | None = None) -> str:
     text = _PAIRING_CODE.sub("MODSYNC1-[redacted]", text)
     text = _API_KEY_XML.sub(r"\1[redacted]\2", text)
     text = _API_KEY_FIELD.sub(r"\1[redacted]", text)
+    text = _NXM_QUERY.sub(r"\1?[redacted]", text)
     text = _DEVICE_ID.sub(r"\1-…", text)
     return text
 

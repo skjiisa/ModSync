@@ -42,6 +42,16 @@ All notable changes to ModSync are documented here. The format follows
   merges them. A machine with another build of the game gets a warning in
   `modsync cyberpunk status`, `open` and `play`. Saves don't sync; the game
   does that itself.
+- Nexus Mods downloads for Cyberpunk 2077 reach its Mod Organizer 2.
+  ModSync becomes the desktop's handler for `nxm://` links when Heroic's
+  Play hook is turned on (or with `modsync nxm enable`), and passes other
+  games' links to the handler from before (MO2-LINT's). An open MO2 gets the
+  link directly. A closed one opens with it through Heroic, so Heroic still
+  tracks the session. MO2-LINT's handler played the game instead, and
+  couldn't find an open MO2. `modsync nxm status` shows the handler and
+  `modsync nxm disable` gives the links back. If an MO2-LINT install takes
+  them, ModSync takes them back. Logs and diagnostics leave out a link's
+  download key.
 - Forget one paired machine: select it under Devices on the Sync page, or
   run `modsync sync forget <machine>`. If another machine passes it on
   again, ModSync removes it again. Entering its code or PIN pairs it again.

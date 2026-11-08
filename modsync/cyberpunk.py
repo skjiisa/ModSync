@@ -42,6 +42,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import urllib.request
@@ -55,6 +56,7 @@ from modsync import background, config
 from modsync.games import CYBERPUNK
 from modsync.heroic import hook as heroic_hook
 from modsync.heroic import library as heroic
+from modsync.logging_setup import state_dir
 from modsync.mo2 import ini
 from modsync.mo2.launch import LaunchPlan, nested_desktop_display
 from modsync.steam import pe
@@ -253,7 +255,9 @@ def _direct_args(game_dir: Path) -> list[str]:
     return ["run", "-a", "--launcher-skip -modded", "-c", "Z:" + str(exe.parent), "Z:" + str(exe)]
 
 
-def build_plan(instance_path: Path | str | None, game: heroic.GogGame | None, *, play: bool = False) -> LaunchPlan:
+def build_plan(instance_path: Path | str | None, game: heroic.GogGame | None, *, play: bool = False,
+               download: str | None = None) -> LaunchPlan:
+    """``download``: an nxm:// link MO2 downloads once it's open."""
     if not instance_path:
         raise CyberpunkError("Choose Cyberpunk's MO2 instance first ('modsync cyberpunk use <dir>').")
     instance = Path(instance_path).expanduser().resolve()
@@ -278,6 +282,8 @@ def build_plan(instance_path: Path | str | None, game: heroic.GogGame | None, *,
             raise CyberpunkError("Open MO2 and finish setting up the instance before playing.")
         args, target = _game_target(sections, game.install_path)
         mo2_args += args
+    elif download:
+        mo2_args.append(download)
     command = [str(instance / "ModOrganizer.exe"), *mo2_args]
     env = prefix_env(game)
     display = nested_desktop_display()
@@ -335,9 +341,19 @@ def enable_hook() -> list[str]:
     if problem:
         raise CyberpunkError(problem)
     try:
-        return heroic_hook.enable(game, hook_script(game, instance), instance.resolve())
+        done = heroic_hook.enable(game, hook_script(game, instance), instance.resolve())
     except heroic_hook.HookError as e:
         raise CyberpunkError(str(e)) from e
+    # MO2-LINT's handler for Nexus downloads would play the game through the
+    # hook rather than open MO2, so ModSync takes the links (modsync.nxm).
+    from modsync import nxm
+
+    if not nxm.status().active:
+        try:
+            done.append(nxm.enable())
+        except (OSError, nxm.NxmError) as e:
+            done.append(f"Nexus Mods downloads couldn't be pointed at ModSync ({e}); 'modsync nxm enable' retries.")
+    return done
 
 
 def disable_hook() -> str:
@@ -362,6 +378,93 @@ def refresh_hook() -> list[str]:
     except (OSError, CyberpunkError, heroic_hook.HookError) as e:
         log.warning("couldn't refresh Heroic's Play hook for Cyberpunk: %s", e)
         return []
+
+
+# --- Nexus downloads (nxm:// links, see modsync.nxm) ----------------------------
+
+
+def takes_downloads() -> bool:
+    """Whether Cyberpunk's nxm:// links are ModSync's to open: the game is in
+    Heroic and there's an MO2 instance for it."""
+    instance = find_instance()
+    return find_game() is not None and instance is not None and instance_problem(instance) is None
+
+
+def _local_path(game: heroic.GogGame, windows: str) -> Path | None:
+    """A Windows path in the game's prefix as the Linux one, through the
+    prefix's own drive links: umu maps the home folder to X:, so MO2 started
+    from ~/ModOrganizer2-cyberpunk2077 runs as ``X:\\ModOrganizer2-…``."""
+    if game.drive_c is None:
+        return None
+    drive, _, rest = windows.partition(":")
+    try:
+        root = (game.drive_c.parent / "dosdevices" / f"{drive.lower()}:").resolve(strict=True)
+    except OSError:
+        return None
+    return root.joinpath(*[part for part in rest.split("\\") if part])
+
+
+def mo2_running(game: heroic.GogGame, instance: Path) -> bool:
+    """Whether this instance's MO2 is running in the game's prefix (open, or
+    running the game). Wine names its processes by their Windows path."""
+    try:
+        found = background.run_host(["pgrep", "-af", r"^[A-Za-z]:\\.*\\ModOrganizer\.exe"], timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    target = str((instance / "ModOrganizer.exe").resolve()).lower()
+    for line in found.stdout.splitlines():
+        _, _, command = line.partition(" ")
+        match = re.match(r"([A-Za-z]:\\(?:.*?\\)?ModOrganizer\.exe)(?:\s|$)", command, re.IGNORECASE)
+        local = _local_path(game, match[1]) if match else None
+        if local is not None and str(local.resolve()).lower() == target:
+            return True
+    return False
+
+
+def download(url: str) -> str:
+    """Hand a Nexus download to Cyberpunk's MO2. An open MO2 gets it from a
+    second ModOrganizer.exe, which passes its link to the first and exits. A
+    closed one is opened with the link: through Heroic while Heroic's Play hook
+    is on, so the session is Heroic's (the hook finds the link ModSync left for
+    it), else as 'modsync cyberpunk open' opens it. Returns what happened."""
+    game, instance = find_game(), find_instance()
+    if game is None:
+        raise CyberpunkError("Cyberpunk 2077 wasn't found in Heroic.")
+    if instance is None:
+        raise CyberpunkError("Cyberpunk 2077 has no Mod Organizer 2 instance ('modsync cyberpunk install').")
+    problem = instance_problem(instance)
+    if problem:
+        raise CyberpunkError(problem)
+    if game.drive_c is None:
+        raise CyberpunkError("Cyberpunk's prefix isn't set up yet. Launch the game once from Heroic first.")
+    if mo2_running(game, instance):
+        # umu's default verb, waitforexitandrun, would wait for MO2 to exit first,
+        # and "run" keeps Proton's launcher waiting on it; runinprefix runs the
+        # program alone, in the same Wine session (it exits once MO2 has the link).
+        argv, env = _prefix_command(game, [str(instance / "ModOrganizer.exe"), url], {"PROTON_VERB": "runinprefix"})
+        path = state_dir() / "mo2-launch.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("ab") as output:
+            output.write(b"\n--- ModSync: passing a download to Mod Organizer 2 ---\n")
+            output.flush()
+            proc = subprocess.Popen(argv, cwd=instance, env=env, stdin=subprocess.DEVNULL, stdout=output,
+                                    stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            code = proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            return "Passed the download to Mod Organizer 2, which is slow to answer."
+        if code != 0:
+            raise CyberpunkError(f"Mod Organizer 2 didn't take the download (exit code {code}). Details: {path}")
+        return "Passed the download to Mod Organizer 2."
+    refresh_hook()  # the script must be one that knows to look for the link
+    hook = heroic_hook.status(game, hook_script(game, instance))
+    if hook.enabled and hook.current:
+        heroic_hook.leave_download(game, url)
+        heroic_hook.launch(game)
+        return "Opening Mod Organizer 2 through Heroic to download the file…"
+    from modsync.mo2.launch import Launcher
+
+    return Launcher().start(build_plan(instance, game, download=url))
 
 
 # --- installing MO2 -----------------------------------------------------------
@@ -389,9 +492,8 @@ def game_running() -> bool:
     return found.returncode == 0
 
 
-def run_in_prefix(game: heroic.GogGame, args: list[str], *, timeout: float = 900,
-                  env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    """Run a command to completion with the game's runner in its prefix."""
+def _prefix_command(game: heroic.GogGame, args: list[str],
+                    env: dict[str, str] | None) -> tuple[list[str], dict[str, str]]:
     argv = [*runner(game), *args]
     full_env = {**prefix_env(game), **(env or {})}
     run_env = dict(os.environ)
@@ -400,6 +502,13 @@ def run_in_prefix(game: heroic.GogGame, args: list[str], *, timeout: float = 900
     run_env.update(full_env)
     if background.in_flatpak():
         argv = ["flatpak-spawn", "--host", "env", *(f"{k}={v}" for k, v in full_env.items()), *argv]
+    return argv, run_env
+
+
+def run_in_prefix(game: heroic.GogGame, args: list[str], *, timeout: float = 900,
+                  env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    """Run a command to completion with the game's runner in its prefix."""
+    argv, run_env = _prefix_command(game, args, env)
     log.info("running %s in Cyberpunk's prefix", " ".join(args))
     return subprocess.run(argv, env=run_env, stdin=subprocess.DEVNULL, capture_output=True,
                           text=True, errors="replace", timeout=timeout)

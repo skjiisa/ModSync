@@ -177,6 +177,7 @@ modsync firewall status | allow | remove   # ModSync's ports in ufw or firewalld
 modsync steam shortcut [--remove]   # add ModSync as a non-Steam game, or remove it
 modsync launch status | enable [--through <tool>] | disable
 modsync dfu status | install [<dest>] | use <dir> | hook enable | disable   # Daggerfall Unity, see below
+modsync nxm status | enable | disable   # Nexus downloads for the games ModSync runs, see "Nexus downloads"
 ```
 
 ## Game version records
@@ -911,6 +912,38 @@ desktop is a system Wine that upgrades the Proton prefix (and stops at a
 Wine Mono dialog), and on a Steam Deck is nothing. ModSync gives MO2-LINT
 stand-ins that make those steps fail at once and leave the prefix alone.
 
+### Nexus downloads
+
+Nexus Mods' "Mod Manager Download" buttons open `nxm://` links, and each link
+names its game (`nxm://cyberpunk2077/mods/…`). MO2-LINT registers its own
+handler for them, which doesn't work with the Play hook. With MO2 closed, it
+starts MO2 by launching the game from Heroic, and the hook turns that launch
+into playing. It also looks for a running MO2 under a `Z:` path, but umu maps
+the home folder to `X:`, so it never finds one. Turning the hook on therefore
+also makes ModSync the handler (`modsync nxm enable` does only that). Links
+for other games go on to the handler from before, unchanged.
+
+A Cyberpunk link reaches MO2 in one of three ways:
+
+- When MO2 is open, or running the game, ModSync runs a second
+  `ModOrganizer.exe` with the link in the same prefix. It passes the link to
+  the first MO2 and exits. Proton's `runinprefix` verb runs it, because the
+  default verb would wait for MO2 to exit.
+- When MO2 is closed and the hook is on, ModSync leaves the link beside the
+  hook's script and asks Heroic to launch the game. The hook opens MO2 with
+  the link instead of playing, so Heroic still tracks the session. It only
+  takes a link left in the last three minutes.
+- When MO2 is closed and the hook is off, MO2 opens with the link the way
+  `modsync cyberpunk open` opens it.
+
+If a link fails, ModSync shows a desktop notification, because no terminal is
+open to show the error. `modsync nxm status` shows the handler; `modsync nxm disable`
+gives the links back to the one from before. Installing or updating MO2-LINT
+makes its handler the default again, and ModSync takes the links back the
+next time the app or the background service starts. A handler you chose
+yourself since is left alone. The handler is a desktop entry,
+`~/.local/share/applications/modsync-nxm-handler.desktop`.
+
 ## Background service
 
 By default ModSync only acts while the app or `modsync serve` is running.
@@ -934,4 +967,4 @@ The launch hook logs to `~/.local/state/modsync/launch-hook.log`.
 
 For a bug report, `modsync diagnostics` or "Copy diagnostics" under Settings
 bundles the doctor report with the last 200 lines of both logs, with
-pairing codes, API keys and device ids redacted.
+pairing codes, API keys, Nexus download keys and device ids redacted.

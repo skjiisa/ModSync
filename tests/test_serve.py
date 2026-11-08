@@ -4,7 +4,7 @@ always; Syncthing only when a vault exists."""
 import unittest
 from unittest.mock import patch
 
-from modsync import gameversion, launchhook
+from modsync import cyberpunk, gameversion, launchhook, nxm
 from modsync.serve import Server
 from modsync.service import DeviceStatus, PinOutcome, SyncStatus
 from modsync.state import NewerStateError, State
@@ -46,6 +46,15 @@ class FakeService:
 
 
 class ServerTests(unittest.TestCase):
+    def setUp(self):
+        # Starting refreshes the hooks and ModSync's nxm:// handler: never this
+        # machine's real Steam, Heroic or desktop settings.
+        for p in (patch.object(launchhook, "upgrade", return_value=None),
+                  patch.object(cyberpunk, "refresh_hook", return_value=[]),
+                  patch.object(nxm, "refresh", return_value=[])):
+            p.start()
+            self.addCleanup(p.stop)
+
     def make(self, state, **kw):
         svc = FakeService(state, **kw)
         lines, notes = [], []

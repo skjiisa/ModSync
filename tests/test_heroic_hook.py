@@ -143,6 +143,47 @@ def test_mo2lints_launch_option_opens_mo2(scene, redirector):
     assert "opening Mod Organizer 2" in said
 
 
+LINK = "nxm://cyberpunk2077/mods/2987/files/168466?key=k&expires=1&user_id=2"
+
+
+def note(scene) -> Path:
+    return scene["tmp"] / ".config/heroic/modsync" / f"download-{APP}.txt"
+
+
+@pytest.mark.parametrize("program", ["exe", "redirector"])
+def test_a_download_link_left_by_modsync_opens_mo2_with_it_once(scene, program):
+    (scene["instance"] / "ModOrganizer.ini").write_text(EXECUTABLES)
+    note(scene).parent.mkdir(parents=True)
+    note(scene).write_text(LINK + "\n")
+    exe = scene["exe"] if program == "exe" else str(scene["game_dir"] / "mo2-redirector.exe")
+
+    calls, said = run(scene, str(scene["umu"]), exe)
+
+    assert calls[0]["argv"] == [f"{scene['instance']}/ModOrganizer.exe", LINK]
+    assert calls[0]["overrides"] == "winmm,version=n,b"
+    assert "for a Nexus Mods download" in said and "key=" not in said
+    assert not note(scene).exists()
+    calls, _ = run(scene, str(scene["umu"]), scene["exe"])  # the next Play plays
+    assert calls[-1]["argv"][1:] == ["run", "-e", "My Cyberpunk, renamed"]
+
+
+@pytest.mark.parametrize("case", ["stale", "not a link"])
+def test_a_stale_or_odd_note_is_dropped_and_the_game_plays(scene, case):
+    import os
+
+    note(scene).parent.mkdir(parents=True)
+    note(scene).write_text((LINK if case == "stale" else "--help") + "\n")
+    if case == "stale":
+        old = note(scene).stat().st_mtime - hook.DOWNLOAD_TTL - 5
+        os.utime(note(scene), (old, old))
+
+    calls, said = run(scene, str(scene["umu"]), scene["exe"])
+
+    assert calls[0]["argv"][1] == "run"
+    assert "ignoring a download link" in said
+    assert not note(scene).exists()
+
+
 @pytest.mark.parametrize("case", ["original requested", "instance missing", "no game program"])
 def test_the_launch_runs_as_it_was_when_mo2_cant_take_it(scene, case):
     env = {"MODSYNC_ORIGINAL_GAME": "1"} if case == "original requested" else {}
@@ -320,3 +361,20 @@ def test_the_cyberpunk_script_names_the_game_folder_and_no_profile(tmp_path):
     assert f"game_dir={shlex.quote(str(game.install_path))}" in text
     assert "game_exe=Cyberpunk2077.exe" in text and "prefer=-modded" in text
     assert "@@" not in text and " -p " not in text
+
+
+@pytest.mark.parametrize("flatpak", [False, True])
+def test_launch_asks_the_heroic_that_has_the_game(tmp_path, flatpak):
+    game = make_heroic(tmp_path, flatpak=flatpak)
+    with patch.object(hook.subprocess, "Popen") as popen, patch.object(hook.background, "in_flatpak", return_value=False):
+        hook.launch(game)
+    url = f"heroic://launch?appName={APP}&runner=gog"
+    assert popen.call_args.args[0] == (["flatpak", "run", hook.FLATPAK_ID, url] if flatpak else ["xdg-open", url])
+
+
+def test_disable_drops_a_download_link_left_behind(tmp_path, closed_heroic):
+    game = make_heroic(tmp_path)
+    hook.enable(game, "script", tmp_path / "MO2")
+    hook.leave_download(game, "nxm://x")
+    hook.disable(game)
+    assert not hook.download_note(game).exists()
