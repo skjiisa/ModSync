@@ -769,7 +769,11 @@ def sync_saves(*, force: bool = False, playing: bool = False) -> "dfu_saves.Repo
         report.skipped = "Saves don't sync on this machine."
         return report
     (inst.path / SAVES_MARKER).touch()
-    return dfu_saves.sync(saves_dir(inst), saves_library(), _machine(),
+    saves = saves_dir(inst)
+    if inst.data_dir.is_dir():
+        # DFU makes it with the first save; a new install gets the other machines' saves before that.
+        saves.mkdir(exist_ok=True)
+    return dfu_saves.sync(saves, saves_library(), _machine(),
                           guard=lambda: _free_to_sync(inst, playing))
 
 

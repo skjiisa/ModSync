@@ -582,6 +582,53 @@ class DaggerfallHook(LaunchHookBase):
         self.assertEqual(launchhook.Record.load(self.DF).native, str(self.dfu))
 
 
+class DaggerfallOverLuxtorpeda(LaunchHookBase):
+    """Steam already starts Daggerfall with Luxtorpeda, a launcher with no
+    Proton in it (it runs its own Daggerfall Unity), as many Decks have it."""
+
+    DF = DaggerfallHook.DF
+    LUX = {"name": "luxtorpeda", "config": "", "priority": "250"}
+    mapping = {1812390: LUX}
+    df_mapping = DaggerfallHook.df_mapping
+
+    def setUp(self):
+        super().setUp()
+        self.dfu = self.tmp / "Daggerfall Unity" / "DaggerfallUnity.x86_64"
+        fakesteam._executable(self.dfu, "#!/bin/sh\n")
+        lux = self.root / "compatibilitytools.d" / "luxtorpeda"
+        fakesteam._executable(lux / "luxtorpeda.sh", "#!/bin/sh\n")
+        (lux / "compatibilitytool.vdf").write_text(
+            '"compatibilitytools"\n{\n  "compat_tools"\n  {\n    "luxtorpeda"\n    {\n'
+            '      "install_path" "."\n      "display_name" "Luxtorpeda"\n'
+            '      "from_oslist"  "windows"\n      "to_oslist"    "linux"\n    }\n  }\n}\n'
+        )
+
+    def test_status_names_it(self):
+        self.assertEqual(launchhook.status(self.DF).summary(),
+                         "Off. Steam's Play button starts The Elder Scrolls II: Daggerfall with Luxtorpeda.")
+
+    def test_enable_hands_the_rest_to_steams_default_and_disable_restores_it(self):
+        launchhook.enable(self.DF, native=self.dfu)
+        record = launchhook.Record.load(self.DF)
+        self.assertEqual(record.underlying_name, "proton_experimental")
+        self.assertEqual(record.previous, self.LUX)
+        self.assertEqual(self.df_mapping(), "modsync_1812390_proton")
+        self.assertIn("back to luxtorpeda", launchhook.disable(self.DF))
+        self.assertEqual(self.df_mapping(), "luxtorpeda")
+
+    def test_luxtorpeda_as_steams_default_too_falls_back_to_valves_proton(self):
+        cfg = SteamConfig.load(self.root / "config/config.vdf")
+        cfg.set_compat_tool(0, "luxtorpeda")
+        cfg.save(backup=False)
+        launchhook.enable(self.DF, native=self.dfu)
+        self.assertEqual(launchhook.Record.load(self.DF).underlying_name, "proton_experimental")
+        self.assertIn("back to luxtorpeda", launchhook.disable(self.DF))
+
+    def test_without_a_native_program_it_still_wants_a_proton(self):
+        with self.assertRaisesRegex(RuntimeError, "has no 'proton' to run"):
+            launchhook.enable(self.DF)
+
+
 class DaggerfallHookFollowsInstall(DaggerfallHook):
     """Installing Daggerfall Unity elsewhere moves the hook only while Steam
     uses it, and never undoes a choice made since (review of #112)."""
