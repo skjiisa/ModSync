@@ -848,14 +848,21 @@ cloud saves when it exits. MO2-LINT's "Launch Mod Organizer" option in
 Heroic opens MO2 instead of playing. Setting `MODSYNC_ORIGINAL_GAME=1` under
 the game's environment variables in Heroic starts the game as before.
 
+The game's program is the first `.exe` inside the game's folder in the
+command line; a launch without one runs as it was. MO2's executable for the
+game is read from MO2's settings on every launch (the one with `-modded`,
+which deploys REDmod), so renaming it in MO2 needs nothing from ModSync.
+
 Heroic's Flatpak, the usual one on a Steam Deck, can't read the home folder
 or start programs outside its sandbox. So the hook's script lives in Heroic's
-config folder with the MO2 instance and its arguments written in, and
-ModSync rewrites it when they change. When the instance is outside the
-folders Heroic's Flatpak can see (`~/Games/Heroic`, `/run/media`, `/mnt` and
-a few more), turning the hook on gives Heroic access to that one folder with
-`flatpak override --user --filesystem=<instance> com.heroicgameslauncher.hgl`.
-Turning the hook off leaves that access in place.
+config folder with the MO2 instance and the game's folder written in, and
+ModSync rewrites it when they change, and when the app or the background
+service starts. When the instance is outside the folders Heroic's Flatpak
+can see (`~/Games/Heroic`, `/run/media`, `/mnt` and a few more), turning the
+hook on, or choosing another instance, gives Heroic access to that one
+folder with `flatpak override --user --filesystem=<instance>
+com.heroicgameslauncher.hgl`; restart Heroic after that. Turning the hook
+off leaves that access in place.
 
 Cyber Engine Tweaks and RED4ext load through `version.dll` and `winmm.dll`
 in the game's `bin/x64` folder, which Wine ignores unless told otherwise, so

@@ -9,8 +9,10 @@
 # wrappers after this one) and the game's program with its arguments. It keeps
 # the first part and runs Mod Organizer 2 in place of the program: the game is
 # still Heroic's launch, so Heroic tracks it and syncs GOG cloud saves as usual.
-# Heroic's Flatpak can't start ModSync or read ModSync's settings, so everything
-# it needs is written in below.
+# The program is the first .exe inside the game's folder; a launch without one
+# runs as it was. Heroic's Flatpak can't start ModSync or read ModSync's
+# settings, so what this needs is written in below, and MO2's executable for
+# the game is read from MO2's own settings on every launch.
 #
 # Every launch sets WINEDLLOVERRIDES for winmm and version (native, then Wine's
 # own): Cyber Engine Tweaks and RED4ext load through those DLLs. MO2-LINT's
@@ -20,17 +22,21 @@
 set -u
 
 instance=@@INSTANCE@@
-play=(@@PLAY_ARGS@@)
-open=(@@OPEN_ARGS@@)
+game_dir=@@GAME_DIR@@
+game_exe=@@GAME_EXE@@             # MO2 executables running this play the game
+prefer=@@PREFER_ARGUMENT@@        # and the one with this argument wins
+direct=(@@DIRECT_ARGS@@)          # MO2's arguments when it has no such executable yet
 
 say() { printf 'ModSync: %s\n' "$*" >&2; }  # Heroic keeps it in the game's log
 
+# A Windows path (Z:\home\…) as the Linux one it stands for.
+unix_path() {
+    local p="${1//\\//}"
+    [[ "${p,,}" == z:/* ]] && p="${p:2}"
+    printf '%s' "$p"
+}
+
 [[ "${1-}" == "@@MARKER@@" ]] && shift 2
-runner=()
-while (( $# )) && [[ "${1,,}" != *.exe ]]; do
-    runner+=("$1")
-    shift
-done
 
 merged=""
 IFS=';' read -r -a entries <<< "${WINEDLLOVERRIDES-}"
@@ -49,26 +55,69 @@ for entry in "${entries[@]}"; do
 done
 export WINEDLLOVERRIDES="${merged:+$merged;}winmm,version=n,b"
 
-if (( ! $# )); then
-    say "no Windows program in the launch; running it as it was"
-    exec "${runner[@]}"
+launch=("$@")
+target=-1
+for i in "${!launch[@]}"; do
+    p=$(unix_path "${launch[$i]}")
+    if [[ "${p,,}" == *.exe && "$p" == "$game_dir"/* ]]; then
+        target=$i
+        break
+    fi
+done
+if (( target < 0 )); then
+    say "no program from $game_dir in the launch; running it as it was"
+    exec "$@"
 fi
 if [[ -n "${MODSYNC_ORIGINAL_GAME:-}" ]]; then
     say "MODSYNC_ORIGINAL_GAME is set; starting the game without Mod Organizer 2"
-    exec "${runner[@]}" "$@"
+    exec "$@"
 fi
 if [[ ! -f "$instance/ModOrganizer.exe" ]]; then
     say "WARNING: $instance/ModOrganizer.exe isn't there (or Heroic can't see it); starting the game without Mod Organizer 2"
-    exec "${runner[@]}" "$@"
+    exec "$@"
 fi
+runner=("${launch[@]:0:target}")
+program=$(unix_path "${launch[$target]}")
+program="${program##*/}"
 
-program="${1##*/}"
 if [[ "${program,,}" == "mo2-redirector.exe" ]]; then
-    args=("${open[@]}")
+    args=()
     say "opening Mod Organizer 2 ($instance)"
 else
-    args=("${play[@]}")
-    say "playing through Mod Organizer 2 ($instance) in place of ${program}"
+    # MO2's executables, as its settings list them: N\title, N\binary, N\arguments.
+    titles=() binaries=() arguments=()
+    section=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        if [[ "$line" == \[*\] ]]; then
+            section="${line:1:${#line}-2}"
+            continue
+        fi
+        [[ "$section" == customExecutables && "$line" =~ ^([0-9]+)\\(title|binary|arguments)=(.*)$ ]] || continue
+        n="${BASH_REMATCH[1]}" value="${BASH_REMATCH[3]}"
+        [[ "$value" == \"*\" ]] && value="${value:1:${#value}-2}"
+        case "${BASH_REMATCH[2]}" in
+            title) titles[n]="$value" ;;
+            binary) binaries[n]="$value" ;;
+            arguments) arguments[n]="$value" ;;
+        esac
+    done < "$instance/ModOrganizer.ini"
+    chosen="" fallback=""
+    for n in "${!binaries[@]}"; do
+        b=$(unix_path "${binaries[n]}")
+        [[ "${b,,}" == */"${game_exe,,}" && -n "${titles[n]-}" ]] || continue
+        [[ -z "$fallback" ]] && fallback="${titles[n]}"
+        if [[ -z "$chosen" && " ${arguments[n]-} " == *" $prefer "* ]]; then
+            chosen="${titles[n]}"
+        fi
+    done
+    chosen="${chosen:-$fallback}"
+    if [[ -n "$chosen" ]]; then
+        args=(run -e "$chosen")
+    else
+        args=("${direct[@]}")
+    fi
+    say "playing through Mod Organizer 2 ($instance) in place of $program: ${args[*]}"
 fi
 cd "$instance" || exit 1
 exec "${runner[@]}" "$instance/ModOrganizer.exe" "${args[@]}"

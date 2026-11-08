@@ -10,11 +10,13 @@ so the game stays Heroic's launch: Heroic tracks it and syncs GOG cloud saves.
 
 The script lives in Heroic's config folder, because Heroic's Flatpak can't read
 the rest of the home folder or start programs outside its sandbox. So the hook
-can't ask ModSync anything at launch: the instance and MO2's arguments are
-written into it, and :func:`refresh` rewrites it when they change (which needs
-no Heroic restart: Heroic reads only the wrapper's path from its settings).
-For the same reason Heroic's Flatpak gets access to an instance outside the
-folders it can already see, through a ``flatpak override`` for that folder.
+can't ask ModSync anything at launch: the instance and the game's folder are
+written into it (MO2's executable it reads from MO2's settings each time), and
+:func:`refresh` rewrites it when they change, or when ModSync brings a newer
+script; that needs no Heroic restart, since Heroic reads only the wrapper's
+path from its settings. For the same reason Heroic's Flatpak gets access to an
+instance outside the folders it can already see, through a ``flatpak
+override`` for that folder.
 
 Heroic keeps a game's settings in memory while it runs and writes them back
 when one changes, so the settings file is only edited while Heroic is closed.
@@ -32,17 +34,24 @@ from pathlib import Path
 from modsync import __version__, background
 from modsync.heroic.library import GogGame
 
-HOOK_VERSION = 1
+HOOK_VERSION = 2  # 2: MO2's executable read at launch; the game's program found by its folder
 TEMPLATE = Path(__file__).parent / "play_hook.sh"
 MARKER = "--modsync-heroic-hook"
 FLATPAK_ID = "com.heroicgameslauncher.hgl"
 # What Heroic's Flatpak can read (its finish-args), relative to the home folder
-# unless absolute.
-FLATPAK_VISIBLE = ("Games/Heroic", "Documents", "Desktop", ".steam", "/mnt", "/media", "/run/media")
+# unless absolute. Its xdg-documents and xdg-desktop are left out: they follow
+# the user's (possibly translated) folder names, and a folder wrongly thought
+# visible breaks the launch, where one wrongly thought hidden only gets an
+# override it didn't need.
+FLATPAK_VISIBLE = ("Games/Heroic", ".steam", "/mnt", "/media", "/run/media")
 
 
 class HookError(RuntimeError):
     pass
+
+
+class NoSettings(HookError):
+    """Heroic has no settings file for the game: it has never launched it."""
 
 
 @dataclass(frozen=True)
@@ -65,11 +74,11 @@ def _settings_path(game: GogGame) -> Path:
     return game.config_dir / "GamesConfig" / f"{game.app_name}.json"
 
 
-def render(game: GogGame, *, game_name: str, instance: Path, play_args: list[str],
-           open_args: list[str], disable_command: str) -> str:
-    def words(args: list[str]) -> str:
-        return " ".join(shlex.quote(a) for a in args)
-
+def render(game: GogGame, *, game_name: str, instance: Path, game_exe: str, prefer_argument: str,
+           direct_args: list[str], disable_command: str) -> str:
+    """``game_exe`` is the program MO2's executables for playing run, and the one
+    whose arguments include ``prefer_argument`` is played; ``direct_args`` are
+    MO2's arguments while it has saved no such executable."""
     text = TEMPLATE.read_text(encoding="utf-8")
     for key, value in {
         "GAME_NAME": game_name,
@@ -78,8 +87,10 @@ def render(game: GogGame, *, game_name: str, instance: Path, play_args: list[str
         "HOOK_VERSION": str(HOOK_VERSION),
         "DISABLE_COMMAND": disable_command,
         "INSTANCE": shlex.quote(str(instance)),
-        "PLAY_ARGS": words(play_args),
-        "OPEN_ARGS": words(open_args),
+        "GAME_DIR": shlex.quote(str(game.install_path)),
+        "GAME_EXE": shlex.quote(game_exe),
+        "PREFER_ARGUMENT": shlex.quote(prefer_argument),
+        "DIRECT_ARGS": " ".join(shlex.quote(a) for a in direct_args),
         "MARKER": MARKER,
     }.items():
         text = text.replace(f"@@{key}@@", value)
@@ -95,7 +106,7 @@ def _load_settings(game: GogGame) -> tuple[dict, dict]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise HookError("Heroic has no settings for the game yet. Launch it once from Heroic first.") from None
+        raise NoSettings("Heroic has no settings for the game yet. Launch it once from Heroic first.") from None
     except (OSError, ValueError) as e:
         raise HookError(f"Heroic's settings for the game ({path}) can't be read: {e}") from None
     settings = data.get(game.app_name) if isinstance(data, dict) else None
@@ -113,14 +124,21 @@ def _write(path: Path, text: str, *, mode: int | None = None) -> None:
     os.replace(tmp, path)
 
 
+# Heroic's own process: the distribution packages' Electron app, the official
+# build in /opt, the AppImage, the Flatpak. Each alternative has a bracket, so
+# the pattern can't match a command line that carries it: from inside ModSync's
+# Flatpak, flatpak-spawn's (pgrep only leaves itself out).
+HEROIC_PROCESS = r"heroic-games-launcher/app[.]asar|/opt/Heroic/heroi[c]|/[.]mount_Heroic|/app/bin/heroic/heroi[c]"
+
+
 def heroic_running() -> bool:
-    """Heroic's own process: the distribution packages' Electron app, the
-    official build in /opt, the AppImage or the Flatpak."""
-    pattern = r"heroic-games-launcher/app\.asar|/opt/Heroic/heroic|/\.mount_Heroic|/app/bin/heroic/heroic"
     try:
-        return background.run_host(["pgrep", "-f", pattern], timeout=10).returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
+        found = background.run_host(["pgrep", "-f", HEROIC_PROCESS], timeout=10)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise HookError(f"Couldn't check whether Heroic is running: {e}") from e
+    if found.returncode > 1:  # 1 is "none"
+        raise HookError(f"Couldn't check whether Heroic is running: {(found.stderr or '').strip() or found.returncode}")
+    return found.returncode == 0
 
 
 def status(game: GogGame, expected: str | None = None) -> HookStatus:
@@ -139,8 +157,11 @@ def status(game: GogGame, expected: str | None = None) -> HookStatus:
 
 
 def flatpak_sees(path: Path) -> bool:
+    """Compared resolved, as Flatpak does: /home is a link to /var/home on
+    SteamOS and Fedora's atomic desktops."""
     home = Path.home()
-    return any(path.is_relative_to(home / v if not v.startswith("/") else Path(v)) for v in FLATPAK_VISIBLE)
+    target = path.resolve()
+    return any(target.is_relative_to((Path(v) if v.startswith("/") else home / v).resolve()) for v in FLATPAK_VISIBLE)
 
 
 def grant_flatpak_access(path: Path) -> bool:
@@ -177,20 +198,31 @@ def disable(game: GogGame) -> str:
         raise HookError("Close Heroic first: it writes the game's settings back from memory while it runs.")
     try:
         data, settings = _load_settings(game)
-    except HookError:
+    except NoSettings:
         data = settings = None
     if settings is not None and any(_is_ours(e) for e in settings.get("wrapperOptions") or []):
         settings["wrapperOptions"] = [e for e in settings["wrapperOptions"] if not _is_ours(e)]
         _write(_settings_path(game), json.dumps(data, indent=2))
-    script_path(game).unlink(missing_ok=True)
+    script = script_path(game)
+    script.unlink(missing_ok=True)
+    try:
+        script.parent.rmdir()
+    except OSError:
+        pass  # not empty, or already gone
     return "Heroic's Play button on the game starts it as before."
 
 
-def refresh(game: GogGame, script_text: str) -> bool:
-    """Rewrite the script of an enabled hook that's out of date. Safe while
-    Heroic runs; True when it changed."""
+def refresh(game: GogGame, script_text: str, instance: Path) -> list[str]:
+    """Bring an enabled hook up to date: the script, and Heroic's Flatpak's
+    access to the instance. Safe while Heroic runs. Returns what the user
+    should know; [] when nothing changed."""
     state = status(game, script_text)
-    if not state.enabled or state.current:
-        return False
-    _write(state.script, script_text, mode=0o755)
-    return True
+    if not state.enabled:
+        return []
+    notes: list[str] = []
+    if game.flatpak and grant_flatpak_access(instance):
+        notes.append(f"Gave Heroic's Flatpak access to {instance}; restart Heroic before playing.")
+    if not state.current:
+        _write(state.script, script_text, mode=0o755)
+        notes.append("Updated Heroic's Play hook.")
+    return notes

@@ -11,7 +11,7 @@ from __future__ import annotations
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QGridLayout
 
-from modsync import __version__, background, diagnostics, firewall, launchhook, steamos
+from modsync import __version__, background, cyberpunk, diagnostics, firewall, launchhook, steamos
 from modsync.steam import shortcuts
 from modsync.ui import worker
 from modsync.ui.input import Action
@@ -91,6 +91,8 @@ class SystemPage(Page):
         # Cloud from syncing saves), then read its status.
         worker.run_async(launchhook.upgrade, on_done=self._after_hook_upgrade,
                          on_failed=lambda _: self.refresh_hook())
+        # Heroic's Play hook for Cyberpunk, likewise (it never raises).
+        worker.run_async(cyberpunk.refresh_hook, on_failed=lambda _: None)
         self.firewall: firewall.Check | None = None
         self._refresh_firewall()
         host.busyChanged.connect(self._on_busy)

@@ -77,6 +77,10 @@ class Server:
                     self.log(f"  {hook}")
             except Exception as exc:
                 self.log(f"  (launch hook update failed: {exc})")
+        from modsync import cyberpunk
+
+        for note in cyberpunk.refresh_hook():
+            self.log(f"  {note}")
         if self.syncing:
             self.service.ensure_running()
             self.log("Syncing — press Ctrl-C to stop.")

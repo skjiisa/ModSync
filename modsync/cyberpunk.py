@@ -222,7 +222,14 @@ def _game_target(sections: dict, game_dir: Path) -> tuple[list[str], str]:
     exe = game_dir / CYBERPUNK.exe_name
     if not exe.is_file():
         raise CyberpunkError(f"{exe} is missing. Check the game's files in Heroic.")
-    return ["run", "-a", "--launcher-skip -modded", "-c", "Z:" + str(exe.parent), "Z:" + str(exe)], CYBERPUNK.name
+    return _direct_args(game_dir), CYBERPUNK.name
+
+
+def _direct_args(game_dir: Path) -> list[str]:
+    """MO2 running the game itself, with the arguments of the Cyberpunk plugin's
+    executable, for an MO2 that hasn't saved its executables yet."""
+    exe = game_dir / CYBERPUNK.exe_name
+    return ["run", "-a", "--launcher-skip -modded", "-c", "Z:" + str(exe.parent), "Z:" + str(exe)]
 
 
 def build_plan(instance_path: Path | str | None, game: heroic.GogGame | None, *, play: bool = False) -> LaunchPlan:
@@ -280,11 +287,13 @@ def prefix_env(game: heroic.GogGame) -> dict[str, str]:
 
 
 def hook_script(game: heroic.GogGame, instance: Path) -> str:
-    """The Play hook as it should be now. It passes no profile, so MO2 plays
-    whichever profile was last chosen in it."""
-    play_args, _ = _game_target(ini.read_ini(instance / "ModOrganizer.ini"), game.install_path)
-    return heroic_hook.render(game, game_name=CYBERPUNK.name, instance=instance.resolve(), play_args=play_args,
-                              open_args=[], disable_command="modsync cyberpunk hook disable")
+    """The Play hook as it should be now. Like Play, it runs MO2's executable
+    that deploys REDmod; it passes no profile, so MO2 plays whichever profile
+    was last chosen in it."""
+    return heroic_hook.render(game, game_name=CYBERPUNK.name, instance=instance.resolve(),
+                              game_exe=PureWindowsPath(CYBERPUNK.exe_name).name, prefer_argument="-modded",
+                              direct_args=_direct_args(game.install_path),
+                              disable_command="modsync cyberpunk hook disable")
 
 
 def hook_status() -> heroic_hook.HookStatus | None:
@@ -320,17 +329,18 @@ def disable_hook() -> str:
         raise CyberpunkError(str(e)) from e
 
 
-def refresh_hook() -> bool:
-    """Keep an enabled hook's script in step with the instance (a new one, or
-    MO2 having saved its executables). Never raises: the hook still works."""
+def refresh_hook() -> list[str]:
+    """Keep an enabled hook in step with the instance and the game's folder,
+    and with this ModSync's script. Run when ModSync starts and whenever the
+    instance may have changed. Never raises; returns what the user should know."""
     try:
         game, instance = find_game(), find_instance()
         if game is None or instance is None or instance_problem(instance):
-            return False
-        return heroic_hook.refresh(game, hook_script(game, instance))
-    except (OSError, CyberpunkError) as e:
+            return []
+        return heroic_hook.refresh(game, hook_script(game, instance), instance.resolve())
+    except (OSError, CyberpunkError, heroic_hook.HookError) as e:
         log.warning("couldn't refresh Heroic's Play hook for Cyberpunk: %s", e)
-        return False
+        return []
 
 
 # --- installing MO2 -----------------------------------------------------------
@@ -510,5 +520,6 @@ def install_mo2(dest: Path | str, on_output: OnOutput | None = None, *, backend=
     except (CyberpunkError, OSError, zipfile.BadZipFile) as e:
         raise CyberpunkError(f"{e} MO2 is installed in {instance}; run the install again to finish its setup.") from e
     chosen = use_instance(instance)
-    refresh_hook()
+    for note in refresh_hook():
+        say(note)
     return chosen

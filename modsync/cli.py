@@ -1215,8 +1215,8 @@ def _cyberpunk_use(path: str) -> int:
         print(f"error: {e}")
         return 1
     print(f"Cyberpunk's MO2 instance: {instance}")
-    if cyberpunk.refresh_hook():
-        print("Heroic's Play button now uses it too.")
+    for note in cyberpunk.refresh_hook():
+        print(note)
     return 0
 
 
@@ -1262,7 +1262,8 @@ def _cyberpunk_launch(*, play: bool) -> int:
     from modsync import cyberpunk
     from modsync.mo2.launch import Launcher
 
-    cyberpunk.refresh_hook()
+    for note in cyberpunk.refresh_hook():
+        print(note)
     try:
         plan = cyberpunk.build_plan(cyberpunk.find_instance(), cyberpunk.find_game(), play=play)
         print(Launcher().start(plan))
