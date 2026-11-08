@@ -6,6 +6,20 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Every copy of ModSync on a machine shares one setup. While the Flatpak is
+  installed, a copy run from source or installed with pip uses the
+  Flatpak's settings and data instead of keeping its own pairing in
+  `~/.config/modsync`. `MODSYNC_HOME` gives a separate setup for
+  development, and `modsync doctor` shows the folders in use.
+- Turning a Play hook on again keeps the copy of ModSync it starts, so a
+  copy run from source doesn't take Steam's Play button from the Flatpak.
+  The Flatpak takes it back, and `--this-copy` on `modsync launch enable` or
+  `modsync dfu hook enable` makes it the copy you're running.
+- The state file records its format version, and a ModSync older than the
+  one that wrote it leaves it alone instead of misreading it.
+
 ## [2.1.0-beta1] - 2026-11-04
 
 Daggerfall Unity joins Skyrim. ModSync installs it from Steam's free
