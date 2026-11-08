@@ -46,6 +46,15 @@ All notable changes to ModSync are documented here. The format follows
   run `modsync sync forget <machine>`. If another machine passes it on
   again, ModSync removes it again. Entering its code or PIN pairs it again.
   `modsync sync status` shows each machine's device id.
+- A machine that syncs only games' folders, such as one with Daggerfall
+  Unity and no Mod Organizer 2, pairs from the Sync page (#117). Before, only
+  the command line could pair it. "Pair with another machine" takes the
+  other machine's PIN or code. Once a game's folder syncs here, "Pair over
+  network" and "Show pairing code" offer this machine's own. The page lists
+  each game's folder and how it stands, beside the vault too, and the paired
+  machines. "Copy from another machine" pairs with a machine that has no
+  vault, or takes its `MODSYNC2-` code, instead of refusing it. A game whose
+  sync is on with no machine paired yet points to Sync.
 
 ### Changed
 

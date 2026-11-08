@@ -1054,7 +1054,8 @@ class FolderSheet(Overlay):
 class BeaconSheet(Overlay):
     """The host side of network pairing: one huge PIN to read across a room."""
 
-    def __init__(self, host, pin: str, name: str, on_cancel: Callable[[], None]) -> None:
+    def __init__(self, host, pin: str, name: str, on_cancel: Callable[[], None], *,
+                 choice: str = "Copy from another machine") -> None:
         super().__init__(host, "", width=820)
         self._cancelled = on_cancel
         self.pin_label = QLabel(f"{pin[:3]} {pin[3:]}")
@@ -1064,7 +1065,7 @@ class BeaconSheet(Overlay):
         self.pin_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.body.addWidget(self.pin_label)
         self.steps = label(
-            "On the other machine, open <b>Sync</b>, choose <b>Copy from another machine</b>, "
+            f"On the other machine, open <b>Sync</b>, choose <b>{choice}</b>, "
             f"pick <b>{name}</b> from the list and enter this PIN.", "secondary")
         self.steps.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.body.addWidget(self.steps)
@@ -1105,8 +1106,11 @@ class CodeSheet(Overlay):
         qr.setStyleSheet("background: white; border-radius: 4px;")
         row.addWidget(qr, 0, Qt.AlignmentFlag.AlignTop)
         col = QVBoxLayout()
-        col.addWidget(label("On another machine, choose \"Copy from another machine\", then "
-                            "\"Paste a pairing code\", or scan this code.", "secondary"))
+        # A machine's own code (no vault) pairs; a vault's is copied.
+        choice = "Pair with another machine" if code.startswith("MODSYNC2-") else "Copy from another machine"
+        self.steps = label(f"On another machine, choose \"{choice}\" under Sync, then "
+                           "\"Paste a pairing code\", or scan this code.", "secondary")
+        col.addWidget(self.steps)
         self.code = label(code, "", selectable=True)
         self.code.setFont(QFont("monospace", 11))
         self.code.setStyleSheet(f"color: {theme.C['text']};")

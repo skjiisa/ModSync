@@ -400,6 +400,20 @@ class MachineWidePairing(GameFolderBase):
         self.assertIn("DESKTOP", self.st.devices)
         self.assertIsNone(State.load().folder_id)
 
+    def test_lan_join_without_mo2_pairs_with_a_vault_host(self):
+        from modsync import pairing_lan
+
+        host = pairing_lan.PairPayload("DESKTOP", "modsync-vault", "Skyrim SE", host="192.0.2.5", name="desktop")
+        ann = pairing_lan.Announcement("desktop", "192.0.2.5", 21029, "s")
+        with patch.object(pairing_lan, "join_pairing", return_value=host), \
+                patch.object(self.service, "join_vault") as join:
+            self.service.join_via_network(ann, "1234", None)
+        join.assert_not_called()  # no Mod Organizer 2 here to copy it into
+        self.assertIn("DESKTOP", self.st.devices)
+        st = State.load()
+        self.assertIsNone(st.folder_id)
+        self.assertTrue(st.paired)
+
     def test_forgetting_mo2_keeps_the_other_games(self):
         self.service.share_game_folder("test-mods")
         State.update(instance_path=str(self.tmp / "MO2"), dfu_path="/games/dfu", paired=True,

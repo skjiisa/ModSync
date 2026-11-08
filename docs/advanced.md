@@ -398,6 +398,18 @@ A machine that syncs only games' folders gives out a code starting with
 joins the vault as before. Versions from before machine-wide pairing reject a
 `MODSYNC2-` code rather than misreading it.
 
+The Sync page pairs these machines too. Without a vault, it lists each game's
+folder and how it stands, and the paired machines. "Pair with another
+machine" takes the other machine's PIN or code and only pairs, even with a
+machine that has the vault: there's no Mod Organizer 2 here to copy it into.
+Once a game's folder syncs here, "Pair over network" and "Show pairing code"
+offer this machine's own PIN and `MODSYNC2-` code. Until then they're hidden,
+because a machine accepts a machine that enters its code only while something
+syncs there. On a machine with Mod Organizer 2 that isn't shared yet, this is
+one row under the vault's two choices until something pairs or syncs.
+"Copy from another machine" pairs with a machine that has no vault rather
+than refusing it, and so does its `MODSYNC2-` code.
+
 If Syncthing isn't answering when a folder is stopped, the folder shows as
 stopping and is let go the next time ModSync reaches Syncthing. Leaving the
 vault keeps the paired machines while a game's folder still syncs with them. If a game moves to another place on one machine, its folder there is

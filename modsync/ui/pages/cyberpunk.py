@@ -179,7 +179,8 @@ class CyberpunkPage(Page):
         if ov.mods == "off" and ov.instance is not None and not ov.chosen:
             detail = "Press to use this instance here and sync its mods with your paired machines."
         else:
-            detail = {"on": "Your mods sync with your paired machines. Saves sync through the game itself.",
+            detail = {"on": "Your mods sync with your paired machines. Saves sync through the game itself."
+                      if self.service.reload_state().paired else "No machine is paired yet. Pair one under Sync.",
                       "off": "Press to sync your mods with your paired machines.",
                       "stopping": "Finishes once Syncthing answers."}[ov.mods]
         self.mods_row.set_state(word, tone, detail)

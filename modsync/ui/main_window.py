@@ -560,6 +560,15 @@ class MainWindow(QMainWindow):
         else:
             self.rebuild()
 
+    def machine_paired(self, message: str) -> None:
+        """Paired with a machine, without joining a vault: only the games'
+        folders sync between them. The wizard stays where it is, since
+        Mod Organizer 2 still isn't set up here."""
+        self.set_busy("sync-setup", False)
+        self.notify(message, "ok")
+        if self.setup is None:
+            self.rebuild()
+
     def instance_chosen(self, path: str) -> None:
         if self.setup is not None:
             self.setup.go_to(2 if self.setup.copy_from_machine else 1)
