@@ -7,12 +7,13 @@ verbatim; the helpers interpret the MO2/Qt encodings:
 * Wine/Proton ``Z:\\...`` paths  (``Z:`` maps to ``/``)
 * path tokens like ``%BASE_DIR%``
 
-When we later need to *write* the ini, we'll use line-targeted edits to preserve
-``@ByteArray(...)``/``@Variant(...)`` blobs byte-for-byte (see plan).
+Writes are line-targeted (:func:`add_missing`), so ``@ByteArray(...)`` and
+``@Variant(...)`` blobs stay byte-for-byte.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -97,3 +98,40 @@ def expand_tokens(value: str, base_dir: str | None) -> str:
         return m.group(0)
 
     return _TOKEN_RE.sub(repl, value)
+
+
+def add_missing(path: Path | str, section: str, values: dict[str, str]) -> list[str]:
+    """Set each key of ``values`` that ``[section]`` doesn't have yet, adding
+    only those lines; every other line, and every key already set, is left as
+    it is. Returns the keys added."""
+    path = Path(path)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []
+    header = end = None
+    present: set[str] = set()
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if header is not None and end is None:
+                end = i
+            if stripped[1:-1] == section:
+                header, end = i, None
+        elif header is not None and end is None and "=" in line:
+            present.add(line.partition("=")[0].strip().lower())
+    added = [k for k in values if k.lower() not in present]
+    if not added:
+        return []
+    new = [f"{k}={values[k]}" for k in added]
+    if header is None:
+        lines += (["", f"[{section}]"] if lines else [f"[{section}]"]) + new
+    else:
+        at = len(lines) if end is None else end
+        while at > header + 1 and not lines[at - 1].strip():  # before the blank line ending the section
+            at -= 1
+        lines[at:at] = new
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return added

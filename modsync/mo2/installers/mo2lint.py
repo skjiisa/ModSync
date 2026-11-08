@@ -164,6 +164,8 @@ class Mo2LintBackend(InstallerBackend):
         *,
         script_extender: bool = False,  # see InstallerBackend.install
         on_output: OnOutput | None = None,
+        launcher: str | None = None,  # MO2-LINT's --launcher: "steam", "gog" or "epic"; None lets it pick
+        env: dict[str, str] | None = None,  # added to MO2-LINT's environment
     ) -> InstallResult:
         dest_dir = Path(dest_dir)  # MO2-LINT creates it; pre-creating it left an empty folder on failure
 
@@ -185,7 +187,7 @@ class Mo2LintBackend(InstallerBackend):
             if on_output:
                 on_output(f"MO2-LINT still lists an instance at {dest_dir} that no longer exists; clearing it.")
             rc = self._run(
-                [str(self.binary()), "uninstall", "--directory", str(dest_dir), "--unattended"], on_output
+                [str(self.binary()), "uninstall", "--directory", str(dest_dir), "--unattended"], on_output, env
             )
             if rc != 0 or registered_instance(dest_dir) is not None:
                 message = f"mo2-lint could not clear its stale entry for {dest_dir} (exit {rc})"
@@ -201,8 +203,10 @@ class Mo2LintBackend(InstallerBackend):
         ]
         if script_extender:
             args.append("--script-extender")
+        if launcher:
+            args += ["--launcher", launcher]
         log.info("installing MO2 with MO2-LINT: %s", " ".join(args))
-        returncode = self._run(args, on_output)
+        returncode = self._run(args, on_output, env)
 
         has_exe = (dest_dir / "ModOrganizer.exe").exists()
         success = returncode == 0 and has_exe
@@ -219,18 +223,20 @@ class Mo2LintBackend(InstallerBackend):
         return InstallResult(success, returncode, dest_dir if success else None, message)
 
     @staticmethod
-    def _run(args: list[str], on_output: OnOutput | None) -> int:
+    def _run(args: list[str], on_output: OnOutput | None, env: dict[str, str] | None = None) -> int:
         """Run mo2-lint (on the host when sandboxed), streaming its output."""
+        env = env or {}
         if background.in_flatpak():
-            args = ["flatpak-spawn", "--host", *args]
+            args = ["flatpak-spawn", "--host", *(f"--env={k}={v}" for k, v in env.items()), *args]
         if on_output:
-            on_output("$ " + " ".join(args))
+            on_output("$ " + " ".join([*(f"{k}={v}" for k, v in env.items()), *args]))
         with subprocess.Popen(
             args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env={**os.environ, **env} if env else None,
         ) as proc:
             assert proc.stdout is not None
             for line in proc.stdout:

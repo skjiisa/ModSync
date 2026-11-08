@@ -808,6 +808,45 @@ DFU only has an x86_64 build. On the Steam Frame it would have to run under
 emulation, which is untested (#110). DFU's developers don't support builds or setups from third parties,
 so report problems with a ModSync-installed DFU to ModSync.
 
+## Cyberpunk 2077 (GOG, through Heroic)
+
+Support for Cyberpunk 2077 from GOG, installed with the
+[Heroic Games Launcher](https://heroicgameslauncher.com/), is under way and
+only on the command line so far. ModSync reads Heroic's own settings (native
+or the Flatpak) for the game's folder, prefix and Proton, and runs Mod
+Organizer 2 the way Heroic runs the game: `umu-run` with Heroic's prefix and
+Proton.
+
+1. Install Cyberpunk 2077 in Heroic and launch it once, so Heroic creates
+   its prefix.
+2. `modsync cyberpunk install` installs MO2 into
+   `~/ModOrganizer2-cyberpunk2077` (or the folder given). MO2-LINT installs
+   MO2 and adds "Launch Mod Organizer" to the game's launch options in
+   Heroic. ModSync then applies MO2-LINT's prefix steps itself through
+   `umu-run winetricks`, installs Microsoft's VC++ runtime into the prefix
+   when it's missing or old, and adds the
+   [RootBuilder](https://github.com/Kezyma/ModOrganizer-Plugins) plugin.
+   An instance installed with MO2-LINT earlier is found by itself;
+   `modsync cyberpunk use <dir>` picks another.
+3. `modsync cyberpunk open` opens MO2, and `modsync cyberpunk play` plays
+   through it. Play uses MO2's Cyberpunk executable, which deploys REDmod
+   and skips REDlauncher.
+
+Cyber Engine Tweaks and RED4ext load through `version.dll` and `winmm.dll`
+in the game's `bin/x64` folder, which Wine ignores unless told otherwise, so
+every launch sets `WINEDLLOVERRIDES="winmm,version=n,b"` (MO2-LINT's
+Cyberpunk guide asks for the same). Install them in MO2 as usual: MO2's
+Cyberpunk plugin puts their DLLs in a `root` folder, and RootBuilder copies
+those into the game folder when the game starts and takes them out again
+when it exits. If the game is killed rather than closed, they stay until
+the next Play.
+
+Why ModSync does the prefix steps instead of MO2-LINT: on GOG, MO2-LINT
+7.0.3 runs winetricks with whatever `wine` is on the PATH, which on a
+desktop is a system Wine that upgrades the Proton prefix (and stops at a
+Wine Mono dialog), and on a Steam Deck is nothing. ModSync gives MO2-LINT
+stand-ins that make those steps fail at once and leave the prefix alone.
+
 ## Background service
 
 By default ModSync only acts while the app or `modsync serve` is running.

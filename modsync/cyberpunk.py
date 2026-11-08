@@ -14,17 +14,33 @@ REDlauncher and deploying REDmod first. Cyber Engine Tweaks and RED4ext are
 loaded through proxy DLLs (``version.dll``, ``winmm.dll``) next to the game,
 which Wine ignores in favour of its own unless told otherwise, so every launch
 sets :data:`DLL_OVERRIDES`. ``n,b`` falls back to Wine's own DLL when there is
-no mod's copy, so it is harmless without mods.
+no mod's copy, so it is harmless without mods. Those DLLs reach the game folder
+through the RootBuilder plugin, which MO2 doesn't ship: :func:`install_mo2`
+adds it, set up the way the Cyberpunk plugin would set it on MO2's first start
+(copy mode: the files are copied in for the session and taken out again when
+the game exits).
+
+MO2-LINT installs MO2 itself, but on GOG its prefix steps run winetricks with
+whatever ``wine`` is on PATH (a host Wine on a desktop, which upgrades the
+Proton prefix and stops at a Wine Mono dialog; none on a Steam Deck) and pass
+the VC++ installer and DLL overrides to winetricks as verbs, which fail.
+:data:`MO2LINT_ENV` makes each of those steps fail at once without touching the
+prefix, and :func:`prepare_prefix` does them with the game's own runner.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import shutil
 import subprocess
+import urllib.request
+import zipfile
+from datetime import datetime
 from pathlib import Path, PureWindowsPath
+from typing import Callable
 
 from modsync import background, config
 from modsync.games import CYBERPUNK
@@ -36,6 +52,36 @@ log = logging.getLogger(__name__)
 
 DLL_OVERRIDES = "winmm,version=n,b"
 _OVERRIDDEN = {"winmm", "version"}
+
+MO2LINT_ENV = {"WINE": "/bin/false", "WINELOADER": "/bin/false", "WINESERVER": "/bin/true"}
+# MO2-LINT's own prefix steps for Cyberpunk, less vcrun2022: winetricks' vcrun2022
+# can leave a broken runtime (MO2-LINT #1106), so prepare_prefix runs Microsoft's
+# redistributable instead, as ModSync does for Skyrim.
+TRICKS = ("win10", "arial", "fontsmooth=rgb", "xaudio2_7=native", "d3dcompiler_47")
+
+ROOTBUILDER_VERSION = "5.1.1"
+ROOTBUILDER_URL = ("https://github.com/Kezyma/ModOrganizer-Plugins/releases/download/rootbuilder/"
+                   f"rootbuilder.{ROOTBUILDER_VERSION}.zip")
+ROOTBUILDER_SHA256 = "902f1edf7ccae8fa625d4ea50b8fd36a0540cda121ad584989e4b1ed977046b1"
+# What the Cyberpunk plugin sets on MO2's first start (its _rootbuilder_settings),
+# written ahead so Play works before MO2 has ever been opened. Only keys that
+# aren't set yet are written, so a choice made in MO2 stays.
+ROOTBUILDER_SETTINGS = {
+    "RootBuilder\\enabled": "true",
+    "RootBuilder\\usvfsmode": "false",
+    "RootBuilder\\linkmode": "false",
+    "RootBuilder\\linkonlymode": "false",
+    "RootBuilder\\backup": "true",
+    "RootBuilder\\cache": "true",
+    "RootBuilder\\autobuild": "true",
+    "RootBuilder\\redirect": "false",
+    "RootBuilder\\installer": "false",
+    "RootBuilder\\exclusions": '"archive,setup_redlauncher.exe,tools"',
+    "RootBuilder\\linkextensions": '"dll,exe"',
+    "Cyberpunk%202077%20Support%20Plugin\\configure_RootBuilder": "false",
+}
+
+OnOutput = Callable[[str], None]
 
 
 class CyberpunkError(RuntimeError):
@@ -204,12 +250,20 @@ def build_plan(instance_path: Path | str | None, game: heroic.GogGame | None, *,
         args, target = _game_target(sections, game.install_path)
         mo2_args += args
     command = [str(instance / "ModOrganizer.exe"), *mo2_args]
+    env = prefix_env(game)
+    display = nested_desktop_display()
+    if display:
+        env.update({"DISPLAY": display, "ENABLE_GAMESCOPE_WSI": "0", "DISABLE_GAMESCOPE_WSI": "1"})
+    return LaunchPlan([*command_runner, *command], env, instance, target, play, game.wine.proton_dir, command)
 
+
+def prefix_env(game: heroic.GogGame) -> dict[str, str]:
+    """What :func:`runner` needs to run in the game's prefix, as Heroic sets it."""
     env = {
         "WINEPREFIX": str(game.prefix),
         "WINEDLLOVERRIDES": with_dll_overrides(os.environ.get("WINEDLLOVERRIDES")),
     }
-    proton = game.wine.proton_dir
+    proton = game.wine.proton_dir if game.wine is not None else None
     if proton is not None:
         env.update({
             "STEAM_COMPAT_DATA_PATH": str(game.prefix),
@@ -218,7 +272,167 @@ def build_plan(instance_path: Path | str | None, game: heroic.GogGame | None, *,
             "GAMEID": f"umu-{CYBERPUNK.appid}",
             "STORE": "gog",
         })
-    display = nested_desktop_display()
-    if display:
-        env.update({"DISPLAY": display, "ENABLE_GAMESCOPE_WSI": "0", "DISABLE_GAMESCOPE_WSI": "1"})
-    return LaunchPlan([*command_runner, *command], env, instance, target, play, proton, command)
+    return env
+
+
+# --- installing MO2 -----------------------------------------------------------
+
+
+def _ready_game() -> heroic.GogGame:
+    game = find_game()
+    if game is None:
+        raise CyberpunkError("Cyberpunk 2077 wasn't found in Heroic. Install it from GOG in Heroic first.")
+    if game.drive_c is None:
+        raise CyberpunkError("Cyberpunk's prefix isn't set up yet. Launch the game once from Heroic first.")
+    if game_running():
+        raise CyberpunkError("Close Cyberpunk 2077 and Mod Organizer 2 first.")
+    return game
+
+
+def game_running() -> bool:
+    """Cyberpunk or MO2 running in Wine. A running session holds the prefix.
+    Wine names its processes by their Windows path (``Z:\\…\\Cyberpunk2077.exe``),
+    which a shell command merely mentioning the program doesn't start with."""
+    try:
+        found = background.run_host(["pgrep", "-f", r"^[A-Za-z]:\\.*\\(Cyberpunk2077|ModOrganizer)\.exe"], timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return found.returncode == 0
+
+
+def run_in_prefix(game: heroic.GogGame, args: list[str], *, timeout: float = 900,
+                  env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    """Run a command to completion with the game's runner in its prefix."""
+    argv = [*runner(game), *args]
+    full_env = {**prefix_env(game), **(env or {})}
+    run_env = dict(os.environ)
+    for key in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH"):
+        run_env.pop(key, None)
+    run_env.update(full_env)
+    if background.in_flatpak():
+        argv = ["flatpak-spawn", "--host", "env", *(f"{k}={v}" for k, v in full_env.items()), *argv]
+    log.info("running %s in Cyberpunk's prefix", " ".join(args))
+    return subprocess.run(argv, env=run_env, stdin=subprocess.DEVNULL, capture_output=True,
+                          text=True, errors="replace", timeout=timeout)
+
+
+def winetricks_command(game: heroic.GogGame, verbs: list[str] | tuple[str, ...]) -> tuple[list[str], dict[str, str]]:
+    """winetricks through umu-launcher for a Proton (it runs it in the game's
+    runtime), the host's winetricks with the game's Wine otherwise."""
+    if game.wine is not None and game.wine.is_proton:
+        return ["winetricks", "-q", *verbs], {}
+    host = _host_which("winetricks")
+    if host is None:
+        raise CyberpunkError("winetricks isn't installed, and Cyberpunk runs with a plain Wine in Heroic.")
+    return [host, "-q", *verbs], {"WINE": str(game.wine.bin) if game.wine else "wine"}
+
+
+def _winetricks(game: heroic.GogGame, verbs: list[str] | tuple[str, ...]) -> subprocess.CompletedProcess:
+    args, env = winetricks_command(game, verbs)
+    if game.wine is not None and game.wine.is_proton:
+        return run_in_prefix(game, args)
+    return _run_host(args, {**prefix_env(game), **env})
+
+
+def installed_verbs(game: heroic.GogGame) -> set[str]:
+    """The winetricks verbs the prefix already has. umu-launcher refuses a run
+    that names any of them, so prepare_prefix leaves those out."""
+    result = _winetricks(game, ["list-installed"])
+    return {line.strip() for line in result.stdout.splitlines()
+            if result.returncode == 0 and line.strip() and " " not in line.strip()}
+
+
+def prepare_prefix(game: heroic.GogGame, on_output: OnOutput | None = None) -> None:
+    """MO2-LINT's prefix steps for Cyberpunk, run the way the game runs."""
+    say = on_output or (lambda _line: None)
+    installed = installed_verbs(game)
+    verbs = [v for v in TRICKS if v not in installed]
+    if verbs:
+        say("Applying " + ", ".join(verbs) + " to Cyberpunk's prefix…")
+        result = _winetricks(game, verbs)
+        if result.returncode != 0:
+            log.error("winetricks failed (%s): %s\n%s", result.returncode, result.stdout[-2000:], result.stderr[-2000:])
+            last = (result.stderr.strip().splitlines() or [""])[-1]
+            raise CyberpunkError(f"winetricks exited with code {result.returncode}"
+                                 + (f": {last}" if last else ". Details are in ModSync's log."))
+
+    from modsync.mo2 import vcruntime
+
+    system32 = game.drive_c / "windows" / "system32"
+    if not vcruntime.prefix_runtime_problems(system32):
+        return
+    say("Installing Microsoft's Visual C++ runtime into Cyberpunk's prefix…")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = vcruntime.backup_prefix_runtime(system32, config.data_dir() / "backups" / f"cyberpunk-vcruntime-{stamp}")
+    result = run_in_prefix(game, [str(vcruntime.redist_installer()), "/install", "/quiet", "/norestart"])
+    # 3010: installed, reboot requested (meaningless in a prefix); 1638: a newer one is there.
+    if result.returncode not in (0, 3010, 1638):
+        log.error("VC++ runtime install failed (%s): %s\n%s", result.returncode, result.stdout[-2000:], result.stderr[-2000:])
+        raise CyberpunkError(f"The Visual C++ runtime installer exited with code {result.returncode}. "
+                             f"The previous DLLs are backed up in {backup}.")
+
+
+def _run_host(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
+    if background.in_flatpak():
+        argv = ["flatpak-spawn", "--host", "env", *(f"{k}={v}" for k, v in env.items()), *argv]
+    return subprocess.run(argv, env={**os.environ, **env}, stdin=subprocess.DEVNULL, capture_output=True,
+                          text=True, errors="replace", timeout=900)
+
+
+def _rootbuilder_zip() -> Path:
+    """The pinned RootBuilder release, downloaded once and checked."""
+    path = config.data_dir() / "downloads" / f"rootbuilder.{ROOTBUILDER_VERSION}.zip"
+    if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == ROOTBUILDER_SHA256:
+        return path
+    log.info("downloading %s", ROOTBUILDER_URL)
+    with urllib.request.urlopen(ROOTBUILDER_URL, timeout=60) as response:
+        data = response.read()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != ROOTBUILDER_SHA256:
+        raise CyberpunkError(f"RootBuilder's download didn't match its checksum ({digest}).")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".part")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+    return path
+
+
+def install_rootbuilder(instance: Path) -> None:
+    """RootBuilder in the instance's plugins folder, set up for Cyberpunk."""
+    plugins = (instance / "plugins").resolve()
+    with zipfile.ZipFile(_rootbuilder_zip()) as archive:
+        for member in archive.infolist():
+            target = (plugins / member.filename).resolve()
+            if not member.filename.startswith("rootbuilder/") or not target.is_relative_to(plugins):
+                continue
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read(member))
+    ini.add_missing(instance / "ModOrganizer.ini", "Plugins", ROOTBUILDER_SETTINGS)
+
+
+def default_instance_dir() -> Path:
+    return Path.home() / f"ModOrganizer2-{CYBERPUNK.mo2lint_key}"
+
+
+def install_mo2(dest: Path | str, on_output: OnOutput | None = None, *, backend=None) -> Path:
+    """A Cyberpunk MO2 instance in ``dest``: MO2-LINT's install (MO2, its config
+    and Heroic's "Launch Mod Organizer" entry), the prefix steps, RootBuilder.
+    Then it's the instance in use."""
+    from modsync.mo2.installers import Mo2LintBackend
+
+    say = on_output or (lambda _line: None)
+    game = _ready_game()
+    backend = backend or Mo2LintBackend()
+    ok, reason = backend.available()
+    if not ok:
+        raise CyberpunkError(f"Cannot install: {reason}")
+    result = backend.install(CYBERPUNK, Path(dest).expanduser(), launcher="gog", env=MO2LINT_ENV, on_output=on_output)
+    if not result.success or result.instance_path is None:
+        raise CyberpunkError(f"Install failed: {result.message}")
+    prepare_prefix(game, on_output)
+    say("Adding the RootBuilder plugin (it puts CET's and RED4ext's DLLs next to the game while you play)…")
+    install_rootbuilder(result.instance_path)
+    return use_instance(result.instance_path)

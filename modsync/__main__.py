@@ -50,6 +50,7 @@ usage:
   modsync dfu hook enable | disable      make Steam's Play button on Daggerfall start Daggerfall Unity
 
   modsync cyberpunk status               Cyberpunk 2077 in Heroic (GOG) and its MO2 instance
+  modsync cyberpunk install [<dir>]      install MO2 for Cyberpunk (with RootBuilder for CET/RED4ext)
   modsync cyberpunk use <dir>            use this MO2 instance for Cyberpunk
   modsync cyberpunk open | play          open its MO2, or play through it, with Heroic's Proton
 
