@@ -53,8 +53,10 @@ All notable changes to ModSync are documented here. The format follows
   network" and "Show pairing code" offer this machine's own. The page lists
   each game's folder and how it stands, beside the vault too, and the paired
   machines. "Copy from another machine" pairs with a machine that has no
-  vault, or takes its `MODSYNC2-` code, instead of refusing it. A game whose
-  sync is on with no machine paired yet points to Sync.
+  vault, or takes its `MODSYNC2-` code, instead of refusing it. On the
+  vault's page, "Pair with another machine" replaces "Add a machine by
+  code…" and takes a PIN too. A game whose sync is on with no machine
+  paired yet points to Sync.
 
 ### Changed
 

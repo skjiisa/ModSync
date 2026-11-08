@@ -397,11 +397,7 @@ class SyncPage(Page):
         for tile in tiles:
             right.addWidget(tile)
         right.addStretch(1)
-        self.pair_join = JoinPanel(self.host, machine=True)
-        self.pair_join_panel = Panel()
-        self.pair_join_panel.add(self.pair_join)
-        self.pair_join_panel.setVisible(False)
-        self.content_layout.addWidget(self.pair_join_panel)
+        self._add_pair_join()
         self._show_devices([])
         self._update_machine()
         if state.active:
@@ -424,6 +420,15 @@ class SyncPage(Page):
         if hosts and not self._code_requested:
             self._code_requested = True
             self._load_code()
+
+    def _add_pair_join(self) -> None:
+        """Entering another machine's PIN or code only pairs: whatever the
+        two sync is shared between them."""
+        self.pair_join = JoinPanel(self.host, machine=True)
+        self.pair_join_panel = Panel()
+        self.pair_join_panel.add(self.pair_join)
+        self.pair_join_panel.setVisible(False)
+        self.content_layout.addWidget(self.pair_join_panel)
 
     def toggle_pair_join(self) -> None:
         show = not self.pair_join_panel.isVisible()
@@ -533,11 +538,12 @@ class SyncPage(Page):
             self.pair_tile.clicked.connect(self.pair_network)
             code = Tile("Show pairing code", "A code and QR code for another machine.", "qr", size="compact")
             code.clicked.connect(self.show_code)
-            add = Tile("Add a machine by code…", "Paste the other machine's pairing code.", "plus", size="compact")
-            add.clicked.connect(self.add_device)
+            self.join_tile = Tile("Pair with another machine…", "Enter the PIN it shows, or paste its code.",
+                                  "devices", size="compact", chevron=True)
+            self.join_tile.clicked.connect(self.toggle_pair_join)
             rescan = Tile("Rescan", "Look for changed files now.", "refresh", size="compact")
             rescan.clicked.connect(self.rescan)
-            tiles = [self.pair_tile, code, add, rescan]
+            tiles = [self.pair_tile, code, self.join_tile, rescan]
             if state.sync_paused:
                 self.resume_tile = Tile("Resume syncing", "Carry over what changed on each machine meanwhile.",
                                         "play", role="primary")
@@ -554,6 +560,8 @@ class SyncPage(Page):
         for tile in tiles:
             right.addWidget(tile)
         right.addStretch(1)
+        if not state.copying:
+            self._add_pair_join()
         self._load_code()
         self.refresh()
         self._accept_pending()
@@ -572,6 +580,10 @@ class SyncPage(Page):
             self.service.reload_state()  # a game's page may have turned its sync on or off
             self._update_machine()
             if not self.service.state.active:
+                # The last folder stopped or the last machine was forgotten:
+                # nothing is left to show, and Syncthing isn't started to say so.
+                self._show_games([])
+                self._show_devices([])
                 return
         self.refresh()
         self._accept_pending()
@@ -700,16 +712,6 @@ class SyncPage(Page):
             return
         CodeSheet(self.host, self._code).open()
 
-    def add_device(self) -> None:
-        def add(text: str) -> None:
-            code = PairingCode.decode(text)
-            worker.run_async(self.service.add_peer, code,
-                             on_done=lambda _: (self.host.notify("Device added.", "ok"), self.refresh()),
-                             on_failed=lambda m: self.host.notify(f"⚠ {m}"))
-
-        KeyboardSheet(self.host, "Add a machine", "Paste the pairing code from the other machine.", add,
-                      placeholder="MODSYNC1-…", validate=_validate_code).open()
-
     def pair_network(self) -> None:
         if self._pairing:
             self.cancel_pairing()
@@ -718,8 +720,7 @@ class SyncPage(Page):
         self._pair_stop = threading.Event()
         self._pairing = True
         name = socket.gethostname() or "this machine"
-        self.beacon = BeaconSheet(self.host, pin, name, self.cancel_pairing,
-                                  choice="Copy from another machine" if self.live else "Pair with another machine")
+        self.beacon = BeaconSheet(self.host, pin, name, self.cancel_pairing, vault=self.live)
         self.beacon.open()
         self.host.notify(f"Waiting for another machine to enter PIN {pin[:3]} {pin[3:]}…")
         beacon = self.beacon

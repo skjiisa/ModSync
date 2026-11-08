@@ -195,3 +195,93 @@ class VaultPageTests(UiTestCase):
         sync.on_status(status)
         self.assertTrue(sync.games_panel.isVisibleTo(sync))
         self.assertEqual(sync._game_rows["dfu-saves"].text(), "Daggerfall Unity saves")
+
+
+class GoingInactiveTests(UiTestCase):
+    """Once nothing syncs or pairs here, the rows go without asking Syncthing."""
+
+    def _window(self):
+        mods = str(self.tmp / "dfu")
+        State(game_folders={"dfu-mods": mods}, paired=True).save()
+        status = _status([FolderStatus(dfu.MODS_FOLDER, mods, "idle", 100.0)], [("DECKDEC-1", "steamdeck", True)])
+        with patch.object(ModSyncService, "status", lambda svc: status):
+            window = self.window()
+            self.settle()
+        sync = window.pages["sync"]
+        self.assertTrue(sync._game_rows and sync._device_rows)
+        return window, sync
+
+    def test_stopping_the_last_folder_with_no_machine_left_clears_the_rows(self):
+        window, sync = self._window()
+        State.update(game_folders={}, paired=False)
+        with patch.object(ModSyncService, "status") as status:
+            sync.poll()
+            self.settle()
+        status.assert_not_called()
+        self.assertEqual((sync._game_rows, sync._device_rows), ({}, {}))
+        self.assertTrue(sync._no_games.isVisibleTo(sync))
+        self.assertIsNotNone(sync._no_devices)
+
+    def test_forgetting_the_last_machine_with_no_folder_clears_its_row(self):
+        window, sync = self._window()
+        State.update(game_folders={})  # the folder stopped earlier; the machine is still paired
+        with patch.object(ModSyncService, "status", lambda svc: _status([], [("DECKDEC-1", "steamdeck", True)])):
+            sync.poll()
+            self.settle()
+        self.assertEqual(sync._game_rows, {})
+        self.assertEqual(list(sync._device_rows), ["DECKDEC-1"])
+        State.update(paired=False)  # what forget_machine does with no machine left
+        sync.poll()
+        self.settle()
+        self.assertEqual(sync._device_rows, {})
+
+
+class InstructionsTests(UiTestCase):
+    """The PIN and code name a choice every receiving Sync page has."""
+
+    def test_the_vaults_page_can_enter_a_pin_or_code_that_only_pairs(self):
+        State(instance_path=str(self.tmp), folder_id="modsync-1").save()
+        window = self.window()
+        sync = window.pages["sync"]
+        sync.join_tile.click()
+        self.assertTrue(sync.pair_join_panel.isVisibleTo(sync))
+        self.assertTrue(sync.pair_join.machine)
+        with patch("modsync.ui.pages.sync.worker.run_async") as run:
+            sheet = sync.pair_join.ask_pin(DECK)
+            sheet.set_pin("123456")
+            sheet.submit()
+        self.assertEqual(run.call_args.args, (window.service.join_via_network, DECK, "123456", None))
+
+    def test_a_vaults_pin_and_code_name_both_choices(self):
+        from modsync.ui.overlays import CodeSheet
+
+        State(instance_path=str(self.tmp), folder_id="modsync-1").save()
+        window = self.window()
+        sync = window.pages["sync"]
+        with patch("modsync.ui.pages.sync.worker.run_async"):
+            sync.pair_network()
+        steps = window.top_overlay.steps.text()
+        self.assertIn("Copy from another machine", steps)
+        self.assertIn("Pair with another machine", steps)
+        sync.cancel_pairing()
+        CodeSheet(window, PairingCode("D" * 56, "modsync-1", "Skyrim SE").encode()).open()
+        steps = window.top_overlay.steps.text()
+        self.assertIn("Copy from another machine", steps)
+        self.assertIn("Pair with another machine", steps)
+        window.top_overlay.cancel()
+        CodeSheet(window, PairingCode("D" * 56, "", "ModSync").encode()).open()
+        self.assertNotIn("Copy from another machine", window.top_overlay.steps.text())
+
+    def test_every_sync_page_offers_pair_with_another_machine(self):
+        for state in (State(), State(instance_path=str(self.tmp)),
+                      State(instance_path=str(self.tmp), folder_id="modsync-1"),
+                      State(game_folders={"dfu-mods": str(self.tmp / "dfu")}, paired=True)):
+            with self.subTest(state=state):
+                state.save()
+                window = self.window()
+                sync = window.pages["sync"]
+                tiles = [t for t in (getattr(sync, "pair_only_tile", None), sync.join_tile)
+                         if t is not None and t.isVisibleTo(sync)]
+                self.assertEqual(len(tiles), 1)
+                self.assertTrue(tiles[0].text().startswith("Pair with another machine"))
+                window.close()

@@ -276,7 +276,7 @@ def main():
                 w.top_overlay.cancel()
                 settle()
         router.pad_style = "xbox"
-        w.pages["sync"].add_device()
+        w.pages["sync"].pair_join.enter_code()
         capture(w, "keyboard")
         keyboard = w.top_overlay
         keyboard.shift.click()
