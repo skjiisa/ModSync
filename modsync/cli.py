@@ -925,6 +925,11 @@ def _dfu_status() -> int:
             print("  ! That isn't where Steam has Daggerfall now; 'modsync dfu install' points it there.")
     if not inst.portable:
         print("  ! Portable.txt is missing, so DFU keeps its data in ~/.config/unity3d.")
+    emulation = dfu.emulation_problem(inst)
+    if emulation:
+        print(f"  ! {emulation}")
+    elif dfu.needs_emulation(inst.executable):
+        print("  Runs through:       Steam's FEX and Steam Linux Runtime (it's an x86-64 program)")
     mods = sorted(inst.mods_dir.rglob("*.dfmod")) if inst.mods_dir.is_dir() else []
     print(f"  Mods:               {len(mods)} in {inst.mods_dir}")
     print(f"Play in Steam:        {dfu.hook_status().summary()}")
@@ -947,7 +952,7 @@ def _dfu_status() -> int:
     version = dfu.version_problem(inst)
     if version:
         print(f"  ! {version}")
-    return 0 if not problems and configured else 1
+    return 0 if not problems and configured and not emulation else 1
 
 
 def _dfu_install(args: list[str]) -> int:

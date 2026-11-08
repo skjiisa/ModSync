@@ -1,6 +1,11 @@
+import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from modsync.steam import shortcuts
 
@@ -126,6 +131,42 @@ class AddOrUpdate(unittest.TestCase):
             self.assertEqual((cfg / "shortcuts.vdf.modsync-bak").read_bytes(), original)
             names = [e["AppName"] for e in shortcuts.load(cfg / "shortcuts.vdf")["shortcuts"].values()]
             self.assertEqual(names, ["Existing Game", "ModSync"])
+
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("sleep") and shutil.which("pgrep"),
+                     "Linux /proc and pgrep required")
+class ProcessRunning(unittest.TestCase):
+    """Under Steam's FEX-Emu (the Steam Frame) an x86 program's comm is "FEX";
+    its first argument is still the program."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        fex = Path(tmp.name) / "FEX"
+        fex.symlink_to(shutil.which("sleep"))
+        # As FEX runs it: comm "FEX", argv[0] the program, with a space in its folder.
+        self.proc = subprocess.Popen(["/games/Daggerfall Unity/DaggerfallUnity.x86_64", "30"], executable=fex)
+        self.addCleanup(self.proc.wait)
+        self.addCleanup(self.proc.kill)
+
+    def test_finds_a_program_fex_runs(self):
+        with patch.dict(os.environ):
+            os.environ.pop("FLATPAK_ID", None)
+            if Path("/.flatpak-info").exists():
+                self.skipTest("inside a Flatpak")
+            self.assertTrue(shortcuts.process_running("DaggerfallUnity", "DaggerfallUnity.x86_64"))
+            self.assertFalse(shortcuts.process_running("DaggerfallUnity", "Other.x86_64"))
+            self.assertFalse(shortcuts.process_running("DaggerfallUnity"))
+
+    def test_the_host_check_the_flatpak_runs_finds_it_too(self):
+        def check(comm, program):
+            return subprocess.run(["sh", "-c", shortcuts._HOST_CHECK, "sh", comm, program], check=False).returncode
+
+        self.assertEqual(check("DaggerfallUnity", "DaggerfallUnity.x86_64"), 0)
+        self.assertEqual(check("DaggerfallUnity", "Other.x86_64"), 1)
+        self.assertEqual(check("DaggerfallUnity", ""), 1)
+        self.assertEqual(check("FEX", ""), 0)
 
 
 if __name__ == "__main__":

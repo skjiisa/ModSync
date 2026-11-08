@@ -203,16 +203,31 @@ def steam_is_running() -> bool:
     return process_running("steam")
 
 
-def process_running(comm: str) -> bool:
+# An x86 program that Steam runs through FEX-Emu on an ARM machine (the Steam
+# Frame) has FEX's name as its comm; its first argument is still the program.
+_EMULATORS = ("FEX", "FEXInterpreter")
+
+# The same check on the host, from inside the Flatpak: $1 is comm, $2 the program.
+_HOST_CHECK = r"""pgrep -x "$1" >/dev/null && exit 0
+[ -n "$2" ] || exit 1
+for pid in $(pgrep -x FEX; pgrep -x FEXInterpreter); do
+    arg0=$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | head -n 1)
+    [ "${arg0##*/}" = "$2" ] && exit 0
+done
+exit 1"""
+
+
+def process_running(comm: str, program: str | None = None) -> bool:
     """Whether a host process named ``comm`` (as ``/proc/<pid>/comm`` has it,
-    cut to 15 characters) is running.
+    cut to 15 characters) is running, or, given ``program``, FEX-Emu running
+    the file of that name.
 
     A Flatpak has its own PID namespace, so ``/proc`` shows nothing of the host
     there; ask the host through the Flatpak portal instead."""
     if os.environ.get("FLATPAK_ID") or Path("/.flatpak-info").exists():
         try:
             result = subprocess.run(
-                ["flatpak-spawn", "--host", "pgrep", "-x", comm],
+                ["flatpak-spawn", "--host", "sh", "-c", _HOST_CHECK, "sh", comm, program or ""],
                 capture_output=True,
                 timeout=10,
                 check=False,
@@ -228,8 +243,13 @@ def process_running(comm: str) -> bool:
         if not entry.name.isdigit():
             continue
         try:
-            if (entry / "comm").read_text().strip() == comm:
+            name = (entry / "comm").read_text().strip()
+            if name == comm:
                 return True
+            if program and name in _EMULATORS:
+                arg0 = (entry / "cmdline").read_bytes().split(b"\0", 1)[0]
+                if os.path.basename(os.fsdecode(arg0)) == program:
+                    return True
         except OSError:
             continue
     return False

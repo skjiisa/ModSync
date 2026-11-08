@@ -30,16 +30,52 @@ if [[ -f "$log_file" ]] && (( $(wc -c < "$log_file" 2>/dev/null || echo 0) > 200
 fi
 log() { printf '%s [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$appid" "$*" >> "$log_file" 2>/dev/null; }
 
+# The folder of Steam app $1 that has the program $2, from Steam's libraries.
+steam_app() {
+    local lib steamapps acf installdir compat_libs
+    IFS=: read -r -a compat_libs <<< "${STEAM_COMPAT_LIBRARY_PATHS:-}"
+    for lib in "${compat_libs[@]}" "${STEAM_COMPAT_CLIENT_INSTALL_PATH:-}" "${libraries[@]}"; do
+        [[ -n "$lib" ]] || continue
+        for steamapps in "$lib/steamapps" "$lib"; do
+            acf="$steamapps/appmanifest_$1.acf"
+            [[ -f "$acf" ]] || continue
+            installdir=$(sed -n 's/^[[:space:]]*"installdir"[[:space:]]*"\(.*\)".*/\1/p' "$acf" | head -n 1)
+            if [[ -n "$installdir" && -x "$steamapps/common/$installdir/$2" ]]; then
+                printf '%s\n' "$steamapps/common/$installdir"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
 verb="${1-}"
 
 # --- 0. a native program in place of the game --------------------------------
 # It runs on the host with Steam's environment, as Steam runs a native game.
+# An x86-64 program on an ARM machine (the Steam Frame) runs as Steam runs any
+# x86 Linux game there: through Steam's FEX-Emu, in a Steam Linux Runtime.
 # "MODSYNC_ORIGINAL_GAME=1 %command%" in the game's launch options, or a
-# missing program, starts the original game instead.
+# program that is missing or can't run here, starts the original game instead.
 if [[ -n "$native" && "$verb" == "waitforexitandrun" ]]; then
+    run=()
+    elf=$(od -An -tx1 -N20 "$native" 2>/dev/null | tr -d ' \n')
     if [[ -n "${MODSYNC_ORIGINAL_GAME:-}" ]]; then
         log "MODSYNC_ORIGINAL_GAME is set; starting the original game"
-    elif [[ -x "$native" ]]; then
+    elif [[ ! -x "$native" ]]; then
+        log "WARNING: $native is gone; starting the original game. 'modsync dfu install' puts it back."
+    elif [[ "$elf" != 7f454c46* || "${elf:36:4}" != 3e00 || "$(uname -m)" == x86_64 ]]; then
+        run=("$native")
+    elif fex=$(steam_app 3127680 fex-compat-tool) \
+            && { slr=$(steam_app 4183110 _v2-entry-point) || slr=$(steam_app 1628350 _v2-entry-point); }; then
+        # Steam sets the compatdata for this launch; FEX keeps its settings there.
+        export STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH:-${XDG_RUNTIME_DIR:-/tmp}/fex-tmp}"
+        export STEAM_COMPAT_TOOL_PATHS="$fex:$slr"
+        run=("$fex/fex-compat-tool" "$verb" -- "$slr/_v2-entry-point" "--verb=$verb" -- "$native")
+    else
+        log "WARNING: $native needs Steam's FEX and Steam Linux Runtime 4.0 on this $(uname -m) machine; starting the original game. Install them from the Tools in Steam's library."
+    fi
+    if (( ${#run[@]} )); then
         cd "${native%/*}" || exit 1
         # Daggerfall Unity's saves sync through a library ModSync keeps (modsync
         # dfu saves): bring the newest in before it starts, and store the new
@@ -61,16 +97,14 @@ if [[ -n "$native" && "$verb" == "waitforexitandrun" ]]; then
                     </dev/null >>"$log_file" 2>&1 || log "WARNING: saves didn't sync ($1)"
             }
             sync_saves "before playing"
-            log "running $native (in place of the game), saves sync after"
-            "$native"
+            log "running ${run[*]} (in place of the game), saves sync after"
+            "${run[@]}"
             rc=$?
             sync_saves "after playing"
             exit $rc
         fi
-        log "exec $native (in place of the game)"
-        exec "$native"
-    else
-        log "WARNING: $native is gone; starting the original game. 'modsync dfu install' puts it back."
+        log "exec ${run[*]} (in place of the game)"
+        exec "${run[@]}"
     fi
 fi
 
@@ -134,19 +168,7 @@ fi
 runtime=""
 runtime_appid=$(sed -n 's/.*"require_tool_appid"[[:space:]]*"\([0-9]*\)".*/\1/p' "$underlying/toolmanifest.vdf" 2>/dev/null | head -n 1)
 if [[ -n "$runtime_appid" && ( "$verb" == "run" || "$verb" == "waitforexitandrun" ) ]]; then
-    IFS=: read -r -a compat_libs <<< "${STEAM_COMPAT_LIBRARY_PATHS:-}"
-    for lib in "${compat_libs[@]}" "${STEAM_COMPAT_CLIENT_INSTALL_PATH:-}" "${libraries[@]}"; do
-        [[ -n "$lib" ]] || continue
-        for steamapps in "$lib/steamapps" "$lib"; do
-            acf="$steamapps/appmanifest_$runtime_appid.acf"
-            [[ -f "$acf" ]] || continue
-            installdir=$(sed -n 's/^[[:space:]]*"installdir"[[:space:]]*"\(.*\)".*/\1/p' "$acf" | head -n 1)
-            if [[ -n "$installdir" && -x "$steamapps/common/$installdir/_v2-entry-point" ]]; then
-                runtime="$steamapps/common/$installdir"
-                break 2
-            fi
-        done
-    done
+    runtime=$(steam_app "$runtime_appid" _v2-entry-point)
     if [[ -z "$runtime" ]]; then
         log "WARNING: Steam Linux Runtime (app $runtime_appid) not found; running $underlying_name without its container"
     fi

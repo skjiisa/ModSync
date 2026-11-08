@@ -20,6 +20,10 @@ Mods go in ``DaggerfallUnity_Data/StreamingAssets/Mods``. Steam's own Play
 button on Daggerfall can start it, through the launch hook
 (:mod:`modsync.launchhook`).
 
+The release is x86-64 only. On an ARM machine (the Steam Frame) it runs as
+Steam runs any x86 Linux game there: through Steam's FEX-Emu, inside a Steam
+Linux Runtime container (see :func:`emulator`). The launch hook does the same.
+
 :data:`MODS_FOLDER` syncs the mods between machines (see
 :mod:`modsync.sync.folders`): one Syncthing folder rooted at the install,
 allowing only what users add (the folders under ``StreamingAssets`` that DFU
@@ -33,6 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import platform
 import re
 import shutil
 import stat
@@ -80,6 +85,11 @@ USER_ASSET_DIRS = ("Mods", "Textures", "Sound", "Books", "Movies", "Presets", "Q
                    "WorldData")
 _ASSETS = "DaggerfallUnity_Data/StreamingAssets"
 SYNCED_DIRS = (*(f"{_ASSETS}/{d}" for d in USER_ASSET_DIRS), "PortableAppdata/Mods")
+
+# How Steam runs an x86 Linux game on ARM: FEX-Emu, in the Steam Linux Runtime
+# (4.0, else 3.0) for its libraries. The launch hook template looks for the same.
+FEX_APPID = 3127680
+RUNTIME_APPIDS = (4183110, 1628350)
 
 # DFU's DFValidator: what makes a folder a usable ARENA2.
 _MIN_TEXTURES = 472
@@ -184,8 +194,61 @@ def find_install(path: Path | str | None) -> Install | None:
 
 
 def is_running() -> bool:
-    # comm is cut to 15 characters, which is exactly "DaggerfallUnity".
-    return shortcuts.process_running(EXECUTABLE[:15])
+    # comm is cut to 15 characters, which is exactly "DaggerfallUnity". Under
+    # FEX-Emu it's FEX's own, so the program's file name is asked for too.
+    return shortcuts.process_running(EXECUTABLE[:15], EXECUTABLE)
+
+
+# --- on ARM: Steam's FEX-Emu --------------------------------------------------
+
+
+def _host_is_x86() -> bool:
+    return platform.machine().lower() in ("x86_64", "amd64")
+
+
+def needs_emulation(program: Path) -> bool:
+    """Whether ``program`` is an x86-64 Linux program and this machine isn't
+    x86-64, so it runs only through FEX-Emu."""
+    if _host_is_x86():
+        return False
+    try:
+        with open(program, "rb") as f:
+            header = f.read(20)
+    except OSError:
+        return False
+    return header[:4] == b"\x7fELF" and header[18:20] == b"\x3e\x00"  # e_machine EM_X86_64
+
+
+@dataclass
+class Emulator:
+    fex: Path  # Steam's FEX-Emu tool
+    runtime: Path  # the Steam Linux Runtime that gives the program its libraries
+
+    def command(self, program: Path, verb: str = "waitforexitandrun") -> list[str]:
+        """``program`` as Steam starts an x86 Linux game on ARM."""
+        return [str(self.fex / "fex-compat-tool"), verb, "--",
+                str(self.runtime / "_v2-entry-point"), f"--verb={verb}", "--", str(program)]
+
+
+def emulator() -> Emulator | None:
+    """Steam's FEX-Emu and a Steam Linux Runtime, when Steam has both."""
+    libraries = libs.all_libraries(platforms.current().steam_roots())
+    fex = libs.find_app(libraries, FEX_APPID)
+    if fex is None or not (fex.install_path / "fex-compat-tool").is_file():
+        return None
+    for appid in RUNTIME_APPIDS:
+        runtime = libs.find_app(libraries, appid)
+        if runtime is not None and (runtime.install_path / "_v2-entry-point").is_file():
+            return Emulator(fex.install_path, runtime.install_path)
+    return None
+
+
+def emulation_problem(inst: Install) -> str | None:
+    """Why ``inst`` can't run on this machine, or None."""
+    if needs_emulation(inst.executable) and emulator() is None:
+        return (f"On this {platform.machine()} machine Daggerfall Unity runs through Steam's FEX and "
+                "Steam Linux Runtime 4.0. Install them from the Tools in Steam's library.")
+    return None
 
 
 def read_setting(ini: Path, section: str, key: str) -> str | None:
@@ -632,6 +695,7 @@ class Overview:
     saves: str
     version_problem: str | None
     version: str | None = None  # the install's DFU version, read with the rest
+    emulation_problem: str | None = None  # why it can't run on this machine (an ARM one without FEX)
 
     @property
     def stale_path(self) -> bool:
@@ -659,7 +723,8 @@ def overview(*, hook: bool = True) -> Overview:
             log.warning("could not read the Play hook's status: %s", exc)
     return Overview(dagger, data_problems(dagger), inst, inst.daggerfall_path() if inst else None, status,
                     sync_state(MODS_FOLDER), sync_state(SAVES_FOLDER),
-                    version_problem(inst) if inst else None, inst.version if inst else None)
+                    version_problem(inst) if inst else None, inst.version if inst else None,
+                    emulation_problem(inst) if inst else None)
 
 
 def setup(dest: Path | str | None = None, *, progress: engine.ProgressFn | None = None) -> tuple[Installed, str | None]:
@@ -695,18 +760,39 @@ def launch(inst: Install) -> str:
         if result.returncode == 0:
             return "Starting Daggerfall Unity through Steam."
         log.warning("xdg-open steam:// failed (%s); starting DFU directly", result.returncode)
+    cmd = [str(inst.executable)]
+    extra_env = {}
+    if needs_emulation(inst.executable):
+        emu = emulator()
+        if emu is None:
+            raise DfuError(emulation_problem(inst))
+        cmd = emu.command(inst.executable)
+        # FEX keeps its settings there; Steam's launches use the game's compatdata.
+        extra_env["STEAM_COMPAT_DATA_PATH"] = str(_compat_data())
     report = sync_saves()
     if report.changed:
         log.info("before playing: %s", report.summary())
-    cmd = [str(inst.executable)]
     if background.in_flatpak():
-        cmd = ["flatpak-spawn", "--host", f"--directory={inst.path}", *cmd]
+        cmd = ["flatpak-spawn", "--host", f"--directory={inst.path}",
+               *(f"--env={k}={v}" for k, v in extra_env.items()), *cmd]
     # As a native game would get it: not the libraries Steam preloads for ModSync, nor Qt's.
     env = {k: v for k, v in os.environ.items()
            if k not in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH")}
+    env.update(extra_env)
     subprocess.Popen(cmd, cwd=inst.path, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, start_new_session=True)
     return "Starting Daggerfall Unity."
+
+
+def _compat_data() -> Path:
+    """Daggerfall's compatdata in Steam, where Steam's own launches of it keep
+    FEX's settings; ModSync's when Steam has none."""
+    from modsync import config
+
+    app = libs.find_app(libs.all_libraries(platforms.current().steam_roots()), DAGGERFALL_APPID)
+    path = (app.library.steamapps / "compatdata" / str(DAGGERFALL_APPID)) if app else config.data_dir() / "dfu" / "fex"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def open_mods_folder() -> Path:

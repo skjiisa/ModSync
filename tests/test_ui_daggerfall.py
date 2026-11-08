@@ -1,6 +1,7 @@
 """Daggerfall Unity as a game Home can show, and the switcher that picks it,
 with modsync.dfu faked."""
 
+import dataclasses
 from pathlib import Path
 from unittest.mock import patch
 
@@ -316,6 +317,13 @@ class DaggerfallUiTests(UiTestCase):
         window, page = self.open_sheet(overview(installed=True, mods="on", version_problem=problem))
         self.assertTrue(page.note.isVisibleTo(page))
         self.assertEqual(page.note.text(), problem)
+
+    def test_an_arm_machine_without_steams_fex_is_told_what_to_install(self):
+        problem = "On this aarch64 machine Daggerfall Unity runs through Steam's FEX."
+        ov = dataclasses.replace(overview(installed=True), emulation_problem=problem)
+        window, page = self.open_sheet(ov)
+        self.assertEqual(page.note.text(), problem)
+        self.assertEqual(page.summary(ov), ("Needs a look", "warn", problem))
 
     def test_a_failure_is_shown_and_the_window_is_free_again(self):
         window, page = self.open_sheet(overview(installed=True))

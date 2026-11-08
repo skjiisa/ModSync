@@ -41,6 +41,11 @@ All notable changes to ModSync are documented here. The format follows
   folder, and turns mods and saves sync on and off. ModSync reopens on the
   game last shown, or on Skyrim while that game isn't installed; opened by
   Skyrim's Play button, it shows only Skyrim.
+- Daggerfall Unity on the Steam Frame. Its x86-64 Linux build runs
+  through Steam's FEX and Steam Linux Runtime 4.0, the way Steam runs any
+  x86 Linux game on ARM, from both Steam's Play button and the app.
+  ModSync can now tell when DFU is running under FEX, so saves sync still
+  waits for it to close.
 - Machines paired through a third one sync with each other directly. When
   a Deck and a laptop have both paired with the desktop, the desktop
   introduces them, and they keep syncing with the desktop off. Machines

@@ -67,6 +67,12 @@ In Desktop Mode, use a mouse or keyboard in Mod Organizer 2. The pointer
 arrives as touch there, and Wine lacks a function MO2's Qt needs for touch
 ([#70](https://github.com/skjiisa/ModSync/issues/70)).
 
+Daggerfall Unity works on the Frame as well (see "Daggerfall Unity" in
+[advanced.md](advanced.md)). Its Linux build is x86-64 only, so it runs
+through Steam's FEX and Steam Linux Runtime 4.0, as other x86 Linux games
+do on the Frame. When you press Play on Daggerfall, Steam first asks for
+Full Screen or Windowed. Either one starts Daggerfall Unity.
+
 ## Changes that need Steam closed: reboot instead
 
 Some settings only take effect while Steam is closed:
