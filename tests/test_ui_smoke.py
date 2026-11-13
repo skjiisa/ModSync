@@ -515,6 +515,27 @@ class CountdownTests(UiTestCase):
         self.assertNotIn("Starting in", home.play.description)
         self.assertTrue(window.isVisible())
 
+    def test_a_key_that_does_nothing_still_stays(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        window = self._window()
+        window.activateWindow()
+        QTest.keyClick(window.focusWidget() or window, Qt.Key.Key_Z)
+        self.wait(1.0)
+        self.assertIsNone(window.steam_launch.decision)
+
+    def test_going_to_another_window_stays(self):
+        from PySide6.QtCore import Qt
+
+        window = self._window()
+        home = window.pages["home"]
+        home._on_app_state(Qt.ApplicationState.ApplicationActive)
+        home._on_app_state(Qt.ApplicationState.ApplicationInactive)
+        self.wait(1.0)
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertNotIn("Starting in", home.play.description)
+
     def test_a_repair_keeps_it_waiting(self):
         with patch.object(ModSyncService, "prefix_runtime_problems", lambda self: ["msvcp140.dll 14.29"]):
             window = self._window()

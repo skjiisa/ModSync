@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QProgressBar, QVBoxLayout
 
 from modsync import launchhook
@@ -58,6 +59,10 @@ class HomePage(Page):
         self._countdown.setInterval(200)
         self._countdown.timeout.connect(self._tick)
         self._sync_ready = not state.syncing  # syncing: once a status says nothing is still arriving
+        # ModSync has been in front (under gamescope it may never say so)
+        self._was_active = QGuiApplication.applicationState() == Qt.ApplicationState.ApplicationActive
+        if self._countdown_state != "off":
+            QGuiApplication.instance().applicationStateChanged.connect(self._on_app_state)
         self.sync_warning = label("", "warning")
         self.sync_warning.hide()
         self.content_layout.addWidget(self.sync_warning)
@@ -445,6 +450,14 @@ class HomePage(Page):
             self._countdown.start()
             self._tick()
 
+    def _on_app_state(self, app_state) -> None:
+        """Going to another window counts as a press: presses there never reach
+        this one, so the countdown would start the game behind the user's back."""
+        if app_state == Qt.ApplicationState.ApplicationActive:
+            self._was_active = True
+        elif self._was_active and self._countdown_state != "off":
+            self._stop_countdown()
+
     def _stop_countdown(self, state: str = "off") -> None:
         self._countdown.stop()
         self._countdown_state = state
@@ -455,6 +468,9 @@ class HomePage(Page):
             return
         if self.host.router.last_input >= self._countdown_started:
             self._stop_countdown()  # any press stays here; A on Play has started it already
+            return
+        if self._was_active and QGuiApplication.applicationState() != Qt.ApplicationState.ApplicationActive:
+            self._stop_countdown()  # gone to another window
             return
         if not self._can_count_down():
             self._stop_countdown("pending")

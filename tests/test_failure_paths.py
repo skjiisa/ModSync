@@ -327,6 +327,22 @@ class SyncthingPortConflict(unittest.TestCase):
         self.addCleanup(mgr.stop)
         return mgr
 
+    def test_attach_uses_a_running_syncthing_and_never_starts_one(self):
+        started = self.tmp / "started"
+        pong = self.serve(200, b'{"ping": "pong"}')
+        mgr = self.manager(pong, f'touch "{started}"')
+        self.assertTrue(mgr.attach())
+        self.assertTrue(mgr.running)
+        mgr.stop()
+        with socket.socket() as sock:  # a port nothing listens on
+            sock.bind(("127.0.0.1", 0))
+            closed = f"127.0.0.1:{sock.getsockname()[1]}"
+        idle = SyncthingManager(mgr.home, binary=self.tmp / "syncthing", gui_address=closed)
+        self.assertFalse(idle.attach())
+        self.assertFalse(idle.running)
+        self.assertFalse(started.exists())
+        self.assertFalse(SyncthingManager(self.tmp / "no-home", binary=self.tmp / "syncthing").attach())
+
     def test_port_owner_that_rejects_the_ping_gives_an_error_not_a_hang(self):
         address = self.serve(404, b"not found")
         mgr = self.manager(address, "exit 3")  # our own daemon cannot bind either

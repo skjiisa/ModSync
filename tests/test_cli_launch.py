@@ -10,7 +10,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from modsync import launchhook
+from modsync import cli, launchhook
 from modsync.__main__ import main
 from modsync.steam import libraries as libs
 from modsync.steam import shortcuts
@@ -141,6 +141,24 @@ class PlayRightAwayTests(unittest.TestCase):
         self.assertEqual(code, launchhook.EXIT_CONTINUE)
         self.assertEqual(written, launchhook.encode_handoff(self.plan))
         run_hub.assert_not_called()
+
+    def test_asks_a_running_syncthing_about_changes_still_arriving(self):
+        from modsync.service import ModSyncService
+        from modsync.state import State
+        from modsync.sync.manager import SyncthingManager
+
+        State(instance_path=str(self.tmp), folder_id="modsync-1").save()
+        seen = []
+        with patch.object(SyncthingManager, "attach", return_value=True) as attach, \
+                patch.object(ModSyncService, "play_attention",
+                             lambda svc: seen.append(svc.manager) or "3 changes haven't arrived yet."):
+            handoff = io.BytesIO()
+            with patch("modsync.ui.app.run_hub", return_value=launchhook.EXIT_CANCEL) as run_hub, \
+                    patch.object(os, "fdopen", return_value=handoff), patch.object(os, "dup2"):
+                handoff.close = lambda: None
+                cli._launch_hub(["--appid", "489830"])
+        attach.assert_called_once()
+        self.assertEqual(run_hub.call_args.kwargs["reason"], "3 changes haven't arrived yet.")
 
     def test_something_to_decide_opens_the_window_and_says_why(self):
         code, written, run_hub = self.hub(attention="SKSE does not match the installed game.")
