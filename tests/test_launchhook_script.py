@@ -207,6 +207,13 @@ class RenderedScript(unittest.TestCase):
         self.assertIsNone(self.record("modsync-cmd"))
         self.assertIsNotNone(self.record("SteamLinuxRuntime_4"))
 
+    def test_original_game_on_request_skips_the_hub(self):
+        result = self.run_hook("waitforexitandrun", self.game_exe, extra_env={"MODSYNC_ORIGINAL_GAME": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(self.record("modsync-cmd"))
+        self.assertEqual(self.record("SteamLinuxRuntime_4")["argv"][-2:], ["waitforexitandrun", self.game_exe])
+        self.assertIn("MODSYNC_ORIGINAL_GAME is set", self.log())
+
     def test_run_verb_skips_hub_but_uses_runtime(self):
         self.run_hook("run", "iscriptevaluator.exe")
         self.assertIsNone(self.record("modsync-cmd"))

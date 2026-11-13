@@ -72,11 +72,13 @@ def run(argv: list[str] | None = None) -> int:
     return app.exec()
 
 
-def run_hub(*, appid: int | None = None, through: str | None = None, handoff: BinaryIO | None = None) -> int:
+def run_hub(*, appid: int | None = None, through: str | None = None, handoff: BinaryIO | None = None,
+            reason: str = "") -> int:
     """The window the Steam launch hook opens: the regular one, with Steam's
     launch waiting on it. Returns the exit code the hook reads: 0 = continue the
     launch, 10 = cancel it. When Play or Open MO2 continued it, their launch is
-    written to ``handoff`` for the hook to run (see ``launchhook.HANDOFF_TAG``)."""
+    written to ``handoff`` for the hook to run (see ``launchhook.HANDOFF_TAG``).
+    ``reason``: why it opened although Steam's Play is set to play right away."""
     from modsync import launchhook
     from modsync.games import GAMES, SKYRIM_SE
     from modsync.logging_setup import configure
@@ -85,7 +87,7 @@ def run_hub(*, appid: int | None = None, through: str | None = None, handoff: Bi
     configure("hub", ["launch", "hub", f"--appid={appid}", f"--through={through}"])
     app = _application(None)
     _start_gamepads(app)
-    launch = launchhook.SteamLaunch(GAMES.get(appid or SKYRIM_SE.appid, SKYRIM_SE), through)
+    launch = launchhook.SteamLaunch(GAMES.get(appid or SKYRIM_SE.appid, SKYRIM_SE), through, reason=reason)
     window = MainWindow(steam_launch=launch)
     window.showMaximized()
     code = app.exec()  # the window's close stops polling, drains workers and its Syncthing

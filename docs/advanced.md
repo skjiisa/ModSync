@@ -176,6 +176,7 @@ modsync service install [--linger] | status | uninstall
 modsync firewall status | allow | remove   # ModSync's ports in ufw or firewalld
 modsync steam shortcut [--remove]   # add ModSync as a non-Steam game, or remove it
 modsync launch status | enable [--through <tool>] | disable
+modsync launch mode [countdown | play | wait]   # what Steam's Play does once ModSync opens, see below
 modsync dfu status | install [<dest>] | use <dir> | hook enable | disable   # Daggerfall Unity, see below
 ```
 
@@ -562,8 +563,11 @@ closes. The hook runs that command in place of the game's own program, with
 Steam's verb (`waitforexitandrun`) and environment. MO2 and the game are
 therefore Steam's launch: Steam shows the game as running until the whole
 Wine session exits, counts playtime, and uploads saves to Steam Cloud only
-after that. A Play started from ModSync when Steam didn't open it bypasses
-Steam, so it doesn't sync cloud saves.
+after that. A Play started from ModSync when Steam didn't open it isn't
+Steam's launch, but Skyrim connects to the running Steam client by itself:
+Steam still shows it as running, counts playtime and uploads its saves to
+Steam Cloud when it exits. What Steam does only before a launch of its own,
+such as fetching newer cloud saves first, may not happen then.
 
 Before an MO2 instance is chosen, the button is Continue instead, which runs
 what Steam was about to start: MO2-LINT's redirector when it is installed
@@ -602,6 +606,28 @@ or the background service the moment Steam closes. You can also pick "ModSync
 Steam's Play button opens the regular ModSync window, with the launch waiting
 on it. Home offers the same Play Skyrim and Open Mod Organizer 2 tiles as
 always, with "Cancel launch" below them. Play has focus, so A or Enter plays.
+What happens next is up to "When you press Play in Steam" under Settings (or
+`modsync launch mode`):
+
+- **Count down** (the default): once Home has checked the game, MO2 and
+  sync and nothing needs a decision, Play says "Starting in 5…" and presses
+  itself after five seconds. Pressing anything first (a button, a key, a
+  click) stops it and leaves the window waiting; A or Enter on Play starts
+  at once. Changes still arriving from another machine hold the countdown
+  until they're in.
+- **Play right away**: no window. The hook's `modsync launch hub` makes the
+  same checks without one and, when nothing needs attention, hands back
+  Play's launch straight away (before an MO2 instance is chosen, it goes on
+  to what Steam was about to run). Otherwise the window opens, says why, and
+  waits.
+- **Wait for me**: the window waits for a choice, as before.
+
+Whichever is set, the window opens and waits when Home would put something
+ahead of Play: a repair MO2 needs, a game version or SKSE that doesn't
+match, a Steam update waiting, mods still copying, changes still arriving or
+files changed on two machines. `MODSYNC_ORIGINAL_GAME=1 %command%` in the
+game's launch options skips ModSync and goes on to the tool Steam used
+before, as Daggerfall's hook does.
 When the game version or SKSE needs a repair, a repair tile such as "Fix game
 version" sits above Play and takes focus instead, and Play says what may
 fail. That only happens before anything is pressed, so a press made while the

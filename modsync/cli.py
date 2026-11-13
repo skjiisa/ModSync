@@ -1337,12 +1337,26 @@ def launch(args: list[str]) -> int:
         return 0
     if sub == "hub":
         return _launch_hub(rest)
+    if sub == "mode" and len(rest) <= 1:
+        if rest:
+            try:
+                launchhook.set_play_mode(rest[0])
+            except ValueError as exc:
+                print(f"error: {exc}")
+                return 2
+        mode = launchhook.play_mode()
+        print(f"Steam's Play: {mode}. {launchhook.describe_play_mode(mode)}")
+        return 0
     print(
         "usage:\n"
         "  modsync launch status                show whether Play opens ModSync first\n"
         "  modsync launch enable [--through T] [--this-copy]\n"
         "                                       open ModSync when the game is launched from Steam\n"
         "  modsync launch disable               restore the previous launch behaviour\n"
+        "  modsync launch mode [countdown|play|wait]\n"
+        "                                       what Steam's Play does once ModSync opens: play after a\n"
+        "                                       countdown (the default), play without a window unless\n"
+        "                                       something needs attention, or wait for a choice\n"
         "  modsync launch hub --appid N         (run by Steam) open ModSync before the game"
     )
     return 2
@@ -1373,9 +1387,50 @@ def _launch_hub(args: list[str]) -> int:
     handoff = os.fdopen(os.dup(1), "wb")
     os.dup2(2, 1)
     with handoff:
+        reason = ""
+        if launchhook.play_mode() == "play" and not os.environ.get("MODSYNC_HUB_AUTO_DECISION"):
+            played, reason = _play_without_window(handoff)
+            if played:
+                return launchhook.EXIT_CONTINUE
         try:
             from modsync.ui.app import run_hub
         except ImportError as exc:
             print(f"ModSync window unavailable (PySide6 missing: {exc}); continuing the launch.")
             return launchhook.EXIT_CONTINUE
-        return run_hub(appid=appid, through=through, handoff=handoff)
+        return run_hub(appid=appid, through=through, handoff=handoff, reason=reason)
+
+
+def _play_without_window(handoff) -> tuple[bool, str]:
+    """Steam's Play set to play right away: with nothing that needs attention,
+    hand the hook MO2's Play (or nothing, before an instance is chosen, so it
+    goes on to what Steam was about to run) without opening the window.
+    Otherwise (False, why), and the window opens and waits."""
+    import logging
+
+    from modsync import launchhook
+    from modsync.logging_setup import configure
+    from modsync.service import ModSyncService
+
+    configure("hub", ["launch", "hub", "--play"])
+    log = logging.getLogger(__name__)
+    try:
+        service = ModSyncService()
+        # The background service's Syncthing, if it runs, knows what hasn't
+        # arrived yet. None running: Play's own check goes on without it too.
+        if service.state.syncing and not service.manager.attach():
+            log.info("Steam launch: Syncthing isn't running; checking without what it knows")
+        reason = service.play_attention()
+        if reason:
+            log.info("Steam launch: opening ModSync, since %s", reason)
+            return False, reason
+        if service.state.has_instance:
+            plan, _note = service.prepare_mo2(play=True)
+            handoff.write(launchhook.encode_handoff(plan))
+            handoff.flush()
+            log.info("Steam launch: %s through MO2 without the window: %s", plan.target, plan.command)
+        else:
+            log.info("Steam launch: no MO2 instance chosen; continuing without the window")
+        return True, ""
+    except Exception as exc:  # noqa: BLE001 — whatever it is, the window can show it
+        log.exception("Steam launch: couldn't play without the window")
+        return False, f"ModSync couldn't start the game by itself: {exc}"
