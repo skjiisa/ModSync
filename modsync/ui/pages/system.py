@@ -49,6 +49,10 @@ class SystemPage(Page):
         self.hook_tile.clicked.connect(self._toggle_hook)
         self.hook: launchhook.LaunchHookStatus | None = None
         self._hook_toggling = False
+        self.play_tile = Tile("When you press Play in Steam", "", "play-circle", status=True)
+        self.play_tile.clicked.connect(self._choose_play_mode)
+        self.play_tile.setVisible(False)
+        self._show_play_mode()
         self.fw_tile = Tile("Allow in firewall…", "", "shield", status=True)
         self.fw_tile.clicked.connect(self._toggle_firewall)
         self.fw_tile.setVisible(False)
@@ -56,7 +60,7 @@ class SystemPage(Page):
                                "Close Steam first.", "plus-box", status=True)
         self.steam_tile.dot.hide()  # an action, not a state: keep only the dot column, for alignment
         self.steam_tile.clicked.connect(self._add_to_steam)
-        for tile in (self.bg_tile, self.hook_tile, self.fw_tile, self.steam_tile):
+        for tile in (self.bg_tile, self.hook_tile, self.play_tile, self.fw_tile, self.steam_tile):
             left.addWidget(tile)
         left.addStretch(1)
 
@@ -99,7 +103,8 @@ class SystemPage(Page):
 
     def open_steam_settings(self) -> None:
         if not self.host.busy:
-            ControlsSheet(self.host, "Set up Steam launch", [self.hook_tile, self.steam_tile]).open()
+            tiles = [self.hook_tile, *([self.play_tile] if self.play_tile.isVisibleTo(self) else []), self.steam_tile]
+            ControlsSheet(self.host, "Set up Steam launch", tiles).open()
 
     def _show_settings_details(self) -> None:
         hook = self.hook.summary() if self.hook is not None else "Still checking Steam's launch settings."
@@ -276,12 +281,49 @@ class SystemPage(Page):
             summary = "Check your setup before Skyrim starts through Steam."
         self.hook_tile.set_badge(head, tone)
         self.hook_tile.set_description(summary)
+        self.play_tile.setVisible(st.enabled or bool(st.pending and st.pending.action == "select"))
         self._update_hook_enabled()
         self.host.steamHookChecked.emit(st)
 
     def _update_hook_enabled(self) -> None:
         found = self.hook is None or self.hook.steam_found
         self.hook_tile.setEnabled(found and not self.host.busy and not self._hook_toggling)
+        self.play_tile.setEnabled(not self.host.busy)
+
+    # --- what Steam's Play does ---
+    _PLAY_MODES = {"countdown": ("Count down", "play-circle", "Count down, then play"),
+                   "play": ("Play right away", "play", "Play right away"),
+                   "wait": ("Wait for me", "pause", "Wait for me")}
+
+    def _show_play_mode(self) -> None:
+        mode = launchhook.play_mode()
+        badge, icon, _title = self._PLAY_MODES[mode]
+        self.play_tile.set_badge(badge, "ok")
+        self.play_tile.set_icon(icon)
+        self.play_tile.set_description(launchhook.describe_play_mode(mode))
+
+    def _choose_play_mode(self) -> None:
+        if self.host.busy:
+            return
+        current = launchhook.play_mode()
+
+        def chosen(key: str | None) -> None:
+            if key not in launchhook.PLAY_MODES:
+                return
+            try:
+                launchhook.set_play_mode(key)
+            except OSError as exc:
+                self.host.notify(f"⚠ Couldn't save that: {exc}")
+                return
+            self._show_play_mode()
+
+        self.host.confirm(
+            "When you press Play in Steam",
+            "Whichever you choose, ModSync opens and waits when the game, Mod Organizer 2 or sync needs a "
+            "decision first. \"Cancel launch\" in ModSync always returns to Steam.",
+            [(mode, title, launchhook.describe_play_mode(mode), "primary" if mode == current else "normal", icon)
+             for mode, (_badge, icon, title) in self._PLAY_MODES.items()],
+            chosen, default=current)
 
     def poll(self) -> None:
         self._refresh_bg()

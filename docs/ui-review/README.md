@@ -55,6 +55,11 @@ Missing SKSE keeps Play as the default Steam launch choice.
 
 ![Steam launch with optional SKSE](launch-skse-optional.png)
 
+With nothing to decide, Play counts down and starts by itself unless anything
+is pressed first.
+
+![Steam launch counting down](launch-countdown.png)
+
 Copying a setup waits for the source's game-version record before offering
 version-dependent repairs. The waiting state survives reopening the app.
 

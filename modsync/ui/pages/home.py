@@ -6,6 +6,9 @@ installation details, version management and less common repairs.
 
 from __future__ import annotations
 
+import time
+
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QProgressBar, QVBoxLayout
 
 from modsync import launchhook
@@ -16,6 +19,7 @@ from modsync.ui.pages import Page
 from modsync.ui.widgets import HeroTile, StatusRow, Tile, label
 
 TAGLINE = "Install Mod Organizer 2 to start modding."
+COUNTDOWN_S = 5  # Steam's Play set to "countdown": how long before Play presses itself
 
 
 class HomePage(Page):
@@ -43,6 +47,17 @@ class HomePage(Page):
             self.head.set_subtitle("")
             self.steam_note = label(f"{starts} Cancel launch returns to Steam.", "secondary")
             self.content_layout.addWidget(self.steam_note)
+        # Steam's Play set to "countdown": once the checks are in and nothing needs
+        # attention, Play presses itself after COUNTDOWN_S unless anything is pressed.
+        # "pending" until it can start, "running", then "off" for good.
+        self._countdown_state = ("pending" if steam is not None and not steam.reason
+                                 and launchhook.play_mode() == "countdown" else "off")
+        self._countdown_end = 0.0
+        self._countdown_started = 0.0
+        self._countdown = QTimer(self)
+        self._countdown.setInterval(200)
+        self._countdown.timeout.connect(self._tick)
+        self._sync_ready = not state.syncing  # syncing: once a status says nothing is still arriving
         self.sync_warning = label("", "warning")
         self.sync_warning.hide()
         self.content_layout.addWidget(self.sync_warning)
@@ -138,6 +153,7 @@ class HomePage(Page):
         right.addLayout(actions)
         self.finish_layout()
         self._play_description = self.play.description
+        self._play_now = self._play_description  # what Play says while no countdown runs
 
         self.mo2_row.set_state("Ready" if state.has_instance else "Not chosen", "ok" if state.has_instance else "warn",
                                state.instance_label if state.has_instance else "Install MO2 or choose an existing setup.")
@@ -149,6 +165,8 @@ class HomePage(Page):
         host.setupDescribed.connect(self.on_setup_described)
         host.busyChanged.connect(self.update_enabled)
         self.update_enabled()
+        if steam is not None and steam.reason:
+            QTimer.singleShot(0, self, lambda: host.notify(f"ModSync opened first: {steam.reason}"))
 
     def summary(self) -> tuple[str, str, str]:
         """How Skyrim stands, as the game picker shows it: value word, tone, detail."""
@@ -202,11 +220,13 @@ class HomePage(Page):
         else:
             self.skse_row.set_state("After the game", "off", "Check the game version first.")
         self.recommend_next_step(st, vc)
+        self._count_down()
 
     def on_mo2_checked(self) -> None:
         self._update_mo2_row()
         if self._checked is not None:
             self.recommend_next_step(*self._checked)
+        self._count_down()
 
     def recommend_next_step(self, st: GameStatus, vc) -> None:
         """Offer the next action without moving focus after the user has acted."""
@@ -264,7 +284,9 @@ class HomePage(Page):
         self.next_step.setVisible(bool(title) and not (panel and panel.busy))
         if isinstance(self.play, HeroTile):
             self.play.set_role("normal" if title and not optional else "primary")
-        self.play.set_description(risk or self._play_description)
+        self._play_now = risk or self._play_description
+        if self._countdown_state != "running":
+            self.play.set_description(self._play_now)
         if (self.host.page is self and self.host.scope() is self.host.chrome
                 and self.host.router.mode != "mouse"):
             if title and not optional and not was_recommended and self.host.focusWidget() is self.play and self.host.untouched:
@@ -355,6 +377,8 @@ class HomePage(Page):
                     f"Still copying the mods from {copy.source}. Play once the copy has finished.")
             elif arriving:
                 self.sync_warning.setText(f"Still syncing ({pct}%). Continuing uses only the mods that have arrived.")
+            self._sync_ready = copy is None and not arriving and not status.conflicts
+            self._count_down()
 
     def hints(self):
         return [([Action.ALT], "Check again")]
@@ -388,8 +412,60 @@ class HomePage(Page):
             for tile in (self.play, self.open_mo2, self.cancel_launch):
                 if tile is not None:
                     tile.setEnabled(not busy)
+            self._count_down()
             return
         launcher = self.service.launcher
         if self.open_mo2 is not None:
             self.play.setEnabled(not busy and not launcher.running(play=True))
             self.open_mo2.setEnabled(not busy and not launcher.running(play=False))
+
+    # --- Steam's Play, counting down ---
+    def _can_count_down(self) -> bool:
+        """Everything Home checks is in, and none of it asks for a decision."""
+        mods = self.host.pages.get("mods")
+        return (self._checked is not None and (mods is None or not mods.unchecked) and self._sync_ready
+                and not (self._recommendation and not self._optional) and not self.host.busy
+                and self.play.isEnabled() and self.host.page is self and self.host.scope() is self.host.chrome)
+
+    def _count_down(self) -> None:
+        """Start the countdown once it can; stop it while it can't."""
+        if self._countdown_state == "off":
+            return
+        if not self.host.untouched and self._countdown_state == "pending":
+            self._countdown_state = "off"  # pressed before it started: the user has taken over
+            return
+        if not self._can_count_down():
+            if self._countdown_state == "running":
+                self._stop_countdown("pending")
+            return
+        if self._countdown_state == "pending":
+            self._countdown_state = "running"
+            self._countdown_started = time.monotonic()
+            self._countdown_end = self._countdown_started + COUNTDOWN_S
+            self._countdown.start()
+            self._tick()
+
+    def _stop_countdown(self, state: str = "off") -> None:
+        self._countdown.stop()
+        self._countdown_state = state
+        self.play.set_description(self._play_now)
+
+    def _tick(self) -> None:
+        if self._countdown_state != "running":
+            return
+        if self.host.router.last_input >= self._countdown_started:
+            self._stop_countdown()  # any press stays here; A on Play has started it already
+            return
+        if not self._can_count_down():
+            self._stop_countdown("pending")
+            return
+        left = self._countdown_end - time.monotonic()
+        if left > 0:
+            seconds = int(left) + 1
+            self.play.set_description(f"Starting in {seconds}… Press any button to stay here.")
+            return
+        self._stop_countdown()
+        if self.service.state.has_instance:
+            self.host.launch(play=True)  # what the Play tile does, sync check included
+        else:
+            self.host.decide_launch(launchhook.EXIT_CONTINUE)

@@ -124,7 +124,11 @@ fi
 # Only for the actual Play press. Steam uses "run" for setup steps (installscripts,
 # first-time setup) and the other verbs are path queries; none of those should
 # open a window. Once the hub has run, nothing further down the chain re-opens it.
-if [[ -z "$native" && "$verb" == "waitforexitandrun" && -z "${MODSYNC_LAUNCH_HUB:-}" ]]; then
+# "MODSYNC_ORIGINAL_GAME=1 %command%" in the game's launch options skips it, and
+# the launch goes on to the tool Steam used before, as without the hook.
+if [[ -z "$native" && "$verb" == "waitforexitandrun" && -n "${MODSYNC_ORIGINAL_GAME:-}" ]]; then
+    log "MODSYNC_ORIGINAL_GAME is set; going on to $underlying_name without ModSync"
+elif [[ -z "$native" && "$verb" == "waitforexitandrun" && -z "${MODSYNC_LAUNCH_HUB:-}" ]]; then
     export MODSYNC_LAUNCH_HUB=1
     hub=("${modsync[@]}")
     if [[ -f /.flatpak-info ]] && command -v flatpak-spawn >/dev/null 2>&1; then
