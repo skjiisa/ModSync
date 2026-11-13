@@ -1415,6 +1415,10 @@ def _play_without_window(handoff) -> tuple[bool, str]:
     log = logging.getLogger(__name__)
     try:
         service = ModSyncService()
+        # The background service's Syncthing, if it runs, knows what hasn't
+        # arrived yet. None running: Play's own check goes on without it too.
+        if service.state.syncing and not service.manager.attach():
+            log.info("Steam launch: Syncthing isn't running; checking without what it knows")
         reason = service.play_attention()
         if reason:
             log.info("Steam launch: opening ModSync, since %s", reason)
