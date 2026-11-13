@@ -849,6 +849,32 @@ class ModSyncService:
                                   "Until you choose a version under Sync, MO2 uses the newer one.")
         return check
 
+    def play_attention(self) -> str | None:
+        """Why Steam's Play should open ModSync and wait instead of playing
+        straight away, or None. The same things Home puts ahead of Play: a
+        repair MO2 needs, a game version or SKSE that doesn't match, a Steam
+        update waiting, or what ``launch_check`` says about syncing."""
+        if not self.state.has_instance:
+            return None
+        if self.prefix_runtime_problems():
+            return "MO2 needs a newer Visual C++ runtime."
+        st = self.usvfs_status()
+        if st.state != "missing" and (usvfs.is_arm64() or st.can_restore) and st.can_apply:
+            return "MO2 needs the ARM64 fix to start games."
+        game = self.game_status(refresh_index=False)
+        if game.needs_downgrade or (game.mismatch and not game.steam_updating):
+            return f"Your mods need Skyrim {game.wanted or game.expected}. Installed: {game.installed}."
+        if game.skse_state in ("wrong", "several"):
+            return "SKSE does not match the installed game."
+        if game.needs_pin and not game.pending_pin:
+            return "Steam has an update waiting for Skyrim."
+        check = self.launch_check()
+        if check.blocked:
+            return check.blocked
+        if check.warnings:
+            return check.warnings[0]
+        return None
+
     # --- conflicts ---
     # Status polls every few seconds; the walk needn't. It reads every name in
     # mods/, so a big instance on an SD card waits longer between walks: the

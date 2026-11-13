@@ -470,6 +470,99 @@ class SteamLaunchTests(UiTestCase):
         self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CANCEL)
 
 
+class CountdownTests(UiTestCase):
+    """Steam's Play set to "countdown" (the default): Play presses itself unless
+    anything is pressed first, and only while nothing needs a decision."""
+
+    def setUp(self):
+        super().setUp()
+        State(instance_path=str(self.tmp)).save()
+        self.plan = handoff_plan(self.tmp)
+        for p in (patch("modsync.ui.pages.home.COUNTDOWN_S", 0.6),
+                  patch.object(ModSyncService, "prepare_mo2", return_value=(self.plan, ""))):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _window(self, reason=""):
+        window = self.window(steam=launchhook.SteamLaunch(SKYRIM_SE, "GE-Proton10-34", reason=reason))
+        self.settle()
+        return window
+
+    def wait(self, seconds):
+        from PySide6.QtTest import QTest
+
+        QTest.qWait(int(seconds * 1000))
+        self.settle()
+
+    def test_play_starts_by_itself_after_the_countdown(self):
+        window = self._window()
+        home = window.pages["home"]
+        self.assertIn("Starting in 1…", home.play.description)
+        self.assertIsNone(window.steam_launch.decision)
+        self.wait(1.0)
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+        self.assertIs(window.steam_launch.plan, self.plan)  # the Play tile's launch: MO2 with SKSE
+
+    def test_any_press_stays_in_modsync(self):
+        from modsync.ui.input import Action, InputRouter
+
+        window = self._window()
+        home = window.pages["home"]
+        self.assertIn("Starting in", home.play.description)
+        InputRouter.instance().dispatch(Action.DOWN)
+        self.wait(1.0)
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertNotIn("Starting in", home.play.description)
+        self.assertTrue(window.isVisible())
+
+    def test_a_repair_keeps_it_waiting(self):
+        with patch.object(ModSyncService, "prefix_runtime_problems", lambda self: ["msvcp140.dll 14.29"]):
+            window = self._window()
+        self.wait(1.0)
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertNotIn("Starting in", window.pages["home"].play.description)
+
+    def test_changes_still_arriving_hold_it_until_they_are_in(self):
+        State(instance_path=str(self.tmp), folder_id="modsync-1").save()
+        window = self.window(steam=launchhook.SteamLaunch(SKYRIM_SE, "GE-Proton10-34"))
+        home, sync = window.pages["home"], window.pages["sync"]
+        sync.on_status(SyncStatus("ME", "modsync-1", True, "syncing", 64.0, []))
+        self.wait(1.0)
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertNotIn("Starting in", home.play.description)
+        sync.on_status(SyncStatus("ME", "modsync-1", True, "idle", 100.0, []))
+        self.assertIn("Starting in", home.play.description)
+
+    def test_wait_for_me_never_counts_down(self):
+        launchhook.set_play_mode("wait")
+        window = self._window()
+        self.wait(1.0)
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertNotIn("Starting in", window.pages["home"].play.description)
+
+    def test_opened_after_play_right_away_says_why_and_waits(self):
+        launchhook.set_play_mode("play")
+        window = self._window(reason="SKSE does not match the installed game.")
+        self.wait(1.0)
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertIn("ModSync opened first: SKSE does not match the installed game.", window.messages)
+
+    def test_settings_choose_what_steams_play_does(self):
+        window = self._window()
+        window.decide_launch(launchhook.EXIT_CANCEL)
+        window = self.window()
+        system = window.pages["system"]
+        system.on_hook_status(launchhook.LaunchHookStatus(
+            SKYRIM_SE, True, "modsync_489830_proton", True, "proton_experimental", "Proton Experimental", True,
+            None, False, True))
+        self.assertTrue(system.play_tile.isVisibleTo(system))
+        self.assertEqual(system.play_tile.badge.text(), "Count down")
+        system.play_tile.click()
+        window.top_overlay.choose("play")
+        self.assertEqual(launchhook.play_mode(), "play")
+        self.assertEqual(system.play_tile.badge.text(), "Play right away")
+
+
 class BusyTests(UiTestCase):
     def test_usvfs_replacement_blocks_launch_and_navigation(self):
         from modsync.mo2 import usvfs

@@ -263,6 +263,7 @@ class ModsPage(Page):
         super().__init__(host)
         state = self.service.state
         self.usvfs_busy = False
+        self.unchecked = {"runtime", "usvfs"}  # the repair checks that haven't reported yet
         self.open_mo2: Tile | None = None
         self.chooser: Mo2Chooser | None = None
         self.header(state.instance_label if state.has_instance else "Mod Organizer 2",
@@ -345,6 +346,8 @@ class ModsPage(Page):
         if self.open_mo2 is not None:
             self._refresh_runtime()
             self.usvfs_refresh()
+        else:
+            self.unchecked.clear()
 
     @property
     def repairs(self) -> list[tuple[Tile, str]]:
@@ -392,7 +395,7 @@ class ModsPage(Page):
     # --- VC++ runtime in the game prefix ---
     def _refresh_runtime(self) -> None:
         worker.run_async(self.service.prefix_runtime_problems, on_done=self._on_runtime_checked,
-                         on_failed=lambda _: None)
+                         on_failed=lambda _: self._on_runtime_checked([]))
 
     def _on_runtime_checked(self, problems: list[str]) -> None:
         self.runtime_tile.setVisible(bool(problems))
@@ -402,6 +405,7 @@ class ModsPage(Page):
             self.runtime_note.setText(
                 "This MO2's virtual file system needs a newer Visual C++ runtime in the game's Proton prefix, "
                 "or nothing started from MO2 will run (" + "; ".join(problems) + ").")
+        self.unchecked.discard("runtime")
         self.repairsChecked.emit()
 
     def _install_runtime(self) -> None:
@@ -450,6 +454,7 @@ class ModsPage(Page):
         self.usvfs_apply.setVisible(relevant and result.can_apply)
         self.usvfs_restore.setVisible(relevant and result.can_restore)
         self._update_enabled()
+        self.unchecked.discard("usvfs")
         self.repairsChecked.emit()
 
     def _usvfs_check_failed(self, message: str) -> None:
@@ -457,6 +462,7 @@ class ModsPage(Page):
         self.usvfs_note.setText(f"Could not check USVFS: {message}")
         self.usvfs_apply.setVisible(False)
         self.usvfs_restore.setVisible(False)
+        self.unchecked.discard("usvfs")
         self.repairsChecked.emit()
 
     def _usvfs_change(self, restore: bool) -> None:

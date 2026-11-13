@@ -65,6 +65,17 @@ class LaunchCommandTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Cannot enable", out)
 
+    def test_play_mode(self):
+        code, out = self.run_cli("launch", "mode")
+        self.assertEqual(code, 0)
+        self.assertIn("Steam's Play: countdown.", out)
+        code, out = self.run_cli("launch", "mode", "wait")
+        self.assertEqual((code, launchhook.play_mode()), (0, "wait"))
+        self.assertIn("waits for you to choose", out)
+        code, out = self.run_cli("launch", "mode", "later")
+        self.assertEqual((code, launchhook.play_mode()), (2, "wait"))
+        self.assertIn("unknown play mode", out)
+
     def test_help_mentions_launch(self):
         code, out = self.run_cli("--help")
         self.assertIn("modsync launch status", out)
@@ -78,7 +89,7 @@ class HubOutputTests(unittest.TestCase):
             "import sys\n"
             "import modsync.ui.app as app\n"
             "from modsync import cli\n"
-            "def fake(*, appid, through, handoff):\n"
+            "def fake(*, appid, through, handoff, reason):\n"
             "    print('a stray print')\n"
             "    handoff.write(b'the-handoff\\0')\n"
             "    return 0\n"
@@ -90,6 +101,62 @@ class HubOutputTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, b"the-handoff\0")
         self.assertIn(b"a stray print", result.stderr)
+
+
+class PlayRightAwayTests(unittest.TestCase):
+    """Steam's Play set to "play": no window while nothing needs attention."""
+
+    def setUp(self):
+        from modsync.mo2.launch import LaunchPlan
+        from modsync.state import State
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        patcher = patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.tmp / "config"),
+                                          "XDG_STATE_HOME": str(self.tmp / "state")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("MODSYNC_HUB_AUTO_DECISION", None)
+        launchhook.set_play_mode("play")
+        State(instance_path=str(self.tmp)).save()
+        command = [str(self.tmp / "ModOrganizer.exe"), "run", "-e", "SKSE"]
+        self.plan = LaunchPlan(["proton", "run", *command], {}, self.tmp, "SKSE", True, self.tmp / "Proton", command)
+
+    def hub(self, attention=None, prepare=None):
+        from modsync import cli
+        from modsync.service import ModSyncService
+
+        handoff = io.BytesIO()
+        with patch.object(ModSyncService, "play_attention", return_value=attention), \
+                patch.object(ModSyncService, "prepare_mo2", side_effect=prepare, return_value=(self.plan, "")), \
+                patch("modsync.ui.app.run_hub", return_value=launchhook.EXIT_CANCEL) as run_hub, \
+                patch.object(os, "fdopen", return_value=handoff), patch.object(os, "dup2"):
+            handoff.close = lambda: None
+            code = cli._launch_hub(["--appid", "489830", "--through", "proton_experimental"])
+        return code, handoff.getvalue(), run_hub
+
+    def test_plays_without_the_window(self):
+        code, written, run_hub = self.hub()
+        self.assertEqual(code, launchhook.EXIT_CONTINUE)
+        self.assertEqual(written, launchhook.encode_handoff(self.plan))
+        run_hub.assert_not_called()
+
+    def test_something_to_decide_opens_the_window_and_says_why(self):
+        code, written, run_hub = self.hub(attention="SKSE does not match the installed game.")
+        self.assertEqual((code, written), (launchhook.EXIT_CANCEL, b""))
+        self.assertEqual(run_hub.call_args.kwargs["reason"], "SKSE does not match the installed game.")
+
+    def test_a_launch_it_cannot_prepare_opens_the_window(self):
+        code, written, run_hub = self.hub(prepare=RuntimeError("MO2 hasn't been set up for Skyrim yet."))
+        self.assertEqual(written, b"")
+        self.assertIn("MO2 hasn't been set up", run_hub.call_args.kwargs["reason"])
+
+    def test_other_modes_open_the_window(self):
+        launchhook.set_play_mode("countdown")
+        code, written, run_hub = self.hub()
+        run_hub.assert_called_once()
+        self.assertEqual(run_hub.call_args.kwargs["reason"], "")
 
 
 if __name__ == "__main__":

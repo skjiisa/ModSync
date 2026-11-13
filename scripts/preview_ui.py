@@ -334,6 +334,16 @@ def main():
         steam.decision = 0
         w.close()
 
+        # Nothing to decide: Play counts down (Steam's Play set to "countdown", the default).
+        steam = launchhook.SteamLaunch(SKYRIM_SE, "GE-Proton10-34")
+        with patch.object(ModSyncService, "game_status", return_value=ready), \
+                patch.object(ModSyncService, "game_version_check",
+                             return_value=gameversion.VersionCheck(ready.installed, ready.expected)):
+            w = window_for(State(**configured), steam=steam, mode="gamepad")
+            capture(w, "launch-countdown")
+        steam.decision = 0
+        w.close()
+
         w = window_for(State(), mode="gamepad")
         w.start_setup()
         settle()
