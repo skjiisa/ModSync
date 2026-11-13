@@ -841,6 +841,18 @@ Heroic's prefix and Proton.
    game play through MO2, also from a Heroic shortcut in Steam. Close Heroic
    first. `modsync cyberpunk hook disable` takes it out again.
 
+While the hook is on, Play and Open Mod Organizer 2, in the app or as
+`modsync cyberpunk play` and `open`, go through Heroic too. ModSync leaves a
+note beside the hook's script (`modsync:play` or `modsync:open`) and asks
+Heroic to launch the game, as its Play button would. The hook takes the
+note and plays or opens MO2, whichever of the game's launch options Heroic
+runs. The session is then Heroic's, so Heroic syncs GOG cloud saves before
+and after it and counts the playtime. With the hook off, ModSync starts MO2
+itself with Heroic's prefix and Proton, and Heroic does neither. While MO2
+is already open, or still starting for an earlier launch, Play says so
+rather than asking Heroic again, since Heroic ignores a second launch of a
+running game.
+
 Heroic has no compatibility tools to stand in for, as the Steam launch hook
 does, but each game's settings take *wrappers*: programs Heroic runs ahead
 of the game's command line. The hook is one, put first in the game's
@@ -930,10 +942,11 @@ A Cyberpunk link reaches MO2 in one of three ways:
   the first MO2 and exits. Proton's `runinprefix` verb runs it, because the
   default verb would wait for MO2 to exit.
 - When MO2 is closed and the hook is on, ModSync leaves the link beside the
-  hook's script and asks Heroic to launch the game. The hook opens MO2 with
-  the link instead of playing, so Heroic still tracks the session. It only
-  takes a link left in the last three minutes. Another link clicked while
-  MO2 is still starting waits for it and then goes to it directly.
+  hook's script and asks Heroic to launch the game, as Play does. The hook
+  opens MO2 with the link instead of playing, so Heroic still tracks the
+  session. It only takes a note left in the last three minutes. Another link
+  clicked while MO2 is still starting, for it or for Play, waits for it and
+  then goes to it directly.
 - When MO2 is closed and the hook is off, MO2 opens with the link the way
   `modsync cyberpunk open` opens it.
 

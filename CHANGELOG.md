@@ -8,6 +8,11 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
+- Cyberpunk 2077's Play and Open Mod Organizer 2 in ModSync (and `modsync
+  cyberpunk play | open`) go through Heroic while Heroic's Play hook is on,
+  so Heroic syncs GOG cloud saves and counts the playtime, as its own Play
+  button does. They play or open MO2 whichever launch option is chosen in
+  Heroic.
 - Cyberpunk 2077 from GOG through the Heroic Games Launcher, with Mod
   Organizer 2. Choose it in the game switcher (X): Home installs MO2 for it,
   plays through it or opens it, switches Heroic's Play button, and turns

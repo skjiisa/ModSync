@@ -190,6 +190,9 @@ class CyberpunkPage(Page):
         finishing = has and ov.needs_setup
         self.install_tile.setText("Finish setting up Mod Organizer 2" if finishing else "Install Mod Organizer 2")
         self.install_tile.setVisible(ready and (ov.instance is None or finishing) and not self._working)
+        through_heroic = hook is not None and hook.enabled
+        self.play.set_description("Through Heroic and Mod Organizer 2, with your mods and GOG cloud saves."
+                                  if through_heroic else "Through Mod Organizer 2, with your mods.")
         self.play.setVisible(has and not self._working)
         self.open_mo2.setVisible(has and not self._working)
         self.use_existing.setVisible(not self._working)

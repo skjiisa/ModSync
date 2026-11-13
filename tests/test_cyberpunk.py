@@ -119,6 +119,58 @@ def test_runner_falls_back_to_heroics_own_umu(tmp_path):
         assert cyberpunk.runner(game) == ["python3", str(bundled)]
 
 
+@pytest.mark.parametrize("play", [True, False])
+def test_play_and_open_go_through_heroic_while_its_hook_is_on(tmp_path, play):
+    """Heroic's launch, so it syncs GOG cloud saves; the note makes the hook
+    play or open MO2 whichever of the game's launch options Heroic runs."""
+    from modsync.mo2.launch import Launcher
+
+    with Downloading(tmp_path, hook_on=True) as d:
+        message = cyberpunk.launch(Launcher(), play=play)
+        assert message == ("Starting Cyberpunk 2077 through Heroic…" if play else
+                           "Opening Mod Organizer 2 through Heroic…")
+        note = cyberpunk.heroic_hook.launch_note(d.game).read_text().strip()
+        assert note == (cyberpunk.heroic_hook.PLAY if play else cyberpunk.heroic_hook.OPEN)
+        assert cyberpunk.heroic_hook.launch.call_args.args == (d.game,)
+        Launcher.start.assert_not_called()
+        with pytest.raises(cyberpunk.CyberpunkError, match="already open"):  # Heroic would ignore a second
+            cyberpunk.launch(Launcher(), play=play)
+        assert cyberpunk.heroic_hook.launch.call_count == 1
+
+
+def test_without_the_hook_modsync_starts_mo2_itself(tmp_path):
+    from modsync.mo2.launch import Launcher
+
+    with Downloading(tmp_path) as d:
+        assert cyberpunk.launch(Launcher(), play=False) == "Starting Mod Organizer 2…"
+        (plan,) = Launcher.start.call_args.args
+        assert plan.command[0] == str(d.instance / "ModOrganizer.exe")
+        cyberpunk.heroic_hook.launch.assert_not_called()
+
+
+def test_a_link_while_play_starts_mo2_through_heroic_waits_for_it(tmp_path):
+    from modsync.mo2.launch import Launcher
+
+    with Downloading(tmp_path, hook_on=True):
+        cyberpunk.launch(Launcher(), play=True)
+        cyberpunk.mo2_running.side_effect = [False, True, True]
+        assert cyberpunk.download(LINK, poll=0) == "Passed the download to Mod Organizer 2."
+        assert cyberpunk.heroic_hook.launch.call_count == 1
+        cyberpunk.heroic_hook.leave_download.assert_not_called()
+
+
+def test_a_launch_heroic_refused_leaves_no_note(tmp_path):
+    from modsync.mo2.launch import Launcher
+
+    with Downloading(tmp_path, hook_on=True) as d:
+        cyberpunk.heroic_hook.launch.side_effect = cyberpunk.heroic_hook.HookError("no Heroic")
+        with pytest.raises(cyberpunk.heroic_hook.HookError):
+            cyberpunk.launch(Launcher(), play=True)
+        assert not cyberpunk.heroic_hook.launch_note(d.game).exists()
+        cyberpunk.heroic_hook.launch.side_effect = None
+        assert "through Heroic" in cyberpunk.launch(Launcher(), play=True)  # nothing recorded to wait for
+
+
 @pytest.mark.parametrize("problem, match", [
     ("no game", "wasn't found in Heroic"),
     ("no prefix", "Launch the game once from Heroic"),
@@ -705,8 +757,8 @@ def test_an_mo2_with_the_same_path_in_another_prefix_isnt_this_one(tmp_path):
 def test_a_link_while_mo2_is_starting_waits_for_it_instead_of_launching_again(tmp_path):
     with Downloading(tmp_path, hook_on=True) as d:
         assert "through Heroic" in cyberpunk.download(LINK)
-        cyberpunk.heroic_hook.download_note(d.game).parent.mkdir(parents=True, exist_ok=True)
-        cyberpunk.heroic_hook.download_note(d.game).write_text(LINK)  # the hook hasn't run yet
+        cyberpunk.heroic_hook.launch_note(d.game).parent.mkdir(parents=True, exist_ok=True)
+        cyberpunk.heroic_hook.launch_note(d.game).write_text(LINK)  # the hook hasn't run yet
         cyberpunk.mo2_running.side_effect = [False, False, True, True]
         assert cyberpunk.download(LINK + "2", poll=0) == "Passed the download to Mod Organizer 2."
         assert cyberpunk.heroic_hook.launch.call_count == 1
@@ -723,7 +775,7 @@ def taken_ago(game, seconds: float) -> None:
     import os
     import time
 
-    taken = cyberpunk.heroic_hook.download_taken(game)
+    taken = cyberpunk.heroic_hook.launch_taken(game)
     taken.parent.mkdir(parents=True, exist_ok=True)
     taken.write_text("")
     os.utime(taken, (time.time() - seconds,) * 2)
@@ -756,12 +808,12 @@ def test_a_link_just_taken_by_the_hook_waits_for_mo2(tmp_path):
 def test_a_failed_launch_leaves_nothing_to_wait_for(tmp_path):
     with Downloading(tmp_path, hook_on=True) as d:
         cyberpunk.heroic_hook.leave_download.side_effect = lambda game, url: (
-            cyberpunk.heroic_hook.download_note(game).parent.mkdir(parents=True, exist_ok=True),
-            cyberpunk.heroic_hook.download_note(game).write_text(url))
+            cyberpunk.heroic_hook.launch_note(game).parent.mkdir(parents=True, exist_ok=True),
+            cyberpunk.heroic_hook.launch_note(game).write_text(url))
         cyberpunk.heroic_hook.launch.side_effect = cyberpunk.heroic_hook.HookError("no Heroic")
         with pytest.raises(cyberpunk.heroic_hook.HookError):
             cyberpunk.download(LINK)
-        assert not cyberpunk.heroic_hook.download_note(d.game).exists()
+        assert not cyberpunk.heroic_hook.launch_note(d.game).exists()
         cyberpunk.heroic_hook.launch.side_effect = None
         with no_waiting():
             assert "through Heroic" in cyberpunk.download(LINK)
