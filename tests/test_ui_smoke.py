@@ -525,6 +525,20 @@ class CountdownTests(UiTestCase):
         self.wait(1.0)
         self.assertIsNone(window.steam_launch.decision)
 
+    def test_a_controller_press_stays_even_if_modsync_never_said_it_was_in_front(self):
+        from modsync.ui.input import InputRouter
+
+        window = self._window()
+        home = window.pages["home"]
+        home._was_active = False  # gamescope may never report the window active
+        router = InputRouter.instance()
+        with patch.object(InputRouter, "_app_active", staticmethod(lambda: False)):
+            router.pad_button("back", True)
+            router.pad_button("back", False)
+            self.wait(1.0)
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertNotIn("Starting in", home.play.description)
+
     def test_going_to_another_window_stays(self):
         from PySide6.QtCore import Qt
 
