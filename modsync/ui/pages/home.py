@@ -466,8 +466,13 @@ class HomePage(Page):
     def _tick(self) -> None:
         if self._countdown_state != "running":
             return
-        if self.host.router.last_input >= self._countdown_started:
-            self._stop_countdown()  # any press stays here; A on Play has started it already
+        router = self.host.router
+        if router.last_input >= self._countdown_started or (
+                not self._was_active and router.last_pad_press >= self._countdown_started):
+            # Any press stays here; A on Play has started it already. While ModSync
+            # has never said it's in front (gamescope may not), a controller press
+            # may be meant for it, so that stays too.
+            self._stop_countdown()
             return
         if self._was_active and QGuiApplication.applicationState() != Qt.ApplicationState.ApplicationActive:
             self._stop_countdown()  # gone to another window

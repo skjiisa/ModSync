@@ -177,6 +177,7 @@ class InputRouter(QObject):
         self._tap: tuple[int, float] | None = None  # modifier pressed alone, and when
         self._family: tuple[str, float] | None = None
         self.last_input = 0.0  # monotonic time of the last press of any kind
+        self.last_pad_press = 0.0  # …of a controller button, also while another app is in front
         self.pointer = "mouse"  # "mouse" or "touch": which kind drove the last pointer press
         self._pad_seen = False  # SDL reported a button press at some point
         app.installEventFilter(self)
@@ -265,8 +266,10 @@ class InputRouter(QObject):
 
     def pad_button(self, name: str, pressed: bool) -> None:
         action = PAD.get(name)
-        if pressed and self._app_active():
-            self.last_input = time.monotonic()  # any button, mapped or not, is a press
+        if pressed:
+            self.last_pad_press = time.monotonic()
+            if self._app_active():
+                self.last_input = self.last_pad_press  # any button, mapped or not, is a press
         if action is None:
             return
         if not pressed:
