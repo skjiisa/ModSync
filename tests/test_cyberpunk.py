@@ -159,6 +159,26 @@ def test_a_link_while_play_starts_mo2_through_heroic_waits_for_it(tmp_path):
         cyberpunk.heroic_hook.leave_download.assert_not_called()
 
 
+def test_a_hook_that_takes_the_note_before_heroic_answers_still_counts(tmp_path):
+    """Heroic may run the hook before its launch request returns: the record
+    is written first, so a note taken at once is taken after it."""
+    from modsync.mo2.launch import Launcher
+
+    with Downloading(tmp_path, hook_on=True) as d:
+        def hook_takes_the_note(game):
+            import time
+
+            cyberpunk.heroic_hook.launch_note(game).unlink()
+            taken_ago(game, 0)
+            time.sleep(0.05)  # and Heroic answers a moment later
+
+        cyberpunk.heroic_hook.launch.side_effect = hook_takes_the_note
+        cyberpunk.launch(Launcher(), play=True)
+        cyberpunk.mo2_running.side_effect = [False, True, True]
+        assert cyberpunk.download(LINK, poll=0) == "Passed the download to Mod Organizer 2."
+        assert cyberpunk.heroic_hook.launch.call_count == 1
+
+
 def test_a_launch_heroic_refused_leaves_no_note(tmp_path):
     from modsync.mo2.launch import Launcher
 

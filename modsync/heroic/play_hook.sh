@@ -61,33 +61,11 @@ for entry in "${entries[@]}"; do
 done
 export WINEDLLOVERRIDES="${merged:+$merged;}winmm,version=n,b"
 
-launch=("$@")
-target=-1
-for i in "${!launch[@]}"; do
-    p=$(unix_path "${launch[$i]}")
-    if [[ "${p,,}" == *.exe && "$p" == "$game_dir"/* ]]; then
-        target=$i
-        break
-    fi
-done
-if (( target < 0 )); then
-    say "no program from $game_dir in the launch; running it as it was"
-    exec "$@"
-fi
-if [[ -n "${MODSYNC_ORIGINAL_GAME:-}" ]]; then
-    say "MODSYNC_ORIGINAL_GAME is set; starting the game without Mod Organizer 2"
-    exec "$@"
-fi
-if [[ ! -f "$instance/ModOrganizer.exe" ]]; then
-    say "WARNING: $instance/ModOrganizer.exe isn't there (or Heroic can't see it); starting the game without Mod Organizer 2"
-    exec "$@"
-fi
-runner=("${launch[@]:0:target}")
-program=$(unix_path "${launch[$target]}")
-program="${program##*/}"
-
-download="" request=""
+# The note is for this launch, whatever it turns out to be: taken first, so
+# one this launch doesn't use can't turn a later Play into something else.
+download="" request="" taken=""
 if [[ -f "$launch_note" ]] && mv -f "$launch_note" "$launch_taken" 2>/dev/null; then  # taken whole, once
+    taken=1
     left=$(stat -c %Y "$launch_taken" 2>/dev/null || echo 0)
     note=""
     IFS= read -r note < "$launch_taken" || true
@@ -102,6 +80,32 @@ if [[ -f "$launch_note" ]] && mv -f "$launch_note" "$launch_taken" 2>/dev/null; 
         say "ignoring a note ModSync left that this doesn't know: $note"
     fi
 fi
+
+# Running the launch as it was. MO2 isn't coming, so ModSync mustn't wait for it.
+as_it_was() {
+    say "$1"
+    [[ -n "$download$request" ]] && say "what ModSync asked this launch for ($request${download:+a Nexus download}) is dropped"
+    [[ -n "$taken" ]] && rm -f "$launch_taken"
+    exec "${launch[@]}"
+}
+
+launch=("$@")
+target=-1
+for i in "${!launch[@]}"; do
+    p=$(unix_path "${launch[$i]}")
+    if [[ "${p,,}" == *.exe && "$p" == "$game_dir"/* ]]; then
+        target=$i
+        break
+    fi
+done
+(( target >= 0 )) || as_it_was "no program from $game_dir in the launch; running it as it was"
+[[ -z "${MODSYNC_ORIGINAL_GAME:-}" ]] ||
+    as_it_was "MODSYNC_ORIGINAL_GAME is set; starting the game without Mod Organizer 2"
+[[ -f "$instance/ModOrganizer.exe" ]] || as_it_was \
+    "WARNING: $instance/ModOrganizer.exe isn't there (or Heroic can't see it); starting the game without Mod Organizer 2"
+runner=("${launch[@]:0:target}")
+program=$(unix_path "${launch[$target]}")
+program="${program##*/}"
 
 if [[ -n "$download" ]]; then
     args=("$download")

@@ -205,6 +205,29 @@ def test_modsyncs_play_and_open_do_that_whichever_option_heroic_ran(scene, progr
 
 
 @pytest.mark.parametrize("case", ["original requested", "instance missing", "no game program"])
+def test_a_launch_that_skips_mo2_drops_the_note_it_was_for(scene, case):
+    """Else an Open left for it would turn the next plain Play into opening MO2,
+    and ModSync would wait for an MO2 that isn't coming."""
+    (scene["instance"] / "ModOrganizer.ini").write_text(EXECUTABLES)
+    note(scene).parent.mkdir(parents=True)
+    hook.leave_request(scene["game"], hook.OPEN)
+    env = {"MODSYNC_ORIGINAL_GAME": "1"} if case == "original requested" else {}
+    if case == "instance missing":
+        (scene["instance"] / "ModOrganizer.exe").rename(scene["instance"] / "away.exe")
+    exe = "/elsewhere/Cyberpunk2077.exe" if case == "no game program" else scene["exe"]
+
+    calls, said = run(scene, str(scene["umu"]), exe, env=env)
+
+    assert calls[-1]["argv"] == [exe]
+    assert "is dropped" in said
+    assert not note(scene).exists() and not note(scene).with_suffix(".taken").exists()
+    if case == "instance missing":
+        (scene["instance"] / "away.exe").rename(scene["instance"] / "ModOrganizer.exe")
+    calls, _ = run(scene, str(scene["umu"]), scene["exe"])  # the next plain Play plays
+    assert calls[-1]["argv"][1:] == ["run", "-e", "My Cyberpunk, renamed"]
+
+
+@pytest.mark.parametrize("case", ["original requested", "instance missing", "no game program"])
 def test_the_launch_runs_as_it_was_when_mo2_cant_take_it(scene, case):
     env = {"MODSYNC_ORIGINAL_GAME": "1"} if case == "original requested" else {}
     if case == "instance missing":

@@ -463,12 +463,23 @@ def _launch_lock():
         yield record
 
 
-def _record_launch(record, how: str) -> None:
+@contextmanager
+def _launched(record, how: str):
+    """Record a launch before starting it: Heroic may run the hook, which
+    takes the note, before the launch request even returns, and the note
+    counts only when taken after the record. A launch that fails to start is
+    taken out again, so nothing waits for it."""
     import time
 
     record.truncate(0)
     record.write(f"{time.time()} {how}\n")
     record.flush()
+    try:
+        yield
+    except BaseException:
+        record.truncate(0)
+        record.flush()
+        raise
 
 
 def _under_way(record, game: heroic.GogGame) -> bool:
@@ -552,21 +563,22 @@ def download(url: str, *, poll: float = 2.0) -> str:
                 record.truncate(0)  # MO2 is up: no launch is under way any more
                 return _pass_to_mo2(game, instance, url)
             if not _under_way(record, game):
-                message, how = _open_mo2_with(game, instance, url)  # raises: nothing recorded
-                _record_launch(record, how)
-                return message
+                return _open_mo2_with(game, instance, url, record)
         time.sleep(poll)
 
 
-def _open_mo2_with(game: heroic.GogGame, instance: Path, url: str) -> tuple[str, str]:
-    """Open MO2 with the link. Returns what happened and how ("hook" or "direct")."""
+def _open_mo2_with(game: heroic.GogGame, instance: Path, url: str, record) -> str:
+    """Open MO2 with the link, recording the launch (see :func:`_launched`).
+    Returns what happened."""
     refresh_hook()  # the script must be one that knows to look for the link
     if _through_heroic(game, instance):
-        _ask_heroic(game, url)
-        return "Opening Mod Organizer 2 through Heroic to download the file…", "hook"
+        with _launched(record, "hook"):
+            _ask_heroic(game, url)
+        return "Opening Mod Organizer 2 through Heroic to download the file…"
     from modsync.mo2.launch import Launcher
 
-    return Launcher().start(build_plan(instance, game, download=url)), "direct"
+    with _launched(record, "direct"):
+        return Launcher().start(build_plan(instance, game, download=url))
 
 
 # --- installing MO2 -----------------------------------------------------------
@@ -978,6 +990,6 @@ def launch(launcher, *, play: bool) -> str:
         if mo2_running(game, plan.cwd) or _under_way(record, game):
             raise CyberpunkError("Mod Organizer 2 is already open for Cyberpunk 2077."
                                  + (" Play from there, or close it first." if play else ""))
-        _ask_heroic(game, heroic_hook.PLAY if play else heroic_hook.OPEN)
-        _record_launch(record, "hook")
+        with _launched(record, "hook"):
+            _ask_heroic(game, heroic_hook.PLAY if play else heroic_hook.OPEN)
     return "Starting Cyberpunk 2077 through Heroic…" if play else "Opening Mod Organizer 2 through Heroic…"
