@@ -919,7 +919,7 @@ class Overview:
     version: str | None = None  # the install's DFU version, read with the rest
     configured_ok: bool = False  # DFU would accept the data the install uses (Steam's or its own copy)
     emulation_problem: str | None = None  # why it can't run on this machine (an ARM one without FEX)
-    controller: bool = False  # the suggested controller layout is on its Secondary bindings
+    controller: str = "none"  # its controller bindings: see controller_state
 
     @property
     def stale_path(self) -> bool:
@@ -959,7 +959,7 @@ def overview(*, hook: bool = True) -> Overview:
                     sync_state(MODS_FOLDER), sync_state(SAVES_FOLDER),
                     version_problem(inst) if inst else None, inst.version if inst else None, configured_ok,
                     emulation_problem(inst) if inst else None,
-                    has_controller_bindings(inst) if inst else False)
+                    controller_state(inst) if inst else "none")
 
 
 def setup(dest: Path | str | None = None, *, progress: engine.ProgressFn | None = None) -> tuple[Installed, str | None]:
@@ -1154,6 +1154,22 @@ def has_controller_bindings(inst: Install) -> bool:
     if not isinstance(secondary, dict):
         return False
     return all(secondary.get(key) == action for key, action in controller_bindings().items())
+
+
+def controller_state(inst: Install) -> str:
+    """``inst``'s controller bindings: "suggested" (the layout is all there),
+    "own" (other controller buttons are bound, by the player) or "none"."""
+    if has_controller_bindings(inst):
+        return "suggested"
+    try:
+        data = _read_keybinds(keybinds_file(inst))
+    except DfuError:
+        return "none"
+    for field_ in ("actionKeyBinds", "secondaryActionKeyBinds"):
+        binds = data.get(field_)
+        if isinstance(binds, dict) and any("Joystick" in str(key) for key in binds):
+            return "own"
+    return "none"
 
 
 def set_controller_bindings(inst: Install) -> str:

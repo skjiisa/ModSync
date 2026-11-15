@@ -323,31 +323,63 @@ class DaggerfallUiTests(UiTestCase):
         launch.assert_called_once()
         self.assertEqual(window.messages[-1], "Starting Daggerfall Unity.")
 
-    def test_controller_bindings_are_confirmed_then_set(self):
+    def test_the_controller_row_shows_every_binding_then_sets_them(self):
+        from modsync.ui.pages.daggerfall import ControllerLayoutSheet
         window, page = self.open_sheet(overview(installed=True))
-        self.assertTrue(page.controller.isVisible())
-        self.assertIn("suggested layout, beside keyboard and mouse", page.controller.desc.text())
+        self.assertEqual(page.controller_row.badge.text(), "Not set up")
         done = "Daggerfall Unity has the suggested controller bindings, on its Secondary bindings."
         with patch.object(dfu, "set_controller_bindings", return_value=done) as set_them:
-            page.controller.click()
+            page.controller_row.click()
             self.settle(2)
             sheet = window.top_overlay
-            self.assertIsInstance(sheet, ConfirmSheet)
+            self.assertIsInstance(sheet, ControllerLayoutSheet)
+            self.assertEqual(set(sheet.combos), {action for action, _ in dfu.CONTROLLER_LAYOUT})
+            self.assertEqual(sheet.combos["RecastSpell"].buttons, ["LT", "A"])
             self.assertIn("Secondary bindings", sheet.text.text())
-            self.assertIn("sync with your mods once mods sync is on", sheet.text.text())
+            self.assertNotIn("paired machines", sheet.text.text())  # mods sync is off
+            self.assertIs(window.focusWidget(), sheet.tiles["go"])
+            self.assertEqual(sheet.accept_hint(), "Use this layout")
             set_them.assert_not_called()
             sheet.tiles["go"].click()
             self.settle(4)
         set_them.assert_called_once()
-        self.assertEqual(window.messages[-1], done)
+        self.assertEqual(window.messages[-1], "Controller layout set. Daggerfall Unity uses it from its next start.")
 
-    def test_controller_bindings_need_an_install(self):
+    def test_cancelling_the_controller_layout_changes_nothing(self):
+        window, page = self.open_sheet(overview(installed=True, mods="on"))
+        with patch.object(dfu, "set_controller_bindings") as set_them:
+            page.controller_row.click()
+            self.settle(2)
+            self.assertIn("paired machines get it with your mods", window.top_overlay.text.text())
+            window.top_overlay.tiles["close"].click()
+            self.settle(3)
+        set_them.assert_not_called()
+
+    def test_with_the_layout_set_the_sheet_is_a_reference(self):
+        window, page = self.open_sheet(dataclasses.replace(overview(installed=True), controller="suggested"))
+        self.assertEqual(page.controller_row.badge.text(), "Suggested")
+        page.controller_row.click()
+        self.settle(2)
+        sheet = window.top_overlay
+        self.assertIs(window.focusWidget(), sheet.tiles["close"])
+        self.assertEqual(sheet.tiles["go"].text(), "Set it up again")
+        self.assertEqual(sheet.tiles["go"].property("tileRole"), "normal")  # nothing to recommend
+
+    def test_own_controller_bindings_are_said_to_be_replaced(self):
+        window, page = self.open_sheet(dataclasses.replace(overview(installed=True), controller="own"))
+        self.assertEqual(page.controller_row.badge.text(), "Your own")
+        page.controller_row.click()
+        self.settle(2)
+        self.assertIn("Replaces the controller buttons you bound", window.top_overlay.tiles["go"].desc.text())
+
+    def test_the_controller_row_needs_an_install(self):
         _window, page = self.open_sheet(overview())
-        self.assertFalse(page.controller.isVisible())
+        self.assertFalse(page.controller_row.isEnabled())
 
-    def test_set_controller_bindings_say_so(self):
-        _window, page = self.open_sheet(dataclasses.replace(overview(installed=True), controller=True))
-        self.assertEqual(page.controller.desc.text(), "The suggested layout is set.")
+    def test_the_sheet_lists_each_action_once(self):
+        from modsync.ui.pages.daggerfall import LAYOUT_COLUMNS
+        listed = [action for column in LAYOUT_COLUMNS for _heading, actions in column for action, _name in actions]
+        self.assertEqual(sorted(listed), sorted(action for action, _ in dfu.CONTROLLER_LAYOUT))
 
     def test_a_version_mismatch_is_said_plainly(self):
         problem = "The synced mods are for Daggerfall Unity 1.2.0, but this machine has 1.1.1."

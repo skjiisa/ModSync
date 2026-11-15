@@ -1289,6 +1289,16 @@ class ControllerBindingsTests(unittest.TestCase):
         self.assertEqual(data["removedPrimaryActions"], [])
         self.assertFalse((self.inst.data_dir / dfu.KEYBINDS_BACKUP).exists())
 
+    def test_controller_state(self):
+        self.assertEqual(dfu.controller_state(self.inst), "none")
+        self._write({"actionKeyBinds": {"W": "MoveForwards"}, "secondaryActionKeyBinds": {},
+                     "joystickUIKeyBinds": {"JoystickButton0": "LeftClick"}})  # DFU's defaults
+        self.assertEqual(dfu.controller_state(self.inst), "none")
+        self._write({"actionKeyBinds": {"W": "MoveForwards"}, "secondaryActionKeyBinds": {"JoystickButton3": "Jump"}})
+        self.assertEqual(dfu.controller_state(self.inst), "own")
+        dfu.set_controller_bindings(self.inst)
+        self.assertEqual(dfu.controller_state(self.inst), "suggested")
+
     def test_bom_read(self):
         self.file.write_text(json.dumps({"actionKeyBinds": {}, "secondaryActionKeyBinds": {}}), encoding="utf-8-sig")
         dfu.set_controller_bindings(self.inst)

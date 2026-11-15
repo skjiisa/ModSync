@@ -8,10 +8,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
-- Daggerfall Unity's Home has "Set up controller bindings", which sets
-  the controller layout suggested in DFU's wiki (B casts, RT swings, LT
-  with another button for the rest) on DFU's Secondary bindings, leaving
-  the keyboard and mouse as they are. The old bindings are kept in
+- Daggerfall Unity's Home has a Controller row. It opens the controller
+  layout suggested in DFU's wiki, every button of it, drawn as your
+  controller prints them (B casts, RT swings, LT with another button for
+  the rest), and sets it up on DFU's Secondary bindings, leaving the
+  keyboard and mouse as they are. Once set, the same sheet is a reference
+  for which button does what. The old bindings are kept in
   `KeyBinds.modsync-backup.txt`. `modsync dfu controller` does the same.
 - Daggerfall Unity's key bindings now sync with its mods. Keyboard and
   controller bindings sit side by side, so one set works on every machine.

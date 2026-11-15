@@ -924,12 +924,17 @@ so report problems with a ModSync-installed DFU to ModSync.
 
 ### Controller bindings
 
-"Set up controller bindings" on Daggerfall Unity's Home (or `modsync dfu
-controller`) sets the controller layout suggested in DFU's wiki
-([Setting Up Controls](https://github.com/Interkarma/daggerfall-unity/wiki/Setting-Up-Controls)):
+The Controller row on Daggerfall Unity's Home opens the controller layout
+suggested in DFU's wiki
+([Setting Up Controls](https://github.com/Interkarma/daggerfall-unity/wiki/Setting-Up-Controls)),
+every button of it, grouped and printed as your controller prints them:
 B casts a spell, RT swings the weapon, Start pauses, and holding LT reaches
 more (LT + A recasts, LT + Y opens the inventory, and so on). The wiki's L2
-and R2 are the bumpers.
+and R2 are the bumpers. "Use this layout" sets it up (`modsync dfu
+controller` from a terminal). Once it's set, the row reads Suggested and the
+same sheet is a reference card, with "Set it up again" to put back buttons
+changed in DFU. Controller buttons you bound yourself show as Your own, and
+the sheet says the layout replaces them.
 
 They go on DFU's Secondary bindings, as the wiki suggests, so the keyboard
 and mouse keep the Primary ones. Controller buttons bound anywhere before
