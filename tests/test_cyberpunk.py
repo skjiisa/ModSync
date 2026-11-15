@@ -574,3 +574,204 @@ class TestUseAnotherInstance:
                 patch.object(service, "_refresh_game_folders") as refresh:
             service.use_cyberpunk_instance(make_instance(tmp_path))
         refresh.assert_not_called()
+
+
+# --- Nexus downloads --------------------------------------------------------------
+
+LINK = "nxm://cyberpunk2077/mods/2987/files/168466?key=k&expires=1&user_id=2"
+
+
+def with_drives(tmp_path: Path, game: library.GogGame) -> None:
+    """The prefix's drive links as umu leaves them: X: is the home folder."""
+    drives = game.drive_c.parent / "dosdevices"
+    drives.mkdir()
+    (drives / "c:").symlink_to("../drive_c")
+    (drives / "x:").symlink_to(tmp_path)
+    (drives / "z:").symlink_to("/")
+
+
+def pgrep(*lines: str):
+    from subprocess import CompletedProcess
+
+    out = "".join(f"{1000 + i} {line}\n" for i, line in enumerate(lines))
+    return patch.object(cyberpunk.background, "run_host", return_value=CompletedProcess([], 0 if lines else 1, out, ""))
+
+
+@pytest.mark.parametrize("line, running", [
+    (r"X:\ModOrganizer2-Cyberpunk2077\ModOrganizer.exe -p Default", True),
+    (r"x:\modorganizer2-cyberpunk2077\modorganizer.exe", True),  # Windows paths ignore case
+    (r"Z:{tmp}\ModOrganizer2-Cyberpunk2077\ModOrganizer.exe run -e Cyberpunk 2077", True),
+    (r"X:\ModOrganizer2-SkyrimSE\ModOrganizer.exe -p Default", False),  # another instance
+    (r"Q:\ModOrganizer2-Cyberpunk2077\ModOrganizer.exe", False),  # no such drive in this prefix
+])
+def test_mo2_running_follows_the_prefixs_drive_letters(tmp_path, line, running):  # environ unreadable: path decides
+    game, instance = make_game(tmp_path), make_instance(tmp_path)
+    with_drives(tmp_path, game)
+    with pgrep(line.replace("{tmp}", str(tmp_path).replace("/", "\\"))):
+        assert cyberpunk.mo2_running(game, instance) is running
+
+
+class Downloading:
+    """cyberpunk.download with the game, instance and every way out stubbed."""
+
+    def __init__(self, tmp_path, *, running=False, hook_on=False):
+        self.game, self.instance = make_game(tmp_path), make_instance(tmp_path)
+        self.popen = patch.object(cyberpunk.subprocess, "Popen")
+        self.patches = [
+            patch.object(cyberpunk, "find_game", return_value=self.game),
+            patch.object(cyberpunk, "find_instance", return_value=self.instance),
+            patch.object(cyberpunk, "mo2_running", return_value=running),
+            patch.object(cyberpunk, "_host_which", return_value="/usr/bin/umu-run"),
+            patch.object(cyberpunk, "refresh_hook", return_value=[]),
+            patch.object(cyberpunk.heroic_hook, "status",
+                         return_value=cyberpunk.heroic_hook.HookStatus(hook_on, hook_on, tmp_path / "s.sh")),
+            patch.object(cyberpunk.heroic_hook, "leave_download"),
+            patch.object(cyberpunk.heroic_hook, "launch"),
+            patch("modsync.mo2.launch.Launcher.start", return_value="Starting Mod Organizer 2…"),
+        ]
+
+    def __enter__(self):
+        cyberpunk._launch_record().unlink(missing_ok=True)
+        self.mocks = [p.start() for p in self.patches]
+        self.popen_mock = self.popen.start()
+        self.popen_mock.return_value.wait.return_value = 0
+        return self
+
+    def __exit__(self, *exc):
+        cyberpunk._launch_record().unlink(missing_ok=True)
+        self.popen.stop()
+        for p in reversed(self.patches):
+            p.stop()
+
+
+def test_an_open_mo2_gets_the_link_from_a_second_mo2_that_doesnt_wait(tmp_path):
+    with Downloading(tmp_path, running=True) as d:
+        assert cyberpunk.download(LINK) == "Passed the download to Mod Organizer 2."
+        argv = d.popen_mock.call_args.args[0]
+        env = d.popen_mock.call_args.kwargs["env"]
+    assert argv == ["/usr/bin/umu-run", str(d.instance / "ModOrganizer.exe"), LINK]
+    assert env["PROTON_VERB"] == "runinprefix" and env["WINEPREFIX"] == str(d.game.prefix)
+
+
+def test_a_closed_mo2_opens_through_heroic_while_its_hook_is_on(tmp_path):
+    with Downloading(tmp_path, hook_on=True) as d:
+        assert "through Heroic" in cyberpunk.download(LINK)
+        leave, launch = cyberpunk.heroic_hook.leave_download, cyberpunk.heroic_hook.launch
+        assert leave.call_args.args == (d.game, LINK)
+        assert launch.call_args.args == (d.game,)
+        assert not d.popen_mock.called
+
+
+def test_without_the_hook_mo2_opens_as_cyberpunk_open_does_with_the_link(tmp_path):
+    from modsync.mo2.launch import Launcher
+
+    with Downloading(tmp_path) as d:
+        assert cyberpunk.download(LINK) == "Starting Mod Organizer 2…"
+        (plan,) = Launcher.start.call_args.args
+    assert plan.command == [str(d.instance / "ModOrganizer.exe"), "-p", "Default", LINK]
+    assert not plan.play and plan.env["WINEDLLOVERRIDES"].endswith("winmm,version=n,b")
+
+
+def test_downloads_are_modsyncs_only_with_the_game_and_an_instance(tmp_path):
+    instance = make_instance(tmp_path)
+    with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path)), \
+            patch.object(cyberpunk, "find_instance", return_value=instance):
+        assert cyberpunk.takes_downloads()
+    with patch.object(cyberpunk, "find_game", return_value=None), \
+            patch.object(cyberpunk, "find_instance", return_value=instance):
+        assert not cyberpunk.takes_downloads()
+
+
+def test_an_mo2_with_the_same_path_in_another_prefix_isnt_this_one(tmp_path):
+    from subprocess import CompletedProcess
+
+    game, instance = make_game(tmp_path), make_instance(tmp_path)
+    with_drives(tmp_path, game)
+    line = "1000 X:\\ModOrganizer2-Cyberpunk2077\\ModOrganizer.exe\n"
+
+    def host(prefix):
+        def run_host(cmd, **_kw):
+            if cmd[0] == "cat":
+                return CompletedProcess(cmd, 0, f"HOME=/h\0WINEPREFIX={prefix}/\0", "")
+            return CompletedProcess(cmd, 0, line, "")
+        return patch.object(cyberpunk.background, "run_host", side_effect=run_host)
+
+    with host(tmp_path / "elsewhere"):
+        assert not cyberpunk.mo2_running(game, instance)
+    with host(game.drive_c.parent):
+        assert cyberpunk.mo2_running(game, instance)
+
+
+def test_a_link_while_mo2_is_starting_waits_for_it_instead_of_launching_again(tmp_path):
+    with Downloading(tmp_path, hook_on=True) as d:
+        assert "through Heroic" in cyberpunk.download(LINK)
+        cyberpunk.heroic_hook.download_note(d.game).parent.mkdir(parents=True, exist_ok=True)
+        cyberpunk.heroic_hook.download_note(d.game).write_text(LINK)  # the hook hasn't run yet
+        cyberpunk.mo2_running.side_effect = [False, False, True, True]
+        assert cyberpunk.download(LINK + "2", poll=0) == "Passed the download to Mod Organizer 2."
+        assert cyberpunk.heroic_hook.launch.call_count == 1
+        assert cyberpunk.heroic_hook.leave_download.call_count == 1
+        assert d.popen_mock.call_args.args[0][-1] == LINK + "2"
+
+
+def no_waiting():
+    return patch("time.sleep", side_effect=AssertionError("waited"))
+
+
+def taken_ago(game, seconds: float) -> None:
+    """The hook took the link ``seconds`` ago."""
+    import os
+    import time
+
+    taken = cyberpunk.heroic_hook.download_taken(game)
+    taken.parent.mkdir(parents=True, exist_ok=True)
+    taken.write_text("")
+    os.utime(taken, (time.time() - seconds,) * 2)
+
+
+def test_an_mo2_that_never_showed_up_is_opened_again_at_once(tmp_path):
+    """The wait runs from when the hook took the link, for every link alike:
+    a link clicked well after that doesn't wait out a wait of its own."""
+    import os
+    import time
+
+    with Downloading(tmp_path, hook_on=True) as d, no_waiting():
+        cyberpunk.download(LINK)
+        record = cyberpunk._launch_record()
+        os.utime(record, (time.time() - 100,) * 2)
+        taken_ago(d.game, 99)  # and MO2 never came
+        assert "through Heroic" in cyberpunk.download(LINK)
+        assert cyberpunk.heroic_hook.launch.call_count == 2
+
+
+def test_a_link_just_taken_by_the_hook_waits_for_mo2(tmp_path):
+    with Downloading(tmp_path, hook_on=True) as d:
+        cyberpunk.download(LINK)
+        taken_ago(d.game, 0)
+        cyberpunk.mo2_running.side_effect = [False, True, True]
+        assert cyberpunk.download(LINK + "2", poll=0) == "Passed the download to Mod Organizer 2."
+        assert cyberpunk.heroic_hook.launch.call_count == 1
+
+
+def test_a_failed_launch_leaves_nothing_to_wait_for(tmp_path):
+    with Downloading(tmp_path, hook_on=True) as d:
+        cyberpunk.heroic_hook.leave_download.side_effect = lambda game, url: (
+            cyberpunk.heroic_hook.download_note(game).parent.mkdir(parents=True, exist_ok=True),
+            cyberpunk.heroic_hook.download_note(game).write_text(url))
+        cyberpunk.heroic_hook.launch.side_effect = cyberpunk.heroic_hook.HookError("no Heroic")
+        with pytest.raises(cyberpunk.heroic_hook.HookError):
+            cyberpunk.download(LINK)
+        assert not cyberpunk.heroic_hook.download_note(d.game).exists()
+        cyberpunk.heroic_hook.launch.side_effect = None
+        with no_waiting():
+            assert "through Heroic" in cyberpunk.download(LINK)
+
+
+def test_a_direct_launch_gets_its_own_short_wait(tmp_path):
+    from modsync.mo2.launch import Launcher
+
+    with Downloading(tmp_path):
+        cyberpunk.download(LINK)
+        cyberpunk.mo2_running.side_effect = [False, True, True]
+        assert cyberpunk.download(LINK + "2", poll=0) == "Passed the download to Mod Organizer 2."
+        assert Launcher.start.call_count == 1

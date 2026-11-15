@@ -56,6 +56,8 @@ usage:
   modsync cyberpunk hook enable | disable | status
                                          make Heroic's Play button on Cyberpunk play through MO2
 
+  modsync nxm status | enable | disable  send Nexus Mods downloads to the MO2 of the games ModSync runs
+
 sync create and join run headless and keep Syncthing alive until Ctrl-C.
 logs: ~/.local/state/modsync/modsync.log (MODSYNC_LOG_LEVEL=DEBUG for more).
 """
@@ -145,6 +147,11 @@ def _main(argv: list[str] | None) -> int:
         from modsync.cli import cyberpunk
 
         return cyberpunk(argv[1:])
+
+    if cmd == "nxm":
+        from modsync.cli import nxm
+
+        return nxm(argv[1:])
 
     if cmd == "steam":
         from modsync.cli import steam
