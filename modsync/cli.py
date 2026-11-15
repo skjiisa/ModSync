@@ -1341,22 +1341,8 @@ def _nxm_open(url: str) -> int:
 
         logging.getLogger(__name__).exception("couldn't open %s link", handler.game_of(url))
         print(f"error: {e}", file=sys.stderr)
-        _notify(f"The Nexus Mods download didn't start: {e}")
+        handler.notify(f"The Nexus Mods download didn't start: {e}")
         return 1
-
-
-def _notify(message: str) -> None:
-    from modsync import background
-
-    try:
-        if background.run_host(["notify-send", "--app-name=ModSync", "--icon=io.github.skjiisa.ModSync",
-                                "ModSync", message], timeout=15).returncode == 0:
-            return
-    except Exception:  # noqa: BLE001 — no notification service: a dialog instead
-        pass
-    from modsync.__main__ import _show_error
-
-    _show_error(message)
 
 
 def launch(args: list[str]) -> int:
@@ -1391,6 +1377,11 @@ def launch(args: list[str]) -> int:
         except RuntimeError as exc:
             print(f"Cannot enable the launch hook: {exc}")
             return 1
+        from modsync import nxm
+
+        note = nxm.claim_links()
+        if note:
+            print(note)
         return 0
     if sub == "disable":
         try:
@@ -1451,8 +1442,10 @@ def _launch_hub(args: list[str]) -> int:
     handoff = os.fdopen(os.dup(1), "wb")
     os.dup2(2, 1)
     with handoff:
-        reason = ""
-        if launchhook.play_mode() == "play" and not os.environ.get("MODSYNC_HUB_AUTO_DECISION"):
+        opened, reason = _open_for_download(appid, handoff)
+        if opened:
+            return launchhook.EXIT_CONTINUE
+        if not reason and launchhook.play_mode() == "play" and not os.environ.get("MODSYNC_HUB_AUTO_DECISION"):
             played, reason = _play_without_window(handoff)
             if played:
                 return launchhook.EXIT_CONTINUE
@@ -1462,6 +1455,39 @@ def _launch_hub(args: list[str]) -> int:
             print(f"ModSync window unavailable (PySide6 missing: {exc}); continuing the launch.")
             return launchhook.EXIT_CONTINUE
         return run_hub(appid=appid, through=through, handoff=handoff, reason=reason)
+
+
+def _open_for_download(appid: int | None, handoff) -> tuple[bool, str]:
+    """A launch ModSync asked Steam for, to open MO2 with a Nexus download
+    (modsync.mo2.steam_downloads): hand the hook Open MO2 with the link,
+    without the window. (False, "") for any other launch; (False, why) when
+    MO2 couldn't be readied, and the window opens and waits."""
+    import logging
+
+    from modsync import launchhook
+    from modsync.games import GAMES
+    from modsync.logging_setup import configure
+    from modsync.mo2 import steam_downloads
+
+    game = GAMES.get(appid) if appid is not None else None
+    try:
+        url = steam_downloads.take_link(game) if game is not None else None
+    except Exception:  # noqa: BLE001 — a note it can't read is no reason to keep the game from starting
+        logging.getLogger(__name__).exception("Steam launch: couldn't read the note for a Nexus download")
+        return False, ""
+    if url is None:
+        return False, ""
+    configure("hub", ["launch", "hub", "--download"])
+    log = logging.getLogger(__name__)
+    try:
+        plan = steam_downloads.prepare(game, url)
+        handoff.write(launchhook.encode_handoff(plan))
+        handoff.flush()
+    except Exception as exc:  # noqa: BLE001 — whatever it is, the window can show it
+        log.exception("Steam launch: couldn't open MO2 for a Nexus download")
+        return False, f"the Nexus download couldn't open Mod Organizer 2: {exc}"
+    log.info("Steam launch: opening MO2 for a Nexus download, without the window")
+    return True, ""
 
 
 def _play_without_window(handoff) -> tuple[bool, str]:

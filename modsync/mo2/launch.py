@@ -104,7 +104,11 @@ def nested_desktop_display() -> str | None:
     return None
 
 
-def build_plan(instance_path: Path | str | None, *, play: bool = False) -> LaunchPlan:
+def build_plan(instance_path: Path | str | None, *, play: bool = False, download: str | None = None) -> LaunchPlan:
+    """MO2's launch: open, playing the game (``play``), or open with a Nexus
+    download's nxm:// link (``download``)."""
+    if play and download:
+        raise ValueError("a download opens MO2; it doesn't play")
     if not instance_path:
         raise RuntimeError("Choose an MO2 instance first.")
     instance = Path(instance_path).expanduser().resolve()
@@ -159,6 +163,8 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False) -> Launc
         game_dir = configured_dir or app.install_path
         args, target = _game_target(sections, game_dir)
         mo2_args += args
+    elif download:
+        mo2_args.append(download)
     command = [str(exe), *mo2_args]
     argv = [str(proton / "proton"), "run", *command]
     runtime_id = compattools.require_tool_appid(proton)
@@ -192,17 +198,33 @@ def run_in_prefix(instance_path: Path | str, exe: Path, args: list[str], *, time
     way MO2 is started (Steam's Proton, inside its Steam Linux Runtime)."""
     plan = build_plan(instance_path)
     at = next(i for i, a in enumerate(plan.argv) if a.endswith("ModOrganizer.exe"))
-    argv = [*plan.argv[:at], str(exe), *args]
+    argv, env = host_command(plan, [*plan.argv[:at], str(exe), *args])
+    log.info("running %s %s in the prefix", exe.name, " ".join(args))
+    return subprocess.run(argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                          text=True, errors="replace", timeout=timeout)
+
+
+def host_command(plan: LaunchPlan, argv: list[str]) -> tuple[list[str], dict[str, str]]:
+    """``argv`` (one of the plan's Proton commands) and the environment to run
+    it with on the host, as the plan's own launch runs."""
     env = dict(os.environ)
+    # Steam/Qt preload settings belong to the calling GUI, not Proton.
     for key in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH"):
         env.pop(key, None)
     env.update(plan.env)
     if background.in_flatpak():
         argv = ["flatpak-spawn", "--host", f"--directory={plan.cwd}",
                 "env", *(f"{k}={v}" for k, v in plan.env.items()), *argv]
-    log.info("running %s %s in the prefix", exe.name, " ".join(args))
-    return subprocess.run(argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True,
-                          text=True, errors="replace", timeout=timeout)
+    return argv, env
+
+
+def proton_command(plan: LaunchPlan, command: list[str], *, verb: str) -> list[str]:
+    """The plan's Proton, inside its Steam Linux Runtime when it uses one,
+    running ``command`` with Proton's ``verb`` in place of the plan's own."""
+    proton = str(plan.proton / "proton")
+    at = plan.argv.index(proton)
+    runtime = [f"--verb={verb}" if a.startswith("--verb=") else a for a in plan.argv[:at]]
+    return [*runtime, proton, verb, *command]
 
 
 def plan_system32(plan: LaunchPlan) -> Path:
@@ -242,15 +264,7 @@ class Launcher:
             if path.exists() and path.stat().st_size > 1_000_000 and not any(p.poll() is None for p, _, _ in self._processes):
                 path.replace(path.with_suffix(".log.1"))
             mark_portable(plan)
-            env = dict(os.environ)
-            # Steam/Qt preload settings belong to the calling GUI, not Proton.
-            for key in ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "QT_QPA_PLATFORM", "QT_PLUGIN_PATH"):
-                env.pop(key, None)
-            env.update(plan.env)
-            argv = plan.argv
-            if background.in_flatpak():
-                argv = ["flatpak-spawn", "--host", f"--directory={plan.cwd}",
-                        "env", *(f"{k}={v}" for k, v in plan.env.items()), *argv]
+            argv, env = host_command(plan, plan.argv)
             with path.open("ab") as output:
                 output.write(f"\n--- ModSync: launching {plan.target} ---\n".encode())
                 output.flush()

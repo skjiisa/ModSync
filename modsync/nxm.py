@@ -3,14 +3,14 @@
 A link names its game first (``nxm://cyberpunk2077/mods/2987/files/168466?key=…``).
 ModSync registers itself as the desktop's handler for ``nxm://`` and takes the
 links of the games whose Mod Organizer 2 it starts, so a download reaches MO2
-the way ModSync runs it (see each game's ``download``). Every other link goes on,
-unchanged, to the handler that was there before: MO2-LINT's, usually, which
-still serves the games ModSync doesn't run.
+the way ModSync runs it (see :mod:`modsync.mo2.downloads`). Every other link
+goes on, unchanged, to the handler that was there before: MO2-LINT's, usually,
+which still serves the games ModSync doesn't run.
 
 MO2-LINT's handler can't serve a game behind one of ModSync's Play hooks: with
 MO2 closed it starts MO2 by launching the game from its store, which under the
-hook plays the game, and it finds a running MO2 by a ``Z:`` path that umu's
-drive letters don't give.
+hook plays the game. Under umu it also looks for a running MO2 by a ``Z:`` path
+that umu's drive letters don't give.
 
 The handler is a desktop entry of its own (:data:`DESKTOP_ID`) in the host's
 ``~/.local/share/applications``, made default with ``xdg-mime``, as MO2-LINT's
@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Callable
 
 from modsync import background, config
+from modsync.games import GAMES, Game
 
 log = logging.getLogger(__name__)
 
@@ -58,8 +59,21 @@ def _cyberpunk() -> GameHandler:
     return GameHandler(cyberpunk.CYBERPUNK.name, cyberpunk.takes_downloads, cyberpunk.download)
 
 
+def _steam(game: Game) -> Callable[[], GameHandler]:
+    """A Steam game whose MO2 ModSync starts (games.GAMES)."""
+    def make() -> GameHandler:
+        from modsync.mo2 import steam_downloads
+
+        return GameHandler(game.name, lambda: steam_downloads.takes_downloads(game),
+                           lambda url: steam_downloads.download(game, url, on_wait=notify))
+    return make
+
+
 # Keyed by the game in the link: Nexus' name for it (Game.nexus_slug).
-HANDLERS: dict[str, Callable[[], GameHandler]] = {"cyberpunk2077": _cyberpunk}
+HANDLERS: dict[str, Callable[[], GameHandler]] = {
+    **{game.nexus_slug: _steam(game) for game in GAMES.values() if game.nexus_slug},
+    "cyberpunk2077": _cyberpunk,
+}
 
 
 def game_of(url: str) -> str | None:
@@ -216,6 +230,18 @@ def enable() -> str:
     _write(_settings_path(), json.dumps({"enabled": True, "previous": previous, "command": command}, indent=2))
     other = f" Other games' links still go to {previous}." if previous else ""
     return f"Nexus Mods downloads for the games ModSync runs now go to their Mod Organizer 2.{other}"
+
+
+def claim_links() -> str | None:
+    """Make ModSync the handler unless it already is, for a Play hook just
+    turned on: MO2-LINT's handler would play the game through the hook rather
+    than open MO2. Returns what the user should know, or None."""
+    if status().active:
+        return None
+    try:
+        return enable()
+    except (OSError, NxmError) as e:
+        return f"Nexus Mods downloads couldn't be pointed at ModSync ({e}); 'modsync nxm enable' retries."
 
 
 def disable() -> str:
@@ -399,6 +425,20 @@ def forward(url: str) -> str:
     subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True, env=env)
     return f"Passed the link to {previous}."
+
+
+def notify(message: str) -> None:
+    """Tell the user, who has no terminal open for a link: a desktop
+    notification, or a dialog without a notification service."""
+    try:
+        if background.run_host(["notify-send", "--app-name=ModSync", "--icon=io.github.skjiisa.ModSync",
+                                "ModSync", message], timeout=15).returncode == 0:
+            return
+    except Exception:  # noqa: BLE001 — no notification service: a dialog instead
+        pass
+    from modsync.__main__ import _show_error
+
+    _show_error(message)
 
 
 def handle(url: str) -> str:

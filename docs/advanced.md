@@ -964,31 +964,45 @@ desktop is a system Wine that upgrades the Proton prefix (and stops at a
 Wine Mono dialog), and on a Steam Deck is nothing. ModSync gives MO2-LINT
 stand-ins that make those steps fail at once and leave the prefix alone.
 
-### Nexus downloads
+## Nexus downloads
 
 Nexus Mods' "Mod Manager Download" buttons open `nxm://` links, and each link
-names its game (`nxm://cyberpunk2077/mods/…`). MO2-LINT registers its own
-handler for them, which doesn't work with the Play hook. With MO2 closed, it
-starts MO2 by launching the game from Heroic, and the hook turns that launch
-into playing. It also looks for a running MO2 under a `Z:` path, but umu maps
-the home folder to `X:`, so it never finds one. Turning the hook on therefore
-also makes ModSync the handler (`modsync nxm enable` does only that). Links
+names its game (`nxm://skyrimspecialedition/mods/…`, `nxm://cyberpunk2077/mods/…`).
+MO2-LINT registers its own handler for them, which doesn't work with
+ModSync's Play hooks. With MO2 closed, it starts MO2 by launching the game
+from Steam or Heroic, and the hook turns that launch into playing. For
+Cyberpunk it also looks for a running MO2 under a `Z:` path, but umu maps the
+home folder to `X:`, so it never finds one. Turning either hook on therefore
+also makes ModSync the handler (`modsync nxm enable` does only that).
+ModSync takes Skyrim Special Edition's links once it has an MO2 instance for
+it, and Cyberpunk 2077's once the game is in Heroic with an instance. Links
 for other games go on to the handler from before, unchanged.
 
-A Cyberpunk link reaches MO2 in one of three ways:
+A link reaches MO2 in one of three ways:
 
 - When MO2 is open, or running the game, ModSync runs a second
   `ModOrganizer.exe` with the link in the same prefix. It passes the link to
   the first MO2 and exits. Proton's `runinprefix` verb runs it, because the
   default verb would wait for MO2 to exit.
-- When MO2 is closed and the hook is on, ModSync leaves the link beside the
-  hook's script and asks Heroic to launch the game, as Play does. The hook
-  opens MO2 with the link instead of playing, so Heroic still tracks the
-  session. It only takes a note left in the last three minutes. Another link
-  clicked while MO2 is still starting, for it or for Play, waits for it and
-  then goes to it directly.
-- When MO2 is closed and the hook is off, MO2 opens with the link the way
-  `modsync cyberpunk open` opens it.
+- When MO2 is closed and the game's Play hook is on, ModSync leaves the link
+  where the hook finds it and has the store launch the game, as Play does.
+  The hook opens MO2 with the link instead of playing, so the store still
+  tracks the session. Skyrim goes through Steam (`steam://rungameid/489830`)
+  when Steam is running: ModSync's window doesn't open and nothing counts
+  down, unless MO2 can't be opened, and then the window says why. Cyberpunk
+  goes through Heroic. The hook only takes a link left in the last three
+  minutes. Another link clicked while MO2 is still starting for a download
+  (or, for Cyberpunk, for ModSync's Play) waits for it and then goes to it
+  directly. So does a Skyrim link clicked while Steam is already launching
+  the game for something else, such as Play with ModSync's window waiting
+  on a choice: Steam would ignore another launch. A notification says it's
+  waiting, for up to five minutes, for MO2 to open.
+- Otherwise MO2 opens with the link the way Open Mod Organizer 2 opens it.
+  For Skyrim that includes Steam being closed: the game starts Steam itself
+  if you then play from MO2.
+
+While mods are still being copied from another machine, a download doesn't
+open MO2, just as Open Mod Organizer 2 doesn't.
 
 If a link fails, ModSync shows a desktop notification, because no terminal is
 open to show the error. `modsync nxm status` shows the handler; `modsync nxm disable`

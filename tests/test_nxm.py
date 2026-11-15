@@ -227,7 +227,7 @@ def test_something_that_isnt_a_link_is_refused(desktop):
 def test_the_cli_says_a_failure_out_loud(desktop, capsys):
     from modsync import cli
 
-    with patch.object(cli, "_notify") as notify:
+    with patch.object(nxm, "notify") as notify:
         assert cli.nxm(["nxm://skyrimspecialedition/mods/1/files/2"]) == 1
     assert "didn't start" in notify.call_args.args[0]
 

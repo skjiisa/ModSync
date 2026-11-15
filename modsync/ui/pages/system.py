@@ -20,6 +20,14 @@ from modsync.ui.pages import Page
 from modsync.ui.widgets import GlyphLabel, Panel, Tile, label
 
 
+def _enable_hook() -> str:
+    """Turn Steam's launch hook on, and take Nexus downloads from MO2-LINT's
+    handler, which would play the game through the hook (modsync.nxm)."""
+    message = launchhook.enable()
+    note = nxm.claim_links()
+    return f"{message} {note}" if note else message
+
+
 class SystemPage(Page):
     key = "system"
     label = "Settings"
@@ -235,7 +243,7 @@ class SystemPage(Page):
         self._update_hook_enabled()
         st = self.hook
         turning_off = bool(st and (st.installed or st.selected) and not (st.pending and st.pending.action == "select"))
-        fn = launchhook.disable if turning_off else launchhook.enable
+        fn = launchhook.disable if turning_off else _enable_hook
         worker.run_async(fn, on_done=self._after_hook, on_failed=self._on_hook_failed)
 
     def _after_hook(self, message: str) -> None:

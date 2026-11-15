@@ -394,11 +394,12 @@ class ModSyncService:
         if not self.state.awaiting_vault_version and gameversion.VaultMeta.load(instance_path) is None:
             self.record_initial_vault_version()
 
-    def prepare_mo2(self, *, play: bool = False) -> tuple[LaunchPlan, str]:
+    def prepare_mo2(self, *, play: bool = False, download: str | None = None) -> tuple[LaunchPlan, str]:
         """Everything Play / Open MO2 needs before MO2 starts, whoever starts it:
-        ModSync itself (:meth:`launch_mo2`) or Steam's launch hook. Returns the
-        plan and a note for the user ("" when there is none)."""
-        plan = build_plan(self.state.instance_path, play=play)
+        ModSync itself (:meth:`launch_mo2`), Steam's launch hook or a Nexus
+        download (``download``, its nxm:// link). Returns the plan and a note
+        for the user ("" when there is none)."""
+        plan = build_plan(self.state.instance_path, play=play, download=download)
         note = ""
         try:
             # Only when the prefix's own runtime is too old for MO2 (a hand-made

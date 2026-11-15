@@ -47,7 +47,6 @@ import shutil
 import subprocess
 import urllib.request
 import zipfile
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
@@ -58,7 +57,7 @@ from modsync.games import CYBERPUNK
 from modsync.heroic import hook as heroic_hook
 from modsync.heroic import library as heroic
 from modsync.logging_setup import state_dir
-from modsync.mo2 import ini
+from modsync.mo2 import downloads, ini
 from modsync.mo2.launch import LaunchPlan, nested_desktop_display
 from modsync.steam import pe
 from modsync.sync import stignore
@@ -345,16 +344,10 @@ def enable_hook() -> list[str]:
         done = heroic_hook.enable(game, hook_script(game, instance), instance.resolve())
     except heroic_hook.HookError as e:
         raise CyberpunkError(str(e)) from e
-    # MO2-LINT's handler for Nexus downloads would play the game through the
-    # hook rather than open MO2, so ModSync takes the links (modsync.nxm).
     from modsync import nxm
 
-    if not nxm.status().active:
-        try:
-            done.append(nxm.enable())
-        except (OSError, nxm.NxmError) as e:
-            done.append(f"Nexus Mods downloads couldn't be pointed at ModSync ({e}); 'modsync nxm enable' retries.")
-    return done
+    note = nxm.claim_links()
+    return [*done, note] if note else done
 
 
 def disable_hook() -> str:
@@ -391,102 +384,24 @@ def takes_downloads() -> bool:
     return find_game() is not None and instance is not None and instance_problem(instance) is None
 
 
-def _local_path(game: heroic.GogGame, windows: str) -> Path | None:
-    """A Windows path in the game's prefix as the Linux one, through the
-    prefix's own drive links: umu maps the home folder to X:, so MO2 started
-    from ~/ModOrganizer2-cyberpunk2077 runs as ``X:\\ModOrganizer2-…``."""
-    if game.drive_c is None:
-        return None
-    drive, _, rest = windows.partition(":")
-    try:
-        root = (game.drive_c.parent / "dosdevices" / f"{drive.lower()}:").resolve(strict=True)
-    except OSError:
-        return None
-    return root.joinpath(*[part for part in rest.split("\\") if part])
-
-
-def _process_prefix(pid: str) -> Path | None:
-    """The Wine prefix a process runs in, from its environment, or None when
-    that can't be read."""
-    try:
-        result = background.run_host(["cat", f"/proc/{pid}/environ"], timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    for entry in result.stdout.split("\0") if result.returncode == 0 else []:
-        if entry.startswith("WINEPREFIX=") and len(entry) > len("WINEPREFIX="):
-            return Path(entry[len("WINEPREFIX="):])
-    return None
-
-
 def mo2_running(game: heroic.GogGame, instance: Path) -> bool:
     """Whether this instance's MO2 is running in the game's prefix (open, or
-    running the game). Wine names its processes by their Windows path, which
-    only means this instance through this prefix's drive letters, so a match
-    must also run in this prefix (when its environment can be read)."""
-    try:
-        found = background.run_host(["pgrep", "-af", r"^[A-Za-z]:\\.*\\ModOrganizer\.exe"], timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if game.drive_c is None:
-        return False
-    target = str((instance / "ModOrganizer.exe").resolve()).lower()
-    wine_prefix = game.drive_c.parent.resolve()
-    for line in found.stdout.splitlines():
-        pid, _, command = line.partition(" ")
-        match = re.match(r"([A-Za-z]:\\(?:.*?\\)?ModOrganizer\.exe)(?:\s|$)", command, re.IGNORECASE)
-        local = _local_path(game, match[1]) if match else None
-        if local is None or str(local.resolve()).lower() != target:
-            continue
-        prefix = _process_prefix(pid)
-        if prefix is None or prefix.resolve() == wine_prefix:
-            return True
-    return False
+    running the game)."""
+    return game.drive_c is not None and downloads.mo2_running(game.drive_c.parent, instance)
 
 
 def _launch_record() -> Path:
     """When ModSync last started MO2, for a download or its own Play or Open
     MO2 (its time is the file's), and how: "hook" or "direct"."""
-    return state_dir() / "cyberpunk-download-launch"
+    return downloads.shared_dir() / "cyberpunk-download-launch"
 
 
-@contextmanager
 def _launch_lock():
-    """The launch record, locked: one launch at a time decides whether to
-    start MO2."""
-    import fcntl
-
-    path = _launch_record()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+") as record:
-        fcntl.flock(record, fcntl.LOCK_EX)
-        record.seek(0)
-        yield record
-
-
-@contextmanager
-def _launched(record, how: str):
-    """Record a launch before starting it: Heroic may run the hook, which
-    takes the note, before the launch request even returns, and the note
-    counts only when taken after the record. A launch that fails to start is
-    taken out again, so nothing waits for it."""
-    import time
-
-    record.truncate(0)
-    record.write(f"{time.time()} {how}\n")
-    record.flush()
-    try:
-        yield
-    except BaseException:
-        record.truncate(0)
-        record.flush()
-        raise
+    return downloads.launch_lock(_launch_record())
 
 
 def _under_way(record, game: heroic.GogGame) -> bool:
-    import time
-
-    record.seek(0)
-    return _launch_under_way(record.read(), os.fstat(record.fileno()).st_mtime, game, time.time())
+    return downloads.under_way(record, heroic_hook.launch_note(game), heroic_hook.launch_taken(game))
 
 
 def _pass_to_mo2(game: heroic.GogGame, instance: Path, url: str) -> str:
@@ -511,27 +426,46 @@ def _pass_to_mo2(game: heroic.GogGame, instance: Path, url: str) -> str:
     return "Passed the download to Mod Organizer 2."
 
 
-# How long MO2 gets to show up once its launch has begun (the hook took the
-# link ModSync left, or ModSync started it directly), before a later link
-# opens it again.
-MO2_START_WAIT = 45.0
+@dataclass
+class _Downloads:
+    """Cyberpunk's MO2 as a download reaches it (see modsync.mo2.downloads)."""
 
+    game: heroic.GogGame
+    instance: Path
 
-def _launch_under_way(record: str, recorded_at: float, game: heroic.GogGame, now: float) -> bool:
-    """Whether the launch ``record`` (written at ``recorded_at``) may still
-    bring MO2 up. Every waiting link reads the same times, so they all stop
-    waiting together."""
-    if not record.strip() or now >= recorded_at + heroic_hook.NOTE_TTL:
-        return False
-    if record.split()[1:] != ["hook"]:  # MO2 started directly
-        return now < recorded_at + MO2_START_WAIT
-    if heroic_hook.launch_note(game).exists():  # waiting for Heroic to run the hook
-        return True
-    try:
-        taken = heroic_hook.launch_taken(game).stat().st_mtime
-    except OSError:
-        return False  # the link went without the hook taking it
-    return taken >= recorded_at and now < taken + MO2_START_WAIT
+    @property
+    def record(self) -> Path:
+        return _launch_record()
+
+    @property
+    def note(self) -> Path:
+        return heroic_hook.launch_note(self.game)
+
+    @property
+    def taken(self) -> Path:
+        return heroic_hook.launch_taken(self.game)
+
+    def running(self) -> bool:
+        return mo2_running(self.game, self.instance)
+
+    def pass_link(self, url: str) -> str:
+        return _pass_to_mo2(self.game, self.instance, url)
+
+    def launching(self) -> str | None:
+        return None
+
+    def through_hook(self) -> bool:
+        refresh_hook()  # the script must be one that knows to look for the link
+        return _through_heroic(self.game, self.instance)
+
+    def ask_hook(self, url: str) -> str:
+        _ask_heroic(self.game, url)
+        return "Opening Mod Organizer 2 through Heroic to download the file…"
+
+    def open_direct(self, url: str) -> str:
+        from modsync.mo2.launch import Launcher
+
+        return Launcher().start(build_plan(self.instance, self.game, download=url))
 
 
 def download(url: str, *, poll: float = 2.0) -> str:
@@ -539,14 +473,9 @@ def download(url: str, *, poll: float = 2.0) -> str:
     second ModOrganizer.exe, which passes its link to the first and exits. A
     closed one is opened with the link: through Heroic while Heroic's Play hook
     is on, so the session is Heroic's (the hook finds the link ModSync left for
-    it), else as 'modsync cyberpunk open' opens it.
-
-    A link that comes while MO2 is still starting for an earlier one waits for
-    it rather than opening it again: Heroic ignores a second launch, and a
-    second link left for the hook would replace the first. See
-    :func:`_launch_under_way` for how long. Returns what happened."""
-    import time
-
+    it), else as 'modsync cyberpunk open' opens it. A link that comes while
+    MO2 is still starting for an earlier one waits for it (see
+    modsync.mo2.downloads). Returns what happened."""
     game, instance = find_game(), find_instance()
     if game is None:
         raise CyberpunkError("Cyberpunk 2077 wasn't found in Heroic.")
@@ -557,28 +486,7 @@ def download(url: str, *, poll: float = 2.0) -> str:
         raise CyberpunkError(problem)
     if game.drive_c is None:
         raise CyberpunkError("Cyberpunk's prefix isn't set up yet. Launch the game once from Heroic first.")
-    while True:
-        with _launch_lock() as record:
-            if mo2_running(game, instance):
-                record.truncate(0)  # MO2 is up: no launch is under way any more
-                return _pass_to_mo2(game, instance, url)
-            if not _under_way(record, game):
-                return _open_mo2_with(game, instance, url, record)
-        time.sleep(poll)
-
-
-def _open_mo2_with(game: heroic.GogGame, instance: Path, url: str, record) -> str:
-    """Open MO2 with the link, recording the launch (see :func:`_launched`).
-    Returns what happened."""
-    refresh_hook()  # the script must be one that knows to look for the link
-    if _through_heroic(game, instance):
-        with _launched(record, "hook"):
-            _ask_heroic(game, url)
-        return "Opening Mod Organizer 2 through Heroic to download the file…"
-    from modsync.mo2.launch import Launcher
-
-    with _launched(record, "direct"):
-        return Launcher().start(build_plan(instance, game, download=url))
+    return downloads.download(_Downloads(game, instance), url, poll=poll)
 
 
 # --- installing MO2 -----------------------------------------------------------
@@ -990,6 +898,6 @@ def launch(launcher, *, play: bool) -> str:
         if mo2_running(game, plan.cwd) or _under_way(record, game):
             raise CyberpunkError("Mod Organizer 2 is already open for Cyberpunk 2077."
                                  + (" Play from there, or close it first." if play else ""))
-        with _launched(record, "hook"):
+        with downloads.launched(record, "hook"):
             _ask_heroic(game, heroic_hook.PLAY if play else heroic_hook.OPEN)
     return "Starting Cyberpunk 2077 through Heroic…" if play else "Opening Mod Organizer 2 through Heroic…"

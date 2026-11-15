@@ -8,6 +8,13 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
+- Nexus Mods downloads for Skyrim Special Edition reach its Mod Organizer 2,
+  as Cyberpunk 2077's do. Turning Steam's launch hook on also makes ModSync
+  the handler for `nxm://` links. While the hook is on and Steam is running,
+  a closed MO2 opens with the link through Steam, without ModSync's window or
+  the countdown, so Steam still tracks the session. MO2-LINT's handler played
+  the game instead. Otherwise ModSync opens MO2 itself, and an open MO2 gets
+  the link directly.
 - Steam's Play button on Skyrim no longer waits in ModSync by default: once
   ModSync has checked the game, MO2 and sync and nothing needs a decision, it
   plays after a five-second countdown that any press stops. "When you press
