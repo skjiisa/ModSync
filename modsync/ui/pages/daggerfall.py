@@ -59,9 +59,9 @@ def _hook_on(hook) -> bool:
 
 # The Controller row: value word, tone, detail, by dfu.controller_state.
 _CONTROLLER_WORDS = {
-    "suggested": ("Suggested", "ok", "B casts, RT swings, hold LT for more."),
-    "own": ("Your own", "off", "Press for Daggerfall Unity's suggested layout."),
-    "none": ("Not set up", "off", "Press for Daggerfall Unity's suggested layout."),
+    "suggested": ("Suggested", "ok", "Uses the suggested controller bindings."),
+    "own": ("Your own", "off", "View the suggested controller layout."),
+    "none": ("Not set up", "off", "View the suggested controller layout."),
 }
 
 # The suggested layout as the sheet lists it: columns of groups, each a heading
@@ -138,12 +138,9 @@ class ControllerLayoutSheet(Overlay):
     def __init__(self, host, state: str, synced: bool, on_set) -> None:
         super().__init__(host, "Controller layout", width=1120)
         self._on_set = on_set
-        intro = ("Daggerfall Unity's suggested layout. It goes on the Secondary bindings, so your keyboard and "
-                 "mouse work as before. For a pair, hold the first button and press the second.")
+        intro = "Your keyboard and mouse keep working."
         if synced:
-            intro += " Your paired machines get it with your mods."
-        intro += (f" The right stick also looks around faster: {dfu.LOOK_SENSITIVITY:g} in place of Daggerfall "
-                  "Unity's 1. To tune it in the game: Pause, Controls, Joystick.")
+            intro += " The layout syncs to your paired machines with your mods."
         self.text = label(intro, "secondary")
         self.body.addWidget(self.text)
 

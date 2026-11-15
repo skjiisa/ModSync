@@ -327,6 +327,7 @@ class DaggerfallUiTests(UiTestCase):
         from modsync.ui.pages.daggerfall import ControllerLayoutSheet
         window, page = self.open_sheet(overview(installed=True))
         self.assertEqual(page.controller_row.badge.text(), "Not set up")
+        self.assertEqual(page.controller_row.description, "View the suggested controller layout.")
         done = "Daggerfall Unity has the suggested controller bindings, on its Secondary bindings."
         with patch.object(dfu, "set_controller_bindings", return_value=done) as set_them:
             page.controller_row.click()
@@ -335,8 +336,7 @@ class DaggerfallUiTests(UiTestCase):
             self.assertIsInstance(sheet, ControllerLayoutSheet)
             self.assertEqual(set(sheet.combos), {action for action, _ in dfu.CONTROLLER_LAYOUT})
             self.assertEqual(sheet.combos["RecastSpell"].buttons, ["LT", "A"])
-            self.assertIn("Secondary bindings", sheet.text.text())
-            self.assertIn("Pause, Controls, Joystick", sheet.text.text())
+            self.assertEqual(sheet.text.text(), "Your keyboard and mouse keep working.")
             self.assertNotIn("paired machines", sheet.text.text())  # mods sync is off
             self.assertIs(window.focusWidget(), sheet.tiles["go"])
             self.assertEqual(sheet.accept_hint(), "Use this layout")
@@ -351,7 +351,8 @@ class DaggerfallUiTests(UiTestCase):
         with patch.object(dfu, "set_controller_bindings") as set_them:
             page.controller_row.click()
             self.settle(2)
-            self.assertIn("paired machines get it with your mods", window.top_overlay.text.text())
+            self.assertEqual(window.top_overlay.text.text(),
+                             "Your keyboard and mouse keep working. The layout syncs to your paired machines with your mods.")
             window.top_overlay.tiles["close"].click()
             self.settle(3)
         set_them.assert_not_called()
@@ -359,6 +360,7 @@ class DaggerfallUiTests(UiTestCase):
     def test_with_the_layout_set_the_sheet_is_a_reference(self):
         window, page = self.open_sheet(dataclasses.replace(overview(installed=True), controller="suggested"))
         self.assertEqual(page.controller_row.badge.text(), "Suggested")
+        self.assertEqual(page.controller_row.description, "Uses the suggested controller bindings.")
         page.controller_row.click()
         self.settle(2)
         sheet = window.top_overlay
@@ -369,6 +371,7 @@ class DaggerfallUiTests(UiTestCase):
     def test_own_controller_bindings_are_said_to_be_replaced(self):
         window, page = self.open_sheet(dataclasses.replace(overview(installed=True), controller="own"))
         self.assertEqual(page.controller_row.badge.text(), "Your own")
+        self.assertEqual(page.controller_row.description, "View the suggested controller layout.")
         page.controller_row.click()
         self.settle(2)
         self.assertIn("Replaces the controller buttons you bound", window.top_overlay.tiles["go"].desc.text())
