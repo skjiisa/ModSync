@@ -28,6 +28,7 @@ took (``ModSyncService._conflict_count``).
 from __future__ import annotations
 
 import filecmp
+import json
 import os
 import re
 import shutil
@@ -88,8 +89,9 @@ def parse(path: Path) -> Conflict | None:
 
 
 def find(instance: Path | str, dirs: tuple[str, ...] = SEARCHED_DIRS) -> list[Conflict]:
-    """The conflict copies at the top of ``instance`` and anywhere under
-    ``dirs`` (its synced folders, relative to it)."""
+    """The conflict copies at the top of ``instance``, anywhere under ``dirs``
+    (its synced folders, relative to it), and beside any of ``dirs`` that is
+    a single file."""
     instance = Path(instance)
     candidates: list[Path] = []
     try:
@@ -97,9 +99,18 @@ def find(instance: Path | str, dirs: tuple[str, ...] = SEARCHED_DIRS) -> list[Co
     except OSError:
         return []
     for name in dirs:
-        for root, _dirs, files in os.walk(instance / name):
-            candidates += [Path(root) / f for f in files if ".sync-conflict-" in f]
-    found = [c for c in map(parse, candidates) if c is not None]
+        path = instance / name
+        if path.is_dir():
+            for root, _dirs, files in os.walk(path):
+                candidates += [Path(root) / f for f in files if ".sync-conflict-" in f]
+            continue
+        # One synced file (or a folder not made yet): its copies sit beside it.
+        try:
+            candidates += [p for p in path.parent.iterdir()
+                           if p.name.startswith(f"{path.stem}.sync-conflict-") and p.suffix == path.suffix]
+        except OSError:
+            pass
+    found = [c for c in map(parse, dict.fromkeys(candidates)) if c is not None]
     # Profile lists first: they decide which mods load.
     return sorted(found, key=lambda c: (c.kind == "file", c.relative(instance), c.when or datetime.min))
 
@@ -213,6 +224,10 @@ def differences(conflict: Conflict) -> list[str]:
         lines = _ini_differences(conflict)
         if lines:
             return lines
+    if conflict.original.name == "KeyBinds.txt":  # Daggerfall Unity's key bindings
+        lines = _keybind_differences(conflict)
+        if lines:
+            return lines
     return [f"The contents differ ({here.st_size:,} bytes in use, {there.st_size:,} in the other)."]
 
 
@@ -231,6 +246,29 @@ def _ini(path: Path) -> dict[tuple[str, str], tuple[str, str]]:
             key = key.strip()
             values[(section.lower(), key.lower())] = (f"[{section}] {key}" if section else key, value.strip())
     return values
+
+
+def _keybinds(path: Path) -> dict[str, dict[str, str]] | None:
+    """Daggerfall Unity's bindings by set: action → key, or None when unreadable."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        sets = {"Primary": data["actionKeyBinds"], "Secondary": data.get("secondaryActionKeyBinds") or {}}
+        return {name: {action: key for key, action in binds.items()} for name, binds in sets.items()}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def _keybind_differences(conflict: Conflict) -> list[str]:
+    """The actions bound differently in each set, or nothing when either side isn't readable."""
+    here, there = _keybinds(conflict.original), _keybinds(conflict.path)
+    if here is None or there is None:
+        return []
+    lines = []
+    for name in here:
+        actions = sorted(a for a in here[name].keys() | there[name].keys() if here[name].get(a) != there[name].get(a))
+        if actions:
+            lines.append(f"{name} bindings that differ: {_listing(actions)}.")
+    return lines or ["Both versions bind the same keys."]
 
 
 def _ini_differences(conflict: Conflict) -> list[str]:

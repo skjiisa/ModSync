@@ -11,7 +11,7 @@ Steam until Steam has it, then installs Daggerfall Unity, then plays it.
 installation…") picks a Daggerfall Unity the user installed themselves (see
 ``dfu.adopt``), whatever state the one in use is in. "Set up controller
 bindings" puts DFU's suggested controller layout on its Secondary bindings, on
-this machine only (see ``dfu.set_controller_bindings``).
+which sync with the mods (see ``dfu.set_controller_bindings``).
 """
 
 from __future__ import annotations
@@ -232,7 +232,7 @@ class DaggerfallPage(Page):
         if inst is not None:
             self.mods_folder.set_description(_short(inst.mods_dir))
             self.controller.set_description("The suggested layout is set." if ov.controller else
-                                            "Daggerfall Unity's suggested layout, on this machine.")
+                                            "Daggerfall Unity's suggested layout, beside keyboard and mouse.")
         self._update_enabled()
         if self._focus_on_load:
             # Shown before this was read: the blue action wasn't there to take focus.
@@ -430,16 +430,17 @@ class DaggerfallPage(Page):
 
     def _confirm_controller(self) -> None:
         """Say what changes before it does: the layout replaces controller
-        bindings, and only here."""
+        bindings, and reaches the paired machines with the mods."""
         ov = self.overview
         if ov is None or ov.install is None or self.host.busy or self._working:
             return
+        synced = ("Key bindings sync with your mods, so your paired machines get these too." if ov.mods == "on"
+                  else "Key bindings sync with your mods once mods sync is on.")
         self.host.confirm(
             "Set up controller bindings?",
             "Daggerfall Unity's suggested controller layout goes on its Secondary bindings, so your keyboard "
-            "and mouse keep working as they do. Controller buttons already bound there are replaced. "
-            "Only this machine changes: key bindings don't sync. The old ones are kept in "
-            f"{dfu.KEYBINDS_BACKUP}, next to them.",
+            f"and mouse keep working as they do. Controller buttons already bound are replaced. {synced} "
+            f"The old bindings are kept in {dfu.KEYBINDS_BACKUP}, next to them.",
             [("go", "Set them up", "Cast spells with B, attack with RT, and hold LT for more.", "primary", "check"),
              ("cancel", "Cancel", "", "normal", "close")],
             lambda key: self._set_controller() if key == "go" else None,

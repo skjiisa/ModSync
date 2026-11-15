@@ -28,8 +28,11 @@ Linux Runtime container (see :func:`emulator`). The launch hook does the same.
 :mod:`modsync.sync.folders`): one Syncthing folder rooted at the install,
 allowing only what users add (the folders under ``StreamingAssets`` that DFU
 ships empty but for a readme) and ``PortableAppdata/Mods``, where DFU keeps
-the load order (``GameData/Mods.json``) and each mod's settings. Everything
-DFU ships itself, its ``settings.ini`` and key bindings, and saves stay out.
+the load order (``GameData/Mods.json``) and each mod's settings, and
+``PortableAppdata/KeyBinds.txt``, the key bindings (keyboard and controller
+both: DFU keeps a Primary and a Secondary set, both in use at once).
+Everything DFU ships itself, its ``settings.ini`` (resolution and other
+machine-specific settings) and saves stay out.
 """
 
 from __future__ import annotations
@@ -86,6 +89,7 @@ USER_ASSET_DIRS = ("Mods", "Textures", "Sound", "Books", "Movies", "Presets", "Q
                    "WorldData")
 _ASSETS = "DaggerfallUnity_Data/StreamingAssets"
 SYNCED_DIRS = (*(f"{_ASSETS}/{d}" for d in USER_ASSET_DIRS), "PortableAppdata/Mods")
+KEYBINDS = "PortableAppdata/KeyBinds.txt"  # DFU's key bindings; synced with the mods
 
 # How Steam runs an x86 Linux game on ARM: FEX-Emu, in the Steam Linux Runtime
 # (4.0, else 3.0) for its libraries. The launch hook template looks for the same.
@@ -758,16 +762,20 @@ MODS_FOLDER = FolderSpec(
     path=_install_root,
     ignore=(
         "// Managed by ModSync. Syncs Daggerfall Unity's mods, the files users add under",
-        "// StreamingAssets, and the load order and mod settings in PortableAppdata/Mods.",
-        "// Never the program, the files DFU ships itself, settings.ini, key bindings or saves.",
+        "// StreamingAssets, the load order and mod settings in PortableAppdata/Mods, and",
+        "// the key bindings. Never the program, the files DFU ships itself, settings.ini or saves.",
         "",
         *(f"!/{d}" for d in SYNCED_DIRS),
+        f"!/{KEYBINDS}",
+        # Syncthing's copy of the other version when two machines change the bindings
+        # apart, so ModSync can offer the choice on every machine (modsync.sync.conflicts).
+        f"!/{KEYBINDS.removesuffix('.txt')}.sync-conflict-*.txt",
         f"!/{VAULT_RECORD}",
         "",
         "// Everything else. Syncthing still looks inside these for the folders above.",
         "/*",
     ),
-    content=(*SYNCED_DIRS, VAULT_RECORD),
+    content=(*SYNCED_DIRS, KEYBINDS, VAULT_RECORD),
     on_share=_record_vault_version,
     in_use=lambda: is_running(),  # looked up when asked, so tests and callers see the live check
     tidy=lambda root: set_aside_mod_copies(root),
@@ -1040,8 +1048,9 @@ def open_mods_folder() -> Path:
 # Daggerfall Unity's wiki suggests a controller layout ("Setting Up Controls"),
 # built on the key combos it supports since 1.0 (LT + A, say), and suggests
 # putting it on the Secondary bindings so keyboard and mouse keep the Primary
-# ones. ModSync writes it there, in PortableAppdata/KeyBinds.txt. That file
-# never syncs (MODS_FOLDER leaves it out), so each machine's bindings stay its own.
+# ones. ModSync writes it there, in PortableAppdata/KeyBinds.txt, which syncs
+# with the mods (KEYBINDS in MODS_FOLDER): both sets work at once, so one file
+# serves a machine played with a controller and one played with a keyboard.
 #
 # DFU's KeyBinds.txt maps a key's name to an action's name. Its names for a
 # controller are Unity's, as Unity's input on Linux reads an Xbox-layout pad
@@ -1051,8 +1060,7 @@ def open_mods_folder() -> Path:
 # A combo is "<modifier> + <key>". The wiki names the bumpers L2 and R2: LT
 # and RT are the triggers there, and L3 and R3 the sticks.
 
-KEYBINDS_NAME = "KeyBinds.txt"
-KEYBINDS_BACKUP = "KeyBinds.modsync-backup.txt"  # the bindings as they were before the last change
+KEYBINDS_BACKUP = "KeyBinds.modsync-backup.txt"  # the bindings before the last change; never synced
 
 PAD = {
     "A": "JoystickButton0", "B": "JoystickButton1", "X": "JoystickButton2", "Y": "JoystickButton3",
@@ -1113,7 +1121,7 @@ def _modifiers() -> set[str]:
 
 
 def keybinds_file(inst: Install) -> Path:
-    return inst.data_dir / KEYBINDS_NAME
+    return inst.path / KEYBINDS
 
 
 def _read_keybinds(path: Path) -> dict:

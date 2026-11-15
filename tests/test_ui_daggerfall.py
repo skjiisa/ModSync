@@ -326,7 +326,7 @@ class DaggerfallUiTests(UiTestCase):
     def test_controller_bindings_are_confirmed_then_set(self):
         window, page = self.open_sheet(overview(installed=True))
         self.assertTrue(page.controller.isVisible())
-        self.assertIn("suggested layout, on this machine", page.controller.desc.text())
+        self.assertIn("suggested layout, beside keyboard and mouse", page.controller.desc.text())
         done = "Daggerfall Unity has the suggested controller bindings, on its Secondary bindings."
         with patch.object(dfu, "set_controller_bindings", return_value=done) as set_them:
             page.controller.click()
@@ -334,7 +334,7 @@ class DaggerfallUiTests(UiTestCase):
             sheet = window.top_overlay
             self.assertIsInstance(sheet, ConfirmSheet)
             self.assertIn("Secondary bindings", sheet.text.text())
-            self.assertIn("don't sync", sheet.text.text())
+            self.assertIn("sync with your mods once mods sync is on", sheet.text.text())
             set_them.assert_not_called()
             sheet.tiles["go"].click()
             self.settle(4)

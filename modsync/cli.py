@@ -980,7 +980,7 @@ def dfu(args: list[str]) -> int:
         "        (run it again to repair an install)\n"
         "  modsync dfu use <dir>                use a Daggerfall Unity that's already installed\n"
         "  modsync dfu hook enable | disable    make Steam's Play button on Daggerfall start Daggerfall Unity\n"
-        "  modsync dfu controller               set Daggerfall Unity's suggested controller bindings (this machine)\n"
+        "  modsync dfu controller               set Daggerfall Unity's suggested controller bindings\n"
         "  modsync dfu saves                    sync the saves now (Play in Steam does it before and after)\n"
         "  modsync dfu follow                   point it at Steam's Daggerfall data if its own is gone\n"
         "        (after Steam moved Daggerfall to another library; Play in Steam does it too)"

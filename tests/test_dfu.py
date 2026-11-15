@@ -3,6 +3,7 @@
 faked."""
 
 import dataclasses
+import fnmatch
 import hashlib
 import io
 import json
@@ -497,6 +498,8 @@ class ModsFolder(_ModsFolderBase):
         self.assertIn(assets + "Mods", allowed)
         self.assertIn(assets + "Textures", allowed)
         self.assertIn("PortableAppdata/Mods", allowed)
+        self.assertIn("PortableAppdata/KeyBinds.txt", allowed)
+        self.assertNotIn("PortableAppdata/settings.ini", allowed)
         self.assertIn(dfu.VAULT_RECORD, allowed)
         for own in ("Quests", "Text", "Tables", "Fonts", "BIOGs", "Factions", "aa", "SpellIcons", "GameFiles"):
             self.assertNotIn(assets + own, allowed)
@@ -1302,7 +1305,13 @@ class ControllerBindingsTests(unittest.TestCase):
             dfu.set_controller_bindings(self.inst)
         self.assertFalse(self.file.exists())
 
-    def test_never_synced(self):
-        """KeyBinds.txt stays out of the mods folder, which is the only one rooted at the install."""
-        allowed = dfu.SYNCED_DIRS
-        self.assertFalse(any(f"PortableAppdata/{dfu.KEYBINDS_NAME}".startswith(d) for d in allowed))
+    def test_synced_with_the_mods(self):
+        """Keyboard (Primary) and controller (Secondary) bindings live side by side, so one
+        file serves every machine. ModSync's backup of it stays here."""
+        self.assertIn(dfu.KEYBINDS, dfu.MODS_FOLDER.content)
+        self.assertEqual(dfu.keybinds_file(self.inst), self.inst.path / dfu.KEYBINDS)
+        allowed = {l[2:] for l in dfu.MODS_FOLDER.ignore if l.startswith("!/")}
+        self.assertIn("PortableAppdata/KeyBinds.txt", allowed)
+        self.assertIn("PortableAppdata/KeyBinds.sync-conflict-*.txt", allowed)
+        backup = f"PortableAppdata/{dfu.KEYBINDS_BACKUP}"
+        self.assertFalse(any(fnmatch.fnmatchcase(backup, a) for a in allowed))

@@ -820,13 +820,19 @@ paths:
   `Movies`, `Presets`, `QuestPacks`, `SoundFonts` and `WorldData`.
 - `PortableAppdata/Mods`, which holds the load order and on/off switches
   (`GameData/Mods.json`) and each mod's settings.
+- `PortableAppdata/KeyBinds.txt`, the key bindings. DFU keeps two sets,
+  Primary and Secondary, and both work at once, so keyboard and mouse on
+  one and a controller on the other serve every machine (see "Controller
+  bindings" below).
 - `modsync-dfu-vault.json`, which records the DFU version the mods are for.
   `modsync dfu status` warns when this machine runs a different version.
 
 The program, the files DFU ships itself (`Quests`, `Text`, `Tables` and the
-like), `settings.ini`, key bindings and saves stay on each machine.
+like), `settings.ini` (resolution and other settings for the machine) and
+saves stay on each machine.
 
-If two machines change the load order or a mod's settings before they sync,
+If two machines change the load order, a mod's settings or the key bindings
+before they sync,
 Syncthing keeps the newer file and sets the other aside. `modsync sync
 conflicts` lists those files under names like
 `dfu-mods:PortableAppdata/Mods/GameData/Mods.json`. To settle one, close DFU
@@ -931,8 +937,13 @@ are unbound, as DFU's own Controls screen does when you rebind one. The file
 as it was is kept as `PortableAppdata/KeyBinds.modsync-backup.txt`. Close DFU
 first: it would write its own bindings back.
 
-Bindings live in `PortableAppdata/KeyBinds.txt`, which never syncs, so each
-machine keeps its own. The names are those of an Xbox-layout controller, as
+Bindings live in `PortableAppdata/KeyBinds.txt`, which syncs with the mods,
+so once mods sync is on, every paired machine gets the controller bindings
+and keeps the keyboard ones beside them. The backup stays on this machine.
+DFU writes the file again each time it starts. That's harmless when nothing
+changed, but bindings changed on one machine while another plays offline
+end up as a conflict, settled like the load order's (above). The names are
+those of an Xbox-layout controller, as
 Steam Input presents any controller to a game it starts, the Deck's own
 controls included. If Steam gives Daggerfall a keyboard-and-mouse layout,
 pick a gamepad one in its controller settings. DFU's wiki also suggests the
