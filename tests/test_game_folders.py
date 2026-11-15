@@ -6,6 +6,7 @@ import os
 import tempfile
 import time
 import unittest
+import unittest.mock
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
@@ -122,6 +123,9 @@ class GameFolderBase(unittest.TestCase):
         self.tmp = Path(tmp.name)
         os.environ["XDG_CONFIG_HOME"] = str(self.tmp / "config")
         self.addCleanup(os.environ.pop, "XDG_CONFIG_HOME", None)
+        data = patch.dict(os.environ, {"XDG_DATA_HOME": str(self.tmp / "data")})  # where kept copies go
+        data.start()
+        self.addCleanup(data.stop)
         self.root: Path | None = self.tmp / "Game" / "Mods"
         self.spec = folders.FolderSpec("test-mods", "Test mods (ModSync)", lambda: self.root,
                                        ("// test", "!/keep", "/*"))
@@ -642,6 +646,194 @@ class ForgetMachine(GameFolderBase):
         self.assertEqual([(f.spec.key, f.state, f.completion) for f in st.game_folders], [("test-mods", "idle", 100)])
 
 
+
+class KeptCopies(GameFolderBase):
+    """A copy of a game's folder kept for the other machines, the game not
+    being set up here."""
+
+    def setUp(self):
+        super().setUp()
+        self.game_root, self.root = self.root, None  # the game isn't installed here
+        self.kept = folders.held_root(self.spec)
+
+    def offer(self, by="DESKTOP"):
+        self.st.pending_folders["modsync-test-mods"] = {"offeredBy": {by: {"label": "Test mods"}}}
+
+    def test_a_kept_copy_is_receive_only_and_shared_with_every_paired_machine(self):
+        self.st.devices["DECK"] = {"deviceID": "DECK"}
+        root = self.service.hold_game_folder("test-mods")
+        self.assertEqual(root, self.kept)
+        self.assertTrue(str(root).endswith("held/modsync-test-mods"))
+        folder = self.st.folders["modsync-test-mods"]
+        self.assertEqual((folder["path"], folder["type"]), (str(root), "receiveonly"))
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DECK"})
+        self.assertEqual((root / ".stignore").read_text(), "// test\n!/keep\n/*\n")
+        st = State.load()
+        self.assertEqual((st.held_folders, st.game_folders), ({"test-mods": str(root)}, {}))
+        self.assertTrue(st.syncs_anything)
+        self.assertTrue(self.service.my_pairing_code().encode().startswith("MODSYNC2-"))
+
+    def test_a_game_set_up_here_syncs_where_it_is_instead(self):
+        self.root = self.game_root
+        with self.assertRaisesRegex(RuntimeError, "modsync sync share test-mods"):
+            self.service.hold_game_folder("test-mods")
+        self.service.share_game_folder("test-mods")
+        with self.assertRaisesRegex(RuntimeError, "already syncs here"):
+            self.service.hold_game_folder("test-mods")
+        self.assertEqual(State.load().held_folders, {})
+
+    def test_offers_are_kept_only_once_asked(self):
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.offer()
+        self.service.accept_pending()
+        self.assertNotIn("modsync-test-mods", self.st.folders)
+        self.assertEqual(self.service.hold_all_games(True), ["test-mods"])
+        folder = self.st.folders["modsync-test-mods"]
+        self.assertEqual((folder["path"], folder["type"]), (str(self.kept), "receiveonly"))
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DESKTOP"})
+        self.assertEqual(State.load().held_folders, {"test-mods": str(self.kept)})
+
+    def test_with_every_game_kept_a_later_offer_is_taken_up_by_itself(self):
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.assertEqual(self.service.hold_all_games(True), [])
+        self.offer()
+        self.service.accept_pending()
+        self.assertEqual(State.load().held_folders, {"test-mods": str(self.kept)})
+
+    def test_turned_off_new_offers_wait_and_kept_copies_stay(self):
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.offer()
+        self.service.hold_all_games(True)
+        self.service.hold_all_games(False)
+        self.assertFalse(State.load().hold_all)
+        self.assertEqual(State.load().held_folders, {"test-mods": str(self.kept)})
+        self.assertIn("modsync-test-mods", self.st.folders)
+
+    def test_a_game_set_up_here_is_taken_up_at_its_own_place_even_when_keeping_every_game(self):
+        self.root = self.game_root
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.offer()
+        self.service.hold_all_games(True)
+        folder = self.st.folders["modsync-test-mods"]
+        self.assertEqual((folder["path"], folder["type"]), (str(self.game_root), "sendreceive"))
+        self.assertEqual(State.load().game_folders, {"test-mods": str(self.game_root)})
+        self.assertEqual(State.load().held_folders, {})
+
+    def test_offers_from_strangers_are_not_kept(self):
+        State.update(paired=True)
+        self.service.hold_all_games(True)
+        self.offer(by="STRANGER")
+        self.service.accept_pending()
+        self.assertNotIn("modsync-test-mods", self.st.folders)
+
+    def test_the_games_own_hooks_leave_a_kept_copy_alone(self):
+        hooks = {name: unittest.mock.Mock(return_value=True) for name in ("on_share", "in_use", "tidy", "accepts")}
+        hooks["on_stop"] = unittest.mock.Mock()
+        self.spec = dataclasses.replace(self.spec, **hooks)
+        self.service.hold_game_folder("test-mods")
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        [fs] = self.service.status().game_folders
+        self.assertTrue(fs.held)
+        self.service._refresh_game_folders(force=True)
+        self.service.stop_game_folder("test-mods")
+        for name, hook in hooks.items():
+            hook.assert_not_called()
+
+    def test_a_kept_copy_counts_no_conflicts(self):
+        self.service.hold_game_folder("test-mods")
+        (self.kept / "keep").mkdir()
+        (self.kept / "keep" / "a.sync-conflict-20261114-120000-ABCDEFG.txt").write_text("x")
+        self.spec = dataclasses.replace(self.spec, content=("keep",))
+        [fs] = self.service.status().game_folders
+        self.assertEqual((fs.held, fs.conflicts), (True, 0))
+
+    def test_a_newly_paired_machine_gets_the_kept_copies(self):
+        self.service.hold_game_folder("test-mods")
+        self.st.pending_devices["DECK"] = {"name": "deck"}
+        self.assertEqual(self.service.accept_pending(), ["DECK"])
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DECK"})
+
+    def test_stopping_keeps_the_files_and_the_copy_isnt_taken_up_again(self):
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.offer()
+        self.service.hold_all_games(True)
+        (self.kept / "keep").write_text("theirs")
+        self.assertTrue(self.service.stop_game_folder("test-mods"))
+        self.assertEqual((self.kept / "keep").read_text(), "theirs")
+        st = State.load()
+        self.assertEqual((st.held_folders, st.declined_folders), ({}, ["test-mods"]))
+        self.offer()
+        self.service.accept_pending()
+        self.assertNotIn("modsync-test-mods", self.st.folders)
+        self.service.hold_all_games(False)
+        self.assertEqual(self.service.hold_all_games(True), ["test-mods"])  # off and on keeps it again
+        self.assertEqual(State.load().declined_folders, [])
+
+    def test_turning_it_on_leaves_a_game_stopped_where_it_is_set_up_stopped(self):
+        self.root = self.game_root
+        self.service.share_game_folder("test-mods")
+        self.service.stop_game_folder("test-mods")
+        self.service.hold_all_games(True)
+        self.assertEqual(State.load().declined_folders, ["test-mods"])
+
+    def test_a_stop_syncthing_refuses_finishes_later(self):
+        self.service.hold_game_folder("test-mods")
+        self.st.refuse_delete = True
+        self.assertFalse(self.service.stop_game_folder("test-mods"))
+        self.assertTrue(folders.stopping("test-mods"))
+        self.st.refuse_delete = False
+        self.service._refresh_game_folders(force=True)
+        self.assertNotIn("modsync-test-mods", self.st.folders)
+        self.assertEqual(State.load().held_folders, {})
+
+    def test_a_kept_copy_stays_put_when_the_game_is_set_up_later(self):
+        self.service.hold_game_folder("test-mods")
+        self.root = self.game_root
+        self.service._refresh_game_folders(force=True)
+        self.assertEqual(self.st.folders["modsync-test-mods"]["path"], str(self.kept))
+        self.assertEqual(State.load().held_folders, {"test-mods": str(self.kept)})
+
+    def test_sharing_once_the_game_is_set_up_syncs_there_instead(self):
+        self.spec = dataclasses.replace(self.spec, on_share=unittest.mock.Mock())
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.service.hold_game_folder("test-mods")
+        (self.kept / "keep").write_text("theirs")
+        self.root = self.game_root
+        self.assertEqual(self.service.share_game_folder("test-mods"), self.game_root)
+        folder = self.st.folders["modsync-test-mods"]
+        self.assertEqual((folder["path"], folder["type"]), (str(self.game_root), "sendreceive"))
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DESKTOP"})
+        st = State.load()
+        self.assertEqual((st.game_folders, st.held_folders), ({"test-mods": str(self.game_root)}, {}))
+        self.assertEqual((self.kept / "keep").read_text(), "theirs")  # left where it was
+        self.spec.on_share.assert_not_called()  # the folder exists elsewhere: its record comes from there
+
+    def test_sharing_after_an_empty_kept_copy_starts_the_folder(self):
+        self.spec = dataclasses.replace(self.spec, on_share=unittest.mock.Mock())
+        self.service.hold_game_folder("test-mods")
+        self.root = self.game_root
+        self.service.share_game_folder("test-mods")
+        self.spec.on_share.assert_called_once_with(self.game_root)
+
+    def test_sharing_waits_while_syncthing_holds_on_to_the_kept_copy(self):
+        self.service.hold_game_folder("test-mods")
+        self.root = self.game_root
+        self.st.refuse_delete = True
+        with self.assertRaisesRegex(RuntimeError, "didn't let go"):
+            self.service.share_game_folder("test-mods")
+        self.assertEqual(State.load().held_folders, {"test-mods": str(self.kept)})
+
+    def test_forgetting_mo2_or_leaving_the_vault_keeps_the_copies_and_machines(self):
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.service.hold_all_games(True)
+        self.service.hold_game_folder("test-mods")
+        State.update(instance_path=str(self.tmp / "MO2"), folder_id="modsync-1")
+        self.service.reload_state()
+        self.service.reset()
+        st = State.load()
+        self.assertEqual((st.held_folders, st.hold_all, st.paired), ({"test-mods": str(self.kept)}, True, True))
+        self.assertIn("DESKTOP", self.st.devices)
+
 class Cli(GameFolderBase):
     def _run(self, *args):
         import io
@@ -684,6 +876,32 @@ class Cli(GameFolderBase):
         self.assertEqual(code, 1)
         self.assertIn("Couldn't pair: Syncthing did not start", out)
 
+    def test_hold(self):
+        self.root = None
+        code, out = self._run("hold", "test-mods")
+        self.assertEqual(code, 0, out)
+        self.assertIn("Keeping a copy of Test mods (ModSync)", out)
+        self.assertIn("No machine is paired yet", out)
+        code, out = self._run("status")
+        self.assertIn("copy kept for other machines", out)
+        code, out = self._run("hold", "all")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(State.load().hold_all)
+        code, out = self._run("hold", "off")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(State.load().hold_all)
+        code, out = self._run("hold", "nope")
+        self.assertEqual(code, 2)
+        self.assertIn("'all' / 'off'", out)
+
+    def test_share_after_holding_says_where_the_old_copy_is(self):
+        self.root, game = None, self.root
+        self._run("hold", "test-mods")
+        self.root = game
+        code, out = self._run("share", "test-mods")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"{folders.held_root(self.spec)} isn't synced any more", out)
+
     def test_a_vault_code_still_needs_the_instance(self):
         code, out = self._run("join", PairingCode("DESKTOP", "modsync-1", "MO2").encode())
         self.assertEqual(code, 2)
@@ -699,6 +917,13 @@ class StateFile(unittest.TestCase):
             self.assertEqual(st.instance_path, "/mo2")
             self.assertEqual(st.game_folders, {})
             self.assertEqual(st.declined_folders, [])
+
+    def test_a_damaged_kept_copies_field_does_not_take_the_rest_with_it(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}):
+            State.path().parent.mkdir(parents=True)
+            State.path().write_text('{"dfu_path": "/dfu", "held_folders": ["x"]}')
+            st = State.load()
+            self.assertEqual((st.dfu_path, st.held_folders, st.hold_all), ("/dfu", {}, False))
 
     def test_older_state_files_load_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}):

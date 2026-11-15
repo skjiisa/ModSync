@@ -195,6 +195,8 @@ def vault(args: list[str]) -> int:
         return _sync_conflicts(rest)
     if sub in {"share", "stop"} and len(rest) == 1:
         return _sync_game_folder(sub, rest[0])
+    if sub == "hold" and len(rest) == 1:
+        return _sync_hold(rest[0])
     if sub == "code" and not rest:
         return _sync_code()
     if sub == "forget" and len(rest) == 1:
@@ -207,6 +209,10 @@ def vault(args: list[str]) -> int:
         "  modsync sync join <pairing-code> <instance-dir> [--merge]\n"
         "  modsync sync join <machine-code>    pair with a machine that syncs only games' folders\n"
         "  modsync sync share | stop <folder>  start or stop syncing a game's folder (e.g. dfu-mods)\n"
+        "  modsync sync hold <folder>          keep a copy of a game's folder for other machines, the game\n"
+        "                                      not being set up here ('stop' stops keeping it)\n"
+        "  modsync sync hold all | off         keep a copy of every game's folder offered here, or stop\n"
+        "                                      taking new ones up\n"
         "  modsync sync code                   this machine's pairing code\n"
         "  modsync sync forget <machine>       unpair one machine here (its name or device id)\n"
         "  modsync sync status\n"
@@ -228,8 +234,12 @@ def _sync_game_folder(action: str, key: str) -> int:
     service = ModSyncService()
     try:
         if action == "share":
+            kept = service.state.held_folders.get(key)
             root = service.share_game_folder(key)
             print(f"Syncing {spec.label} from {root} with every paired machine.")
+            if kept:
+                print(f"The copy kept for other machines in {kept} isn't synced any more. Delete it when")
+                print("you no longer need it.")
             if not service.state.paired:
                 print("No machine is paired yet: 'modsync sync code' prints the code to pair one.")
         else:
@@ -238,6 +248,42 @@ def _sync_game_folder(action: str, key: str) -> int:
             else:
                 print(f"Stopping {spec.label} here: Syncthing didn't answer, so it lets go of the folder")
                 print("the next time ModSync runs. Its files stay where they are.")
+    except RuntimeError as exc:
+        print(exc)
+        return 1
+    finally:
+        service.shutdown()
+    return 0
+
+
+def _sync_hold(what: str) -> int:
+    from modsync.service import ModSyncService
+    from modsync.sync import folders
+
+    spec = None if what in {"all", "off"} else folders.spec_for(what)
+    if spec is None and what not in {"all", "off"}:
+        known = ", ".join(s.key for s in folders.specs()) or "none yet"
+        print(f"ModSync has no folder called {what!r} (known: {known}, or 'all' / 'off').")
+        return 2
+    service = ModSyncService()
+    try:
+        if what == "off":
+            service.hold_all_games(False)
+            print("New games' folders offered here are no longer kept. The copies already kept stay;")
+            print("'modsync sync stop <folder>' stops keeping one.")
+        elif what == "all":
+            taken = service.hold_all_games(True)
+            print("Keeping a copy of every game's folder a paired machine offers, for games not set up here,")
+            print("so the other machines sync through this one. 'modsync sync stop <folder>' leaves one out.")
+            for key in taken:
+                print(f"Keeping {key} in {service.state.held_folders.get(key)}.")
+            if not service.state.paired:
+                print("No machine is paired yet: 'modsync sync join <code>' pairs with one.")
+        else:
+            root = service.hold_game_folder(what)
+            print(f"Keeping a copy of {spec.label} in {root} for the other machines.")
+            if not service.state.paired:
+                print("No machine is paired yet: 'modsync sync join <code>' pairs with one.")
     except RuntimeError as exc:
         print(exc)
         return 1
@@ -302,7 +348,8 @@ def _sync_status() -> int:
         if fs.stopping:
             print(f"Folder:     {fs.spec.label}  ({fs.path}): stopping")
             continue
-        print(f"Folder:     {fs.spec.label}  ({fs.path}): {fs.state or 'starting'}, {pct}% here"
+        kept = "copy kept for other machines, " if fs.held else ""
+        print(f"Folder:     {fs.spec.label}  ({fs.path}): {kept}{fs.state or 'starting'}, {pct}% here"
               + (f", {fs.need_items} item(s) still to arrive" if fs.need_items else "")
               + (f", {fs.conflicts} conflict(s)" if fs.conflicts else ""))
     if not service.state.syncing:
@@ -993,12 +1040,18 @@ def _dfu_status() -> int:
         print("Mods sync:            stopping (once Syncthing answers)")
     elif dfu.MODS_FOLDER.key in st.game_folders:
         print("Mods sync:            on ('modsync sync status' shows how far along)")
+    elif dfu.MODS_FOLDER.key in st.held_folders:
+        print(f"Mods sync:            a copy is kept for other machines ('modsync sync share "
+              f"{dfu.MODS_FOLDER.key}' syncs them here instead)")
     else:
         print(f"Mods sync:            off ('modsync sync share {dfu.MODS_FOLDER.key}' turns it on)")
     if folders.stopping(dfu.SAVES_FOLDER.key, st):
         print("Saves sync:           stopping (once Syncthing answers)")
     elif dfu.SAVES_FOLDER.key in st.game_folders:
         print(f"Saves sync:           on ({dfu.saves_dir(inst)})")
+    elif dfu.SAVES_FOLDER.key in st.held_folders:
+        print(f"Saves sync:           a copy is kept for other machines ('modsync sync share "
+              f"{dfu.SAVES_FOLDER.key}' syncs them here instead)")
     else:
         print(f"Saves sync:           off ('modsync sync share {dfu.SAVES_FOLDER.key}' turns it on)")
     version = dfu.version_problem(inst)
@@ -1212,6 +1265,9 @@ def _cyberpunk_status() -> int:
         print("Mods sync:             stopping (once Syncthing answers)")
     elif key in st.game_folders:
         print("Mods sync:             on ('modsync sync status' shows how far along)")
+    elif key in st.held_folders:
+        print(f"Mods sync:             a copy is kept for other machines ('modsync sync share {key}' "
+              "syncs them here instead)")
     elif cyberpunk.chosen_instance() is None:
         print("Mods sync:             off (only for an instance from 'modsync cyberpunk install' or 'use')")
     else:

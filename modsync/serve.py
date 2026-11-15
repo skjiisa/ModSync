@@ -61,6 +61,10 @@ class Server:
             self.log("No instance chosen yet; watching Steam only")
         for key, path in state.game_folders.items():
             self.log(f"Serving {key} for {path}")
+        for key, path in state.held_folders.items():
+            self.log(f"Keeping a copy of {key} for other machines in {path}")
+        if state.hold_all:
+            self.log("Keeping a copy of every game's folder another machine offers, for games not set up here")
         if state.paired and not state.syncs_anything:
             self.log("Paired; waiting for another machine to offer a game's folder")
         vc = self.service.game_version_check()
@@ -127,7 +131,7 @@ class Server:
             if status.folder_state is not None:
                 line += f" · folder {status.folder_state} · {int(status.completion or 0)}% in sync"
             for fs in status.game_folders:
-                line += f" · {fs.spec.key} {fs.state or '?'} · {int(fs.completion or 0)}%"
+                line += f" · {fs.spec.key}{' (kept)' if fs.held else ''} {fs.state or '?'} · {int(fs.completion or 0)}%"
             copy = progress if progress is not None and progress.phase == "done" else status.copy
             if copy is not None and copy.phase != "done":
                 line += f" · copying from {copy.source}: {copy.phase}"

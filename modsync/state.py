@@ -34,7 +34,9 @@ from modsync import config
 # 2: forgotten_devices and one_way_introducers, which an older one would drop
 # on its next write (bringing forgotten machines back, and settling pairings
 # made since all over again).
-SCHEMA = 2
+# 3: held_folders and hold_all, which an older one would drop (leaving the
+# copies kept here in Syncthing with nothing looking after them).
+SCHEMA = 3
 
 
 EXIT_NEWER_STATE = 3  # how a command ends on one; the background service isn't restarted for it
@@ -54,7 +56,8 @@ def _refuse_newer(p: Path, data: object) -> None:
 
 _FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "awaiting_vault_version",
            "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside", "dfu_path", "game_folders", "declined_folders", "paired",
-           "home_game", "stand_in_names_cleared", "forgotten_devices", "one_way_introducers")
+           "home_game", "stand_in_names_cleared", "forgotten_devices", "one_way_introducers", "held_folders",
+           "hold_all")
 
 
 @dataclass
@@ -90,6 +93,13 @@ class State:
     game_folders: dict[str, str] = field(default_factory=dict)
     # Folders stopped here: offers of them from paired machines aren't taken up.
     declined_folders: list[str] = field(default_factory=list)
+    # Copies of games' folders kept here for games not set up on this machine,
+    # by key: where each one is. Never used here; a machine that is often on
+    # passes changes between machines that are rarely on at the same time.
+    held_folders: dict[str, str] = field(default_factory=dict)
+    # Keep a copy of every game's folder a paired machine offers, when the game
+    # isn't set up here (one stopped here stays stopped).
+    hold_all: bool = False
     # Paired with another machine (pairing is machine-wide), so Syncthing keeps
     # running to take up the folders it offers, even before anything syncs here.
     paired: bool = False
@@ -124,6 +134,8 @@ class State:
                     state.game_folders = {}
                 if not isinstance(state.declined_folders, list):
                     state.declined_folders = []
+                if not isinstance(state.held_folders, dict):
+                    state.held_folders = {}
                 if not isinstance(state.forgotten_devices, list):
                     state.forgotten_devices = []
                 return state
@@ -210,8 +222,8 @@ class State:
 
     @property
     def syncs_anything(self) -> bool:
-        """The MO2 vault or any game's folder is shared from here."""
-        return bool(self.syncing or self.game_folders)
+        """The MO2 vault or any game's folder is shared from here, or a copy of one kept."""
+        return bool(self.syncing or self.game_folders or self.held_folders)
 
     @property
     def active(self) -> bool:

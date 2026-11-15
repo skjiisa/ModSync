@@ -112,6 +112,45 @@ class GamesOnlyTests(UiTestCase):
         self.assertEqual(sync._game_rows, {})
         self.assertTrue(sync._no_games.isVisibleTo(sync))
 
+    def test_a_kept_copy_shows_as_kept_and_choosing_it_offers_to_stop_keeping_it(self):
+        window = self.window()
+        sync = window.pages["sync"]
+        sync._on_machine_status(_status([FolderStatus(dfu.MODS_FOLDER, self.mods, "idle", 100.0)]))
+        used = sync._game_rows["dfu-mods"]
+        sync._on_machine_status(_status([FolderStatus(dfu.MODS_FOLDER, self.mods, "idle", 100.0, held=True)]))
+        row = sync._game_rows["dfu-mods"]
+        self.assertIsNot(row, used)  # choosing it does something else now
+        self.assertEqual((row.badge.text(), row.description), ("Up to date", "Kept here for your other machines."))
+        row.click()
+        self.assertEqual(window.top_overlay.title.text(), "Stop keeping Daggerfall Unity mods?")
+        with patch("modsync.ui.pages.sync.worker.run_async") as run:
+            window.top_overlay.choose("stop")
+        self.assertEqual(run.call_args.args[:2], (window.service.stop_game_folder, "dfu-mods"))
+        sync._on_machine_status(_status([FolderStatus(dfu.MODS_FOLDER, self.mods, "idle", 100.0, held=True)]))
+        self.assertIs(sync._game_rows["dfu-mods"], row)  # updated in place
+
+    def test_keeping_games_not_installed_here_asks_first_and_turns_off_at_once(self):
+        window = self.window()
+        sync = window.pages["sync"]
+        tile = sync.hold_tile
+        self.assertTrue(tile.isVisibleTo(sync))
+        self.assertEqual(tile.badge.text(), "Off")
+        tile.click()
+        self.assertEqual(window.top_overlay.title.text(), "Keep games not installed here?")
+        def hold_all(svc, on):
+            State.update(hold_all=on)
+            svc.reload_state()
+            return []
+
+        with patch.object(ModSyncService, "hold_all_games", hold_all):
+            window.top_overlay.choose("on")
+            self.settle()
+            self.assertEqual(tile.badge.text(), "On")
+            tile.click()  # no question to turn it off
+            self.settle()
+        self.assertFalse(State.load().hold_all)
+        self.assertEqual(tile.badge.text(), "Off")
+
     def test_the_pin_and_code_tell_the_other_machine_to_pair(self):
         window = self.window()
         sync = window.pages["sync"]
