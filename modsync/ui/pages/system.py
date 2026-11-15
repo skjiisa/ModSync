@@ -48,6 +48,7 @@ class SystemPage(Page):
         self._bg_what = f"A user service that starts at login and {what}, even when ModSync is closed."
         if state.active:
             self._bg_what += " While you play a game, it pauses syncing until the game closes."
+        self._bg_what += " In a desktop session, an icon in the system tray shows it's on."
         self._bg_summary = ("Keep syncing while ModSync is closed." if state.syncing else
                             "Apply queued Steam changes while ModSync is closed.")
         self.bg_tile = Tile("Run in background", self._bg_summary, "moon", status=True)

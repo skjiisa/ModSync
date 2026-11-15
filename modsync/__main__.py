@@ -37,6 +37,7 @@ usage:
   modsync sync conflicts [keep current|other <file>]
                                          list files changed on two machines, or keep one version
   modsync serve                          keep syncing (if set up) and watching Steam, in the foreground
+  modsync tray                           the tray icon a desktop session shows while the background service is on
 
   modsync service install [--linger]     run 'modsync serve' at login (systemd --user)
   modsync firewall status | allow | remove
@@ -105,7 +106,7 @@ def _main(argv: list[str] | None) -> int:
 
     # The GUI (also when Steam opens it) and `serve` configure logging themselves with their own
     # component tag; every other command is "cli".
-    if cmd not in {None, "serve"} and not (cmd == "launch" and argv[1:2] == ["hub"]):
+    if cmd not in {None, "serve", "tray"} and not (cmd == "launch" and argv[1:2] == ["hub"]):
         from modsync.logging_setup import configure
 
         configure("cli", argv)
@@ -139,6 +140,11 @@ def _main(argv: list[str] | None) -> int:
         from modsync.cli import service
 
         return service(argv[1:])
+
+    if cmd == "tray":
+        from modsync.tray import run
+
+        return run()
 
     if cmd == "dfu":
         from modsync.cli import dfu

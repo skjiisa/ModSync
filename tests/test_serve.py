@@ -4,7 +4,7 @@ always; Syncthing only when a vault exists."""
 import unittest
 from unittest.mock import patch
 
-from modsync import gameversion, launchhook, mo2games, nxm
+from modsync import background, gameversion, launchhook, mo2games, nxm
 from modsync.serve import Server
 from modsync.service import DeviceStatus, PinOutcome, SyncStatus
 from modsync.state import NewerStateError, State
@@ -83,7 +83,8 @@ class ServerTests(unittest.TestCase):
         for p in (patch.object(launchhook, "upgrade", return_value=None),
                   patch.object(launchhook, "hooked_appids", return_value=[]),
                   patch.object(mo2games, "refresh_hooks", return_value=[]),
-                  patch.object(nxm, "refresh", return_value=[])):
+                  patch.object(nxm, "refresh", return_value=[]),
+                  patch.object(background, "ensure_tray_autostart", return_value=False)):
             p.start()
             self.addCleanup(p.stop)
 

@@ -8,6 +8,15 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
+- While the background service is on, a desktop session (Desktop Mode on
+  the Deck) shows a ModSync icon in the system tray, so it isn't left
+  running and forgotten. Its menu says what the service is doing ("Syncing
+  Skyrim SE", "Paused while you play", "Nothing syncs here; it only watches
+  Steam"), opens ModSync, and turns the service off. Clicking the icon opens
+  ModSync. Turning the service on adds an autostart entry for the icon and
+  shows it right away; turning it off, from the tray or Settings, removes
+  both. A service installed before this gets the entry once when it starts,
+  and one you remove stays removed. Gaming Mode has no tray.
 - While you play, the background service pauses ModSync's folders in
   Syncthing, so nothing is scanned, hashed or transferred during the game,
   and it resumes them within 30 seconds of the game closing. A game is
