@@ -1245,6 +1245,27 @@ class ControllerBindingsTests(unittest.TestCase):
         self.assertEqual(data["actionKeyBinds"], {"W": "MoveForwards"})
         self.assertEqual(data["secondaryActionKeyBinds"], dfu.controller_bindings())
 
+    def test_old_combos_on_a_button_the_layout_binds_alone_go(self):
+        """DFU rejects B bound alone while B + A is a combo, across Primary and Secondary.
+        A combo on LT (the layout's own modifier) or on a key the layout leaves alone stays."""
+        self._write({
+            "actionKeyBinds": {"W": "MoveForwards", "JoystickButton1 + JoystickButton0": "PrintScreen",
+                               "LeftControl + S": "QuickSave"},
+            "secondaryActionKeyBinds": {"JoystickButton7 + JoystickButton3": "ToggleConsole",
+                                        "JoystickAxis3Button0 + JoystickAxis6Button0": "CenterView",
+                                        "JoystickButton8 + JoystickButton0": "LookUp"},
+            "removedPrimaryActions": [],
+            "$version": "v1",
+        })
+        dfu.set_controller_bindings(self.inst)
+        data = self._read()
+        self.assertEqual(data["actionKeyBinds"], {"W": "MoveForwards", "LeftControl + S": "QuickSave"})
+        self.assertEqual(data["secondaryActionKeyBinds"], {
+            "JoystickAxis3Button0 + JoystickAxis6Button0": "CenterView",
+            "JoystickButton8 + JoystickButton0": "LookUp",
+            **dfu.controller_bindings(),
+        })
+
     def test_again_changes_nothing(self):
         self._write({"actionKeyBinds": {"W": "MoveForwards"}, "secondaryActionKeyBinds": {},
                      "removedPrimaryActions": [], "$version": "v1"})

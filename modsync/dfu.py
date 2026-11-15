@@ -1142,7 +1142,8 @@ def has_controller_bindings(inst: Install) -> bool:
 def set_controller_bindings(inst: Install) -> str:
     """Put the suggested controller layout on ``inst``'s Secondary bindings, as
     DFU's own Controls screen would bind each one: an action's old Secondary
-    binding goes, and so does whatever else held its key, on either side.
+    binding goes, and so does whatever else held its key, on either side, or
+    used one of its buttons as a combo's modifier the way DFU won't accept.
     Keyboard and mouse bindings, and Secondary bindings the layout doesn't
     use, stay. The file as it was is kept in :data:`KEYBINDS_BACKUP`.
 
@@ -1157,16 +1158,23 @@ def set_controller_bindings(inst: Install) -> str:
     before = json.loads(json.dumps(data))
     wanted = controller_bindings()
     actions = set(wanted.values())
+    # DFU flags a key bound on its own that is also a combo's modifier, on
+    # either side: so the layout's combo modifier (LT) goes, and so does any
+    # combo kept from before whose modifier the layout binds on its own.
     drop = set(wanted) | _modifiers()
+    alone = {k for k in wanted if " + " not in k}
+
+    def clashes(key: str) -> bool:
+        return key in drop or key.split(" + ")[0].strip() in alone
 
     def kept(binds, *, secondary: bool) -> dict[str, str]:
         if not isinstance(binds, dict):
             return {}
-        return {k: v for k, v in binds.items() if k not in drop and not (secondary and v in actions)}
+        return {k: v for k, v in binds.items() if not clashes(k) and not (secondary and v in actions)}
 
     primary = kept(data.get("actionKeyBinds"), secondary=False)
     secondary = kept(data.get("secondaryActionKeyBinds"), secondary=True)
-    taken = [k for k in data.get("actionKeyBinds") or {} if k in drop]
+    taken = [k for k in data.get("actionKeyBinds") or {} if clashes(k)]
     secondary.update(wanted)
     data["actionKeyBinds"] = primary
     data["secondaryActionKeyBinds"] = secondary
