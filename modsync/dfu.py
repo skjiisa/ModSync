@@ -1113,6 +1113,34 @@ CONTROLLER_LAYOUT = (
 )
 
 
+# The right stick's look speed that goes with the layout. DFU's own default, 1,
+# turns about 120 degrees a second at full tilt, which is slow on a stick; its
+# slider (Pause, Controls, Joystick) goes from 0.1 to 4. Set only over DFU's
+# default: a speed the player chose stays. It's in settings.ini, which never
+# syncs, so each machine sets it once the layout is there (_carry_keybinds).
+LOOK_SENSITIVITY = 2.5
+_DFU_LOOK_SENSITIVITY = 1.0
+
+
+def look_sensitivity(inst: Install) -> float | None:
+    """``inst``'s right-stick look speed (None: DFU's default, not written yet)."""
+    value = read_setting(inst.settings_ini, "Controls", "JoystickLookSensitivity")
+    try:
+        return float(value) if value is not None else None
+    except ValueError:
+        return None
+
+
+def _raise_look_sensitivity(inst: Install) -> bool:
+    """Set :data:`LOOK_SENSITIVITY` where the look speed is still DFU's default."""
+    current = look_sensitivity(inst)
+    if current is not None and current != _DFU_LOOK_SENSITIVITY:
+        return False
+    write_settings(inst.settings_ini, "Controls", {"JoystickLookSensitivity": LOOK_SENSITIVITY})
+    log.info("raised the right stick's look speed in %s to %s", inst.settings_ini, LOOK_SENSITIVITY)
+    return True
+
+
 def _key_name(buttons: str) -> str:
     """DFU's name for ``buttons``: one button, or a combo as DFU writes it."""
     return " + ".join(PAD[b.strip()] for b in buttons.split("+"))
@@ -1178,7 +1206,9 @@ def set_controller_bindings(inst: Install) -> str:
     binding goes, and so does whatever else held its key, on either side, or
     used one of its buttons as a combo's modifier the way DFU won't accept.
     Keyboard and mouse bindings, and Secondary bindings the layout doesn't
-    use, stay. The file as it was is kept in :data:`KEYBINDS_BACKUP`.
+    use, stay. The file as it was is kept in :data:`KEYBINDS_BACKUP`. The
+    right stick's look speed goes up to :data:`LOOK_SENSITIVITY` if it is
+    still DFU's default (settings.ini, which stays on this machine).
 
     A missing KeyBinds.txt (DFU not started yet) is made with only these:
     DFU fills in its defaults around them when it starts."""
@@ -1197,6 +1227,9 @@ def set_controller_bindings(inst: Install) -> str:
         done = _set_controller_bindings(inst)
         if syncing:
             _carry_keybinds(inst)
+        # settings.ini, which DFU writes back when it quits: under the same guard.
+        if _raise_look_sensitivity(inst):
+            done += f" The right stick looks around faster ({LOOK_SENSITIVITY:g})."
     return done
 
 
@@ -1447,6 +1480,10 @@ def _carry_keybinds(inst: Install) -> str:
         log.warning("key bindings changed here and elsewhere; this machine's are in %s", copy)
     if done:
         log.info("%s", done)
+    if has_controller_bindings(inst):
+        # The layout arrived from another machine (or is here already): its look speed
+        # goes with it, though settings.ini never syncs.
+        _raise_look_sensitivity(inst)
     if synced != last:
         noted.parent.mkdir(parents=True, exist_ok=True)
         noted.write_text(json.dumps({"synced": synced}) + "\n", encoding="utf-8")

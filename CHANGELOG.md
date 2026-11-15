@@ -13,7 +13,9 @@ All notable changes to ModSync are documented here. The format follows
   controller prints them (B casts, RT swings, LT with another button for
   the rest), and sets it up on DFU's Secondary bindings, leaving the
   keyboard and mouse as they are. Once set, the same sheet is a reference
-  for which button does what. The old bindings are kept in
+  for which button does what. The layout also raises the right stick's
+  look speed from DFU's sluggish 1 to 2.5, on every machine it reaches,
+  unless you already chose your own (Pause, Controls, Joystick in game). The old bindings are kept in
   `KeyBinds.modsync-backup.txt`. `modsync dfu controller` does the same.
 - Daggerfall Unity's key bindings now sync with its mods. Keyboard and
   controller bindings sit side by side, so one set works on every machine.

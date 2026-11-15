@@ -956,6 +956,12 @@ same sheet is a reference card, with "Set it up again" to put back buttons
 changed in DFU. Controller buttons you bound yourself show as Your own, and
 the sheet says the layout replaces them.
 
+The layout also turns up the right stick's look speed
+(`JoystickLookSensitivity` in `settings.ini`) from DFU's 1, about 120° a
+second at full tilt, to 2.5. Only a speed still at DFU's default changes; to
+tune it in the game, open Pause, Controls, Joystick. `settings.ini` never
+syncs, so each machine raises its own once the layout reaches it.
+
 They go on DFU's Secondary bindings, as the wiki suggests, so the keyboard
 and mouse keep the Primary ones. Controller buttons bound anywhere before
 are unbound, as DFU's own Controls screen does when you rebind one. The file

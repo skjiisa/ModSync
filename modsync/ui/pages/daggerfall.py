@@ -142,6 +142,8 @@ class ControllerLayoutSheet(Overlay):
                  "mouse work as before. For a pair, hold the first button and press the second.")
         if synced:
             intro += " Your paired machines get it with your mods."
+        intro += (f" The right stick also looks around faster: {dfu.LOOK_SENSITIVITY:g} in place of Daggerfall "
+                  "Unity's 1. To tune it in the game: Pause, Controls, Joystick.")
         self.text = label(intro, "secondary")
         self.body.addWidget(self.text)
 

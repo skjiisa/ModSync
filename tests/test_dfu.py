@@ -1289,6 +1289,23 @@ class ControllerBindingsTests(unittest.TestCase):
         self.assertEqual(data["removedPrimaryActions"], [])
         self.assertFalse((self.inst.data_dir / dfu.KEYBINDS_BACKUP).exists())
 
+    def test_the_right_stick_looks_faster_unless_its_speed_was_chosen(self):
+        ini = self.inst.settings_ini
+        ini.write_text("[Daggerfall]\nMyDaggerfallPath = /d\n\n[Controls]\nMouseLookSensitivity = 2\n"
+                       "JoystickLookSensitivity = 1\nJoystickDeadzone = 0.1\n", encoding="utf-8")
+        self.assertIn("looks around faster (2.5)", dfu.set_controller_bindings(self.inst))
+        self.assertEqual(dfu.look_sensitivity(self.inst), 2.5)
+        text = ini.read_text(encoding="utf-8")
+        self.assertIn("MyDaggerfallPath = /d", text)
+        self.assertIn("MouseLookSensitivity = 2\nJoystickLookSensitivity = 2.5\nJoystickDeadzone = 0.1", text)
+        dfu.write_settings(ini, "Controls", {"JoystickLookSensitivity": 1.7})  # chosen in the game
+        self.assertNotIn("faster", dfu.set_controller_bindings(self.inst))
+        self.assertEqual(dfu.look_sensitivity(self.inst), 1.7)
+
+    def test_the_look_speed_is_set_before_dfu_first_wrote_it(self):
+        dfu.set_controller_bindings(self.inst)
+        self.assertEqual(dfu.look_sensitivity(self.inst), 2.5)
+
     def test_controller_state(self):
         self.assertEqual(dfu.controller_state(self.inst), "none")
         self._write({"actionKeyBinds": {"W": "MoveForwards"}, "secondaryActionKeyBinds": {},
@@ -1442,6 +1459,28 @@ class KeyBindsSyncTests(unittest.TestCase):
         shared = self.read(self.shared)["secondaryActionKeyBinds"]
         self.assertEqual(shared, {"Keypad8": "MoveForwards", **dfu.controller_bindings()})
         self.assertEqual(self.conflict_copies(), [])
+
+    def test_the_look_speed_follows_the_layout_to_another_machine(self):
+        ini = self.inst.settings_ini
+        ini.write_text("[Controls]\nJoystickLookSensitivity = 1\n", encoding="utf-8")
+        self.shared.write_text(json.dumps({"actionKeyBinds": {}, "secondaryActionKeyBinds": dfu.controller_bindings()}))
+        dfu.sync_keybinds(self.inst)
+        self.assertEqual(dfu.look_sensitivity(self.inst), 2.5)
+
+    def test_other_bindings_leave_the_look_speed_alone(self):
+        ini = self.inst.settings_ini
+        ini.write_text("[Controls]\nJoystickLookSensitivity = 1\n", encoding="utf-8")
+        self.shared.write_text(self.binds({"JoystickButton1": "CastSpell"}))
+        dfu.sync_keybinds(self.inst)
+        self.assertEqual(dfu.look_sensitivity(self.inst), 1.0)
+
+    def test_nothing_touches_the_look_speed_while_dfu_runs(self):
+        ini = self.inst.settings_ini
+        ini.write_text("[Controls]\nJoystickLookSensitivity = 1\n", encoding="utf-8")
+        self.shared.write_text(json.dumps({"actionKeyBinds": {}, "secondaryActionKeyBinds": dfu.controller_bindings()}))
+        self.running = True
+        dfu.sync_keybinds(self.inst)
+        self.assertEqual(dfu.look_sensitivity(self.inst), 1.0)
 
     def test_a_version_arriving_while_sharing_is_never_replaced_unseen(self):
         """Syncthing brings in another machine's bindings between the look and the copy:

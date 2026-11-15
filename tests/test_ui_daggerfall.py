@@ -336,6 +336,7 @@ class DaggerfallUiTests(UiTestCase):
             self.assertEqual(set(sheet.combos), {action for action, _ in dfu.CONTROLLER_LAYOUT})
             self.assertEqual(sheet.combos["RecastSpell"].buttons, ["LT", "A"])
             self.assertIn("Secondary bindings", sheet.text.text())
+            self.assertIn("Pause, Controls, Joystick", sheet.text.text())
             self.assertNotIn("paired machines", sheet.text.text())  # mods sync is off
             self.assertIs(window.focusWidget(), sheet.tiles["go"])
             self.assertEqual(sheet.accept_hint(), "Use this layout")
