@@ -30,6 +30,7 @@ class FakeSyncthing:
         self.refuse_delete = False
         self.stats: dict | None = None  # /rest/stats/device; None: Syncthing doesn't answer it
         self.connected: set[str] = set()
+        self.remote_states: dict[str, str] = {}  # device -> remoteState for every folder; "unknown" if unset
 
     # SyncthingManager
     def start(self, timeout=0):
@@ -98,6 +99,8 @@ class _Client:
         return {"state": "idle", "needTotalItems": 0}
 
     def completion(self, folder_id, device_id=None):
+        if device_id:
+            return {"completion": 100, "remoteState": self.st.remote_states.get(device_id, "unknown")}
         return {"completion": 100}
 
     def connections(self):
@@ -1165,6 +1168,51 @@ class KeptSkyrimVault(GameFolderBase):
         self.assertEqual(folder_devices(self.st, self.VAULT), {"ME", "DESKTOP", "DECK"})
         self.assertEqual(State.load().copy_source, "DECK")  # the one connected now
         self.assertEqual((self.instance / "mods/A Mod/plugin.esp").read_text(), "esp")
+
+    def test_join_kept_copies_from_a_machine_that_shares_the_vault(self):
+        """The copy is kept for every paired machine, including one that syncs
+        only games and never had the vault."""
+        self.st.devices["GAMES"] = {"deviceID": "GAMES", "name": "games only"}
+        self.keep_with_mods()
+        self.st.connected = {"GAMES"}  # the desktop is off
+        self.st.remote_states = {"GAMES": "notSharing", "DESKTOP": "valid"}
+        self.new_instance()
+        self.service.join_kept_vault(self.instance)
+        self.assertEqual(State.load().copy_source, "DESKTOP")
+
+    def test_join_kept_with_no_machine_sharing_it(self):
+        self.keep_with_mods()
+        self.st.remote_states = {"DESKTOP": "notSharing"}
+        self.new_instance()
+        with self.assertRaisesRegex(RuntimeError, "No paired machine shares Skyrim's mods"):
+            self.service.join_kept_vault(self.instance)
+        self.assertEqual(State.load().held_folders, {self.KEY: str(self.kept)})
+
+    def test_a_copy_waiting_on_a_machine_that_turns_out_not_to_share_it_moves_on(self):
+        self.st.devices["GAMES"] = {"deviceID": "GAMES", "name": "games only"}
+        self.keep_with_mods()
+        self.st.connected = {"GAMES"}
+        self.new_instance()
+        self.service.join_kept_vault(self.instance)  # nothing known yet: the connected one
+        self.assertEqual(State.load().copy_source, "GAMES")
+        self.st.remote_states = {"GAMES": "notSharing", "DESKTOP": "valid"}
+        self.assertEqual(self.service.advance_copy().phase, "waiting")
+        self.assertEqual(State.load().copy_source, "GAMES")  # the desktop isn't connected yet
+        self.st.connected = {"GAMES", "DESKTOP"}
+        self.service.advance_copy()
+        self.assertEqual(State.load().copy_source, "DESKTOP")
+
+    def test_a_copy_from_a_code_stays_with_that_machine(self):
+        """Its list's length came with the code: only that machine can vouch for it."""
+        self.keep_with_mods()
+        self.new_instance()
+        self.service.join_vault(PairingCode("DESKTOP", self.VAULT, "Skyrim SE", 12), self.instance)
+        self.st.devices["DECK"] = {"deviceID": "DECK"}
+        self.st.folders[self.VAULT]["devices"].append({"deviceID": "DECK"})
+        self.st.connected = {"DESKTOP", "DECK"}
+        self.st.remote_states = {"DESKTOP": "notSharing", "DECK": "valid"}
+        self.service.advance_copy()
+        self.assertEqual(State.load().copy_source, "DESKTOP")
 
     def test_join_kept_without_a_kept_copy(self):
         self.new_instance()

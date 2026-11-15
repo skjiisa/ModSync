@@ -641,17 +641,33 @@ class ModSyncService:
                 folder = client.get_folder(folder_id)
             except Exception as exc:
                 raise RuntimeError(f"Syncthing doesn't have the copy kept here any more: {exc}") from exc
-            others = [d["deviceID"] for d in folder.get("devices", []) if d.get("deviceID") not in (None, "", me)]
+            forgotten = set(self.state.forgotten_devices)
+            others = [d["deviceID"] for d in folder.get("devices", [])
+                      if d.get("deviceID") not in (None, "", me) and d["deviceID"] not in forgotten]
             try:
                 conns = client.connections().get("connections", {})
             except Exception:
                 conns = {}
-        forgotten = set(self.state.forgotten_devices)
-        others = [d for d in others if d not in forgotten]
-        if not others:
-            raise RuntimeError("The copy of Skyrim's mods kept here isn't shared with any machine. "
-                               "Join with the other machine's pairing code instead.")
-        source = next((d for d in others if (conns.get(d) or {}).get("connected")), others[0])
+
+            def remote_state(device: str) -> str:
+                try:
+                    return client.completion(folder_id, device).get("remoteState") or ""
+                except Exception:
+                    return ""
+
+            # The copy is kept for every paired machine, including ones that
+            # sync only games and never had the vault: copy from one that
+            # shares it, connected first. One Syncthing can't tell about yet
+            # (offline since it started) may do; the copy moves on to another
+            # if it turns out not to (_copy_from_another).
+            states = {d: remote_state(d) for d in others}
+        sharing = [d for d in others if states[d] == "valid"]
+        maybe = [d for d in others if states[d] not in ("valid", "notSharing")]
+        candidates = sharing or maybe
+        if not candidates:
+            raise RuntimeError("No paired machine shares Skyrim's mods with this one any more. "
+                               "Join with the pairing code of the machine that has them instead.")
+        source = next((d for d in candidates if (conns.get(d) or {}).get("connected")), candidates[0])
         return self.join_vault(PairingCode(source, folder_id, ""), instance_path, merge=merge,
                                paired=[d for d in others if d != source])
 
@@ -760,6 +776,8 @@ class ModSyncService:
                 if observe:
                     self._copy_seen = self._index_seen = None
                 progress.phase = "waiting"
+                if act and remote.get("remoteState") == "notSharing" and st.copy_expected == -1:
+                    self._copy_from_another(client, fid, source, connections)
                 return progress
             if not self._index_complete(int(remote.get("sequence") or 0), st.copy_expected, observe):
                 # A one-off look (`modsync sync status`) has no earlier poll to
@@ -826,6 +844,28 @@ class ModSyncService:
             log.info("copy: later changes will be set aside in %s", fresh)
             return
         client.revert(fid)
+
+    def _copy_from_another(self, client, fid: str, source: str, connections: dict) -> None:
+        """The machine a copy waits for doesn't share the vault (joined
+        without a code, from a copy kept for machines that include ones that
+        sync only games): copy from a connected one that does. Only when the
+        join didn't say how far its source's list went, which ties the copy
+        to that one machine."""
+        try:
+            devices = [d.get("deviceID") for d in client.get_folder(fid).get("devices", [])]
+        except Exception:
+            return
+        for device in devices:
+            if device in (None, "", source) or not (connections.get(device) or {}).get("connected"):
+                continue
+            try:
+                if client.completion(fid, device).get("remoteState") != "valid":
+                    continue
+            except Exception:
+                continue
+            log.info("copy: %s… doesn't share %s; copying from %s… instead", source[:7], fid, device[:7])
+            self.update_state(copy_source=device)
+            return
 
     def _copy_settled(self, status: dict, ready: bool, observe: bool) -> bool:
         """Ready now, and nothing changed since the last observed poll."""
