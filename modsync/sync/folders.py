@@ -18,18 +18,23 @@ it alone. It's there for the other machines, which sync through it, so a
 machine that is often on passes changes between two that rarely are at the
 same time. Syncthing passes on what a receive-only folder has received.
 
-Skyrim's vault stays as it was (``ModSyncService``): a random folder id that
-the pairing code carries, a copy that starts receive-only, and MO2-aware
-conflicts. Nothing here touches it.
+Skyrim's vault is set up as it was (``ModSyncService``): a random folder id
+that the pairing code carries, a copy that starts receive-only, and MO2-aware
+conflicts. Only a copy of it kept for other machines comes through here. Its
+key is the id's random part (:func:`vault_spec`), so it's kept like any other
+folder, apart from the vault this machine uses (``State.folder_id``), and
+joining the vault later uses the copy (:func:`kept_copy_gives_way`).
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import time
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -85,11 +90,82 @@ def specs() -> list[FolderSpec]:
 
 
 def spec_for(key: str) -> FolderSpec | None:
-    return next((s for s in specs() if s.key == key), None)
+    return next((s for s in specs() if s.key == key), None) or vault_spec(key)
 
 
 def _spec_for_id(folder_id: str) -> FolderSpec | None:
-    return next((s for s in specs() if s.folder_id == folder_id), None)
+    if not folder_id.startswith(FOLDER_PREFIX):
+        return None
+    return spec_for(folder_id.removeprefix(FOLDER_PREFIX))
+
+
+# The random part of a Skyrim vault's folder id ("modsync-" + 16 hex digits,
+# ModSyncService._new_folder_id). No game's key looks like this.
+_VAULT_KEY = re.compile(r"[0-9a-f]{16}")
+VAULT_LABEL = "Skyrim SE mods (ModSync)"
+
+
+def is_vault(key: str) -> bool:
+    """Whether ``key`` is a Skyrim vault's, not a game folder's."""
+    return bool(_VAULT_KEY.fullmatch(key))
+
+
+def _skyrim_instance() -> Path | None:
+    """Skyrim's MO2 instance here, the game being set up when there is one."""
+    path = State.load().instance_path
+    return Path(path) if path else None
+
+
+def _no_mods(root: Path) -> bool:
+    """An MO2 instance with no mods or downloads of its own (what joining
+    would ask to copy over or merge with): a kept copy can move into it."""
+    for name in ("mods", "downloads"):
+        try:
+            if any(not p.name.startswith(".") and p.suffix != ".meta" for p in (root / name).iterdir()):
+                return False
+        except OSError:
+            pass
+    return True
+
+
+def vault_spec(key: str) -> FolderSpec | None:
+    """A Skyrim vault, as far as keeping a copy of it goes. The vault itself
+    syncs through ``ModSyncService`` once Skyrim is set up here (its offers
+    wait for a join, see :func:`take_offers`), so this only knows where the
+    game is, what syncs, and when the instance is empty enough for a kept
+    copy to move into."""
+    if not is_vault(key):
+        return None
+    from modsync.sync import stignore  # stdlib only
+
+    return FolderSpec(
+        key=key,
+        label=VAULT_LABEL,
+        path=_skyrim_instance,
+        ignore=tuple(stignore.PATTERNS),
+        content=(*stignore.CONTENT_DIRS, "categories.dat", "modsync-vault.json"),
+        accepts=_no_mods,
+    )
+
+
+def offered_vaults(client: SyncthingClient) -> list[str]:
+    """The keys of the Skyrim vaults paired machines offer here."""
+    try:
+        pending = client.pending_folders() or {}
+    except Exception as exc:
+        log.info("pending folders unavailable: %s", exc)
+        return []
+    st = State.load()
+    paired = set(peers(client)) - set(st.forgotten_devices)
+    return sorted(fid.removeprefix(FOLDER_PREFIX) for fid, info in pending.items()
+                  if fid.startswith(FOLDER_PREFIX) and is_vault(fid.removeprefix(FOLDER_PREFIX))
+                  and fid != st.folder_id and set((info or {}).get("offeredBy") or {}) & paired)
+
+
+def kept_vault(st: State | None = None) -> str | None:
+    """The key of the Skyrim vault a copy is kept of here, if one is."""
+    st = st or State.load()
+    return next((k for k in st.held_folders if is_vault(k)), None)
 
 
 @dataclass
@@ -250,50 +326,75 @@ def stopping(key: str, st: State | None = None) -> bool:
 def share(client: SyncthingClient, spec: FolderSpec) -> Path:
     """Start syncing ``spec`` from this machine, with every paired machine.
     A copy kept here for other machines gives way: the folder syncs where the
-    game is from now on. When the game's folder has nothing of its own yet
-    (a new MO2 instance) and the kept copy is current, its files move there,
-    so nothing downloads again (:func:`_use_kept`); otherwise they stay where
-    they were."""
+    game is from now on (:func:`kept_copy_gives_way`)."""
+    if is_vault(spec.key):
+        raise RuntimeError("Skyrim's mods sync once you join them: 'modsync sync join kept <instance-dir>', "
+                           "or 'Use the mods kept here' on the Sync page.")
     root = spec.path()
     if root is None:
         raise RuntimeError(f"{spec.label}: set the game up on this machine first.")
-    kept = State.load().held_folders.get(spec.key)
-    before = None
-    current = False
-    if kept is not None:
-        try:
-            before = client.get_folder(spec.folder_id)
-        except Exception:
-            before = None  # not in Syncthing (removed by hand): nothing to put back
-        current = _kept_is_current(client, spec, before)
-        # Until it syncs at the game's folder, offers of it are left alone, so
-        # another process (the background service) can't take it up there
-        # while the kept copy moves in. _remember takes it off again.
-        _decline(spec.key)
-        try:
-            _release(client, spec)
-        except Exception:
-            _undecline(spec.key)
-            raise
-    moved: list[_Move] = []
-    try:
-        joined = (kept is not None and _has_content(Path(kept))) or _offered(client, spec)
-        if kept is not None and current:
-            moved = _use_kept(spec, Path(kept), root)
+    with kept_copy_gives_way(client, spec, root) as kept:
+        joined = (kept is not None and kept.had_content) or _offered(client, spec)
         if spec.on_share is not None and not joined:
             spec.on_share(root)  # a new shared folder; one already offered is joined as it is
         _put(client, spec, root, peers(client))
-    except Exception:
-        if kept is not None:
-            _undo_moves(moved)
-            _restore_kept(client, spec, before, Path(kept))
-        raise
-    _remember(spec.key, root)
-    if moved:
-        _tidy_kept(Path(kept))
-        log.info("%s now uses the copy that was kept here: %s moved to %s", spec.folder_id, kept, root)
+        _remember(spec.key, root)
     log.info("sharing %s (%s) from %s", spec.folder_id, spec.label, root)
     return root
+
+
+@dataclass
+class KeptCopy:
+    """A copy kept here that gave way to the game's folder (see
+    :func:`kept_copy_gives_way`)."""
+
+    path: Path
+    folder: dict | None  # its Syncthing folder before it gave way, to put back
+    had_content: bool  # it had files: the folder exists on other machines
+    moved: list[_Move] = field(default_factory=list)
+
+
+@contextmanager
+def kept_copy_gives_way(client: SyncthingClient, spec: FolderSpec, root: Path):
+    """Around setting ``spec`` up to sync at ``root``, where the game is: a
+    copy kept here for other machines leaves Syncthing first. When ``root``
+    has nothing of its own yet (a new MO2 instance) and the kept copy is
+    current, its files move there, so nothing downloads again
+    (:func:`_use_kept`); otherwise they stay where they were. Yields the
+    :class:`KeptCopy`, or None when no copy is kept here.
+
+    Until the block ends, offers of the folder are left alone, so another
+    process (the background service) can't keep it again while it moves. If
+    the block fails, the moves are undone and the copy is kept as it was, so
+    the other machines still sync through it."""
+    path = State.load().held_folders.get(spec.key)
+    if path is None:
+        yield None
+        return
+    try:
+        before = client.get_folder(spec.folder_id)
+    except Exception:
+        before = None  # not in Syncthing (removed by hand): nothing to put back
+    kept = KeptCopy(Path(path), before, _has_content(Path(path)))
+    current = _kept_is_current(client, spec, before)
+    _decline(spec.key)
+    try:
+        _release(client, spec)
+    except Exception:
+        _undecline(spec.key)
+        raise
+    try:
+        if current:
+            kept.moved = _use_kept(spec, kept.path, root)
+        yield kept
+    except BaseException:
+        _undo_moves(kept.moved)
+        _restore_kept(client, spec, before, kept.path)
+        raise
+    _undecline(spec.key)
+    if kept.moved:
+        _tidy_kept(kept.path)
+        log.info("%s now uses the copy that was kept here: %s moved to %s", spec.folder_id, kept.path, root)
 
 
 def _undecline(key: str) -> None:
@@ -433,8 +534,13 @@ def hold(client: SyncthingClient, spec: FolderSpec) -> Path:
     if spec.key in st.game_folders and not stopping(spec.key, st):
         raise RuntimeError(f"{spec.label} already syncs here, where the game is.")
     if spec.path() is not None:
+        if is_vault(spec.key):
+            raise RuntimeError("Skyrim's Mod Organizer 2 is set up here, so its mods sync where it is "
+                               "('modsync sync join').")
         raise RuntimeError(f"{spec.label}: the game is set up here, so its folder syncs where the game is "
                            f"('modsync sync share {spec.key}').")
+    if spec.folder_id == st.folder_id:
+        raise RuntimeError(f"{spec.label} already syncs here.")
     root = held_root(spec)
     _put(client, spec, root, peers(client), receive_only=True)
     _remember(spec.key, root, held=True)
@@ -452,10 +558,12 @@ def hold_all(client: SyncthingClient | None, on: bool) -> list[str]:
         State.update(hold_all=False)
         return []
     elsewhere = {s.key for s in specs() if s.path() is None}
+    no_skyrim = _skyrim_instance() is None
 
     def change(st: State) -> None:
         st.hold_all = True
-        st.declined_folders = [k for k in st.declined_folders if k not in elsewhere or stopping(k, st)]
+        st.declined_folders = [k for k in st.declined_folders
+                               if (k not in elsewhere and not (no_skyrim and is_vault(k))) or stopping(k, st)]
 
     State.change(change)
     return take_offers(client)
@@ -627,12 +735,17 @@ def take_offers(client: SyncthingClient) -> list[str]:
         offered_by = [d for d in ((info or {}).get("offeredBy") or {}) if d in paired]
         if not offered_by:
             continue
+        if folder_id == st.folder_id:
+            continue  # the vault this machine uses, left by hand: ModSyncService puts it back
         root = spec.path()
         held = root is None
         if held:
             if not st.hold_all:
                 continue
             root = held_root(spec)
+        elif is_vault(spec.key):
+            log.info("%s is offered; Skyrim is set up here, so it waits for a join", folder_id)
+            continue
         elif spec.accepts is not None and not spec.accepts(root):
             log.info("%s is offered, but %s has content of its own; waiting for 'share'", folder_id, root)
             continue

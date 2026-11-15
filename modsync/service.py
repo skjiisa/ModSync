@@ -17,7 +17,7 @@ import shutil
 import socket
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -505,12 +505,16 @@ class ModSyncService:
         """Stop using the chosen instance (and its vault, if any). Files stay."""
         if self.state.syncing:
             self.stop_sync()
-        # Everything about MO2 and its vault goes; the other games stay set up.
-        keep = self.reload_state()
-        self.state = State(dfu_path=keep.dfu_path, game_folders=keep.game_folders,
-                           declined_folders=keep.declined_folders, paired=keep.paired,
-                           home_game=keep.home_game, held_folders=keep.held_folders, hold_all=keep.hold_all)
-        self.state.save()
+        # Everything about MO2 and its vault goes; the other games, and what
+        # this machine knows about its pairings, stay.
+        blank = State()
+
+        def forget(st: State) -> None:
+            for name in ("instance_path", "folder_id", "instance_label", "awaiting_vault_version", "sync_paused",
+                         "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside"):
+                setattr(st, name, getattr(blank, name))
+
+        self.state = State.change(forget)
 
     # --- vaults ---
     @staticmethod
@@ -542,6 +546,7 @@ class ModSyncService:
         peer_host: str | None = None,
         peer_name: str = "",
         merge: bool = False,
+        paired: list[str] | None = None,
     ) -> PairingCode:
         """Join a vault advertised by another machine's pairing code.
 
@@ -555,7 +560,15 @@ class ModSyncService:
 
         ``peer_host`` is the address the peer was reached on during LAN pairing,
         so Syncthing can connect without its own discovery, and ``peer_name``
-        the name it gave. Without one, Syncthing names the peer once it connects."""
+        the name it gave. Without one, Syncthing names the peer once it connects.
+
+        ``paired``: the machines to share the vault with, all already paired
+        here (:meth:`join_kept_vault`); the code's machine is left as it is
+        then, rather than paired again.
+
+        A copy of this vault kept here for other machines gives way, and when
+        the instance has no mods or downloads yet, its files move in, so
+        nothing downloads again (``folders.kept_copy_gives_way``)."""
         if not code.has_vault:
             raise RuntimeError("That code pairs machines that sync only games' folders, not Mod Organizer 2. "
                                "Use the code from the machine whose Mod Organizer 2 setup you want.")
@@ -575,30 +588,97 @@ class ModSyncService:
                 shutil.move(local_meta, archive / local_meta.name)
             else:
                 local_meta.unlink()
-        self._introduce_one_way(required=True)
-        self._unforget(code.device_id)
+        if paired is None:
+            self._introduce_one_way(required=True)
+            self._unforget(code.device_id)
+        key = code.folder_id.removeprefix(folders.FOLDER_PREFIX)
+        spec = folders.vault_spec(key) if code.folder_id.startswith(folders.FOLDER_PREFIX) else None
         with self.manager.client() as client:
-            pairing.add_peer_device(
-                client,
-                code.device_id,
-                peer_name,
-                addresses=pairing.static_addresses(peer_host),
-                introducer=True,
-            )
-            pairing.share_instance_folder(
-                client, code.folder_id, instance_path, [code.device_id], label=label,
-                receive_only=not merge, versions_dir=archive,
-            )
-            folders.share_with(client, code.device_id)
-            device_id = client.my_id()
-        self._remember(instance_path, code.folder_id, label, sync_paused=False, paired=True,
-                       copy_phase="" if merge else "receiving", copy_source="" if merge else code.device_id,
-                       copy_expected=-1 if merge or code.sequence is None else code.sequence,
-                       copy_archive=str(archive) if archive else "", set_aside="",
-                       awaiting_vault_version=True)
-        log.info("joined vault %s from device %s… into %s (%s)", code.folder_id, code.device_id[:7],
-                 instance_path, "merge" if merge else "copy")
+            if paired is None:
+                pairing.add_peer_device(
+                    client,
+                    code.device_id,
+                    peer_name,
+                    addresses=pairing.static_addresses(peer_host),
+                    introducer=True,
+                )
+            with folders.kept_copy_gives_way(client, spec, instance_path) if spec else nullcontext() as kept:
+                # The machines the kept copy was shared with keep syncing it with this one.
+                had = [d.get("deviceID") for d in (kept.folder or {}).get("devices", [])] if kept else []
+                pairing.share_instance_folder(
+                    client, code.folder_id, instance_path, [code.device_id, *(paired or []), *filter(None, had)],
+                    label=label, receive_only=not merge, versions_dir=archive,
+                )
+                folders.share_with(client, code.device_id)
+                device_id = client.my_id()
+                self._remember(instance_path, code.folder_id, label, sync_paused=False, paired=True,
+                               copy_phase="" if merge else "receiving",
+                               copy_source="" if merge else code.device_id,
+                               copy_expected=-1 if merge or code.sequence is None else code.sequence,
+                               copy_archive=str(archive) if archive else "", set_aside="",
+                               awaiting_vault_version=True)
+        if spec is not None:
+            self._undecline(key)  # declined when this machine left the vault before
+        log.info("joined vault %s from device %s… into %s (%s%s)", code.folder_id, code.device_id[:7],
+                 instance_path, "merge" if merge else "copy",
+                 ", using the copy kept here" if kept is not None and kept.moved else "")
         return PairingCode(device_id, code.folder_id, label)
+
+    def join_kept_vault(self, instance_path: Path | str, *, merge: bool = False) -> PairingCode:
+        """Join the Skyrim vault this machine keeps a copy of for the others:
+        they're paired already, so no code is needed. Copies from one that's
+        connected now (any of them when none is), and shares the vault with
+        every machine the kept copy was shared with. See :meth:`join_vault`."""
+        key = folders.kept_vault(self.reload_state())
+        if key is None:
+            raise RuntimeError("No copy of Skyrim's mods is kept here. Join with the other machine's "
+                               "pairing code instead.")
+        folder_id = folders.FOLDER_PREFIX + key
+        self.ensure_running()
+        with self.manager.client() as client:
+            me = client.my_id()
+            try:
+                folder = client.get_folder(folder_id)
+            except Exception as exc:
+                raise RuntimeError(f"Syncthing doesn't have the copy kept here any more: {exc}") from exc
+            forgotten = set(self.state.forgotten_devices)
+            others = [d["deviceID"] for d in folder.get("devices", [])
+                      if d.get("deviceID") not in (None, "", me) and d["deviceID"] not in forgotten]
+            try:
+                conns = client.connections().get("connections", {})
+            except Exception:
+                conns = {}
+
+            def remote_state(device: str) -> str:
+                try:
+                    return client.completion(folder_id, device).get("remoteState") or ""
+                except Exception:
+                    return ""
+
+            # The copy is kept for every paired machine, including ones that
+            # sync only games and never had the vault: copy from one that
+            # shares it, connected first. One Syncthing can't tell about yet
+            # (offline since it started) may do; the copy moves on to another
+            # if it turns out not to (_copy_from_another).
+            states = {d: remote_state(d) for d in others}
+        sharing = [d for d in others if states[d] == "valid"]
+        maybe = [d for d in others if states[d] not in ("valid", "notSharing")]
+        candidates = sharing or maybe
+        if not candidates:
+            raise RuntimeError("No paired machine shares Skyrim's mods with this one any more. "
+                               "Join with the pairing code of the machine that has them instead.")
+        source = next((d for d in candidates if (conns.get(d) or {}).get("connected")), candidates[0])
+        return self.join_vault(PairingCode(source, folder_id, ""), instance_path, merge=merge,
+                               paired=[d for d in others if d != source])
+
+    def _undecline(self, key: str) -> None:
+        if key not in State.load().declined_folders:
+            return
+
+        def change(st: State) -> None:
+            st.declined_folders = [k for k in st.declined_folders if k != key]
+
+        self.state = State.change(change)
 
     @staticmethod
     def _new_copy_archive(instance_path: Path) -> Path:
@@ -696,6 +776,8 @@ class ModSyncService:
                 if observe:
                     self._copy_seen = self._index_seen = None
                 progress.phase = "waiting"
+                if act and st.copy_expected == -1:
+                    self._copy_from_another(client, fid, source, connections)
                 return progress
             if not self._index_complete(int(remote.get("sequence") or 0), st.copy_expected, observe):
                 # A one-off look (`modsync sync status`) has no earlier poll to
@@ -762,6 +844,40 @@ class ModSyncService:
             log.info("copy: later changes will be set aside in %s", fresh)
             return
         client.revert(fid)
+
+    def _copy_from_another(self, client, fid: str, source: str, connections: dict) -> None:
+        """The machine a copy waits for can't be copied from now (offline, or
+        it doesn't share the vault: joined without a code, from a copy kept
+        for machines that include ones that sync only games). Copy from a
+        connected machine that shares it instead. Only when the join didn't
+        say how far its source's list went, which ties the copy to that one
+        machine. The switch happens under the state's lock, rechecked there,
+        so a machine being forgotten meanwhile isn't chosen."""
+        try:
+            devices = [d.get("deviceID") for d in client.get_folder(fid).get("devices", [])]
+        except Exception:
+            return
+        forgotten = set(self.state.forgotten_devices)
+        for device in devices:
+            if (device in (None, "", source) or device in forgotten
+                    or not (connections.get(device) or {}).get("connected")):
+                continue
+            try:
+                if client.completion(fid, device).get("remoteState") != "valid":
+                    continue
+            except Exception:
+                continue
+
+            def switch(st: State, device=device) -> None:
+                if (st.copying and st.folder_id == fid and st.copy_source == source
+                        and st.copy_expected == -1 and device not in st.forgotten_devices):
+                    st.copy_source = device
+
+            self.state = State.change(switch)
+            if self.state.copy_source == device:
+                log.info("copy: %s… can't be copied from now; copying %s from %s… instead",
+                         source[:7], fid, device[:7])
+            return
 
     def _copy_settled(self, status: dict, ready: bool, observe: bool) -> bool:
         """Ready now, and nothing changed since the last observed poll."""
@@ -1091,7 +1207,11 @@ class ModSyncService:
         self.ensure_running()
 
         def forget(st: State) -> None:
-            # Under the state's lock, so pairing with it again can't interleave.
+            # Under the state's lock, so pairing with it again can't interleave,
+            # nor a copy moving on to it (_copy_from_another).
+            if st.copying and st.copy_source == device_id:
+                raise RuntimeError("This machine is still copying the vault from that one. "
+                                   "Let the copy finish, or leave the vault, first.")
             with self.manager.client() as client:
                 me = client.my_id()
                 if device_id == me:
@@ -1171,6 +1291,20 @@ class ModSyncService:
             root = folders.hold(client, spec)
         self.reload_state()
         return root
+
+    def hold_skyrim_vault(self) -> Path:
+        """Keep a copy of the Skyrim vault a paired machine offers here, for
+        the other machines, Skyrim not being set up here."""
+        self.ensure_running()
+        with self.manager.client() as client:
+            offered = folders.offered_vaults(client)
+        if not offered:
+            raise RuntimeError("No paired machine offers Skyrim's mods here. It offers them once it shares "
+                               "them and both machines are on.")
+        if len(offered) > 1:
+            raise RuntimeError("More than one Skyrim setup is offered here: "
+                               + ", ".join(offered) + ". Name one with 'modsync sync hold <id>'.")
+        return self.hold_game_folder(offered[0])
 
     def hold_all_games(self, on: bool) -> list[str]:
         """Keep a copy of every game's folder paired machines offer, for games
@@ -1373,9 +1507,10 @@ class ModSyncService:
     def _leave_vault(self, forget_devices: bool) -> None:
         folder_id = self.reload_state().folder_id
         games = [*self.state.game_folders, *self.state.held_folders]
-        if forget_devices and games:
-            # Pairing is machine-wide: the games' folders still sync with them.
-            log.info("keeping the paired machines for %s", ", ".join(games))
+        if forget_devices and (games or self.state.hold_all):
+            # Pairing is machine-wide: the games' folders still sync with them,
+            # or are kept here for them.
+            log.info("keeping the paired machines for %s", ", ".join(games) or "the games kept here")
             forget_devices = False
         log.info("leaving vault %s (forget devices: %s)", folder_id, forget_devices)
         try:
@@ -1397,6 +1532,14 @@ class ModSyncService:
                                 pass
         except Exception:
             pass  # daemon may be down; clearing our own state is what matters
+        if folder_id and folders.is_vault(folder_id.removeprefix(folders.FOLDER_PREFIX)):
+            # Left on purpose: offers of it aren't kept here as a copy for the
+            # others (joining again, or turning "Keep games not installed
+            # here" on again without Skyrim here, takes it back).
+            def decline(st: State) -> None:
+                st.declined_folders = sorted({*st.declined_folders, folder_id.removeprefix(folders.FOLDER_PREFIX)})
+
+            State.change(decline)
         # A copy left half-way leaves what it set aside so far in its archive.
         self.update_state(folder_id=None, sync_paused=False, copy_phase="", copy_source="", copy_expected=0,
                           copy_archive="", set_aside="", awaiting_vault_version=False,

@@ -20,7 +20,7 @@ from modsync.ui import nav, theme
 from modsync.ui.input import Action
 from modsync.ui.pages.game import GamePanel
 from modsync.ui.pages.mods import Mo2Chooser
-from modsync.ui.pages.sync import JoinPanel, create_vault
+from modsync.ui.pages.sync import JoinPanel, create_vault, kept_vault_tile
 from modsync.ui.widgets import Panel, PageHeader, Tile, label, scroller
 
 STEPS = (
@@ -121,10 +121,14 @@ class SetupFlow(QWidget):
             self.copy = Tile("Copy from another machine", "Find the machine with the mods, or paste its "
                              "pairing code.", "download", size="choice")
             self.copy.clicked.connect(self._show_join)
-            for tile in (self.local, self.share, self.copy):
-                row.addWidget(tile)
-            v2.addLayout(row)
         self.join = JoinPanel(host)  # host.vault_joined finishes the wizard
+        self.use_kept = None
+        if not self.service.state.syncing:
+            self.use_kept = kept_vault_tile(host, self.join)
+            for tile in (self.use_kept, self.local, self.share, self.copy):
+                if tile is not None:
+                    row.addWidget(tile)
+            v2.addLayout(row)
         self.join_panel = Panel()
         self.join_panel.add(self.join)
         self.join_panel.setVisible(False)
@@ -163,7 +167,7 @@ class SetupFlow(QWidget):
     def _on_busy(self, busy: bool) -> None:
         # A join or share in flight, a file operation, or a game started from
         # here: hold the choices, and never rewrite game files under a game.
-        for tile in (self.local, self.share, self.copy, self.keep):
+        for tile in (self.local, self.share, self.copy, self.keep, self.use_kept):
             if tile is not None:
                 tile.setEnabled(not busy)
         self.chooser.setEnabled(not busy)
@@ -243,7 +247,7 @@ class SetupFlow(QWidget):
         page = self.stack.currentWidget()
         preferred = {0: self.keep or (self.chooser.found_tiles[0] if self.chooser.found_tiles else None),
                      1: self.repair_tile() or self.finish_tile,
-                     2: self.local or getattr(self, "keep_sync", None)}.get(self.index)
+                     2: self.use_kept or self.local or getattr(self, "keep_sync", None)}.get(self.index)
         candidates = nav.focusables(page)
         target = preferred if preferred in candidates else (nav.reading_order(candidates, page) or [None])[0]
         if target is not None:

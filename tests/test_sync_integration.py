@@ -697,6 +697,91 @@ class SyncthingIntegration(unittest.TestCase):
                 a_mgr.stop()
                 b_mgr.stop()
 
+    def test_a_skyrim_vault_kept_for_others_is_joined_without_downloading_again(self) -> None:
+        """#149 end to end: A shares Skyrim's vault. B, with no Skyrim, pairs
+        and keeps every game, so it keeps a copy of the vault. Then B installs
+        MO2 and joins the kept copy without a code: the files move into the
+        new instance (same inodes), the copy finishes, and B's changes reach A."""
+        from modsync.sync import folders
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            inst_a, inst_b = tmp / "A" / "MO2", tmp / "B" / "MO2"
+            (inst_a / "mods" / "A Mod").mkdir(parents=True)
+            (inst_a / "mods" / "A Mod" / "a.esp").write_text("from A")
+            (inst_a / "profiles" / "Default").mkdir(parents=True)
+            (inst_a / "profiles" / "Default" / "modlist.txt").write_text("+A Mod\n")
+            (a_mgr, a_port), (b_mgr, b_port) = self._two_nodes(tmp)
+
+            @contextmanager
+            def on(name):
+                with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp / f"config-{name}"),
+                                             "XDG_DATA_HOME": str(tmp / f"data-{name}")}):
+                    yield
+
+            try:
+                with on("A"), patch("modsync.service.gameversion.find_game_dir", return_value=None):
+                    a = ModSyncService(manager=a_mgr)
+                    code = a.create_vault(inst_a, "Skyrim SE")
+                key = code.folder_id.removeprefix(folders.FOLDER_PREFIX)
+                with on("B"):
+                    b = ModSyncService(manager=b_mgr)
+                    b.pair(PairingCode(code.device_id, "", "A"))
+                    with b_mgr.client() as client:
+                        pairing.add_peer_device(client, code.device_id, "A", addresses=[f"tcp://127.0.0.1:{a_port}"],
+                                                introducer=True)
+                    b.hold_all_games(True)
+                    kept = folders.held_root(folders.vault_spec(key))
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline and not (kept / "mods" / "A Mod" / "a.esp").exists():
+                    with on("A"):
+                        a.accept_pending()
+                    with on("B"):
+                        b.accept_pending()
+                    time.sleep(0.5)
+                self.assertTrue((kept / "mods" / "A Mod" / "a.esp").exists(), "B never kept A's vault")
+                inode = (kept / "mods" / "A Mod" / "a.esp").stat().st_ino
+                with on("B"):
+                    with b_mgr.client() as client:  # current: nothing left to receive
+                        deadline = time.monotonic() + 60
+                        while time.monotonic() < deadline and (
+                                client.folder_status(code.folder_id).get("state") != "idle"
+                                or client.folder_status(code.folder_id).get("needTotalItems")):
+                            time.sleep(0.5)
+                    (inst_b / "profiles" / "Default").mkdir(parents=True)  # what a new MO2 makes
+                    (inst_b / "profiles" / "Default" / "modlist.txt").write_text("# new\n")
+                    with patch("modsync.service.gameversion.find_game_dir", return_value=None):
+                        b.choose_instance(inst_b)
+                    b.INDEX_QUIET_S = 3.0
+                    b.join_kept_vault(inst_b)
+                    self.assertEqual((inst_b / "mods" / "A Mod" / "a.esp").stat().st_ino, inode,
+                                     "the kept copy wasn't moved in")
+                    self.assertEqual(State.load().held_folders, {})
+                    deadline = time.monotonic() + 120
+                    while time.monotonic() < deadline and b.state.copy_phase:
+                        b.advance_copy()
+                        time.sleep(1)
+                    self.assertEqual(b.state.copy_phase, "", "the copy didn't finish (see B.log)")
+                    self.assertEqual((inst_b / "profiles" / "Default" / "modlist.txt").read_text(), "+A Mod\n")
+                    (inst_b / "mods" / "B Mod").mkdir()
+                    (inst_b / "mods" / "B Mod" / "b.esp").write_text("from B")
+                    with b_mgr.client() as client:
+                        client.rescan(code.folder_id)
+                received = inst_a / "mods" / "B Mod" / "b.esp"
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline and not received.exists():
+                    time.sleep(0.5)
+                self.assertTrue(received.exists(), "B's change never reached A")
+            except Exception:
+                for name in ("A", "B"):
+                    path = tmp / f"{name}.log"
+                    if path.exists():
+                        print(path.name, path.read_text()[-6000:])
+                raise
+            finally:
+                a_mgr.stop()
+                b_mgr.stop()
+
     def test_daggerfall_unity_mods_sync_and_nothing_else(self) -> None:
         """The dfu-mods folder's allow-list against a real Syncthing: mods, the
         files users add under StreamingAssets and PortableAppdata/Mods arrive;
