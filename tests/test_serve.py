@@ -23,6 +23,21 @@ class FakeService:
         self.queued = False
         self.waits = []
 
+    holds_for_play = False
+    pause_fails = False
+
+    def pause_for_play(self):
+        if self.pause_fails:
+            raise RuntimeError("Syncthing didn't answer")
+        self.holds_for_play = True
+        self.state.paused_for_play = ["modsync-1"]
+        return ["modsync-1"]
+
+    def resume_after_play(self):
+        self.holds_for_play = False
+        resumed, self.state.paused_for_play = self.state.paused_for_play, []
+        return resumed
+
     def steam_change_queued(self):
         return self.queued
 
@@ -76,7 +91,10 @@ class ServerTests(unittest.TestCase):
         svc = FakeService(state, **kw)
         lines, notes = [], []
         server = Server(svc, log=lines.append, notify=lambda t, b: notes.append((t, b)))
+        server._detect_play = lambda: self.game  # never this machine's processes
         return svc, server, lines, notes
+
+    game = False
 
     def test_a_newer_modsync_taking_over_the_state_stops_it(self):
         svc, server, _, _ = self.make(State(instance_path="/mo2"))
@@ -232,6 +250,72 @@ class ServerTests(unittest.TestCase):
                                   "that were only here are kept in /mo2/.modsync-before-join/x.")])
         server.tick()  # the copy is over: no second notice, no status read
         self.assertEqual(len(notes), 1)
+
+    def test_a_game_pauses_syncing_until_it_closes(self):
+        svc, server, lines, _ = self.make(State(instance_path="/mo2", folder_id="modsync-1"))
+        now = [0.0]
+        server._clock = lambda: now[0]
+        self.game = True
+        server.tick()
+        self.assertTrue(svc.holds_for_play)
+        self.assertIn("  A game is running: paused 1 folder(s) until it closes.", lines)
+        self.assertEqual(svc.upkept, 0)  # nothing else while it plays
+        svc.accept_pending = lambda: self.fail("no pairing while a game runs")
+        clock = server._clock
+        self.assertEqual(self.quick_wait(server, 30), 30)
+        self.assertFalse(server._watch_on.is_set())  # a plain sleep: no watching Syncthing's events
+        server._clock = clock
+        now[0] = 10
+        self.game = False
+        server.tick()  # checked at most every 30 s
+        self.assertTrue(svc.holds_for_play)
+        now[0] = 30
+        del svc.accept_pending
+        server.tick()
+        self.assertFalse(svc.holds_for_play)
+        self.assertEqual(svc.state.paused_for_play, [])
+        self.assertIn("  No game is running: resumed 1 folder(s).", lines)
+        self.assertEqual(svc.upkept, 1)
+
+    def test_a_window_opened_and_closed_mid_game_does_not_end_the_pause(self):
+        svc, server, _, _ = self.make(State(instance_path="/mo2", folder_id="modsync-1"))
+        now = [0.0]
+        server._clock = lambda: now[0]
+        self.game = True
+        server.tick()
+        svc.state.paused_for_play = []  # a window opened (resuming them) and closed within 30 s
+        now[0] = 10
+        server.tick()
+        self.assertFalse(svc.holds_for_play)
+        now[0] = 30
+        server.tick()
+        self.assertTrue(svc.holds_for_play)  # paused again
+        self.assertEqual(svc.state.paused_for_play, ["modsync-1"])
+
+    def test_never_pauses_mid_copy_or_without_anything_syncing(self):
+        self.game = True
+        svc, server, _, _ = self.make(State(instance_path="/mo2", folder_id="modsync-1", copy_phase="receiving"))
+        server.tick()
+        self.assertFalse(svc.holds_for_play)
+        svc, server, _, _ = self.make(State(instance_path="/mo2"))
+        server._detect_play = lambda: self.fail("no need to look")
+        server.tick()
+        self.assertFalse(svc.holds_for_play)
+
+    def test_a_failed_pause_keeps_syncing(self):
+        self.game = True
+        svc, server, lines, _ = self.make(State(instance_path="/mo2", folder_id="modsync-1"))
+        svc.pause_fails = True
+        server.tick()
+        self.assertFalse(server._playing)
+        self.assertEqual(svc.upkept, 1)
+        self.assertTrue(any("could not pause for the game" in l for l in lines))
+
+    def test_folders_left_paused_by_a_crash_are_resumed(self):
+        svc, server, _, _ = self.make(State(instance_path="/mo2", folder_id="modsync-1",
+                                            paused_for_play=["modsync-1"]))
+        server.tick()
+        self.assertEqual(svc.state.paused_for_play, [])
 
     def test_queued_pin_is_applied_without_a_vault(self):
         svc, server, lines, notes = self.make(State())

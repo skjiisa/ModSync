@@ -1014,6 +1014,101 @@ class KeptCopies(GameFolderBase):
         self.assertEqual((st.held_folders, st.hold_all, st.paired), ({"test-mods": str(self.kept)}, True, True))
         self.assertIn("DESKTOP", self.st.devices)
 
+class PauseForPlay(GameFolderBase):
+    """While a game runs the background service pauses ModSync's folders."""
+
+    def setUp(self):
+        super().setUp()
+        for fid, paused in (("modsync-vault", False), ("modsync-test-mods", False),
+                            ("modsync-dfu-saves", True), ("someone-elses", False)):
+            self.st.folders[fid] = {"id": fid, "paused": paused, "devices": []}
+        State.update(instance_path=str(self.tmp / "MO2"), folder_id="modsync-vault")
+        self.service.reload_state()
+
+    def paused(self):
+        return {fid for fid, f in self.st.folders.items() if f.get("paused")}
+
+    def test_pauses_only_its_own_running_folders_and_resumes_only_those(self):
+        self.assertEqual(sorted(self.service.pause_for_play()), ["modsync-test-mods", "modsync-vault"])
+        self.assertEqual(self.paused(), {"modsync-vault", "modsync-test-mods", "modsync-dfu-saves"})
+        self.assertEqual(State.load().paused_for_play, ["modsync-test-mods", "modsync-vault"])
+        self.assertTrue(self.service.holds_for_play)
+        self.service.ensure_running()  # the service itself, mid-game: stays paused
+        self.assertIn("modsync-vault", self.paused())
+        self.assertEqual(sorted(self.service.resume_after_play()), ["modsync-test-mods", "modsync-vault"])
+        self.assertEqual(self.paused(), {"modsync-dfu-saves"})  # paused by someone else: stays so
+        self.assertEqual(State.load().paused_for_play, [])
+        self.assertFalse(self.service.holds_for_play)
+
+    def test_a_window_talking_to_syncthing_resumes_them(self):
+        self.service.pause_for_play()
+        window = ModSyncService(manager=self.st)
+        window.ensure_running()
+        self.assertEqual(self.paused(), {"modsync-dfu-saves"})
+        self.assertEqual(State.load().paused_for_play, [])
+
+    def test_a_vault_paused_by_the_user_meanwhile_stays_paused(self):
+        self.service.pause_for_play()
+        State.update(sync_paused=True)
+        self.assertEqual(self.service.resume_after_play(), ["modsync-test-mods"])
+        self.assertIn("modsync-vault", self.paused())
+
+    def test_a_folder_syncthing_did_not_answer_for_is_tried_again(self):
+        self.service.pause_for_play()
+        real = _Client.get_folder
+
+        def flaky(client, fid):
+            if fid == "modsync-vault":
+                raise OSError("timed out")
+            return real(client, fid)
+
+        with patch.object(_Client, "get_folder", flaky), self.assertRaisesRegex(RuntimeError, "modsync-vault"):
+            self.service.resume_after_play()
+        self.assertEqual(State.load().paused_for_play, ["modsync-vault"])
+        self.assertEqual(self.paused(), {"modsync-vault", "modsync-dfu-saves"})
+        self.assertEqual(self.service.resume_after_play(), ["modsync-vault"])
+        self.assertEqual(State.load().paused_for_play, [])
+
+    def test_a_window_resuming_meanwhile_waits_for_the_pause_to_finish(self):
+        # Once the race the review found: the window cleared the record between
+        # the service noting the folders and pausing them, and they stayed paused.
+        import threading
+
+        window = ModSyncService(manager=self.st)
+        real = _Client.put_folder
+        seen = {}
+
+        def put(client, folder):
+            if folder.get("paused") and "thread" not in seen:
+                seen["noted"] = list(State.load().paused_for_play)  # noted before pausing
+                seen["thread"] = threading.Thread(target=window.resume_after_play)
+                seen["thread"].start()
+                seen["thread"].join(0.2)
+                seen["waited"] = seen["thread"].is_alive()
+            real(client, folder)
+
+        with patch.object(_Client, "put_folder", put):
+            self.service.pause_for_play()
+        seen["thread"].join(5)
+        self.assertEqual(seen["noted"], ["modsync-test-mods", "modsync-vault"])
+        self.assertTrue(seen["waited"])
+        self.assertEqual(self.paused(), {"modsync-dfu-saves"})
+        self.assertEqual(State.load().paused_for_play, [])
+
+    def test_the_user_pausing_the_vault_takes_the_same_lock(self):
+        self.service.pause_sync(True)
+        self.assertTrue(State.load().sync_paused)
+        self.assertIn("modsync-vault", self.paused())
+        self.service.pause_sync(False)
+        self.assertNotIn("modsync-vault", self.paused())
+
+    def test_a_folder_gone_meanwhile_is_skipped(self):
+        self.service.pause_for_play()
+        del self.st.folders["modsync-test-mods"]
+        self.assertEqual(self.service.resume_after_play(), ["modsync-vault"])
+        self.assertEqual(State.load().paused_for_play, [])
+
+
 class Cli(GameFolderBase):
     def _run(self, *args):
         import io

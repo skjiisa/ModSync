@@ -36,7 +36,9 @@ from modsync import config
 # made since all over again).
 # 3: held_folders and hold_all, which an older one would drop (leaving the
 # copies kept here in Syncthing with nothing looking after them).
-SCHEMA = 3
+# 4: paused_for_play, which an older one would drop (leaving the folders the
+# background service paused for a game paused for good).
+SCHEMA = 4
 
 
 EXIT_NEWER_STATE = 3  # how a command ends on one; the background service isn't restarted for it
@@ -57,7 +59,7 @@ def _refuse_newer(p: Path, data: object) -> None:
 _FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "awaiting_vault_version",
            "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside", "dfu_path", "game_folders", "declined_folders", "paired",
            "home_game", "stand_in_names_cleared", "forgotten_devices", "one_way_introducers", "held_folders",
-           "hold_all")
+           "hold_all", "paused_for_play")
 
 
 @dataclass
@@ -114,6 +116,9 @@ class State:
     # Pairings made before each pair introduced only one way have been sorted
     # out (see modsync.sync.pairing.introduce_one_way).
     one_way_introducers: bool = False
+    # ModSync's folders the background service paused in Syncthing while a game
+    # runs (folder ids), to resume when it stops or a window opens.
+    paused_for_play: list[str] = field(default_factory=list)
     # The version of the file's format this ModSync writes (SCHEMA); never read back.
     schema: int = SCHEMA
 
@@ -138,6 +143,8 @@ class State:
                     state.held_folders = {}
                 if not isinstance(state.forgotten_devices, list):
                     state.forgotten_devices = []
+                if not isinstance(state.paused_for_play, list):
+                    state.paused_for_play = []
                 return state
             except (OSError, ValueError, TypeError):
                 pass
@@ -185,6 +192,11 @@ class State:
             fn(state)
             state._write()
         return state
+
+    def write_now(self) -> None:
+        """Inside ``change``'s ``fn``: write what it has changed so far, before
+        it goes on to something a crash could leave half done."""
+        self._write()
 
     @classmethod
     @contextmanager
