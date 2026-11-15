@@ -72,7 +72,7 @@ def takes_downloads(game: Game) -> bool:
 
 def note_path(game: Game) -> Path:
     """Where ModSync leaves the link for the hub that Steam's launch runs."""
-    return state_dir() / f"steam-{game.appid}-download.txt"
+    return downloads.shared_dir() / f"steam-{game.appid}-download.txt"
 
 
 def taken_path(game: Game) -> Path:
@@ -80,7 +80,7 @@ def taken_path(game: Game) -> Path:
 
 
 def _record_path(game: Game) -> Path:
-    return state_dir() / f"steam-{game.appid}-download-launch"
+    return downloads.shared_dir() / f"steam-{game.appid}-download-launch"
 
 
 def take_link(game: Game) -> str | None:
@@ -135,6 +135,16 @@ class SteamDownloads:
         if code != 0:
             raise RuntimeError(f"Mod Organizer 2 didn't take the download (exit code {code}). Details: {path}")
         return "Passed the download to Mod Organizer 2."
+
+    def launching(self) -> str | None:
+        """Steam runs every launch of the game under its reaper, from Play
+        until the game (or MO2) exits: ModSync's window waiting after Play,
+        Proton starting, the game running."""
+        try:
+            found = background.run_host(["pgrep", "-f", f"SteamLaunch AppId={self.game.appid}( |$)"], timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return f"Steam is already launching {self.game.name}" if found.returncode == 0 else None
 
     def through_hook(self) -> bool:
         from modsync import launchhook

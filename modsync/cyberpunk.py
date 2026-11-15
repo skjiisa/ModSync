@@ -393,7 +393,7 @@ def mo2_running(game: heroic.GogGame, instance: Path) -> bool:
 def _launch_record() -> Path:
     """When ModSync last started MO2, for a download or its own Play or Open
     MO2 (its time is the file's), and how: "hook" or "direct"."""
-    return state_dir() / "cyberpunk-download-launch"
+    return downloads.shared_dir() / "cyberpunk-download-launch"
 
 
 def _launch_lock():
@@ -450,6 +450,9 @@ class _Downloads:
 
     def pass_link(self, url: str) -> str:
         return _pass_to_mo2(self.game, self.instance, url)
+
+    def launching(self) -> str | None:
+        return None
 
     def through_hook(self) -> bool:
         refresh_hook()  # the script must be one that knows to look for the link

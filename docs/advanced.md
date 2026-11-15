@@ -993,7 +993,10 @@ A link reaches MO2 in one of three ways:
   goes through Heroic. The hook only takes a link left in the last three
   minutes. Another link clicked while MO2 is still starting for a download
   (or, for Cyberpunk, for ModSync's Play) waits for it and then goes to it
-  directly.
+  directly. So does a Skyrim link clicked while Steam is already launching
+  the game for something else, such as Play with ModSync's window waiting
+  on a choice: Steam would ignore another launch. It waits up to five
+  minutes for MO2 to open.
 - Otherwise MO2 opens with the link the way Open Mod Organizer 2 opens it.
   For Skyrim that includes Steam being closed: the game starts Steam itself
   if you then play from MO2.

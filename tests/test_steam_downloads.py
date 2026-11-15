@@ -38,24 +38,35 @@ class Downloading:
     """steam_downloads.download for Skyrim with the plan, the hook and every
     way out stubbed."""
 
-    def __init__(self, tmp_path, *, running=False, hook_on=False, steam_running=True):
+    def __init__(self, tmp_path, *, running=False, hook_on=False, steam_running=True, launching=False):
         self.plan = make_plan(tmp_path)
+        self.launching = launching  # Steam's reaper is running a launch of the game
+        self.opened = subprocess.CompletedProcess([], 0, "", "")  # what xdg-open answers
         hook = SimpleNamespace(installed=hook_on, selected=hook_on, steam_running=steam_running)
         self.patches = [
             patch.object(steam_downloads, "state_dir", return_value=tmp_path / "state"),
+            patch.object(downloads, "shared_dir", return_value=tmp_path / "shared"),
             patch.object(steam_downloads, "_plan", return_value=self.plan),
             patch.object(steam_downloads.downloads, "mo2_running", return_value=running),
             patch.object(launchhook, "status", return_value=hook),
-            patch.object(steam_downloads.background, "run_host",
-                         return_value=subprocess.CompletedProcess([], 0, "", "")),
+            patch.object(steam_downloads.background, "run_host", side_effect=self._host),
             patch.object(steam_downloads.background, "in_flatpak", return_value=False),
             patch.object(steam_downloads.subprocess, "Popen"),
             patch("modsync.mo2.launch.Launcher.start", return_value="Starting Mod Organizer 2…"),
         ]
 
+    def _host(self, cmd, **_kw):
+        if cmd[0] == "pgrep":
+            return subprocess.CompletedProcess(cmd, 0 if self.launching else 1, "", "")
+        return self.opened
+
+    def opens(self) -> list[list[str]]:
+        """What ModSync asked the host to open (Steam launches)."""
+        return [c.args[0] for c in self.run_host.call_args_list if c.args[0][0] == "xdg-open"]
+
     def __enter__(self):
         mocks = [p.start() for p in self.patches]
-        self.mo2_running, self.run_host, self.popen, self.start = mocks[2], mocks[4], mocks[6], mocks[7]
+        self.mo2_running, self.run_host, self.popen, self.start = mocks[3], mocks[5], mocks[7], mocks[8]
         self.popen.return_value.wait.return_value = 0
         return self
 
@@ -90,7 +101,7 @@ def test_a_closed_mo2_opens_through_steam_while_the_hook_is_on(tmp_path):
     with Downloading(tmp_path, hook_on=True) as d:
         assert "through Steam" in d.download()
         assert steam_downloads.note_path(SKYRIM_SE).read_text() == LINK + "\n"
-        assert d.run_host.call_args.args[0] == ["xdg-open", "steam://rungameid/489830"]
+        assert d.opens() == [["xdg-open", "steam://rungameid/489830"]]
         assert not d.start.called
 
 
@@ -104,11 +115,11 @@ def test_otherwise_mo2_opens_directly_with_the_link(tmp_path, hook_on, steam_run
 
 def test_a_launch_steam_couldnt_be_asked_for_leaves_nothing_behind(tmp_path):
     with Downloading(tmp_path, hook_on=True) as d:
-        d.run_host.return_value = subprocess.CompletedProcess([], 4, "", "no handler for steam://")
+        d.opened = subprocess.CompletedProcess([], 4, "", "no handler for steam://")
         with pytest.raises(RuntimeError, match="no handler"):
             d.download()
         assert not steam_downloads.note_path(SKYRIM_SE).exists()
-        d.run_host.return_value = subprocess.CompletedProcess([], 0, "", "")
+        d.opened = subprocess.CompletedProcess([], 0, "", "")
         with patch("time.sleep", side_effect=AssertionError("waited")):
             assert "through Steam" in d.download()
 
@@ -118,8 +129,42 @@ def test_a_link_while_mo2_is_starting_through_steam_waits_for_it(tmp_path):
         d.download()  # its note is still waiting for the hub
         d.mo2_running.side_effect = [False, False, True]
         assert d.download(LINK + "2", poll=0) == "Passed the download to Mod Organizer 2."
-        assert d.run_host.call_count == 1
+        assert len(d.opens()) == 1
         assert d.popen.call_args.args[0][-1] == LINK + "2"
+
+
+def test_a_link_while_steam_launches_the_game_for_play_waits_for_its_mo2(tmp_path):
+    """Steam would ignore a launch for the link, leaving its note for the next Play."""
+    with Downloading(tmp_path, hook_on=True, launching=True) as d:
+        d.mo2_running.side_effect = [False, False, True]
+        assert d.download(poll=0) == "Passed the download to Mod Organizer 2."
+        assert d.opens() == [] and not d.start.called
+        assert not steam_downloads.note_path(SKYRIM_SE).exists()
+
+
+def test_a_link_gives_up_on_a_steam_launch_that_never_opens_mo2(tmp_path):
+    with Downloading(tmp_path, hook_on=True, launching=True) as d, patch.object(downloads, "BUSY_WAIT", 0):
+        with pytest.raises(RuntimeError, match="Steam is already launching Skyrim Special Edition"):
+            d.download(poll=0)
+        assert d.opens() == [] and not steam_downloads.note_path(SKYRIM_SE).exists()
+
+
+def test_the_handler_and_the_hub_meet_in_a_folder_both_copies_share(tmp_path, monkeypatch):
+    """The Flatpak's state folder is its own; its data folder is the one a
+    copy run on the host uses too (config.shares_flatpak_data). The handler
+    may be one copy and Steam's hook start the other."""
+    from modsync import config
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(config, "flatpak_installed", lambda: True)
+    paths = set()
+    for flatpak, data, state in ((True, config.flatpak_home() / "data", config.flatpak_home() / ".local/state"),
+                                 (False, tmp_path / ".local/share", tmp_path / ".local/state")):
+        monkeypatch.setattr(config, "in_flatpak", lambda flatpak=flatpak: flatpak)
+        monkeypatch.setenv("XDG_DATA_HOME", str(data))
+        monkeypatch.setenv("XDG_STATE_HOME", str(state))
+        paths.add((steam_downloads.note_path(SKYRIM_SE), steam_downloads._record_path(SKYRIM_SE)))
+    assert len(paths) == 1
 
 
 # --- the note, as the hub takes it ----------------------------------------------------
@@ -127,7 +172,7 @@ def test_a_link_while_mo2_is_starting_through_steam_waits_for_it(tmp_path):
 
 @pytest.fixture
 def state(tmp_path):
-    with patch.object(steam_downloads, "state_dir", return_value=tmp_path):
+    with patch.object(downloads, "shared_dir", return_value=tmp_path):
         yield tmp_path
 
 

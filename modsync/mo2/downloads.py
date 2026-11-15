@@ -12,7 +12,10 @@ Through the store, ModSync leaves the link in a note for the hook. The hook
 moves the note aside and empties it, so the moved file's time says when MO2's
 launch began. A link that comes while MO2 is still starting for an earlier
 one waits for it rather than launching again: the store ignores a second
-launch, and a second note would replace the first.
+launch, and a second note would replace the first. So does a link that comes
+while the store is launching the game for something else (its Play button):
+the store would ignore a launch for it, and the note would wait for the next
+Play.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Protocol
 
-from modsync import background
+from modsync import background, config
 
 # How long a note left for a hook stays good: long enough for the store to
 # start and launch the game, short enough that a launch that never came
@@ -36,6 +39,10 @@ NOTE_TTL = 180
 # link ModSync left, or ModSync started it directly), before a later link
 # opens it again.
 MO2_START_WAIT = 45.0
+
+# How long a link waits for MO2 while the store launches the game for
+# something else, such as ModSync's window waiting on a choice after Play.
+BUSY_WAIT = 300.0
 
 
 class Target(Protocol):
@@ -50,6 +57,10 @@ class Target(Protocol):
 
     def pass_link(self, url: str) -> str:
         """Give the open MO2 the link. Returns what happened."""
+
+    def launching(self) -> str | None:
+        """What the store is doing with the game already (launching it, or
+        running it) that a launch for the link would collide with, or None."""
 
     def through_hook(self) -> bool:
         """Whether the store's launch of the game would run MO2 (the hook is on)."""
@@ -66,18 +77,32 @@ class Target(Protocol):
 def download(target: Target, url: str, *, poll: float = 2.0) -> str:
     """Hand a Nexus download to the target's MO2 (see the module's
     docstring). Returns what happened."""
+    busy_since: float | None = None
     while True:
         with launch_lock(target.record) as record:
             if target.running():
                 record.truncate(0)  # MO2 is up: no launch is under way any more
                 return target.pass_link(url)
             if not under_way(record, target.note, target.taken):
-                if target.through_hook():
-                    with launched(record, "hook"):
-                        return target.ask_hook(url)
-                with launched(record, "direct"):
-                    return target.open_direct(url)
+                busy = target.launching()
+                if busy is None:
+                    if target.through_hook():
+                        with launched(record, "hook"):
+                            return target.ask_hook(url)
+                    with launched(record, "direct"):
+                        return target.open_direct(url)
+                busy_since = time.monotonic() if busy_since is None else busy_since
+                if time.monotonic() - busy_since >= BUSY_WAIT:
+                    raise RuntimeError(f"{busy}, and Mod Organizer 2 didn't open for the download. "
+                                       "Click it again once MO2 is open.")
         time.sleep(poll)
+
+
+def shared_dir() -> Path:
+    """Where the nxm:// handler, the hook and ModSync's own launches meet: a
+    folder the Flatpak and a copy run on the host share (config.data_dir),
+    unlike the state folder, which is each copy's own."""
+    return config.data_dir() / "launches"
 
 
 # --- the launch record ------------------------------------------------------------
