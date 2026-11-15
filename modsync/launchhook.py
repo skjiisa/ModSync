@@ -62,9 +62,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-TEMPLATE_VERSION = 7  # 2: the MO2 launch the window hands back; 3: a native program; 4: DFU's saves around it;
+TEMPLATE_VERSION = 8  # 2: the MO2 launch the window hands back; 3: a native program; 4: DFU's saves around it;
 # 5: a newer setup (state.EXIT_NEWER_STATE) ends the launch; 6: DFU follows Daggerfall to another library;
-# 7: an x86-64 DFU through Steam's FEX on ARM
+# 7: an x86-64 DFU through Steam's FEX on ARM; 8: MODSYNC_ORIGINAL_GAME skips ModSync for Skyrim too
 TEMPLATE_DIR = Path(__file__).parent / "steam" / "launchhook_template"
 MARKER = ".modsync-launch-hook"  # only directories carrying this are ever removed
 
@@ -237,6 +237,45 @@ class Pending:
         cls.path(appid).unlink(missing_ok=True)
 
 
+# What Steam's Play does once the hook has opened ModSync. "countdown": the
+# window plays by itself after a few seconds unless something is pressed;
+# "play": no window at all while nothing needs attention; "wait": the window
+# waits for a choice. Whatever the setting, the window opens and waits when
+# the game, MO2 or sync needs a decision first.
+PLAY_MODES = ("countdown", "play", "wait")
+DEFAULT_PLAY_MODE = "countdown"
+
+
+def _play_mode_path() -> Path:
+    return config.config_dir() / "steam-play.json"
+
+
+def play_mode() -> str:
+    try:
+        mode = json.loads(_play_mode_path().read_text(encoding="utf-8")).get("mode")
+    except (OSError, ValueError, AttributeError):
+        return DEFAULT_PLAY_MODE
+    return mode if mode in PLAY_MODES else DEFAULT_PLAY_MODE
+
+
+def set_play_mode(mode: str) -> None:
+    if mode not in PLAY_MODES:
+        raise ValueError(f"unknown play mode {mode!r}; one of {', '.join(PLAY_MODES)}")
+    path = _play_mode_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"mode": mode}) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def describe_play_mode(mode: str, game: Game = SKYRIM_SE) -> str:
+    return {
+        "countdown": f"ModSync opens, then starts {game.name} after a few seconds unless you press something.",
+        "play": f"{game.name} starts right away. ModSync opens only when something needs attention.",
+        "wait": "ModSync opens and waits for you to choose.",
+    }[mode]
+
+
 # --- Steam on this machine --------------------------------------------------------
 
 
@@ -334,7 +373,12 @@ class LaunchHookStatus:
                     f"On. It still runs under the hook's old name, which keeps Steam Cloud from syncing "
                     f"{g} saves. Open ModSync or run 'modsync launch enable' to update it."
                 )
-            return f"On. Steam's Play button opens ModSync, then continues to {self.hands_off_to}."
+            mode = play_mode()
+            if mode == "play":
+                return (f"On. Steam's Play button starts {g} through ModSync, which opens only when "
+                        "something needs attention.")
+            how = "plays after a few seconds" if mode == "countdown" else "waits for you"
+            return f"On. Steam's Play button opens ModSync, which {how}, then continues to {self.hands_off_to}."
         if self.installed:
             via = f" with {self.current_mapping}" if self.current_mapping else ""
             return (
@@ -379,6 +423,7 @@ class SteamLaunch:
     through: str | None = None  # the compatibility tool the hook hands the launch on to
     decision: int | None = None
     plan: "LaunchPlan | None" = None  # Continue: what to run instead of the game's own program
+    reason: str = ""  # why the window opened although Play is set to play right away
 
     @property
     def hands_off_to(self) -> str:

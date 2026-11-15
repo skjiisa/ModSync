@@ -8,6 +8,14 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
+- Steam's Play button on Skyrim no longer waits in ModSync by default: once
+  ModSync has checked the game, MO2 and sync and nothing needs a decision, it
+  plays after a five-second countdown that any press stops. "When you press
+  Play in Steam" under Settings (or `modsync launch mode`) picks the
+  countdown, playing right away without the window, or waiting as before.
+  Whichever is set, ModSync waits when something needs attention first.
+- `MODSYNC_ORIGINAL_GAME=1 %command%` in Skyrim's launch options skips
+  ModSync's launch hook, as it already did for Daggerfall.
 - Cyberpunk 2077 from GOG through the Heroic Games Launcher, with Mod
   Organizer 2. Choose it in the game switcher (X): Home installs MO2 for it,
   plays through it or opens it, switches Heroic's Play button, and turns

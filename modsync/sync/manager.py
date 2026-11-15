@@ -77,6 +77,25 @@ class SyncthingManager:
                 return
             self._start(timeout)
 
+    def attach(self) -> bool:
+        """Use the Syncthing already serving this home (the background
+        service's, or a window's), never starting one. Whether there is one."""
+        with self._lifecycle_lock:
+            if self.running:
+                return True
+            config_xml = self.home / "config.xml"
+            if not config_xml.exists():
+                return False
+            try:
+                self.api_key, address = self._read_gui(config_xml)
+                self.address = self._gui_override or address
+                with self.client() as client:
+                    self._attached = client.ping()
+            except Exception as exc:  # unreadable config, nothing listening
+                log.info("no Syncthing to attach to at %s: %s", self.home, exc)
+                self._attached = False
+            return self._attached
+
     def _start(self, timeout: float) -> None:
         self._attached = False
         if self._log_handle is not None:

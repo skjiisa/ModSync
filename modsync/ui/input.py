@@ -177,6 +177,7 @@ class InputRouter(QObject):
         self._tap: tuple[int, float] | None = None  # modifier pressed alone, and when
         self._family: tuple[str, float] | None = None
         self.last_input = 0.0  # monotonic time of the last press of any kind
+        self.last_pad_press = 0.0  # …of a controller button, also while another app is in front
         self.pointer = "mouse"  # "mouse" or "touch": which kind drove the last pointer press
         self._pad_seen = False  # SDL reported a button press at some point
         app.installEventFilter(self)
@@ -265,6 +266,10 @@ class InputRouter(QObject):
 
     def pad_button(self, name: str, pressed: bool) -> None:
         action = PAD.get(name)
+        if pressed:
+            self.last_pad_press = time.monotonic()
+            if self._app_active():
+                self.last_input = self.last_pad_press  # any button, mapped or not, is a press
         if action is None:
             return
         if not pressed:
@@ -289,6 +294,7 @@ class InputRouter(QObject):
     def pad_scroll(self, value: float) -> None:
         self._scroll_speed = value
         if value and self._app_active():
+            self.last_input = time.monotonic()
             self._saw_pad()
             self._set_mode("gamepad")
             if not self._scroll_timer.isActive():
@@ -370,6 +376,8 @@ class InputRouter(QObject):
                 return False  # an ignored key bubbling up to a parent: seen already
             if not hasattr(obj.window(), "handle_action"):
                 return False  # a plain Qt dialog or another window: leave it alone
+            if not event.isAutoRepeat():
+                self.last_input = time.monotonic()  # any key, mapped or not, is a press
             key = event.key()
             if key in TAP_KEYS:
                 # Whether the key's own modifier is already set on its press
@@ -435,7 +443,6 @@ class InputRouter(QObject):
                 if previous != self.pointer and self.mode == "mouse":
                     self.modeChanged.emit("mouse")
             self._tap = None  # Ctrl+click is not a bumper
-            if kind == QEvent.Type.MouseButtonPress:
-                self.last_input = time.monotonic()
+            self.last_input = time.monotonic()  # a click, or scrolling
             self._set_mode("mouse")
         return False
