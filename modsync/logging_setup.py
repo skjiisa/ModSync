@@ -72,7 +72,7 @@ def _level_from_env() -> int:
 
 def configure(component: str, argv: list[str] | None = None) -> Path | None:
     """Set up the root logger for this process. ``component`` is one of
-    ``gui`` / ``cli`` / ``serve`` / ``hub`` and appears in every line. Returns
+    ``gui`` / ``cli`` / ``serve`` / ``hub`` / ``tray`` and appears in every line. Returns
     the log file path, or None when only stderr could be set up."""
     root = logging.getLogger()
     for handler in list(root.handlers):

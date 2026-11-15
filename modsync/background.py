@@ -8,6 +8,10 @@ out. The unit keeps its historical name so upgrades replace it in place.
 
 Works natively and inside the Flatpak — there it hops to the host's systemd via
 ``flatpak-spawn --host``.
+
+While it's on, a desktop session shows a tray icon (``modsync tray``, see
+modsync.tray) so it isn't forgotten: an XDG autostart entry starts it at each
+desktop login. Gaming Mode doesn't run autostart entries and has no tray.
 """
 
 from __future__ import annotations
@@ -18,6 +22,11 @@ import sys
 from pathlib import Path
 
 UNIT_NAME = "modsync-sync.service"
+APP_ID = "io.github.skjiisa.ModSync"
+AUTOSTART_NAME = f"{APP_ID}.Tray.desktop"
+# In ModSync's config folder once the tray's autostart entry was added for a
+# service installed before there was a tray: one removed by hand stays removed.
+_TRAY_ADDED = "tray-autostart-added"
 
 
 def in_flatpak() -> bool:
@@ -85,6 +94,125 @@ def unit_path() -> Path:
     return config_home / "systemd" / "user" / UNIT_NAME
 
 
+def command(*args: str) -> list[str]:
+    """How a desktop session runs ``modsync <args>`` from this copy of
+    ModSync, keeping a separate setup (MODSYNC_HOME) as the unit does."""
+    home = _modsync_home()
+    if in_flatpak():
+        env = [f"--env=MODSYNC_HOME={home}"] if home else []
+        return ["flatpak", "run", *env, os.environ.get("FLATPAK_ID") or APP_ID, *args]
+    env = ["env", f"MODSYNC_HOME={home}"] if home else []
+    return [*env, sys.executable, "-m", "modsync", *args]
+
+
+def _desktop_quote(arg: str) -> str:
+    """One argument of a desktop entry's Exec key, before the key's own
+    string escapes (``_exec_value``): quoted when it needs to be, with
+    ``"``, `` ` ``, ``$`` and ``\\`` escaped inside the quotes, and ``%`` doubled."""
+    if arg and not any(c in arg for c in ' \t\n"\'\\><~|&;$*?#()`'):
+        return arg.replace("%", "%%")
+    escaped = "".join("\\" + c if c in '"`$\\' else c for c in arg)
+    return f'"{escaped}"'.replace("%", "%%")
+
+
+def _exec_value(args: list[str]) -> str:
+    """The Exec key's value: the quoted arguments, then the escapes every
+    desktop-entry string takes (a literal backslash in a quoted argument
+    ends up as four)."""
+    line = " ".join(_desktop_quote(a) for a in args)
+    for raw, escaped in (("\\", "\\\\"), ("\n", "\\n"), ("\t", "\\t"), ("\r", "\\r")):
+        line = line.replace(raw, escaped)
+    return line
+
+
+def _unit_identity(text: str) -> list[str]:
+    """What says which copy of ModSync and which setup a unit runs."""
+    return [line for line in text.splitlines() if line.startswith(("ExecStart=", "Environment="))]
+
+
+def installed_here() -> bool:
+    """The background service is on, and runs this copy and setup (not one
+    installed from another copy, or with another MODSYNC_HOME, since: the
+    unit and the autostart entry are one per user)."""
+    try:
+        installed = unit_path().read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return _unit_identity(installed) == _unit_identity(unit_text())
+
+
+def autostart_path() -> Path:
+    # The host's ~/.config, as for the unit: the desktop session reads it there.
+    if in_flatpak():
+        config_home = Path.home() / ".config"
+    else:
+        config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return config_home / "autostart" / AUTOSTART_NAME
+
+
+def autostart_text() -> str:
+    return f"""\
+[Desktop Entry]
+Type=Application
+Name=ModSync (background)
+Comment=Shows that ModSync's background service is on
+Exec={_exec_value(command("tray"))}
+Icon={APP_ID}
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+"""
+
+
+def add_tray_autostart() -> None:
+    path = autostart_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(autostart_text(), encoding="utf-8")
+    from modsync import config
+
+    marker = config.config_dir() / _TRAY_ADDED
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+
+
+def remove_tray_autostart() -> None:
+    autostart_path().unlink(missing_ok=True)
+
+
+def ensure_tray_autostart() -> bool:
+    """For a service installed before there was a tray: add its autostart
+    entry, once. The background service calls it when it starts; only the
+    copy and setup the unit runs does it. Whether it added it."""
+    from modsync import config
+
+    if not installed_here() or autostart_path().exists() or (config.config_dir() / _TRAY_ADDED).exists():
+        return False
+    add_tray_autostart()
+    return True
+
+
+def spawn_detached(argv: list[str]) -> None:
+    """Start a program that outlives this process, and inside the Flatpak this
+    sandbox too: from the host, which runs it with the desktop session's
+    own environment. The sandbox's display names aren't the host's (Flatpak
+    gives X11 ``:99``, and may rename the Wayland socket), so none is passed."""
+    if in_flatpak():
+        argv = ["flatpak-spawn", "--host", *argv]
+    subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def start_tray() -> None:
+    """Show the tray icon now, in a desktop session: the autostart entry only
+    starts it at the next login. Best effort."""
+    if not (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")):
+        return
+    try:
+        spawn_detached(command("tray"))
+    except OSError:
+        pass
+
+
 def run_host(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     """Run a command on the host system (hopping out of the Flatpak sandbox if
     we're in one). Output is captured unless the caller says otherwise."""
@@ -143,6 +271,12 @@ def install(enable_linger: bool = False) -> str:
     _checked_systemctl("is-active", UNIT_NAME)
 
     lines = [f"Installed {path}", "Enabled and started modsync-sync.service."]
+    try:
+        add_tray_autostart()
+        start_tray()
+        lines.append("In a desktop session, a tray icon shows it's on.")
+    except OSError as exc:  # the service itself is on: that's what was asked for
+        lines.append(f"Could not add the tray icon's autostart entry: {exc}")
 
     if enable_linger:
         linger = run_host(["loginctl", "enable-linger"])
@@ -163,6 +297,7 @@ def uninstall() -> None:
     path = unit_path()
     if path.exists():
         path.unlink()
+    remove_tray_autostart()  # a tray running now sees the unit go and quits
     _checked_systemctl("daemon-reload")
 
 

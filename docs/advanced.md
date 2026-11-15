@@ -1282,6 +1282,17 @@ stopped mid-game. A folder you paused yourself stays paused. Nothing pauses
 during a copy from another machine. This changes `state.json` to version 4, so
 an older ModSync sharing the setup stops instead of dropping that list.
 
+While the service is on, a desktop session shows a ModSync icon in the system
+tray (`modsync tray`), so it isn't forgotten. Its tooltip and menu say what
+the service is doing, and the menu opens ModSync or turns the service off.
+"Run in background" adds an autostart entry for it
+(`~/.config/autostart/io.github.skjiisa.ModSync.Tray.desktop`) and shows it
+straight away; turning the service off removes the entry, and a running icon
+quits. A service installed before the icon existed adds the entry once when it
+starts; delete the file to do without the icon, and it stays deleted. The icon
+reads `state.json` only when it changes and never talks to Syncthing. Gaming
+Mode has no tray, so it doesn't appear there.
+
 Under Settings, "Run in background" shows whether the service is running,
 inactive, failed or off. Open the ModSync Steam shortcut to check it in
 Gaming Mode. Choosing it again while it is on stops and removes the service

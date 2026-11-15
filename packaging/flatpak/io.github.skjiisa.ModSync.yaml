@@ -48,6 +48,10 @@ finish-args:
   # Background service management uses flatpak-spawn --host to reach systemd
   # (`modsync service install` writes a systemd --user unit on the host).
   - --talk-name=org.freedesktop.Flatpak
+  # The tray icon while the background service is on (`modsync tray`): Qt
+  # registers its StatusNotifierItem with Plasma under its connection's own
+  # name, so it needs to reach the watcher and own nothing.
+  - --talk-name=org.kde.StatusNotifierWatcher
   # Steam's default library (~/.local/share/Steam): read game files + Proton
   # prefixes, and write to compatibilitytools.d for the launch hook
   # (`modsync launch enable`) and to config/ for the "Add to Steam" shortcut.

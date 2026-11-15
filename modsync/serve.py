@@ -110,6 +110,13 @@ class Server:
 
         for note in [*mo2games.refresh_hooks(), *nxm.refresh()]:
             self.log(f"  {note}")
+        try:
+            from modsync import background
+
+            if background.ensure_tray_autostart():
+                self.log("  Added the tray icon's autostart entry: a desktop session shows it from the next login.")
+        except OSError as exc:
+            self.log(f"  (tray autostart entry not added: {exc})")
         if self.syncing:
             self.service.ensure_running()
             self.log("Syncing — press Ctrl-C to stop.")
