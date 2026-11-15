@@ -907,7 +907,8 @@ class SyncthingIntegration(unittest.TestCase):
                     yield
 
             try:
-                with on("A", a_root), patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+                with on("A", a_root), patch.object(cyberpunk.GAME, "find_game", return_value=None), \
+                        patch.object(cyberpunk.GAME, "game_version", return_value=("2.5", "3.0.88.46235")):
                     a = ModSyncService(manager=a_mgr)
                     a.share_game_folder("cp2077-mo2")
                     code = a.my_pairing_code()
