@@ -931,7 +931,11 @@ modsync sync share <key>-mo2        # sync its mods with every paired machine
    first, as for Skyrim, because MO2-LINT changes the game's settings in
    Steam and prepares the prefix with its bundled protontricks. MO2-LINT
    wants Proton 11.0 installed in Steam for that. Without it, ModSync gives
-   MO2-LINT the Proton the game runs with instead. For a Heroic game,
+   MO2-LINT the Proton the game runs with instead. MO2-LINT remembers that
+   Proton by Steam's name for it, which its own `mo2-lint update` may not
+   find again (for Proton Experimental, whose folder is named differently).
+   The update then keeps the Steam tool it made at install, which still
+   works unless that Proton has moved to another library. For a Heroic game,
    ModSync applies MO2-LINT's prefix steps itself, as described under
    Cyberpunk 2077 below. An instance MO2-LINT installed earlier is found by
    itself.
