@@ -277,6 +277,21 @@ class ServerTests(unittest.TestCase):
         self.assertIn("  No game is running: resumed 1 folder(s).", lines)
         self.assertEqual(svc.upkept, 1)
 
+    def test_a_window_opened_and_closed_mid_game_does_not_end_the_pause(self):
+        svc, server, _, _ = self.make(State(instance_path="/mo2", folder_id="modsync-1"))
+        now = [0.0]
+        server._clock = lambda: now[0]
+        self.game = True
+        server.tick()
+        svc.state.paused_for_play = []  # a window opened (resuming them) and closed within 30 s
+        now[0] = 10
+        server.tick()
+        self.assertFalse(svc.holds_for_play)
+        now[0] = 30
+        server.tick()
+        self.assertTrue(svc.holds_for_play)  # paused again
+        self.assertEqual(svc.state.paused_for_play, ["modsync-1"])
+
     def test_never_pauses_mid_copy_or_without_anything_syncing(self):
         self.game = True
         svc, server, _, _ = self.make(State(instance_path="/mo2", folder_id="modsync-1", copy_phase="receiving"))

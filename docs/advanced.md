@@ -1279,7 +1279,8 @@ a shared lock on `window.lock` in ModSync's data folder, which the service
 checks. The paused folders are listed in `state.json` (`paused_for_play`), so
 opening ModSync, or the service starting again, resumes them if the service
 stopped mid-game. A folder you paused yourself stays paused. Nothing pauses
-during a copy from another machine.
+during a copy from another machine. This changes `state.json` to version 4, so
+an older ModSync sharing the setup stops instead of dropping that list.
 
 Under Settings, "Run in background" shows whether the service is running,
 inactive, failed or off. Open the ModSync Steam shortcut to check it in

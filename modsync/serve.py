@@ -68,6 +68,7 @@ class Server:
         self._upkept_at: float | None = None
         self._play_checked_at: float | None = None
         self._playing = False  # ModSync's folders are paused for a game
+        self._paused_some = False  # and that pause found some to pause
         self._detect_play: Callable[[], bool] = playing.playing
 
     @property
@@ -165,6 +166,11 @@ class Server:
         stops (or a window opens), checking at most every ``_PLAY_CHECK_S``.
         Never mid-copy: the copy's steps read the folder's progress."""
         svc = self.service
+        if svc.holds_for_play and self._paused_some and not svc.state.paused_for_play:
+            # A window resumed them (opening it does) and has closed again
+            # since: they're no longer paused for this game.
+            svc.holds_for_play = False
+            self._playing = False
         if svc.state.copy_phase:
             now = False
         elif self._due("_play_checked_at", _PLAY_CHECK_S):
@@ -178,6 +184,7 @@ class Server:
         if now and not svc.holds_for_play:
             try:
                 ids = svc.pause_for_play()
+                self._paused_some = bool(ids)
                 self.log(f"  A game is running: paused {len(ids)} folder(s) until it closes.")
             except Exception as exc:
                 self.log(f"  (could not pause for the game: {exc})")

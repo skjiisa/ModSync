@@ -36,7 +36,9 @@ from modsync import config
 # made since all over again).
 # 3: held_folders and hold_all, which an older one would drop (leaving the
 # copies kept here in Syncthing with nothing looking after them).
-SCHEMA = 3
+# 4: paused_for_play, which an older one would drop (leaving the folders the
+# background service paused for a game paused for good).
+SCHEMA = 4
 
 
 EXIT_NEWER_STATE = 3  # how a command ends on one; the background service isn't restarted for it
@@ -190,6 +192,11 @@ class State:
             fn(state)
             state._write()
         return state
+
+    def write_now(self) -> None:
+        """Inside ``change``'s ``fn``: write what it has changed so far, before
+        it goes on to something a crash could leave half done."""
+        self._write()
 
     @classmethod
     @contextmanager

@@ -242,6 +242,12 @@ class PinOutcome:
     message: str
 
 
+def _not_found(exc: Exception) -> bool:
+    """Syncthing answered that there's no such folder (a KeyError: the tests' stand-in)."""
+    response = getattr(exc, "response", None)
+    return isinstance(exc, KeyError) or getattr(response, "status_code", None) == 404
+
+
 def _event_ids(events) -> list[int]:
     return [e["id"] for e in events or [] if isinstance(e, dict) and isinstance(e.get("id"), int)]
 
@@ -818,11 +824,17 @@ class ModSyncService:
         if not self.reload_state().folder_id:
             raise RuntimeError("no vault configured on this machine yet")
         self.ensure_running()
-        with self.manager.client() as client:
-            folder = client.get_folder(self.state.folder_id)
-            folder["paused"] = paused
-            client.put_folder(folder)
-        self.update_state(sync_paused=paused)
+
+        def apply(st: State) -> None:
+            # Under the state's lock: the background service pausing or
+            # resuming folders for a game can't come in between.
+            with self.manager.client() as client:
+                folder = client.get_folder(st.folder_id)
+                folder["paused"] = paused
+                client.put_folder(folder)
+            st.sync_paused = paused
+
+        self.state = State.change(apply)
         log.info("%s vault %s", "paused" if paused else "resumed", self.state.folder_id)
 
     # --- before playing ---
@@ -1779,46 +1791,63 @@ class ModSyncService:
 
     def pause_for_play(self) -> list[str]:
         """Pause ModSync's folders in Syncthing while a game runs: no scans,
-        hashing or transfers meanwhile. Only those not paused already, noted
-        in the state before Syncthing pauses them, so a crash leaves nothing
-        paused that nothing would resume. Returns the folder ids."""
-        with self.manager.client() as client:
-            ids = [f["id"] for f in client.folders()
-                   if str(f.get("id", "")).startswith(folders.FOLDER_PREFIX) and not f.get("paused")]
+        hashing or transfers meanwhile. Only those not paused already. All of
+        it under the state's lock, so a window resuming them can't come in
+        between, and noted in the state before Syncthing pauses them, so a
+        crash leaves nothing paused that nothing would resume. Returns the
+        folder ids."""
+        ids: list[str] = []
 
-            def note(st: State) -> None:
+        def pause(st: State) -> None:
+            with self.manager.client() as client:
+                ids.extend(f["id"] for f in client.folders()
+                           if str(f.get("id", "")).startswith(folders.FOLDER_PREFIX) and not f.get("paused"))
+                if not ids:
+                    return
                 st.paused_for_play = sorted(set(st.paused_for_play) | set(ids))
+                st.write_now()
+                for fid in ids:
+                    folder = client.get_folder(fid)
+                    folder["paused"] = True
+                    client.put_folder(folder)
 
-            self.state = State.change(note)
-            for fid in ids:
-                folder = client.get_folder(fid)
-                folder["paused"] = True
-                client.put_folder(folder)
+        self.state = State.change(pause)
         self.holds_for_play = True
         if ids:
             log.info("a game is running: paused %s", ", ".join(ids))
         return ids
 
     def resume_after_play(self) -> list[str]:
-        """Resume what ``pause_for_play`` paused. The vault stays paused if the
-        user paused it since. Returns the folder ids resumed."""
-        resumed = []
-        with State.held() as st, self.manager.client() as client:
-            for fid in st.paused_for_play:
-                if fid == st.folder_id and st.sync_paused:
-                    continue
-                try:
-                    folder = client.get_folder(fid)
-                except Exception:
-                    continue  # gone meanwhile (stopped, or the vault left)
-                if folder.get("paused"):
-                    folder["paused"] = False
-                    client.put_folder(folder)
-                    resumed.append(fid)
-        self.state = State.update(paused_for_play=[])
+        """Resume what ``pause_for_play`` paused, under the state's lock. The
+        vault stays paused if the user paused it since; a folder no longer in
+        Syncthing is dropped. One Syncthing didn't answer for stays noted, to
+        try again, and this raises. Returns the folder ids resumed."""
+        resumed: list[str] = []
+        failed: list[str] = []
+
+        def resume(st: State) -> None:
+            with self.manager.client() as client:
+                for fid in st.paused_for_play:
+                    if fid == st.folder_id and st.sync_paused:
+                        continue
+                    try:
+                        folder = client.get_folder(fid)
+                    except Exception as exc:
+                        if not _not_found(exc):
+                            failed.append(fid)
+                        continue  # gone meanwhile: stopped, or the vault left
+                    if folder.get("paused"):
+                        folder["paused"] = False
+                        client.put_folder(folder)
+                        resumed.append(fid)
+            st.paused_for_play = failed
+
+        self.state = State.change(resume)
         self.holds_for_play = False
         if resumed:
             log.info("resumed %s", ", ".join(resumed))
+        if failed:
+            raise RuntimeError(f"Syncthing didn't answer for {', '.join(failed)}; trying again later")
         return resumed
 
     def upkeep(self) -> None:
