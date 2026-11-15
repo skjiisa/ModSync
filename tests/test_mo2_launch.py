@@ -52,6 +52,25 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(plan.env["SteamAppId"], "489830")
         self.assertEqual(plan.cwd, self.instance)
 
+    def test_a_download_opens_mo2_with_its_link(self):
+        link = "nxm://skyrimspecialedition/mods/1/files/2?key=k"
+        plan = launch.build_plan(self.instance, download=link)
+        self.assertEqual(plan.command, [str(self.instance / "ModOrganizer.exe"), "-p", "My Profile", link])
+        self.assertFalse(plan.play)
+        with self.assertRaises(ValueError):
+            launch.build_plan(self.instance, play=True, download=link)
+
+    def test_another_program_runs_with_the_plans_proton_and_runtime_under_another_verb(self):
+        plan = launch.build_plan(self.instance)
+        exe = str(self.instance / "ModOrganizer.exe")
+        self.assertEqual(launch.proton_command(plan, [exe, "x"], verb="runinprefix"),
+                         [str(self.common / "SteamLinuxRuntime_4/_v2-entry-point"), "--verb=runinprefix", "--",
+                          str(self.proton / "proton"), "runinprefix", exe, "x"])
+        bare = launch.LaunchPlan([str(self.proton / "proton"), "run", exe], {}, self.instance, "MO2", False,
+                                 self.proton, [exe])
+        self.assertEqual(launch.proton_command(bare, [exe, "x"], verb="runinprefix"),
+                         [str(self.proton / "proton"), "runinprefix", exe, "x"])
+
     def test_a_desktop_nested_in_gamescope_runs_wine_on_gamescopes_display(self):
         self.assertNotIn("DISPLAY", launch.build_plan(self.instance).env)
         with patch.dict(os.environ, {"DISPLAY": ":2", "STEAM_GAME_DISPLAY_0": ":1"}):

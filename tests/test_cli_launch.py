@@ -28,6 +28,7 @@ class LaunchCommandTests(unittest.TestCase):
         env = launchhook.SteamEnv(root, libs.all_libraries([root]))
         for p in (
             patch.object(launchhook, "steam_env", lambda: env),
+            patch("modsync.nxm.claim_links", lambda: None),
             patch.object(shortcuts, "steam_is_running", lambda: False),
         ):
             p.start()

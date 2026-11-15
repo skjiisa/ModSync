@@ -32,14 +32,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from modsync import __version__, background
+from modsync.mo2 import downloads
 from modsync.heroic.library import GogGame
 
 HOOK_VERSION = 4  # 2: MO2's executable read at launch; the game's program found by its folder; 3: downloads;
 # 4: ModSync's Play and Open MO2 (PLAY and OPEN)
-# How long a note left for the hook (leave_download, leave_request) stays good:
-# long enough for Heroic to start and launch the game, short enough that a
-# launch that never came doesn't turn a later Play into something else.
-NOTE_TTL = 180
+# How long a note left for the hook (leave_download, leave_request) stays good.
+NOTE_TTL = downloads.NOTE_TTL
 # What ModSync's own Play and Open MO2 leave for the launch they ask Heroic for,
 # so it does that whichever of the game's launch options Heroic runs.
 PLAY = "modsync:play"
