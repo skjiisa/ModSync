@@ -11,7 +11,9 @@ It is meant to cost next to nothing on a Steam Deck: a pass every ``IDLE_S``
 seconds, or every ``BUSY_S`` while something waits on Steam or a copy. In
 between, a thread keeps a request open that Syncthing answers the moment a
 machine asks to pair or offers a folder. It never reads the sync
-status nobody is looking at.
+status nobody is looking at. While a game runs and no ModSync window is open
+(``modsync.playing``), it pauses ModSync's folders in Syncthing and does
+nothing else until the game has closed.
 
 So someone who never syncs still gets the deferred pin applied — which is the
 whole point of queueing it on the Deck, where Steam is always running.
@@ -25,7 +27,7 @@ import threading
 import time
 from typing import Callable
 
-from modsync import gameversion, launchhook
+from modsync import gameversion, launchhook, playing
 from modsync.games import SKYRIM_SE
 from modsync.state import NewerStateError
 
@@ -38,6 +40,7 @@ IDLE_S = 30.0
 _VERSION_CHECK_S = 60.0  # the PE header + SKSE scan are cheap but not free
 _UPKEEP_S = 60.0  # the games' folders: walks and, for DFU, a pass over the saves
 _MIN_WAKE_S = 1.0  # however many events arrive
+_PLAY_CHECK_S = 30.0  # one ps on the host
 
 
 def notify(title: str, body: str) -> None:
@@ -63,6 +66,9 @@ class Server:
         self._woken = threading.Event()  # the watch saw something for the next pass
         self._version_checked_at: float | None = None
         self._upkept_at: float | None = None
+        self._play_checked_at: float | None = None
+        self._playing = False  # ModSync's folders are paused for a game
+        self._detect_play: Callable[[], bool] = playing.playing
 
     @property
     def syncing(self) -> bool:
@@ -133,10 +139,13 @@ class Server:
                 self.notify("ModSync launch hook", hook)
         except Exception as exc:
             self.log(f"  (launch hook check failed: {exc})")
-        # Mid-copy the vault's game-version record may not have arrived yet.
-        if self._due("_version_checked_at", _VERSION_CHECK_S) and not self.service.state.copy_phase:
+        if self.syncing:
+            self._follow_play()
+        # Mid-copy the vault's game-version record may not have arrived yet;
+        # and Steam doesn't update a game while it runs.
+        if not self._playing and not self.service.state.copy_phase and self._due("_version_checked_at", _VERSION_CHECK_S):
             self._check_game_version()
-        if not self.syncing:
+        if not self.syncing or self._playing:
             return
         try:
             for device_id in self.service.accept_pending():
@@ -150,6 +159,35 @@ class Server:
                 self.log(f"  (folder upkeep failed: {exc})")
         if self.service.state.copy_phase:
             self._advance_copy()
+
+    def _follow_play(self) -> None:
+        """Pause ModSync's folders once a game runs, resume them once it
+        stops (or a window opens), checking at most every ``_PLAY_CHECK_S``.
+        Never mid-copy: the copy's steps read the folder's progress."""
+        svc = self.service
+        if svc.state.copy_phase:
+            now = False
+        elif self._due("_play_checked_at", _PLAY_CHECK_S):
+            try:
+                now = self._detect_play()
+            except Exception as exc:
+                self.log(f"  (game check failed: {exc})")
+                now = False
+        else:
+            return
+        if now and not svc.holds_for_play:
+            try:
+                ids = svc.pause_for_play()
+                self.log(f"  A game is running: paused {len(ids)} folder(s) until it closes.")
+            except Exception as exc:
+                self.log(f"  (could not pause for the game: {exc})")
+        elif not now and (svc.holds_for_play or svc.state.paused_for_play):
+            try:
+                ids = svc.resume_after_play()
+                self.log(f"  No game is running: resumed {len(ids)} folder(s).")
+            except Exception as exc:
+                self.log(f"  (could not resume after the game: {exc})")
+        self._playing = now and svc.holds_for_play
 
     def _due(self, attr: str, every: float) -> bool:
         """Whether what ``attr`` times last ran ``every`` seconds ago or more
@@ -228,7 +266,7 @@ class Server:
         if seconds <= 0:
             return
         started = self._clock()
-        watching = self.syncing
+        watching = self.syncing and not self._playing  # paused for a game: nothing to answer
         if watching:
             self._start_watch()
             self._watch_on.set()

@@ -46,6 +46,8 @@ class SystemPage(Page):
             else "applies a queued Steam pin the moment Steam exits and notices when Steam updates the game"
         )
         self._bg_what = f"A user service that starts at login and {what}, even when ModSync is closed."
+        if state.active:
+            self._bg_what += " While you play a game, it pauses syncing until the game closes."
         self._bg_summary = ("Keep syncing while ModSync is closed." if state.syncing else
                             "Apply queued Steam changes while ModSync is closed.")
         self.bg_tile = Tile("Run in background", self._bg_summary, "moon", status=True)

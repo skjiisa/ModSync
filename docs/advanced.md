@@ -1262,6 +1262,25 @@ the syncing itself, at low priority. Both machines still need to be awake
 and connected, unless a third
 one keeps the games for them (see "Keeping games not installed here").
 
+While a game runs and no ModSync window is open, the service pauses
+ModSync's folders in Syncthing and does nothing else until the game has
+closed. It checks every 30 seconds, with one `ps` on the host. A game is:
+
+- anything Steam launched, native or Proton, including a non-Steam shortcut;
+- a Windows program that Heroic's launch of a game started (an installer or
+  another Wine program on its own doesn't count, nor Wine services left
+  behind after a game);
+- Mod Organizer 2 under Wine, however it started;
+- Daggerfall Unity started on its own.
+
+An open window, including the countdown before Steam's Play starts the
+game, keeps syncing so changes can arrive before you play. Each window holds
+a shared lock on `window.lock` in ModSync's data folder, which the service
+checks. The paused folders are listed in `state.json` (`paused_for_play`), so
+opening ModSync, or the service starting again, resumes them if the service
+stopped mid-game. A folder you paused yourself stays paused. Nothing pauses
+during a copy from another machine.
+
 Under Settings, "Run in background" shows whether the service is running,
 inactive, failed or off. Open the ModSync Steam shortcut to check it in
 Gaming Mode. Choosing it again while it is on stops and removes the service

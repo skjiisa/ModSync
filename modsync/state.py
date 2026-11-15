@@ -57,7 +57,7 @@ def _refuse_newer(p: Path, data: object) -> None:
 _FIELDS = ("instance_path", "folder_id", "instance_label", "firewall_rules_stamp", "awaiting_vault_version",
            "sync_paused", "copy_phase", "copy_source", "copy_expected", "copy_archive", "set_aside", "dfu_path", "game_folders", "declined_folders", "paired",
            "home_game", "stand_in_names_cleared", "forgotten_devices", "one_way_introducers", "held_folders",
-           "hold_all")
+           "hold_all", "paused_for_play")
 
 
 @dataclass
@@ -114,6 +114,9 @@ class State:
     # Pairings made before each pair introduced only one way have been sorted
     # out (see modsync.sync.pairing.introduce_one_way).
     one_way_introducers: bool = False
+    # ModSync's folders the background service paused in Syncthing while a game
+    # runs (folder ids), to resume when it stops or a window opens.
+    paused_for_play: list[str] = field(default_factory=list)
     # The version of the file's format this ModSync writes (SCHEMA); never read back.
     schema: int = SCHEMA
 
@@ -138,6 +141,8 @@ class State:
                     state.held_folders = {}
                 if not isinstance(state.forgotten_devices, list):
                     state.forgotten_devices = []
+                if not isinstance(state.paused_for_play, list):
+                    state.paused_for_play = []
                 return state
             except (OSError, ValueError, TypeError):
                 pass

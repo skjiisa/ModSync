@@ -6,6 +6,8 @@ import logging
 import sys
 from typing import BinaryIO
 
+from modsync import playing
+
 log = logging.getLogger(__name__)
 
 
@@ -63,6 +65,7 @@ def run(argv: list[str] | None = None) -> int:
     from modsync.ui.main_window import MainWindow
 
     configure("gui", argv)
+    playing.hold_window_lock()  # the background service keeps syncing while it's open
     app = _application(argv)
     _start_gamepads(app)
     window = MainWindow()
@@ -85,12 +88,14 @@ def run_hub(*, appid: int | None = None, through: str | None = None, handoff: Bi
     from modsync.ui.main_window import MainWindow
 
     configure("hub", ["launch", "hub", f"--appid={appid}", f"--through={through}"])
+    playing.hold_window_lock()  # the game isn't playing yet: syncing goes on until this closes
     app = _application(None)
     _start_gamepads(app)
     launch = launchhook.SteamLaunch(GAMES.get(appid or SKYRIM_SE.appid, SKYRIM_SE), through, reason=reason)
     window = MainWindow(steam_launch=launch)
     window.showMaximized()
     code = app.exec()  # the window's close stops polling, drains workers and its Syncthing
+    playing.release_window_lock()  # closed: what comes next may be the game
     result = launch.decision if launch.decision is not None else (
         code if code in (launchhook.EXIT_CONTINUE, launchhook.EXIT_CANCEL) else launchhook.EXIT_CANCEL
     )

@@ -265,6 +265,11 @@ class ModSyncService:
         self._clear_stand_in_names()
         self._introduce_one_way()
         self._drop_forgotten()
+        if self.state.paused_for_play and not self.holds_for_play:
+            try:
+                self.resume_after_play()
+            except Exception as exc:  # the next call tries again
+                log.warning("could not resume the folders paused for a game: %s", exc)
 
     def _clear_stand_in_names(self) -> None:
         """Once: paired machines an older version named after the vault get
@@ -1767,6 +1772,54 @@ class ModSyncService:
         if ids:
             self._event_id = max(ids)
         return bool(ids)
+
+    # Set in the background service while it keeps ModSync's folders paused for
+    # a game. Anywhere else (a window) talking to Syncthing resumes them.
+    holds_for_play = False
+
+    def pause_for_play(self) -> list[str]:
+        """Pause ModSync's folders in Syncthing while a game runs: no scans,
+        hashing or transfers meanwhile. Only those not paused already, noted
+        in the state before Syncthing pauses them, so a crash leaves nothing
+        paused that nothing would resume. Returns the folder ids."""
+        with self.manager.client() as client:
+            ids = [f["id"] for f in client.folders()
+                   if str(f.get("id", "")).startswith(folders.FOLDER_PREFIX) and not f.get("paused")]
+
+            def note(st: State) -> None:
+                st.paused_for_play = sorted(set(st.paused_for_play) | set(ids))
+
+            self.state = State.change(note)
+            for fid in ids:
+                folder = client.get_folder(fid)
+                folder["paused"] = True
+                client.put_folder(folder)
+        self.holds_for_play = True
+        if ids:
+            log.info("a game is running: paused %s", ", ".join(ids))
+        return ids
+
+    def resume_after_play(self) -> list[str]:
+        """Resume what ``pause_for_play`` paused. The vault stays paused if the
+        user paused it since. Returns the folder ids resumed."""
+        resumed = []
+        with State.held() as st, self.manager.client() as client:
+            for fid in st.paused_for_play:
+                if fid == st.folder_id and st.sync_paused:
+                    continue
+                try:
+                    folder = client.get_folder(fid)
+                except Exception:
+                    continue  # gone meanwhile (stopped, or the vault left)
+                if folder.get("paused"):
+                    folder["paused"] = False
+                    client.put_folder(folder)
+                    resumed.append(fid)
+        self.state = State.update(paused_for_play=[])
+        self.holds_for_play = False
+        if resumed:
+            log.info("resumed %s", ", ".join(resumed))
+        return resumed
 
     def upkeep(self) -> None:
         """What the games' folders need done here between syncs (see

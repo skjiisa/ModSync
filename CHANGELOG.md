@@ -8,6 +8,14 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
+- While you play, the background service pauses ModSync's folders in
+  Syncthing, so nothing is scanned, hashed or transferred during the game,
+  and it resumes them within 30 seconds of the game closing. A game is
+  anything Steam launched (a non-Steam shortcut too), a game Heroic
+  launched, Mod Organizer 2, or Daggerfall Unity. An open ModSync window
+  keeps syncing, including the countdown before Steam's Play starts the
+  game. Opening ModSync resumes folders left paused for a game. A folder you
+  paused yourself stays paused.
 - The games MO2-LINT can install Mod Organizer 2 for now work in ModSync
   the same way, from Steam and from Heroic (GOG and Epic): Baldur's Gate 3,
   Dragon Age: Origins and 2, Enderal, Fallout 3, 4, New Vegas and London,
