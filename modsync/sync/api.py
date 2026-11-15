@@ -156,9 +156,10 @@ class SyncthingClient:
     def events(self, since: int, types: Iterable[str], timeout: float) -> list[dict[str, Any]]:
         """Events of these types after event ``since``, waiting up to
         ``timeout`` seconds for the first one (a long poll: Syncthing answers
-        as soon as one happens). Event ids start again at 1 when Syncthing
-        restarts."""
-        params = {"since": since, "events": ",".join(types), "timeout": max(1, int(timeout))}
+        as soon as one happens; 0 answers at once). Syncthing keeps events of
+        a set of types only from the first request for that set on, and
+        numbers them from 1 again when it restarts."""
+        params = {"since": since, "events": ",".join(types), "timeout": max(0, int(timeout))}
         resp = self._http.get("/rest/events", params=params, timeout=timeout + 15)
         return resp.raise_for_status().json() or []
 

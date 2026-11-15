@@ -7,10 +7,10 @@ It does whatever this machine's setup calls for, and nothing more:
 * only when a vault exists: keep Syncthing running, auto-accept machines that
   paired with our code, keep the games' folders tidy, and see a copy through.
 
-It is meant to cost next to nothing on a Steam Deck: it wakes every
-``IDLE_S`` seconds, or every ``BUSY_S`` while something waits on Steam or a
-copy, and in between Syncthing holds a request open that it answers the
-moment a machine asks to pair or offers a folder. It never reads the sync
+It is meant to cost next to nothing on a Steam Deck: a pass every ``IDLE_S``
+seconds, or every ``BUSY_S`` while something waits on Steam or a copy. In
+between, a thread keeps a request open that Syncthing answers the moment a
+machine asks to pair or offers a folder. It never reads the sync
 status nobody is looking at.
 
 So someone who never syncs still gets the deferred pin applied — which is the
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 import time
 from typing import Callable
 
@@ -57,6 +58,9 @@ class Server:
         self.notify = notify
         self._last_installed: gameversion.GameVersion | None = None
         self._clock = time.monotonic
+        self._watcher: threading.Thread | None = None
+        self._watch_on = threading.Event()  # syncing: the watch runs
+        self._woken = threading.Event()  # the watch saw something for the next pass
         self._version_checked_at: float | None = None
         self._upkept_at: float | None = None
 
@@ -206,25 +210,61 @@ class Server:
         self.notify(f"{SKYRIM_SE.name} was updated", body)
 
     def interval(self) -> float:
-        busy = self.service.state.copy_phase
-        if not busy:
-            try:
-                busy = self.service.steam_change_queued()
-            except Exception:
-                busy = True
+        busy = self.service.state.copy_phase or self._steam_change_queued()
         return BUSY_S if busy else IDLE_S
 
+    def _steam_change_queued(self) -> bool:
+        try:
+            return self.service.steam_change_queued()
+        except Exception:
+            return True
+
     def wait(self, seconds: float) -> None:
-        """Sleep ``seconds``, or less when Syncthing reports something the
-        next pass answers."""
+        """Sleep ``seconds``, or less: when Syncthing reports something the
+        next pass answers (see ``_watch``), or when the app queues a Steam
+        change meanwhile, which must be applied in the few seconds Steam is
+        gone on a switch between Gaming Mode and the desktop. That check is
+        a few file lookups every ``BUSY_S``, nothing more."""
         if seconds <= 0:
             return
         started = self._clock()
-        if self.syncing and self.service.wait_for_sync_events(seconds):
-            # Early: a burst of events still wakes it at most once a second.
-            time.sleep(max(0.0, _MIN_WAKE_S - (self._clock() - started)))
-            return
-        time.sleep(max(0.0, seconds - (self._clock() - started)))
+        watching = self.syncing
+        if watching:
+            self._start_watch()
+            self._watch_on.set()
+        else:
+            self._watch_on.clear()
+        try:
+            while (left := seconds - (self._clock() - started)) > 0:
+                if watching and self._woken.wait(min(BUSY_S, left)):
+                    self._woken.clear()
+                    # A burst of events still wakes it at most once a second.
+                    time.sleep(max(0.0, _MIN_WAKE_S - (self._clock() - started)))
+                    return
+                if not watching:
+                    time.sleep(min(BUSY_S, left))
+                if self._steam_change_queued() and seconds > BUSY_S:
+                    return
+        finally:
+            if not watching:
+                self._woken.clear()
+
+    def _start_watch(self) -> None:
+        if self._watcher is None:
+            self._watcher = threading.Thread(target=self._watch, name="modsync-sync-events", daemon=True)
+            self._watcher.start()
+
+    def _watch(self) -> None:
+        """In its own thread, while syncing: one request after another held
+        open by Syncthing, so a pairing request or a folder offer is answered
+        at once, without the loop waking to ask."""
+        while True:
+            self._watch_on.wait()
+            woke = self.service.watch_sync_events(IDLE_S)
+            if woke:
+                self._woken.set()
+            elif woke is None:
+                time.sleep(BUSY_S)  # Syncthing isn't up (yet): the next pass starts it
 
     def run(self, interval: float | None = None) -> int:
         """Loop until interrupted; ``interval`` fixes the wait between passes."""

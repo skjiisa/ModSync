@@ -22,14 +22,13 @@ class FakeService:
         self.upkept = 0
         self.queued = False
         self.waits = []
-        self.events = False
 
     def steam_change_queued(self):
         return self.queued
 
-    def wait_for_sync_events(self, timeout):
+    def watch_sync_events(self, timeout):
         self.waits.append(timeout)
-        return self.events
+        return None
 
     def upkeep(self):
         self.upkept += 1
@@ -139,27 +138,75 @@ class ServerTests(unittest.TestCase):
         svc.state.copy_phase = "receiving"
         self.assertEqual(server.interval(), serve.BUSY_S)
 
-    def test_while_syncing_syncthing_wakes_it(self):
+    def quick_wait(self, server, seconds, *, woken_at=None, queued_at=None, svc=None):
+        """Run ``server.wait`` on a fake clock that each sleep or wait moves on.
+        Returns the seconds that passed."""
         from modsync import serve
 
-        svc, server, _, _ = self.make(State(instance_path="/mo2", folder_id="modsync-1"))
-        with patch.object(serve.time, "sleep") as sleep:
-            svc.events = True  # an event (or Syncthing's own timeout) ended the wait
-            server.wait(30)
-            self.assertEqual(svc.waits, [30])
-            self.assertLessEqual(sleep.call_args.args[0], 1.0)  # at most a second more
-            svc.events = False  # Syncthing didn't answer: sleep instead
-            server.wait(30)
-            self.assertGreater(sleep.call_args.args[0], 29)
+        now = [0.0]
+        server._clock = lambda: now[0]
 
-    def test_without_a_vault_it_just_sleeps(self):
+        def advance(t):
+            now[0] += t
+            if queued_at is not None and now[0] >= queued_at:
+                svc.queued = True
+
+        class Woken:
+            def wait(self, t):
+                if woken_at is not None and now[0] + t >= woken_at:
+                    now[0] = max(now[0], woken_at)
+                    return True
+                advance(t)
+                return False
+
+            def clear(self):
+                pass
+
+        server._woken = Woken()
+        server._start_watch = lambda: None
+        with patch.object(serve.time, "sleep", side_effect=advance):
+            server.wait(seconds)
+        return now[0]
+
+    def test_while_syncing_the_watch_wakes_it(self):
+        svc, server, _, _ = self.make(State(instance_path="/mo2", folder_id="modsync-1"))
+        self.assertEqual(self.quick_wait(server, 30, woken_at=12), 12)
+        self.assertEqual(self.quick_wait(server, 30, woken_at=0.2), 1)  # a burst wakes it once a second at most
+        self.assertTrue(server._watch_on.is_set())
+        self.assertEqual(self.quick_wait(server, 30), 30)
+
+    def test_a_steam_change_queued_mid_wait_ends_it(self):
+        # Steam is gone only for seconds on a switch between Gaming Mode and the desktop.
+        for state in (State(instance_path="/mo2"), State(instance_path="/mo2", folder_id="modsync-1")):
+            svc, server, _, _ = self.make(state)
+            self.assertLessEqual(self.quick_wait(server, 30, queued_at=7, svc=svc), 10)
+
+    def test_a_busy_wait_runs_its_course(self):
         from modsync import serve
 
         svc, server, _, _ = self.make(State(instance_path="/mo2"))
-        with patch.object(serve.time, "sleep") as sleep:
-            server.wait(30)
-        self.assertEqual(svc.waits, [])
-        self.assertGreater(sleep.call_args.args[0], 29)
+        svc.queued = True
+        self.assertEqual(self.quick_wait(server, serve.BUSY_S), serve.BUSY_S)
+
+    def test_without_a_vault_it_does_not_watch(self):
+        svc, server, _, _ = self.make(State(instance_path="/mo2"))
+        self.assertEqual(self.quick_wait(server, 30), 30)
+        self.assertFalse(server._watch_on.is_set())
+
+    def test_the_watch_thread_wakes_the_loop(self):
+        svc, server, _, _ = self.make(State(instance_path="/mo2", folder_id="modsync-1"))
+        replies = [True]
+
+        def watch(timeout):
+            if replies:
+                return replies.pop()
+            server._watch_on.clear()  # park the thread
+            return False
+
+        svc.watch_sync_events = watch
+        server._watch_on.set()
+        server._start_watch()
+        self.assertTrue(server._woken.wait(5))
 
     def test_a_finished_copy_is_announced_once(self):
         from modsync.service import CopyProgress
@@ -167,13 +214,24 @@ class ServerTests(unittest.TestCase):
         svc, server, lines, notes = self.make(State(instance_path="/mo2", folder_id="modsync-1",
                                                     set_aside="/mo2/.modsync-before-join/x",
                                                     copy_phase="receiving"))
-        progress = [CopyProgress("receiving", "Desktop", need_items=4), CopyProgress("done", "Desktop", set_aside=2)]
-        svc.status = lambda: SyncStatus("ME", "modsync-1", True, "idle", 100.0, [], copy=progress.pop(0))
+        steps = [CopyProgress("receiving", "Desktop", need_items=4), CopyProgress("done", "Desktop", set_aside=2)]
+
+        def advance():
+            step = steps.pop(0)
+            if step.phase == "done":
+                svc.state.copy_phase = ""  # as the real one leaves it
+            return step
+
+        svc.advance_copy = advance
+        svc.status = lambda: SyncStatus("ME", "modsync-1", True, "idle", 100.0, [],
+                                        copy=CopyProgress("receiving", "Desktop", need_items=4))
         server.tick()
         self.assertIn("copying from Desktop: receiving", lines[-1])
         server.tick()
         self.assertEqual(notes, [("Copy finished", "This machine now has the same mods as Desktop. 2 file(s) "
                                   "that were only here are kept in /mo2/.modsync-before-join/x.")])
+        server.tick()  # the copy is over: no second notice, no status read
+        self.assertEqual(len(notes), 1)
 
     def test_queued_pin_is_applied_without_a_vault(self):
         svc, server, lines, notes = self.make(State())
