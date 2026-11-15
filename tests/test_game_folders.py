@@ -1202,6 +1202,46 @@ class KeptSkyrimVault(GameFolderBase):
         self.service.advance_copy()
         self.assertEqual(State.load().copy_source, "DESKTOP")
 
+    def test_a_copy_moves_on_even_once_the_wrong_machine_has_gone(self):
+        """Syncthing forgets a machine's folder states when it disconnects, so
+        "notSharing" can't be relied on to still be there."""
+        self.st.devices["GAMES"] = {"deviceID": "GAMES", "name": "games only"}
+        self.keep_with_mods()
+        self.st.connected = {"GAMES"}
+        self.new_instance()
+        self.service.join_kept_vault(self.instance)
+        self.st.connected = {"DESKTOP"}  # GAMES left; the desktop came on
+        self.st.remote_states = {"DESKTOP": "valid"}
+        self.service.advance_copy()
+        self.assertEqual(State.load().copy_source, "DESKTOP")
+
+    def test_a_copy_never_moves_on_to_a_forgotten_machine(self):
+        self.st.devices["GAMES"] = {"deviceID": "GAMES", "name": "games only"}
+        self.keep_with_mods()
+        self.st.connected = {"GAMES"}
+        self.new_instance()
+        self.service.join_kept_vault(self.instance)
+        self.st.connected = {"GAMES", "DESKTOP"}
+        self.st.remote_states = {"GAMES": "notSharing", "DESKTOP": "valid"}
+        State.update(forgotten_devices=["DESKTOP"])  # forgotten in another process meanwhile
+        self.service.advance_copy()
+        self.assertEqual(State.load().copy_source, "GAMES")
+
+    def test_forgetting_the_machine_a_copy_just_moved_to_is_refused(self):
+        self.st.devices["GAMES"] = {"deviceID": "GAMES", "name": "games only"}
+        self.keep_with_mods()
+        self.st.connected = {"GAMES"}
+        self.new_instance()
+        self.service.join_kept_vault(self.instance)
+        other = ModSyncService(manager=self.st)  # the app, which read the state before the switch
+        other.reload_state()
+        self.st.connected = {"GAMES", "DESKTOP"}
+        self.st.remote_states = {"GAMES": "notSharing", "DESKTOP": "valid"}
+        self.service.advance_copy()  # the background service moves on to the desktop
+        with self.assertRaisesRegex(RuntimeError, "still copying the vault from that one"):
+            other.forget_machine("DESKTOP")
+        self.assertIn("DESKTOP", self.st.devices)
+
     def test_a_copy_from_a_code_stays_with_that_machine(self):
         """Its list's length came with the code: only that machine can vouch for it."""
         self.keep_with_mods()

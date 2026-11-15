@@ -776,7 +776,7 @@ class ModSyncService:
                 if observe:
                     self._copy_seen = self._index_seen = None
                 progress.phase = "waiting"
-                if act and remote.get("remoteState") == "notSharing" and st.copy_expected == -1:
+                if act and st.copy_expected == -1:
                     self._copy_from_another(client, fid, source, connections)
                 return progress
             if not self._index_complete(int(remote.get("sequence") or 0), st.copy_expected, observe):
@@ -846,25 +846,37 @@ class ModSyncService:
         client.revert(fid)
 
     def _copy_from_another(self, client, fid: str, source: str, connections: dict) -> None:
-        """The machine a copy waits for doesn't share the vault (joined
-        without a code, from a copy kept for machines that include ones that
-        sync only games): copy from a connected one that does. Only when the
-        join didn't say how far its source's list went, which ties the copy
-        to that one machine."""
+        """The machine a copy waits for can't be copied from now (offline, or
+        it doesn't share the vault: joined without a code, from a copy kept
+        for machines that include ones that sync only games). Copy from a
+        connected machine that shares it instead. Only when the join didn't
+        say how far its source's list went, which ties the copy to that one
+        machine. The switch happens under the state's lock, rechecked there,
+        so a machine being forgotten meanwhile isn't chosen."""
         try:
             devices = [d.get("deviceID") for d in client.get_folder(fid).get("devices", [])]
         except Exception:
             return
+        forgotten = set(self.state.forgotten_devices)
         for device in devices:
-            if device in (None, "", source) or not (connections.get(device) or {}).get("connected"):
+            if (device in (None, "", source) or device in forgotten
+                    or not (connections.get(device) or {}).get("connected")):
                 continue
             try:
                 if client.completion(fid, device).get("remoteState") != "valid":
                     continue
             except Exception:
                 continue
-            log.info("copy: %s… doesn't share %s; copying from %s… instead", source[:7], fid, device[:7])
-            self.update_state(copy_source=device)
+
+            def switch(st: State, device=device) -> None:
+                if (st.copying and st.folder_id == fid and st.copy_source == source
+                        and st.copy_expected == -1 and device not in st.forgotten_devices):
+                    st.copy_source = device
+
+            self.state = State.change(switch)
+            if self.state.copy_source == device:
+                log.info("copy: %s… can't be copied from now; copying %s from %s… instead",
+                         source[:7], fid, device[:7])
             return
 
     def _copy_settled(self, status: dict, ready: bool, observe: bool) -> bool:
@@ -1195,7 +1207,11 @@ class ModSyncService:
         self.ensure_running()
 
         def forget(st: State) -> None:
-            # Under the state's lock, so pairing with it again can't interleave.
+            # Under the state's lock, so pairing with it again can't interleave,
+            # nor a copy moving on to it (_copy_from_another).
+            if st.copying and st.copy_source == device_id:
+                raise RuntimeError("This machine is still copying the vault from that one. "
+                                   "Let the copy finish, or leave the vault, first.")
             with self.manager.client() as client:
                 me = client.my_id()
                 if device_id == me:
