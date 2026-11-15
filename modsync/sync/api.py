@@ -6,7 +6,7 @@ status/identity, reading + writing config (devices, folders), and ignores.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 import httpx
 
@@ -152,6 +152,16 @@ class SyncthingClient:
 
     def rescan(self, folder_id: str) -> None:
         self._http.post("/rest/db/scan", params={"folder": folder_id}).raise_for_status()
+
+    def events(self, since: int, types: Iterable[str], timeout: float) -> list[dict[str, Any]]:
+        """Events of these types after event ``since``, waiting up to
+        ``timeout`` seconds for the first one (a long poll: Syncthing answers
+        as soon as one happens; 0 answers at once). Syncthing keeps events of
+        a set of types only from the first request for that set on, and
+        numbers them from 1 again when it restarts."""
+        params = {"since": since, "events": ",".join(types), "timeout": max(0, int(timeout))}
+        resp = self._http.get("/rest/events", params=params, timeout=timeout + 15)
+        return resp.raise_for_status().json() or []
 
     # --- system ---
     def restart(self) -> None:

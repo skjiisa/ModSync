@@ -242,6 +242,10 @@ class PinOutcome:
     message: str
 
 
+def _event_ids(events) -> list[int]:
+    return [e["id"] for e in events or [] if isinstance(e, dict) and isinstance(e.get("id"), int)]
+
+
 class ModSyncService:
     def __init__(self, manager: SyncthingManager | None = None) -> None:
         self.state = State.load()
@@ -1723,6 +1727,52 @@ class ModSyncService:
         except Exception as exc:
             log.error("queued pin failed: %s", exc)
             return PinOutcome(False, True, [], f"pin failed: {exc}")
+
+    def steam_change_queued(self) -> bool:
+        """A pin or a launch-hook switch waits for Steam to exit. Only file
+        checks: whether Steam runs is asked only when something waits."""
+        from modsync import launchhook
+
+        return self._pending_pin_path().exists() or bool(launchhook.Pending.load_all())
+
+    # --- the background service ---
+    _WAKE_EVENTS = ("PendingDevicesChanged", "PendingFoldersChanged", "DeviceConnected")
+    _event_id = 0
+    _events_from: str | None = None  # the startTime of the Syncthing _event_id counts in
+
+    def watch_sync_events(self, timeout: float) -> bool | None:
+        """Wait up to ``timeout`` seconds for a machine to ask to pair, offer a
+        folder or connect: what the background service answers
+        (``accept_pending``). Syncthing holds the request open, so nothing
+        wakes in between. True when a pass should look now: such an event,
+        or a Syncthing new to this watch (started, or restarted, which
+        numbers events from 1 again), whose events of these types are kept
+        only from now on, so what it had pending before must be looked at.
+        False after ``timeout`` without one; None when Syncthing didn't
+        answer."""
+        try:
+            with self.manager.client() as client:
+                started = client.system_status().get("startTime")
+                if started != self._events_from:
+                    events = client.events(0, self._WAKE_EVENTS, 0)
+                    self._event_id = max(_event_ids(events), default=0)
+                    self._events_from = started
+                    return True
+                events = client.events(self._event_id, self._WAKE_EVENTS, timeout)
+        except Exception as exc:
+            log.debug("sync events unavailable: %s", exc)
+            self._events_from = None
+            return None
+        ids = _event_ids(events)
+        if ids:
+            self._event_id = max(ids)
+        return bool(ids)
+
+    def upkeep(self) -> None:
+        """What the games' folders need done here between syncs (see
+        ``folders.tidy``), without reading their status."""
+        if self.state.game_folders:
+            folders.tidy()
 
     # --- status ---
     def status(self) -> SyncStatus:

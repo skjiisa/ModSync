@@ -1132,5 +1132,75 @@ class PairingCodes(unittest.TestCase):
             json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("utf-8"))
 
 
+class BackgroundUpkeep(GameFolderBase):
+    """The background service tidies the games' folders without reading their status."""
+
+    def test_upkeep_tidies_folders_synced_here_only(self):
+        tidied = []
+        self.spec = folders.FolderSpec("test-mods", "Test mods (ModSync)", lambda: self.root,
+                                       ("/*",), tidy=tidied.append)
+        State.update(game_folders={"test-mods": str(self.root)}, held_folders={"test-mods-kept": "/kept"})
+        self.service.reload_state()
+        self.service.upkeep()
+        self.assertEqual(tidied, [self.root])
+        State.update(declined_folders=["test-mods"])  # stopping: left alone
+        self.service.reload_state()
+        self.service.upkeep()
+        self.assertEqual(tidied, [self.root])
+
+    def test_a_failing_tidy_never_stops_it(self):
+        def broken(root):
+            raise OSError("read-only")
+
+        self.spec = folders.FolderSpec("test-mods", "Test mods (ModSync)", lambda: self.root, ("/*",), tidy=broken)
+        State.update(game_folders={"test-mods": str(self.root)})
+        self.service.reload_state()
+        with self.assertLogs("modsync.sync.folders", "WARNING"):
+            self.service.upkeep()
+
+
+class SyncEvents(GameFolderBase):
+    """Between passes the background service watches Syncthing's events."""
+
+    def watch(self, replies, starts):
+        calls = []
+
+        def events(since, types, timeout):
+            calls.append((since, timeout))
+            reply = replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        def system_status():
+            start = starts.pop(0) if len(starts) > 1 else starts[0]
+            if isinstance(start, Exception):
+                raise start
+            return {"startTime": start}
+
+        with patch.object(_Client, "events", lambda self, *a: events(*a), create=True), \
+                patch.object(_Client, "system_status", lambda self: system_status(), create=True):
+            results = [self.service.watch_sync_events(30) for _ in range(len(replies))]
+        return results, calls
+
+    def test_a_new_syncthing_is_looked_at_once_then_events_wake_it(self):
+        # The first request makes Syncthing keep these events: without a pass right
+        # after it, a request that came just before it would wait a whole interval.
+        results, calls = self.watch([[{"id": 3}], [{"id": 7, "type": "PendingDevicesChanged"}], []], ["t1"])
+        self.assertEqual(results, [True, True, False])
+        self.assertEqual(calls, [(0, 0), (3, 30), (7, 30)])
+
+    def test_a_restart_starts_over_although_every_request_succeeds(self):
+        # The app's Syncthing went away and the service started its own between two polls.
+        results, calls = self.watch([[], [{"id": 100}], [], []], ["t1", "t1", "t2", "t2"])
+        self.assertEqual(results, [True, True, True, False])
+        self.assertEqual(calls, [(0, 0), (0, 30), (0, 0), (0, 30)])
+
+    def test_no_answer_starts_over(self):
+        results, calls = self.watch([[{"id": 5}], OSError("connection refused"), []], ["t1"])
+        self.assertEqual(results, [True, None, True])
+        self.assertEqual(calls, [(0, 0), (5, 30), (0, 0)])
+
+
 if __name__ == "__main__":
     unittest.main()
