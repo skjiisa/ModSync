@@ -108,6 +108,12 @@ def hook_game(appid: int) -> Game:
     return HOOK_GAMES.get(appid, SKYRIM_SE)
 
 
+def windowless(appid: int) -> bool:
+    """A game from the table (modsync.mo2games): Play goes through MO2 with
+    no ModSync window, whatever the play mode."""
+    return appid not in GAMES and appid != DAGGERFALL.appid and appid in HOOK_GAMES
+
+
 def hooked_appids() -> list[int]:
     """The games with anything of a hook on this machine: its record, a change
     queued for it, or its tool directory. Most of HOOK_GAMES never have one,
@@ -410,6 +416,8 @@ class LaunchHookStatus:
                     f"On. It still runs under the hook's old name, which keeps Steam Cloud from syncing "
                     f"{g} saves. Open ModSync or run 'modsync launch enable' to update it."
                 )
+            if windowless(self.game.appid):
+                return f"On. Steam's Play button plays {g} through Mod Organizer 2, as Steam's own launch."
             mode = play_mode()
             if mode == "play":
                 return (f"On. Steam's Play button starts {g} through ModSync, which opens only when "
@@ -835,6 +843,8 @@ def _enable(appid: int, *, through: str | None, command: list[str], native: Path
 
     hands = describe_target(underlying.name, underlying.display_name)
     play = f"Play starts {_native_name(native)}" if native else f"Play opens ModSync, then continues to {hands}"
+    if windowless(appid):
+        native, play = None, "Play goes through Mod Organizer 2"
     log.info("launch hook enabled for %s: hands off to %s (%s); Steam had %s; steam running: %s",
              appid, underlying.name, underlying.path, current or "(default)", shortcuts.steam_is_running())
     if current == ours:
@@ -844,7 +854,7 @@ def _enable(appid: int, *, through: str | None, command: list[str], native: Path
     renaming = current == legacy_tool_id(appid)
     if shortcuts.steam_is_running():
         Pending("select", appid, {"name": ours, "config": "", "priority": "250"}).save()
-        if native and not renaming:
+        if (native or windowless(appid)) and not renaming:
             return (
                 f"Launch hook installed; {play[0].lower()}{play[1:]}. Steam is running, so the switch is "
                 f"queued. {steamos.steam_restart_hint()} You can also pick "
@@ -866,7 +876,7 @@ def _enable(appid: int, *, through: str | None, command: list[str], native: Path
     _drop_legacy(env, appid, ours)
     if renaming:
         return f"Launch hook renamed so Steam Cloud syncs {game.name} saves again."
-    if native:
+    if native or windowless(appid):
         return f"Launch hook enabled. Start Steam and press Play on {game.name}: {play[0].lower()}{play[1:]}."
     return f"Launch hook enabled; it continues to {hands}. Start Steam and press Play on {game.name}."
 
@@ -889,7 +899,8 @@ def disable(appid: int = SKYRIM_SE.appid) -> str:
     if _is_ours(current, appid):
         if shortcuts.steam_is_running():
             Pending("restore", appid, previous, remove_tool=True).save()
-            until = f"starts {_native_name(record.native)}" if record and record.native else "opens ModSync"
+            until = f"starts {_native_name(record.native)}" if record and record.native else (
+                "goes through Mod Organizer 2" if windowless(appid) else "opens ModSync")
             return (
                 f"Steam is running, so restoring the previous launcher is queued. {steamos.steam_restart_hint()} "
                 f"Until then Play still {until} for {game.name}. You can also pick the previous "
@@ -941,6 +952,8 @@ def _apply(env: SteamEnv, pending: Pending) -> str | None:
             record = load_record(env.tool_dir(appid), appid)
             if record and record.native:
                 return f"Launch hook selected. Play on {hook_game(appid).name} now starts {_native_name(record.native)}."
+            if windowless(appid):
+                return f"Launch hook selected. Play on {hook_game(appid).name} now goes through Mod Organizer 2."
             return "Launch hook selected for the game. Play now opens ModSync first."
         cfg.set_compat_entry(appid, pending.mapping)
         cfg.save()

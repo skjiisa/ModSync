@@ -929,7 +929,9 @@ modsync sync share <key>-mo2        # sync its mods with every paired machine
    its prefix.
 2. `modsync games <key> install` installs MO2. For a Steam game, close Steam
    first, as for Skyrim, because MO2-LINT changes the game's settings in
-   Steam and prepares the prefix with its bundled protontricks. For a Heroic game,
+   Steam and prepares the prefix with its bundled protontricks. MO2-LINT
+   wants Proton 11.0 installed in Steam for that. Without it, ModSync gives
+   MO2-LINT the Proton the game runs with instead. For a Heroic game,
    ModSync applies MO2-LINT's prefix steps itself, as described under
    Cyberpunk 2077 below. An instance MO2-LINT installed earlier is found by
    itself.
@@ -967,8 +969,10 @@ as Steam had it and a notification says why. With no MO2 instance for the
 game, the hook does nothing. `MODSYNC_ORIGINAL_GAME=1 %command%` in the game's
 launch options skips the hook.
 
-After MO2-LINT's install, Steam's Play opens MO2 through MO2-LINT's own tool
-until the hook is on. The app shows that as "Opens MO2".
+MO2-LINT's install adds a tool of its own to Steam ("MO2 <game>"), which
+opens MO2 from Steam's Play once it's chosen under Properties, then
+Compatibility. With ModSync's hook on there's no need to choose it. If it is
+chosen, the app shows Steam's Play button as "Opens MO2".
 
 ### Heroic's Play button
 
@@ -1008,11 +1012,12 @@ RootBuilder plugin after the install, and keeps extra files out of the sync.
 ### What has and hasn't been tested
 
 Cyberpunk 2077 from GOG runs on this path on a desktop, as it did before the
-path was shared. For Steam, the launch ModSync builds was checked against
-real Starfield and Witcher 3 installs without starting them, and the hook's
-script and the hub run in the test suite against a made-up Steam. Nobody has
-yet installed MO2 for a Steam game other than Skyrim through ModSync, played
-an Epic game, or tried any of this on a Steam Deck or Steam Frame. The ARM64
+path was shared. Starfield from Steam was installed this way on a desktop
+(CachyOS, native Steam, Proton Experimental, no Proton 11.0). MO2 opened in
+Starfield's prefix and recognised the game, and with the hook on, ModSync's
+Open Mod Organizer 2 went through Steam's own launch and ended with it.
+Nobody has yet played a game other than Skyrim and Cyberpunk through this
+path, installed for an Epic game, or tried it on a Steam Deck or Steam Frame. The ARM64
 fix for MO2 (`modsync mo2 usvfs`) only knows Skyrim's instance so far.
 
 One known gap is Epic's login arguments. Heroic passes an Epic game its login

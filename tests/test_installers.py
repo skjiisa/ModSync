@@ -103,6 +103,69 @@ class Mo2LintBackendTests(unittest.TestCase):
             self.assertEqual(seen["args"][:2], ["flatpak-spawn", "--host"])
             self.assertEqual(seen["args"][2], str(fake))
 
+    def test_without_proton_11_a_steam_install_uses_the_games_proton_by_protontricks_name(self):
+        """MO2-LINT 7.0.3 asks for "Proton 11.0" unless told otherwise. Told
+        another, it finds it by folder name or path, and hands the same value
+        to protontricks, which knows only Steam's name for it ("Proton
+        Experimental", in "Proton - Experimental"). The fake below does both
+        lookups the way they do."""
+        from unittest.mock import patch
+
+        from modsync.games import CYBERPUNK
+        from modsync.mo2.installers import mo2lint
+        from modsync.steam import vdf
+
+        lookups = textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import os, sys, pathlib
+            args = sys.argv[1:]
+            if "--proton-version" in args:
+                value = args[args.index("--proton-version") + 1]
+                found = pathlib.Path(value).expanduser()  # MO2-LINT: a path, also relative to where it runs
+                print("mo2-lint finds:", found.resolve() if (found / "proton").exists() else None)
+                print("protontricks gets:", value)
+            dest = pathlib.Path(sys.argv[3])
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "ModOrganizer.exe").write_bytes(b"MZ")
+            """)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            fake = _script(tmp / "fake-mo2-lint", lookups)
+            steamapps = tmp / "steamapps"
+            experimental = steamapps / "common" / "Proton - Experimental"
+            experimental.mkdir(parents=True)
+            (experimental / "proton").write_text("")
+            (steamapps / "appmanifest_1493710.acf").write_text(vdf.dumps({"AppState": {
+                "appid": "1493710", "name": "Proton Experimental", "installdir": "Proton - Experimental"}}))
+            ge = tmp / "compatibilitytools.d" / "GE-Proton10-34"
+            ge.mkdir(parents=True)
+            (ge / "proton").write_text("")
+            (ge / "compatibilitytool.vdf").write_text(vdf.dumps({"compatibilitytools": {"compat_tools": {
+                "GE-Proton10-34": {"install_path": ".", "display_name": "GE-Proton10-34"}}}}))
+
+            def install(game, launcher, found, *, default=False):
+                lines: list[str] = []
+                with patch("modsync.mo2.launch.game_proton_dir", return_value=found), \
+                        patch.object(mo2lint, "default_proton_installed", return_value=default), \
+                        patch.object(mo2lint, "data_dir", return_value=tmp / "data"):
+                    result = Mo2LintBackend(binary=fake).install(
+                        game, tmp / f"MO2-{len(list(tmp.iterdir()))}", on_output=lines.append, launcher=launcher)
+                self.assertTrue(result.success, result.message)
+                return "\n".join(lines)
+
+            said = install(SKYRIM_SE, None, experimental)
+            self.assertIn("--proton-version Proton Experimental", said)
+            self.assertIn(f"mo2-lint finds: {experimental.resolve()}", said)
+            self.assertIn("protontricks gets: Proton Experimental", said)
+            said = install(CYBERPUNK, "steam", ge)
+            self.assertIn(f"mo2-lint finds: {ge.resolve()}", said)
+            self.assertIn("protontricks gets: GE-Proton10-34", said)
+            # Proton 11.0 installed: MO2-LINT picks, as it intends.
+            self.assertNotIn("--proton-version", install(SKYRIM_SE, None, experimental, default=True))
+            self.assertNotIn("--proton-version", install(SKYRIM_SE, None, None))  # Steam can't say
+            self.assertNotIn("--proton-version", install(CYBERPUNK, "gog", experimental))  # not Steam's game
+
     def test_launcher_and_environment_reach_mo2lint(self):
         """Cyberpunk on GOG: --launcher gog, and Wine stand-ins in the environment
         (modsync.cyberpunk.MO2LINT_ENV) — also through flatpak-spawn."""
@@ -176,7 +239,7 @@ class Mo2LintBackendTests(unittest.TestCase):
             fake = _script(tmp / "fake-mo2-lint", FAKE_OK)
             calls = []
 
-            def run(args, on_output, env=None):
+            def run(args, on_output, env=None, cwd=None):
                 calls.append(args[1:])
                 if args[1] == "uninstall":
                     state.write_text('{"instances": []}')  # what mo2-lint uninstall does

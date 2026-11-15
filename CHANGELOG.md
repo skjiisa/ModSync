@@ -153,6 +153,10 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Installing Mod Organizer 2 for a Steam game, Skyrim included, works without
+  Proton 11.0 installed. MO2-LINT asked for it and stopped. ModSync now gives
+  MO2-LINT the Proton the game runs with in that case, under the name
+  protontricks knows it by.
 - Installing the Visual C++ runtime into Skyrim's prefix no longer reports
   a failure when the installer succeeds but asks for a reboot or finds a
   newer runtime already there. Wine passes its exit codes (3010, 1638) on

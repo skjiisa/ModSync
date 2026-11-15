@@ -181,7 +181,7 @@ elif [[ -z "$native" && "$verb" == "waitforexitandrun" && -z "${MODSYNC_LAUNCH_H
                     log "with ${entry%%=*}=${entry#*=}"
                 fi
             done
-            log "playing through ModSync: ${handoff[*]:3} (with $underlying_name, in ${handoff[2]})"
+            log "launching through ModSync: ${handoff[*]:3} (with $underlying_name, in ${handoff[2]})"
             set -- "$verb" "${handoff[@]:3}"
         else
             log "WARNING: ModSync handed back ${handoff[1]} and ${handoff[2]}, which are not there; launching the game"

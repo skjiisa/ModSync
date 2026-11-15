@@ -305,7 +305,9 @@ def test_steams_play_button_goes_through_modsyncs_hook(machine):
     with patch.object(shortcuts, "steam_is_running", return_value=False), \
             patch.object(launchhook, "modsync_command", return_value=["/usr/bin/modsync"]):
         said = game.enable_hook()
-        assert "Launch hook enabled" in said[0] and "Starfield" in said[0]
+        assert said[0] == "Launch hook enabled. Start Steam and press Play on Starfield: play goes through Mod Organizer 2."
+        assert game.hook_status().summary() == (
+            "On. Steam's Play button plays Starfield through Mod Organizer 2, as Steam's own launch.")
         assert (tool / "proton").is_file() and f'appid="{STARFIELD}"' in (tool / "proton").read_text()
         assert game.hook_status().enabled
         assert STARFIELD in launchhook.hooked_appids()

@@ -113,6 +113,20 @@ def _proton_for(compat: Path, libs: list, game: Game = SKYRIM_SE) -> Path:
     )
 
 
+def game_proton_dir(game: Game) -> Path | None:
+    """The Proton the game runs with in Steam, as :func:`build_plan` picks it
+    for MO2, or None when Steam doesn't have the game or that can't be told."""
+    for root in platforms.current().steam_roots():
+        libs = libraries.read_libraries(root)
+        app = libraries.find_app(libs, game.appid)
+        if app is not None:
+            try:
+                return _proton_for(app.library.steamapps / "compatdata" / str(game.appid), libs, game)
+            except RuntimeError:
+                return None
+    return None
+
+
 def nested_desktop_display() -> str | None:
     """Gamescope's X display, when ModSync runs in a desktop nested inside gamescope.
 

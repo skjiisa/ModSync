@@ -137,7 +137,7 @@ class RenderedScript(unittest.TestCase):
         self.assertEqual(entry["env"]["STEAM_COMPAT_APP_ID"], "489830")  # still Steam's launch of the game
         self.assertEqual(entry["env"]["LD_PRELOAD"], "/fake/gameoverlayrenderer.so")
         log = self.log()
-        self.assertIn("playing through ModSync", log)
+        self.assertIn("launching through ModSync", log)
         self.assertIn("hub: a log line", log)  # stderr is logged; only stdout is the handoff
         self.assertEqual(list((self.tmp / "state/modsync").glob("handoff.*")), [])
 
