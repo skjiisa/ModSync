@@ -184,7 +184,7 @@ class FakeHandler:
 
 def test_a_game_modsync_runs_gets_its_own_links(desktop):
     handler = FakeHandler(claims=True)
-    with patch.dict(nxm.HANDLERS, {"cyberpunk2077": handler.make}):
+    with patch.dict(nxm.HANDLERS, {"cyberpunk2077": [handler.make]}):
         assert nxm.handle(LINK) == "sent"
     assert handler.downloads == [LINK]
 
@@ -202,7 +202,7 @@ def test_other_links_go_to_the_handler_from_before(desktop, link):
         started.append((argv, kw))
         return None
 
-    with patch.dict(nxm.HANDLERS, {"cyberpunk2077": FakeHandler(claims=False).make}), \
+    with patch.dict(nxm.HANDLERS, {"cyberpunk2077": [FakeHandler(claims=False).make]}), \
             patch.object(nxm.subprocess, "Popen", side_effect=popen):
         assert MO2LINT in nxm.handle(link)
     ((argv, kw),) = started

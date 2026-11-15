@@ -34,7 +34,7 @@ def no_disk(self):
 class CyberpunkUiTests(UiTestCase):
     def open_sheet(self, ov):
         """Home showing Cyberpunk, with ``ov`` as what's set up for the rest of the test."""
-        for p in (patch.object(cyberpunk, "overview", lambda hook=True: ov),
+        for p in (patch.object(cyberpunk.GAME, "overview", lambda hook=True: ov),
                   patch.object(GogGame, "drive_c", property(no_disk))):
             p.start()
             self.addCleanup(p.stop)
@@ -64,7 +64,7 @@ class CyberpunkUiTests(UiTestCase):
     def test_home_reopens_on_cyberpunk_when_heroic_has_it(self):
         State.update(home_game="cyberpunk")
         ov = overview()
-        with patch.object(cyberpunk, "overview", lambda hook=True: ov), \
+        with patch.object(cyberpunk.GAME, "overview", lambda hook=True: ov), \
                 patch.object(GogGame, "drive_c", property(no_disk)):
             window = self.window()
             self.settle(3)
@@ -95,7 +95,7 @@ class CyberpunkUiTests(UiTestCase):
             on_output("Applying xaudio2_7=native to Cyberpunk's prefix…")
             return INSTANCE
 
-        with patch.object(cyberpunk, "install_mo2", side_effect=install) as installed:
+        with patch.object(cyberpunk.GAME, "install_mo2", side_effect=install) as installed:
             page.install_tile.click()
             self.settle(4)
         installed.assert_called_once()
@@ -107,7 +107,7 @@ class CyberpunkUiTests(UiTestCase):
         window, page = self.open_sheet(overview())
         self.assertIs(page.preferred_focus(), page.play)
         self.assertTrue(page.open_mo2.isVisibleTo(page))
-        with patch.object(cyberpunk, "launch", return_value="Starting Cyberpunk 2077 through MO2…") as launch:
+        with patch.object(cyberpunk.GAME, "launch", return_value="Starting Cyberpunk 2077 through MO2…") as launch:
             page.play.click()
             self.settle(4)
             page.open_mo2.click()
@@ -118,7 +118,7 @@ class CyberpunkUiTests(UiTestCase):
     def test_rows_switch_heroics_play_button_and_sync(self):
         window, page = self.open_sheet(overview())
         self.assertEqual(page.hook_row.badge.text(), "Game only")
-        with patch.object(cyberpunk, "enable_hook", return_value=["Heroic's Play button goes through MO2."]) as on:
+        with patch.object(cyberpunk.GAME, "enable_hook", return_value=["Heroic's Play button goes through MO2."]) as on:
             page.hook_row.click()
             self.settle(4)
         on.assert_called_once()
@@ -133,7 +133,7 @@ class CyberpunkUiTests(UiTestCase):
         window, page = self.open_sheet(overview(hook_on=True, mods="on"))
         self.assertEqual(page.hook_row.badge.text(), "Mod Organizer 2")
         self.assertEqual(page.mods_row.badge.text(), "On")
-        with patch.object(cyberpunk, "disable_hook", return_value="Starts it as before.") as off:
+        with patch.object(cyberpunk.GAME, "disable_hook", return_value="Starts it as before.") as off:
             page.hook_row.click()
             self.settle(4)
         off.assert_called_once()
@@ -147,7 +147,7 @@ class CyberpunkUiTests(UiTestCase):
         """One MO2-LINT installed is played but only synced once chosen: the row chooses it."""
         window, page = self.open_sheet(overview(chosen=False))
         self.assertIn("use this instance here", page.mods_row.description)
-        with patch.object(cyberpunk, "use_instance") as use, \
+        with patch.object(cyberpunk.GAME, "use_instance") as use, \
                 patch.object(window.service, "share_game_folder", return_value=INSTANCE):
             page.mods_row.click()
             self.settle(4)
@@ -161,11 +161,11 @@ class CyberpunkUiTests(UiTestCase):
         self.assertIsInstance(window.top_overlay, FolderSheet)
         window.top_overlay.close()
         self.settle()
-        with patch.object(window.service, "use_cyberpunk_instance",
+        with patch.object(window.service, "use_game_instance",
                           return_value=["Using Mod Organizer 2 in /other.", "Updated Heroic's Play hook."]) as use:
             page._use(Path("/other"))
             self.settle(4)
-        use.assert_called_once_with(Path("/other"))  # the service moves mods sync along before Play is free
+        use.assert_called_once_with(cyberpunk.GAME, Path("/other"))  # the service moves mods sync along before Play is free
         self.assertEqual(window.messages[-1], "Using Mod Organizer 2 in /other. Updated Heroic's Play hook.")
 
     def test_a_version_mismatch_is_said_plainly_and_in_the_picker(self):
@@ -178,7 +178,7 @@ class CyberpunkUiTests(UiTestCase):
 
     def test_a_failure_is_shown_and_the_window_is_free_again(self):
         window, page = self.open_sheet(overview())
-        with patch.object(cyberpunk, "enable_hook", side_effect=cyberpunk.CyberpunkError("Close Heroic first.")):
+        with patch.object(cyberpunk.GAME, "enable_hook", side_effect=cyberpunk.CyberpunkError("Close Heroic first.")):
             page.hook_row.click()
             self.settle(4)
         self.assertEqual(window.messages[-1], "⚠ Close Heroic first.")
@@ -193,7 +193,7 @@ class CyberpunkUiTests(UiTestCase):
         self.assertEqual(page.install_tile.text(), "Finish setting up Mod Organizer 2")
         self.assertIs(page.preferred_focus(), page.install_tile)
         self.assertEqual(page.summary(ov)[0], "Needs a look")
-        with patch.object(cyberpunk, "install_mo2", return_value=INSTANCE) as install:
+        with patch.object(cyberpunk.GAME, "install_mo2", return_value=INSTANCE) as install:
             page.install_tile.click()
             self.settle(4)
         self.assertEqual(install.call_args.args[0], INSTANCE)  # that instance, not a new one
@@ -213,14 +213,14 @@ class CyberpunkUiTests(UiTestCase):
     def test_a_read_overtaken_by_a_newer_one_or_an_action_is_dropped(self):
         window, page = self.open_sheet(overview())
         calls = []
-        with patch("modsync.ui.pages.cyberpunk.worker.run_async",
+        with patch("modsync.ui.pages.managed.worker.run_async",
                    side_effect=lambda fn, *a, **kw: calls.append(kw)):
             page.refresh()  # an older poll...
             page.refresh()  # ...and the read after an action
         calls[1]["on_done"](overview(hook_on=True))
         calls[0]["on_done"](overview(hook_on=False))  # the older one lands last
         self.assertEqual(page.hook_row.badge.text(), "Mod Organizer 2")
-        with patch("modsync.ui.pages.cyberpunk.worker.run_async",
+        with patch("modsync.ui.pages.managed.worker.run_async",
                    side_effect=lambda fn, *a, **kw: calls.append(kw)):
             page.refresh()
             page._run(lambda: "done", message="Working…")  # an action starts meanwhile

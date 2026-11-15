@@ -49,12 +49,14 @@ usage:
   modsync dfu install [<dest-dir>]       install Daggerfall Unity using Steam's Daggerfall data
   modsync dfu hook enable | disable      make Steam's Play button on Daggerfall start Daggerfall Unity
 
-  modsync cyberpunk status               Cyberpunk 2077 in Heroic (GOG) and its MO2 instance
-  modsync cyberpunk install [<dir>]      install MO2 for Cyberpunk (with RootBuilder for CET/RED4ext)
-  modsync cyberpunk use <dir>            use this MO2 instance for Cyberpunk
-  modsync cyberpunk open | play          open its MO2, or play through it, with Heroic's Proton
-  modsync cyberpunk hook enable | disable | status
-                                         make Heroic's Play button on Cyberpunk play through MO2
+  modsync games [list [--all]]           the other games ModSync runs MO2 for, in Steam or Heroic here
+  modsync games <key> status             one of them in its store, and its MO2 instance
+  modsync games <key> install [<dir>]    install MO2 for it (Cyberpunk: with RootBuilder for CET/RED4ext)
+  modsync games <key> use <dir>          use this MO2 instance for it
+  modsync games <key> open | play        open its MO2, or play through it, in the game's own prefix
+  modsync games <key> hook enable | disable | status
+                                         make Steam's or Heroic's Play button on it play through MO2
+  modsync cyberpunk …                    the same as 'modsync games cyberpunk2077 …'
 
   modsync nxm status | enable | disable  send Nexus Mods downloads to the MO2 of the games ModSync runs
 
@@ -147,6 +149,11 @@ def _main(argv: list[str] | None) -> int:
         from modsync.cli import cyberpunk
 
         return cyberpunk(argv[1:])
+
+    if cmd == "games":
+        from modsync.cli import games
+
+        return games(argv[1:])
 
     if cmd == "nxm":
         from modsync.cli import nxm

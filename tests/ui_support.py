@@ -21,7 +21,7 @@ try:
 except ImportError:  # pragma: no cover - GUI extra not installed
     QApplication = None
 
-from modsync import background, cyberpunk, dfu, gameversion, launchhook
+from modsync import background, dfu, gameversion, launchhook, mo2games
 from modsync.firewall import Check
 from modsync.games import SKYRIM_SE
 from modsync.mo2 import usvfs
@@ -90,9 +90,12 @@ class UiTestCase(unittest.TestCase):
             patch("modsync.ui.pages.system.firewall.check", return_value=Check(None, True, "")),
             patch("modsync.ui.pages.mods.scan_instances", return_value=[]),
             # No Daggerfall on the test machine, unless a test says otherwise.
-            patch.object(cyberpunk, "overview", lambda hook=True: cyberpunk.Overview(
+            # None of the table's games either (Cyberpunk, and the rest): no test
+            # reads this machine's Steam or Heroic.
+            patch.object(mo2games.ManagedGame, "overview", lambda self, hook=True: mo2games.Overview(
                 None, None, False, None, None, "off", None, None)),
-            patch.object(cyberpunk, "refresh_hook", lambda: []),
+            patch.object(mo2games, "here", lambda: []),
+            patch.object(mo2games, "refresh_hooks", lambda: []),
             patch.object(dfu, "overview", lambda hook=True: dfu.Overview(
                 None, ["Steam hasn't installed it."], None, None, None, "off", "off", None)),
             # Don't read this machine's controllers: a plain keyboard unless a

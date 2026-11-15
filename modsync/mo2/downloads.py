@@ -35,6 +35,11 @@ from modsync import background, config
 # doesn't turn a later Play into something else.
 NOTE_TTL = 180
 
+# What ModSync's own Play and Open MO2 leave in the note instead of a link, for
+# the launch they ask the store for.
+PLAY = "modsync:play"
+OPEN = "modsync:open"
+
 # How long MO2 gets to show up once its launch has begun (the hook took the
 # link ModSync left, or ModSync started it directly), before a later link
 # opens it again.
@@ -224,11 +229,12 @@ def mo2_running(prefix: Path, instance: Path) -> bool:
     return False
 
 
-def take_note(note: Path, taken: Path) -> str | None:
+def take_note(note: Path, taken: Path, *, requests: bool = False) -> str | None:
     """For a hook written in Python: take the note ModSync left, once, the way
     Heroic's hook script does (move it aside, then empty it so the moved
-    file's time is when MO2's launch began). Returns the link, or None when
-    there was none or it's older than :data:`NOTE_TTL`."""
+    file's time is when MO2's launch began). Returns the link (or, with
+    ``requests``, :data:`PLAY` or :data:`OPEN`), or None when there was none
+    or it's older than :data:`NOTE_TTL`."""
     try:
         os.replace(note, taken)
     except OSError:
@@ -241,6 +247,8 @@ def take_note(note: Path, taken: Path) -> str | None:
         os.utime(taken)
     except OSError:
         return None
-    if time.time() - left > NOTE_TTL or not text.lower().startswith("nxm://"):
+    if time.time() - left > NOTE_TTL:
         return None
-    return text
+    if text.lower().startswith("nxm://") or (requests and text in (PLAY, OPEN)):
+        return text
+    return None

@@ -221,3 +221,24 @@ Once installed, the blue action plays it, through Steam when the Play button
 is set to Daggerfall Unity, which also syncs the saves around the game.
 
 ![Daggerfall Unity ready](daggerfall.png)
+
+## Other games
+
+A game from the table of games ModSync runs Mod Organizer 2 for
+(`modsync games list --all`) joins the switcher once Steam or Heroic has it
+installed. Cyberpunk 2077 is offered either way. With more than five games
+the list scrolls inside the sheet.
+
+![Switching to a game from the table](game-switch-table.png)
+
+Every such game has the same page. The rows say where the store installed
+the game, which MO2 instance is in use, what the store's Play button does,
+and whether mods sync. Until MO2 is installed, the blue action installs it.
+
+![A Steam game before MO2 is installed](game-table-install.png)
+
+Once it is, the blue action plays through MO2. With the store's Play button
+set to Mod Organizer 2, Play goes through the store, so the store syncs its
+cloud saves.
+
+![A Steam game ready to play](game-table.png)

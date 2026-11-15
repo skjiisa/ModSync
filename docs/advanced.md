@@ -178,6 +178,8 @@ modsync steam shortcut [--remove]   # add ModSync as a non-Steam game, or remove
 modsync launch status | enable [--through <tool>] | disable
 modsync launch mode [countdown | play | wait]   # what Steam's Play does once ModSync opens, see below
 modsync dfu status | install [<dest>] | use <dir> | hook enable | disable   # Daggerfall Unity, see below
+modsync games [list [--all]]        # the other games ModSync runs MO2 for, see "Other games"
+modsync games <key> status | install [<dir>] | use <dir> | open | play | hook enable | disable | status
 modsync nxm status | enable | disable   # Nexus downloads for the games ModSync runs, see "Nexus downloads"
 ```
 
@@ -849,7 +851,136 @@ DFU only has an x86_64 build. On the Steam Frame it would have to run under
 emulation, which is untested (#110). DFU's developers don't support builds or setups from third parties,
 so report problems with a ModSync-installed DFU to ModSync.
 
-## Cyberpunk 2077 (GOG, through Heroic)
+## Other games
+
+Skyrim Special Edition and Daggerfall each have their own path in ModSync.
+Every other game goes through one path that is the same for all of them, in
+Steam and in Heroic (GOG and Epic). ModSync finds the game in its store,
+installs Mod Organizer 2 for it with MO2-LINT, opens MO2 or plays through it
+in the game's own prefix, makes the store's Play button play through MO2,
+sends the game's Nexus downloads to that MO2, and syncs its mods with paired
+machines. Saves stay with the store. The game is still the store's launch, so
+Steam Cloud, GOG and Epic sync them as they do without mods.
+
+The games are the ones MO2-LINT can install MO2 for. `modsync games list
+--all` prints them with their keys: Baldur's Gate 3, Cyberpunk 2077, Dragon
+Age: Origins and 2, Enderal, Fallout 3, 4, New Vegas and London, Morrowind,
+Oblivion, Skyrim Legendary Edition, Skyrim VR, Starfield, Subnautica, Valheim
+and The Witcher 3 among them. ModSync's maintainers don't own most of them,
+so a game other than Cyberpunk 2077 has only been tested as far as the notes
+under "What has and hasn't been tested" say.
+
+In the app, a game from this list appears in the game switcher (X) once Steam
+or Heroic has it installed. Cyberpunk 2077 is always offered. The game's page
+has the same rows and actions for every game.
+
+```sh
+modsync games                       # the games on this machine, and their MO2 instances
+modsync games list --all            # every game ModSync knows, with its key
+modsync games <key> status
+modsync games <key> install [<dir>] # default ~/ModOrganizer2-<key>
+modsync games <key> use <dir>       # an MO2 instance set up some other way
+modsync games <key> open | play
+modsync games <key> hook enable | disable | status
+modsync sync share <key>-mo2        # sync its mods with every paired machine
+```
+
+1. Install the game in Steam or Heroic and launch it once, so the store makes
+   its prefix.
+2. `modsync games <key> install` installs MO2. For a Steam game, close Steam
+   first, as for Skyrim, because MO2-LINT changes the game's settings in
+   Steam and prepares the prefix with its bundled protontricks. For a Heroic game,
+   ModSync applies MO2-LINT's prefix steps itself, as described under
+   Cyberpunk 2077 below. An instance MO2-LINT installed earlier is found by
+   itself.
+3. `open` opens MO2 and `play` plays through it.
+4. `hook enable` makes the store's own Play button play through MO2.
+
+### Which program Play runs
+
+MO2 keeps a list of programs for each game (the drop-down beside its Run
+button). Play runs the first one in that list that is in the game's folder
+and still exists. MO2's game plugins list a script extender ahead of the
+game, and the game ahead of its launcher, so Play starts the script extender
+when one is installed. To make Play start something else, move it up in
+MO2's list (Tools, then Executables). Before MO2 has saved a list, Play runs
+the program MO2-LINT names for the game, through MO2.
+
+### Steam's Play button
+
+`hook enable` installs the same launch hook Skyrim uses, under the game's own
+name in Steam's compatibility tools (`modsync_<appid>_proton`). For these
+games the hook opens no window. `modsync launch hub` hands MO2's Play
+straight back, and Steam runs it as the game's launch, so Steam tracks the
+session and syncs Steam Cloud saves when it ends. Steam only reads the
+setting while it starts, so with Steam running the change waits until Steam
+closes, as it does for Skyrim.
+
+While the hook is on and Steam is running, ModSync's own Play and Open Mod
+Organizer 2 go through Steam too. ModSync leaves a note
+(`modsync:play` or `modsync:open`) and asks Steam to launch the game, and the
+hub takes the note. With the hook off, ModSync starts MO2 itself with the
+game's Proton and prefix, and Steam Cloud does not sync around that session.
+
+If MO2's launch can't be worked out (the prefix is gone, say), the game starts
+as Steam had it and a notification says why. With no MO2 instance for the
+game, the hook does nothing. `MODSYNC_ORIGINAL_GAME=1 %command%` in the game's
+launch options skips the hook.
+
+After MO2-LINT's install, Steam's Play opens MO2 through MO2-LINT's own tool
+until the hook is on. The app shows that as "Opens MO2".
+
+### Heroic's Play button
+
+The hook is the wrapper described under Cyberpunk 2077 below, for any GOG or
+Epic game. Close Heroic before turning it on or off.
+
+### Syncing a game's mods
+
+Each game has one synced folder, `<key>-mo2` (Cyberpunk's is `cp2077-mo2`,
+from before). It follows the same rules as Skyrim's vault: `mods`,
+`profiles`, `downloads`, `overwrite` and `categories.dat` sync, and the MO2
+program, `ModOrganizer.ini` and `nexusApiKey` never do. Logs stay out. Only
+an instance handed to ModSync with `install` or `use` syncs. A paired machine
+takes the folder up once it has an instance for the game with no mods in it.
+
+The machine that starts syncing records the game's version
+(`modsync-game-version.json`) when MO2-LINT names the game's own program. For
+a game where it names a launcher, ModSync records nothing, since a launcher's
+version says nothing about the game. A machine with another version gets a
+note in `status`, `open` and `play`, and nothing else happens.
+
+### What a game can need beyond the list
+
+Two kinds of special case exist, and Cyberpunk 2077 uses both.
+
+A fact about the game goes in `QUIRKS` in `modsync/games.py`. `dll_overrides`
+names DLLs that Wine must load from the game's folder ahead of its own, for
+mod loaders that arrive as a proxy DLL (BepInEx's `winhttp.dll`, Cyber Engine
+Tweaks' `version.dll`). Every launch sets them in `WINEDLLOVERRIDES`, also
+through Steam's and Heroic's hooks. `play_exes` and `play_argument` pick
+which of MO2's programs Play runs when MO2's order isn't enough.
+
+Something to do goes in a subclass of `ManagedGame`
+(`modsync/mo2games/__init__.py`), named in `_special()`. Cyberpunk's adds the
+RootBuilder plugin after the install, and keeps extra files out of the sync.
+
+### What has and hasn't been tested
+
+Cyberpunk 2077 from GOG runs on this path on a desktop, as it did before the
+path was shared. For Steam, the launch ModSync builds was checked against
+real Starfield and Witcher 3 installs without starting them, and the hook's
+script and the hub run in the test suite against a made-up Steam. Nobody has
+yet installed MO2 for a Steam game other than Skyrim through ModSync, played
+an Epic game, or tried any of this on a Steam Deck or Steam Frame. The ARM64
+fix for MO2 (`modsync mo2 usvfs`) only knows Skyrim's instance so far.
+
+## Cyberpunk 2077
+
+Cyberpunk 2077 is one of the games above, with a few things of its own. Its
+commands are also `modsync cyberpunk …`, the same as `modsync games
+cyberpunk2077 …`. The rest of this section describes it from GOG through
+Heroic, which is how it has been tested.
 
 ModSync sets up Cyberpunk 2077 from GOG, installed with the
 [Heroic Games Launcher](https://heroicgameslauncher.com/), with Mod

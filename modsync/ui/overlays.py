@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -280,7 +281,11 @@ class GameSheet(Overlay):
     """Which game Home shows. One row per game with how it stands, the one
     shown now checked. Focus starts on another game: opening this means
     switching, so X then A is enough. ``start`` names the row to start on
-    instead."""
+    instead. More games than fit (a machine with many of the table's games
+    installed) scroll inside the sheet."""
+
+    ROWS_BEFORE_SCROLLING = 5
+    SCROLL_HEIGHT = 470  # five rows at 1280 × 800, with the sixth showing its edge
 
     def __init__(self, host, games: list[GameChoice], current: str,
                  on_choice: Callable[[str], None], *, start: str | None = None) -> None:
@@ -299,7 +304,16 @@ class GameSheet(Overlay):
             row.clicked.connect(lambda _checked=False, k=key: self.choose(k))
             self.rows[key] = row
             rows.addWidget(row)
-        self.body.addLayout(rows)
+        self.area: QScrollArea | None = None
+        if len(self.rows) > self.ROWS_BEFORE_SCROLLING:
+            content = QWidget()
+            rows.setContentsMargins(0, 0, 10, 0)
+            content.setLayout(rows)
+            self.area = scroller(content)
+            self.area.setFixedHeight(self.SCROLL_HEIGHT)
+            self.body.addWidget(self.area)
+        else:
+            self.body.addLayout(rows)
 
     def accept_hint(self) -> str:
         focus = self.host.focusWidget()

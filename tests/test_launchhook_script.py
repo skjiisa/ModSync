@@ -160,6 +160,43 @@ class RenderedScript(unittest.TestCase):
         self.assertEqual(entry["env"]["STEAM_COMPAT_TOOL_PATHS"],
                          f"{other}:{self.root}/steamapps/common/SteamLinuxRuntime_sniper")
 
+    def test_a_handoff_can_set_environment_for_the_launch(self):
+        """A game whose mod loaders arrive as proxy DLLs needs Wine told to
+        load them (modsync.games.QUIRKS); Steam's own environment stays."""
+        from dataclasses import replace
+
+        plan = replace(self.mo2_plan(), hook_env={"MODSYNC_TEST_OVERRIDES": "winmm,version=n,b",
+                                                  "MODSYNC_TEST_SPACED": "a value with spaces"})
+        handoff = launchhook.encode_handoff(plan)
+        self.assertTrue(handoff.startswith(launchhook.HANDOFF_ENV_TAG.encode() + b"\0"))
+        result = self.run_hook("waitforexitandrun", self.game_exe, handoff=handoff)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        entry = self.record("SteamLinuxRuntime_4")
+        self.assertEqual(entry["argv"][2:], [str(self.proton_dir / "proton"), "waitforexitandrun", *plan.command])
+        self.assertEqual(entry["cwd"], str(plan.cwd))
+        self.assertEqual(entry["env"]["MODSYNC_TEST_OVERRIDES"], "winmm,version=n,b")
+        self.assertEqual(entry["env"]["MODSYNC_TEST_SPACED"], "a value with spaces")
+        self.assertEqual(entry["env"]["STEAM_COMPAT_APP_ID"], "489830")
+
+    def test_a_launch_without_environment_is_handed_over_as_before(self):
+        """So a hook script from an older ModSync still understands it."""
+        handoff = launchhook.encode_handoff(self.mo2_plan())
+        self.assertTrue(handoff.startswith(launchhook.HANDOFF_TAG.encode() + b"\0"))
+        with self.assertRaises(ValueError):
+            from dataclasses import replace
+
+            launchhook.encode_handoff(replace(self.mo2_plan(), hook_env={"NOT A NAME": "x"}))
+
+    def test_a_handoff_whose_environment_is_cut_short_launches_the_game(self):
+        fields = [launchhook.HANDOFF_ENV_TAG, str(self.proton_dir), str(self.tmp), "5", "MODSYNC_TEST_X=1"]
+        result = self.run_hook("waitforexitandrun", self.game_exe,
+                               handoff=b"".join(f.encode() + b"\0" for f in fields))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        entry = self.record("SteamLinuxRuntime_4")
+        self.assertEqual(entry["argv"][-1], self.game_exe)
+        self.assertNotIn("MODSYNC_TEST_X", entry["env"])
+        self.assertIn("unexpected output", self.log())
+
     def test_no_handoff_runs_the_game_as_before(self):
         self.run_hook("waitforexitandrun", self.game_exe, handoff=b"")
         entry = self.record("SteamLinuxRuntime_4")

@@ -6,8 +6,11 @@ from unittest.mock import patch
 
 import pytest
 
-from modsync import cyberpunk
+from modsync import cyberpunk, mo2games
 from modsync.heroic import library
+from modsync.mo2games import heroic as store
+
+CP = cyberpunk.GAME  # the game's methods are patched there; the module's functions call them
 
 PROTON = Path("/opt/proton-cachyos-native/proton")
 
@@ -52,14 +55,14 @@ size=2
 def _no_chosen_instance():
     """The scratch config folder lasts the whole session; a choice one test
     makes mustn't decide the next."""
-    cyberpunk._settings_path().unlink(missing_ok=True)
+    CP._settings_path().unlink(missing_ok=True)
     yield
-    cyberpunk._settings_path().unlink(missing_ok=True)
+    CP._settings_path().unlink(missing_ok=True)
 
 
 @pytest.fixture
 def umu():
-    with patch.object(cyberpunk, "_host_which", return_value="/usr/bin/umu-run"):
+    with patch.object(mo2games, "host_which", return_value="/usr/bin/umu-run"):
         yield
 
 
@@ -111,12 +114,12 @@ def test_plain_wine_runs_the_wine_binary_without_proton_variables(tmp_path):
 def test_runner_falls_back_to_heroics_own_umu(tmp_path):
     game = make_game(tmp_path)
     bundled = game.config_dir / "tools/runtimes/umu/umu_run.py"
-    with patch.object(cyberpunk, "_host_which", return_value=None):
+    with patch.object(mo2games, "host_which", return_value=None):
         with pytest.raises(cyberpunk.CyberpunkError, match="umu-launcher"):
-            cyberpunk.runner(game)
+            store.runner(CP, game)
         bundled.parent.mkdir(parents=True)
         bundled.write_text("")
-        assert cyberpunk.runner(game) == ["python3", str(bundled)]
+        assert store.runner(CP, game) == ["python3", str(bundled)]
 
 
 @pytest.mark.parametrize("play", [True, False])
@@ -153,7 +156,7 @@ def test_a_link_while_play_starts_mo2_through_heroic_waits_for_it(tmp_path):
 
     with Downloading(tmp_path, hook_on=True):
         cyberpunk.launch(Launcher(), play=True)
-        cyberpunk.mo2_running.side_effect = [False, True, True]
+        store.mo2_running.side_effect = [False, True, True]
         assert cyberpunk.download(LINK, poll=0) == "Passed the download to Mod Organizer 2."
         assert cyberpunk.heroic_hook.launch.call_count == 1
         cyberpunk.heroic_hook.leave_download.assert_not_called()
@@ -174,7 +177,7 @@ def test_a_hook_that_takes_the_note_before_heroic_answers_still_counts(tmp_path)
 
         cyberpunk.heroic_hook.launch.side_effect = hook_takes_the_note
         cyberpunk.launch(Launcher(), play=True)
-        cyberpunk.mo2_running.side_effect = [False, True, True]
+        store.mo2_running.side_effect = [False, True, True]
         assert cyberpunk.download(LINK, poll=0) == "Passed the download to Mod Organizer 2."
         assert cyberpunk.heroic_hook.launch.call_count == 1
 
@@ -192,7 +195,7 @@ def test_a_launch_heroic_refused_leaves_no_note(tmp_path):
 
 
 @pytest.mark.parametrize("problem, match", [
-    ("no game", "wasn't found in Heroic"),
+    ("no game", "wasn't found in Steam or Heroic"),
     ("no prefix", "Launch the game once from Heroic"),
     ("no instance", "Choose Cyberpunk's MO2 instance"),
     ("skyrim instance", "manages Skyrim Special Edition"),
@@ -262,7 +265,7 @@ def test_cli_launch_reports_a_missing_chosen_instance(tmp_path, capsys):
     cyberpunk.use_instance(chosen)
     (chosen / "ModOrganizer.exe").unlink()
 
-    with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path)):
+    with patch.object(CP, "find_game", return_value=make_game(tmp_path)):
         assert main(["cyberpunk", "play"]) == 1
     assert "no ModOrganizer.exe" in capsys.readouterr().out
 
@@ -276,7 +279,7 @@ class FakeRun:
     def __init__(self, installed="", results=()):
         self.installed, self.results, self.calls = installed, list(results), []
 
-    def __call__(self, game, args, **_kw):
+    def __call__(self, mg, game, args, **_kw):
         from subprocess import CompletedProcess
 
         self.calls.append(args)
@@ -287,9 +290,9 @@ class FakeRun:
 
 def test_prepare_prefix_runs_only_the_missing_verbs_through_umu(tmp_path):
     fake = FakeRun(installed="win10\narial\n")
-    with patch.object(cyberpunk, "run_in_prefix", fake), \
+    with patch.object(store, "run_in_prefix", fake), \
             patch("modsync.mo2.vcruntime.prefix_runtime_problems", return_value=[]):
-        cyberpunk.prepare_prefix(make_game(tmp_path))
+        store.prepare_prefix(CP, make_game(tmp_path))
 
     assert fake.calls == [["winetricks", "-q", "list-installed"],
                           ["winetricks", "-q", "fontsmooth=rgb", "xaudio2_7=native", "d3dcompiler_47"]]
@@ -299,8 +302,8 @@ def test_prepare_prefix_says_why_winetricks_failed(tmp_path):
     from subprocess import CompletedProcess
 
     fake = FakeRun(results=[CompletedProcess([], 1, "", "INFO: umu\nERROR: no network\n")])
-    with patch.object(cyberpunk, "run_in_prefix", fake), pytest.raises(cyberpunk.CyberpunkError, match="no network"):
-        cyberpunk.prepare_prefix(make_game(tmp_path))
+    with patch.object(store, "run_in_prefix", fake), pytest.raises(cyberpunk.CyberpunkError, match="no network"):
+        store.prepare_prefix(CP, make_game(tmp_path))
 
 
 def test_prepare_prefix_installs_the_vc_runtime_only_when_needed(tmp_path):
@@ -310,39 +313,39 @@ def test_prepare_prefix_installs_the_vc_runtime_only_when_needed(tmp_path):
     game = make_game(tmp_path)
     # 3010 (installed, reboot requested) as Linux sees it: its low byte.
     fake = FakeRun(installed="\n".join(cyberpunk.TRICKS), results=[CompletedProcess([], 3010 & 0xFF, "", "")])
-    with patch.object(cyberpunk, "run_in_prefix", fake), \
+    with patch.object(store, "run_in_prefix", fake), \
             patch("modsync.mo2.vcruntime.prefix_runtime_problems", side_effect=[["msvcp140.dll is 14.0.24215.1"], []]), \
             patch("modsync.mo2.vcruntime.redist_installer", return_value=installer), \
             patch("modsync.mo2.vcruntime.backup_prefix_runtime", return_value=tmp_path / "backup") as backup:
-        cyberpunk.prepare_prefix(game)
+        store.prepare_prefix(CP, game)
 
     assert fake.calls[-1] == [str(installer), "/install", "/quiet", "/norestart"]
     assert backup.call_args.args[0] == game.drive_c / "windows" / "system32"
 
     fake = FakeRun(installed="\n".join(cyberpunk.TRICKS), results=[CompletedProcess([], 0, "", "")])
-    with patch.object(cyberpunk, "run_in_prefix", fake), \
+    with patch.object(store, "run_in_prefix", fake), \
             patch("modsync.mo2.vcruntime.prefix_runtime_problems", return_value=["msvcp140.dll is missing"]), \
             patch("modsync.mo2.vcruntime.redist_installer", return_value=installer), \
             patch("modsync.mo2.vcruntime.backup_prefix_runtime", return_value=tmp_path / "backup"), \
             pytest.raises(cyberpunk.CyberpunkError, match="still has msvcp140.dll is missing"):
-        cyberpunk.prepare_prefix(game)
+        store.prepare_prefix(CP, game)
 
     fake = FakeRun(installed="\n".join(cyberpunk.TRICKS), results=[CompletedProcess([], 1603 & 0xFF, "", "")])
-    with patch.object(cyberpunk, "run_in_prefix", fake), \
+    with patch.object(store, "run_in_prefix", fake), \
             patch("modsync.mo2.vcruntime.prefix_runtime_problems", return_value=["msvcp140.dll is missing"]), \
             patch("modsync.mo2.vcruntime.redist_installer", return_value=installer), \
             patch("modsync.mo2.vcruntime.backup_prefix_runtime", return_value=tmp_path / "backup"), \
             pytest.raises(cyberpunk.CyberpunkError, match="code 67"):
-        cyberpunk.prepare_prefix(game)
+        store.prepare_prefix(CP, game)
 
 
 def test_plain_wine_uses_the_hosts_winetricks_with_the_games_wine(tmp_path):
     game = make_game(tmp_path, wine_type="wine")
-    with patch.object(cyberpunk, "_host_which", return_value="/usr/bin/winetricks"):
-        assert cyberpunk.winetricks_command(game, ["win10"]) == (
+    with patch.object(mo2games, "host_which", return_value="/usr/bin/winetricks"):
+        assert store.winetricks_command(CP, game, ["win10"]) == (
             ["/usr/bin/winetricks", "-q", "win10"], {"WINE": "/usr/bin/wine"})
-    with patch.object(cyberpunk, "_host_which", return_value=None), pytest.raises(cyberpunk.CyberpunkError):
-        cyberpunk.winetricks_command(game, ["win10"])
+    with patch.object(mo2games, "host_which", return_value=None), pytest.raises(cyberpunk.CyberpunkError):
+        store.winetricks_command(CP, game, ["win10"])
 
 
 def make_rootbuilder_zip(path: Path) -> Path:
@@ -404,16 +407,16 @@ class FakeBackend:
 def test_install_mo2_runs_mo2lint_for_gog_then_the_prefix_and_rootbuilder(tmp_path):
     backend = FakeBackend(tmp_path)
     game = make_game(tmp_path)
-    with patch.object(cyberpunk, "find_game", return_value=game), \
-            patch.object(cyberpunk, "game_running", return_value=False), \
-            patch.object(cyberpunk, "prepare_prefix") as prepare, \
+    with patch.object(CP, "find_game", return_value=game), \
+            patch.object(CP, "game_running", return_value=False), \
+            patch.object(store, "prepare_prefix") as prepare, \
             patch.object(cyberpunk, "install_rootbuilder") as rootbuilder:
         instance = cyberpunk.install_mo2(tmp_path / "dest", backend=backend)
 
     (played, dest, kw), = backend.calls
     assert played.mo2lint_key == "cyberpunk2077" and dest == tmp_path / "dest"
     assert kw["launcher"] == "gog" and kw["env"] == cyberpunk.MO2LINT_ENV
-    prepare.assert_called_once_with(game, None)
+    prepare.assert_called_once_with(CP, game, None)
     rootbuilder.assert_called_once_with(instance)
     assert cyberpunk.chosen_instance() == instance
 
@@ -421,14 +424,14 @@ def test_install_mo2_runs_mo2lint_for_gog_then_the_prefix_and_rootbuilder(tmp_pa
 def test_install_again_after_a_failed_step_finishes_the_setup(tmp_path):
     backend = FakeBackend(tmp_path)
     game = make_game(tmp_path)
-    with patch.object(cyberpunk, "find_game", return_value=game), \
-            patch.object(cyberpunk, "game_running", return_value=False), \
+    with patch.object(CP, "find_game", return_value=game), \
+            patch.object(CP, "game_running", return_value=False), \
             patch.object(cyberpunk, "install_rootbuilder"):
-        with patch.object(cyberpunk, "prepare_prefix", side_effect=cyberpunk.CyberpunkError("winetricks exited with code 1.")), \
+        with patch.object(store, "prepare_prefix", side_effect=cyberpunk.CyberpunkError("winetricks exited with code 1.")), \
                 pytest.raises(cyberpunk.CyberpunkError, match="run the install again"):
             cyberpunk.install_mo2(tmp_path / "ModOrganizer2-Cyberpunk2077", backend=backend)
         assert cyberpunk.chosen_instance() is None
-        with patch.object(cyberpunk, "prepare_prefix") as prepare:
+        with patch.object(store, "prepare_prefix") as prepare:
             instance = cyberpunk.install_mo2(tmp_path / "ModOrganizer2-Cyberpunk2077", backend=backend)
 
     assert len(backend.calls) == 1  # MO2-LINT ran once; the retry only finished the setup
@@ -438,8 +441,8 @@ def test_install_again_after_a_failed_step_finishes_the_setup(tmp_path):
 
 def test_install_over_another_games_instance_is_refused(tmp_path):
     other = make_instance(tmp_path, "[General]\ngameName=Skyrim Special Edition\n")
-    with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path)), \
-            patch.object(cyberpunk, "game_running", return_value=False), \
+    with patch.object(CP, "find_game", return_value=make_game(tmp_path)), \
+            patch.object(CP, "game_running", return_value=False), \
             pytest.raises(cyberpunk.CyberpunkError, match="manages Skyrim"):
         cyberpunk.install_mo2(other, backend=FakeBackend(tmp_path))
 
@@ -450,8 +453,8 @@ def test_install_over_another_games_instance_is_refused(tmp_path):
 ])
 def test_install_mo2_refuses_when_the_prefix_is_busy_or_missing(tmp_path, running, prefix_ready, match):
     backend = FakeBackend(tmp_path)
-    with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path, prefix_ready=prefix_ready)), \
-            patch.object(cyberpunk, "game_running", return_value=running), \
+    with patch.object(CP, "find_game", return_value=make_game(tmp_path, prefix_ready=prefix_ready)), \
+            patch.object(CP, "game_running", return_value=running), \
             pytest.raises(cyberpunk.CyberpunkError, match=match):
         cyberpunk.install_mo2(tmp_path / "dest", backend=backend)
     assert backend.calls == []
@@ -461,14 +464,14 @@ def test_game_running_matches_wine_processes_not_shells():
     import re
     from subprocess import CompletedProcess
 
-    with patch.object(cyberpunk.background, "run_host", return_value=CompletedProcess([], 0)) as run:
+    with patch.object(mo2games.background, "run_host", return_value=CompletedProcess([], 0)) as run:
         assert cyberpunk.game_running()
     pattern = re.compile(run.call_args.args[0][-1])
     assert pattern.search(r"Z:\home\deck\Games\Cyberpunk 2077\bin\x64\Cyberpunk2077.exe --launcher-skip -modded")
     assert pattern.search(r"X:\ModOrganizer2-cyberpunk2077\ModOrganizer.exe -p Default run -e Cyberpunk 2077")
     assert not pattern.search("zsh -c pgrep -f Cyberpunk2077.exe")
     assert not pattern.search("c:\\windows\\system32\\umu.exe /home/deck/ModOrganizer2-cyberpunk2077/ModOrganizer.exe")
-    with patch.object(cyberpunk.background, "run_host", return_value=CompletedProcess([], 1)):
+    with patch.object(mo2games.background, "run_host", return_value=CompletedProcess([], 1)):
         assert not cyberpunk.game_running()
 
 
@@ -515,19 +518,19 @@ def test_cets_databases_stay_out():
 
 def test_a_record_owed_since_sharing_is_written_once_the_version_can_be_read(tmp_path):
     root = make_instance(tmp_path)
-    with patch.object(cyberpunk, "game_version", return_value=None):
+    with patch.object(CP, "game_version", return_value=None):
         cyberpunk.MODS_FOLDER.on_share(root)
         cyberpunk.MODS_FOLDER.tidy(root)
     assert not (root / cyberpunk.VAULT_RECORD).exists()
-    with patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+    with patch.object(CP, "game_version", return_value=("2.5", "3.0.88.46235")):
         cyberpunk.MODS_FOLDER.tidy(root)
     assert cyberpunk.vault_version(root) == ("2.5", "3.0.88.46235")
-    assert "record_owed" not in json.loads(cyberpunk._settings_path().read_text())
+    assert "record_owed" not in json.loads(CP._settings_path().read_text())
 
 
 def test_a_joining_machine_never_writes_the_record(tmp_path):
     root = make_instance(tmp_path)
-    with patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+    with patch.object(CP, "game_version", return_value=("2.5", "3.0.88.46235")):
         cyberpunk.MODS_FOLDER.tidy(root)  # took up an offer: no record owed here
     assert not (root / cyberpunk.VAULT_RECORD).exists()
 
@@ -538,7 +541,7 @@ def test_every_recorded_version_counts_conflict_copies_too(tmp_path):
     (root / "modsync-cp2077-vault.sync-conflict-20261108-101010-ABCDEFG.json").write_text(
         json.dumps({"game_version": "2.3", "build": "3.0.80.1"}))
 
-    with patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+    with patch.object(CP, "game_version", return_value=("2.5", "3.0.88.46235")):
         problem = cyberpunk.version_problem(instance=root)
     assert problem is not None and "set up for 2.3 (build 3.0.80.1)" in problem
     assert f"!/{cyberpunk.RECORD_CONFLICTS}" in cyberpunk.MODS_FOLDER.ignore  # and they reach the others
@@ -546,9 +549,9 @@ def test_every_recorded_version_counts_conflict_copies_too(tmp_path):
 
 def test_the_sharing_machine_records_its_game_version_once(tmp_path):
     root = make_instance(tmp_path)
-    with patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+    with patch.object(CP, "game_version", return_value=("2.5", "3.0.88.46235")):
         cyberpunk.MODS_FOLDER.on_share(root)
-    with patch.object(cyberpunk, "game_version", return_value=("2.6", "3.0.90.1")):
+    with patch.object(CP, "game_version", return_value=("2.6", "3.0.90.1")):
         cyberpunk.MODS_FOLDER.on_share(root)  # a later share doesn't rewrite it
 
     assert cyberpunk.vault_version(root) == ("2.5", "3.0.88.46235")
@@ -558,12 +561,12 @@ def test_another_game_version_here_is_only_reported(tmp_path):
     root = make_instance(tmp_path)
     (root / cyberpunk.VAULT_RECORD).write_text(json.dumps({"game_version": "2.5", "build": "3.0.88.46235"}))
 
-    with patch.object(cyberpunk, "game_version", return_value=("2.5", "3.0.88.46235")):
+    with patch.object(CP, "game_version", return_value=("2.5", "3.0.88.46235")):
         assert cyberpunk.version_problem(instance=root) is None
-    with patch.object(cyberpunk, "game_version", return_value=("2.6", "3.0.90.1")):
+    with patch.object(CP, "game_version", return_value=("2.6", "3.0.90.1")):
         problem = cyberpunk.version_problem(instance=root)
     assert "here is 2.6 (build 3.0.90.1)" in problem and "set up for 2.5 (build 3.0.88.46235)" in problem
-    with patch.object(cyberpunk, "game_version", return_value=None):
+    with patch.object(CP, "game_version", return_value=None):
         assert cyberpunk.version_problem(instance=root) is None  # can't tell: say nothing
 
 
@@ -583,15 +586,15 @@ def test_overview_reads_the_prefix_and_how_far_the_setup_got(tmp_path):
     instance = make_instance(tmp_path)
     cyberpunk.use_instance(instance)
     for prefix_ready in (True, False):
-        with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path / str(prefix_ready),
+        with patch.object(CP, "find_game", return_value=make_game(tmp_path / str(prefix_ready),
                                                                        prefix_ready=prefix_ready)), \
-                patch.object(cyberpunk, "hook_status", return_value=None):
+                patch.object(CP, "hook_status", return_value=None):
             ov = cyberpunk.overview()
         assert ov.prefix_ready is prefix_ready
         assert ov.needs_setup and ov.chosen
     (instance / "plugins/rootbuilder").mkdir(parents=True)
     (instance / "plugins/rootbuilder/__init__.py").write_text("")
-    with patch.object(cyberpunk, "find_game", return_value=None):
+    with patch.object(CP, "find_game", return_value=None):
         assert not cyberpunk.overview().needs_setup
 
 
@@ -601,7 +604,7 @@ class TestUseAnotherInstance:
         from modsync.service import ModSyncService
 
         svc = ModSyncService(manager=object())
-        with patch.object(svc, "ensure_running"), patch.object(cyberpunk, "refresh_hook", return_value=[]):
+        with patch.object(svc, "ensure_running"), patch.object(CP, "refresh_hook", return_value=[]):
             yield svc
 
     def test_mods_sync_moves_along_before_it_returns(self, tmp_path, service):
@@ -614,9 +617,9 @@ class TestUseAnotherInstance:
             assert force
             State.update(game_folders={"cp2077-mo2": str(new.resolve())})
 
-        with patch.object(cyberpunk, "game_running", return_value=False), \
+        with patch.object(CP, "game_running", return_value=False), \
                 patch.object(service, "_refresh_game_folders", side_effect=moved) as refresh:
-            notes = service.use_cyberpunk_instance(new)
+            notes = service.use_game_instance(CP, new)
         refresh.assert_called_once()
         assert notes == [f"Using Mod Organizer 2 in {new.resolve()}."]
 
@@ -624,27 +627,27 @@ class TestUseAnotherInstance:
         from modsync.state import State
 
         State.update(game_folders={"cp2077-mo2": "/old/instance"})
-        with patch.object(cyberpunk, "game_running", return_value=False), \
+        with patch.object(CP, "game_running", return_value=False), \
                 patch.object(service, "_refresh_game_folders"):
-            notes = service.use_cyberpunk_instance(make_instance(tmp_path))
+            notes = service.use_game_instance(CP, make_instance(tmp_path))
         assert "wait a moment before playing" in notes[-1]
 
     def test_refused_while_the_game_runs_with_sync_on(self, tmp_path, service):
         from modsync.state import State
 
         State.update(game_folders={"cp2077-mo2": "/old/instance"})
-        with patch.object(cyberpunk, "game_running", return_value=True), \
+        with patch.object(CP, "game_running", return_value=True), \
                 pytest.raises(RuntimeError, match="Close Cyberpunk 2077"):
-            service.use_cyberpunk_instance(make_instance(tmp_path))
+            service.use_game_instance(CP, make_instance(tmp_path))
         assert cyberpunk.chosen_instance() is None
 
     def test_without_sync_nothing_needs_to_move(self, tmp_path, service):
         from modsync.state import State
 
         State.update(game_folders={})
-        with patch.object(cyberpunk, "game_running", return_value=True), \
+        with patch.object(CP, "game_running", return_value=True), \
                 patch.object(service, "_refresh_game_folders") as refresh:
-            service.use_cyberpunk_instance(make_instance(tmp_path))
+            service.use_game_instance(CP, make_instance(tmp_path))
         refresh.assert_not_called()
 
 
@@ -666,7 +669,7 @@ def pgrep(*lines: str):
     from subprocess import CompletedProcess
 
     out = "".join(f"{1000 + i} {line}\n" for i, line in enumerate(lines))
-    return patch.object(cyberpunk.background, "run_host", return_value=CompletedProcess([], 0 if lines else 1, out, ""))
+    return patch.object(mo2games.background, "run_host", return_value=CompletedProcess([], 0 if lines else 1, out, ""))
 
 
 @pytest.mark.parametrize("line, running", [
@@ -680,7 +683,7 @@ def test_mo2_running_follows_the_prefixs_drive_letters(tmp_path, line, running):
     game, instance = make_game(tmp_path), make_instance(tmp_path)
     with_drives(tmp_path, game)
     with pgrep(line.replace("{tmp}", str(tmp_path).replace("/", "\\"))):
-        assert cyberpunk.mo2_running(game, instance) is running
+        assert store.mo2_running(CP, game, instance) is running
 
 
 class Downloading:
@@ -688,13 +691,13 @@ class Downloading:
 
     def __init__(self, tmp_path, *, running=False, hook_on=False):
         self.game, self.instance = make_game(tmp_path), make_instance(tmp_path)
-        self.popen = patch.object(cyberpunk.subprocess, "Popen")
+        self.popen = patch.object(store.subprocess, "Popen")
         self.patches = [
-            patch.object(cyberpunk, "find_game", return_value=self.game),
-            patch.object(cyberpunk, "find_instance", return_value=self.instance),
-            patch.object(cyberpunk, "mo2_running", return_value=running),
-            patch.object(cyberpunk, "_host_which", return_value="/usr/bin/umu-run"),
-            patch.object(cyberpunk, "refresh_hook", return_value=[]),
+            patch.object(CP, "find_game", return_value=self.game),
+            patch.object(CP, "find_instance", return_value=self.instance),
+            patch.object(store, "mo2_running", return_value=running),
+            patch.object(mo2games, "host_which", return_value="/usr/bin/umu-run"),
+            patch.object(CP, "refresh_hook", return_value=[]),
             patch.object(cyberpunk.heroic_hook, "status",
                          return_value=cyberpunk.heroic_hook.HookStatus(hook_on, hook_on, tmp_path / "s.sh")),
             patch.object(cyberpunk.heroic_hook, "leave_download"),
@@ -703,14 +706,14 @@ class Downloading:
         ]
 
     def __enter__(self):
-        cyberpunk._launch_record().unlink(missing_ok=True)
+        CP.launch_record().unlink(missing_ok=True)
         self.mocks = [p.start() for p in self.patches]
         self.popen_mock = self.popen.start()
         self.popen_mock.return_value.wait.return_value = 0
         return self
 
     def __exit__(self, *exc):
-        cyberpunk._launch_record().unlink(missing_ok=True)
+        CP.launch_record().unlink(missing_ok=True)
         self.popen.stop()
         for p in reversed(self.patches):
             p.stop()
@@ -746,11 +749,11 @@ def test_without_the_hook_mo2_opens_as_cyberpunk_open_does_with_the_link(tmp_pat
 
 def test_downloads_are_modsyncs_only_with_the_game_and_an_instance(tmp_path):
     instance = make_instance(tmp_path)
-    with patch.object(cyberpunk, "find_game", return_value=make_game(tmp_path)), \
-            patch.object(cyberpunk, "find_instance", return_value=instance):
+    with patch.object(CP, "find_game", return_value=make_game(tmp_path)), \
+            patch.object(CP, "find_instance", return_value=instance):
         assert cyberpunk.takes_downloads()
-    with patch.object(cyberpunk, "find_game", return_value=None), \
-            patch.object(cyberpunk, "find_instance", return_value=instance):
+    with patch.object(CP, "find_game", return_value=None), \
+            patch.object(CP, "find_instance", return_value=instance):
         assert not cyberpunk.takes_downloads()
 
 
@@ -766,12 +769,12 @@ def test_an_mo2_with_the_same_path_in_another_prefix_isnt_this_one(tmp_path):
             if cmd[0] == "cat":
                 return CompletedProcess(cmd, 0, f"HOME=/h\0WINEPREFIX={prefix}/\0", "")
             return CompletedProcess(cmd, 0, line, "")
-        return patch.object(cyberpunk.background, "run_host", side_effect=run_host)
+        return patch.object(mo2games.background, "run_host", side_effect=run_host)
 
     with host(tmp_path / "elsewhere"):
-        assert not cyberpunk.mo2_running(game, instance)
+        assert not store.mo2_running(CP, game, instance)
     with host(game.drive_c.parent):
-        assert cyberpunk.mo2_running(game, instance)
+        assert store.mo2_running(CP, game, instance)
 
 
 def test_a_link_while_mo2_is_starting_waits_for_it_instead_of_launching_again(tmp_path):
@@ -779,7 +782,7 @@ def test_a_link_while_mo2_is_starting_waits_for_it_instead_of_launching_again(tm
         assert "through Heroic" in cyberpunk.download(LINK)
         cyberpunk.heroic_hook.launch_note(d.game).parent.mkdir(parents=True, exist_ok=True)
         cyberpunk.heroic_hook.launch_note(d.game).write_text(LINK)  # the hook hasn't run yet
-        cyberpunk.mo2_running.side_effect = [False, False, True, True]
+        store.mo2_running.side_effect = [False, False, True, True]
         assert cyberpunk.download(LINK + "2", poll=0) == "Passed the download to Mod Organizer 2."
         assert cyberpunk.heroic_hook.launch.call_count == 1
         assert cyberpunk.heroic_hook.leave_download.call_count == 1
@@ -809,7 +812,7 @@ def test_an_mo2_that_never_showed_up_is_opened_again_at_once(tmp_path):
 
     with Downloading(tmp_path, hook_on=True) as d, no_waiting():
         cyberpunk.download(LINK)
-        record = cyberpunk._launch_record()
+        record = CP.launch_record()
         os.utime(record, (time.time() - 100,) * 2)
         taken_ago(d.game, 99)  # and MO2 never came
         assert "through Heroic" in cyberpunk.download(LINK)
@@ -820,7 +823,7 @@ def test_a_link_just_taken_by_the_hook_waits_for_mo2(tmp_path):
     with Downloading(tmp_path, hook_on=True) as d:
         cyberpunk.download(LINK)
         taken_ago(d.game, 0)
-        cyberpunk.mo2_running.side_effect = [False, True, True]
+        store.mo2_running.side_effect = [False, True, True]
         assert cyberpunk.download(LINK + "2", poll=0) == "Passed the download to Mod Organizer 2."
         assert cyberpunk.heroic_hook.launch.call_count == 1
 
@@ -844,6 +847,6 @@ def test_a_direct_launch_gets_its_own_short_wait(tmp_path):
 
     with Downloading(tmp_path):
         cyberpunk.download(LINK)
-        cyberpunk.mo2_running.side_effect = [False, True, True]
+        store.mo2_running.side_effect = [False, True, True]
         assert cyberpunk.download(LINK + "2", poll=0) == "Passed the download to Mod Organizer 2."
         assert Launcher.start.call_count == 1

@@ -70,16 +70,16 @@ class Server:
             if vc.skse_note():
                 self.log(f"    {vc.skse_note()}")
             self.log("")
-        for appid in launchhook.HOOK_GAMES:
+        for appid in launchhook.hooked_appids():
             try:
                 hook = launchhook.upgrade(appid)
                 if hook is not None:
                     self.log(f"  {hook}")
             except Exception as exc:
                 self.log(f"  (launch hook update failed: {exc})")
-        from modsync import cyberpunk, nxm
+        from modsync import mo2games, nxm
 
-        for note in [*cyberpunk.refresh_hook(), *nxm.refresh()]:
+        for note in [*mo2games.refresh_hooks(), *nxm.refresh()]:
             self.log(f"  {note}")
         if self.syncing:
             self.service.ensure_running()

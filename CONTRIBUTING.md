@@ -92,6 +92,36 @@ The manifest lint reports three `finish-args` errors (home filesystem,
 has a comment on each explaining why. CI runs the lint but does not fail on
 them. ModSync is not published on Flathub, so no exception request is needed.
 
+## Adding a game
+
+Most games need no code. ModSync runs Mod Organizer 2 for every game in
+`modsync/mo2/games.json`, and `scripts/build_game_table.py` writes that file
+from the list of the pinned MO2-LINT release:
+
+```sh
+uv run --with pyyaml python scripts/build_game_table.py
+```
+
+Run it after changing `MO2LINT_VERSION`, and commit the result. A game
+MO2-LINT gained upstream then works in ModSync in Steam and in Heroic, with
+its page in the app, its commands (`modsync games <key> …`), its Play hook,
+its Nexus downloads and its synced mods folder. "Other games" in
+[docs/advanced.md](docs/advanced.md) describes what each of those does.
+
+When a game needs more, add the least that covers it:
+
+- A fact about the game goes in `QUIRKS` in `modsync/games.py`. Examples are
+  a clearer name, the DLLs Wine must load from the game's folder
+  (`dll_overrides`), and which of MO2's programs Play runs (`play_exes`,
+  `play_argument`).
+- A step to run goes in a subclass of `ManagedGame`, listed in `_special()`
+  in `modsync/mo2games/__init__.py`. `modsync/cyberpunk.py` is the example.
+  It adds a plugin after the install and keeps extra files out of the sync.
+
+You don't need to own the game to add it. `tests/test_mo2games.py` builds a
+made-up Steam library and Heroic config, so a test can cover a quirk without
+the game. Say in the PR what you could and couldn't try on a real install.
+
 ## Pull requests
 
 - Branch from `main`. Keep each PR to one topic.

@@ -1,4 +1,4 @@
-"""Heroic's Play button on a GOG game runs Mod Organizer 2: the Heroic
+"""Heroic's Play button on a GOG or Epic game runs Mod Organizer 2: the Heroic
 counterpart of Steam's launch hook (:mod:`modsync.launchhook`).
 
 Heroic has no compatibility tools to stand in for, but each game's settings
@@ -6,7 +6,7 @@ take *wrappers*: programs Heroic puts ahead of the game's command line. The
 hook is one, :file:`play_hook.sh`, first in the game's ``wrapperOptions`` in
 ``GamesConfig/<appName>.json``. It keeps the command that runs the game (umu-run
 with Heroic's Proton and prefix) and runs MO2 in place of the game's program,
-so the game stays Heroic's launch: Heroic tracks it and syncs GOG cloud saves.
+so the game stays Heroic's launch: Heroic tracks it and syncs its cloud saves.
 
 The script lives in Heroic's config folder, because Heroic's Flatpak can't read
 the rest of the home folder or start programs outside its sandbox. So the hook
@@ -33,16 +33,16 @@ from pathlib import Path
 
 from modsync import __version__, background
 from modsync.mo2 import downloads
-from modsync.heroic.library import GogGame
+from modsync.heroic.library import HeroicGame
 
-HOOK_VERSION = 4  # 2: MO2's executable read at launch; the game's program found by its folder; 3: downloads;
-# 4: ModSync's Play and Open MO2 (PLAY and OPEN)
+HOOK_VERSION = 5  # 2: MO2's executable read at launch; the game's program found by its folder; 3: downloads;
+# 4: ModSync's Play and Open MO2 (PLAY and OPEN); 5: any game: the DLL overrides and the program to play are the game's
 # How long a note left for the hook (leave_download, leave_request) stays good.
 NOTE_TTL = downloads.NOTE_TTL
 # What ModSync's own Play and Open MO2 leave for the launch they ask Heroic for,
 # so it does that whichever of the game's launch options Heroic runs.
-PLAY = "modsync:play"
-OPEN = "modsync:open"
+PLAY = downloads.PLAY
+OPEN = downloads.OPEN
 TEMPLATE = Path(__file__).parent / "play_hook.sh"
 MARKER = "--modsync-heroic-hook"
 FLATPAK_ID = "com.heroicgameslauncher.hgl"
@@ -74,38 +74,38 @@ class HookStatus:
         return "on" if self.current else "on, but out of date (ModSync rewrites it on its next launch)"
 
 
-def script_path(game: GogGame) -> Path:
+def script_path(game: HeroicGame) -> Path:
     return game.config_dir / "modsync" / f"play-{game.app_name}.sh"
 
 
-def launch_note(game: GogGame) -> Path:
+def launch_note(game: HeroicGame) -> Path:
     """Where ModSync leaves what the next launch is for: an nxm:// link to open
     MO2 with, or PLAY or OPEN. Beside the script, which Heroic's Flatpak can read."""
     return game.config_dir / "modsync" / f"launch-{game.app_name}.txt"
 
 
-def launch_taken(game: GogGame) -> Path:
+def launch_taken(game: HeroicGame) -> Path:
     """Where the hook moves a note it takes. It empties the file then, so the
     file's time says when the launch for the note began."""
     return launch_note(game).with_suffix(".taken")
 
 
-def leave_download(game: GogGame, url: str) -> None:
+def leave_download(game: HeroicGame, url: str) -> None:
     _write(launch_note(game), url + "\n")
 
 
-def leave_request(game: GogGame, request: str) -> None:
+def leave_request(game: HeroicGame, request: str) -> None:
     """PLAY or OPEN, for the launch ModSync is about to ask Heroic for."""
     if request not in (PLAY, OPEN):
         raise ValueError(request)
     _write(launch_note(game), request + "\n")
 
 
-def launch(game: GogGame) -> None:
+def launch(game: HeroicGame) -> None:
     """Ask Heroic to launch the game, as its Play button does (starting Heroic
     if it isn't running). Its Flatpak directly: with both installed, the
     protocol could reach the Heroic that doesn't have the game."""
-    url = f"heroic://launch?appName={game.app_name}&runner=gog"
+    url = f"heroic://launch?appName={game.app_name}&runner={game.runner}"
     command = ["flatpak", "run", FLATPAK_ID, url] if game.flatpak else ["xdg-open", url]
     if background.in_flatpak():
         command = ["flatpak-spawn", "--host", *command]
@@ -116,18 +116,22 @@ def launch(game: GogGame) -> None:
         raise HookError(f"Couldn't ask Heroic to launch the game: {e}") from e
 
 
-def _settings_path(game: GogGame) -> Path:
+def _settings_path(game: HeroicGame) -> Path:
     return game.config_dir / "GamesConfig" / f"{game.app_name}.json"
 
 
-def render(game: GogGame, *, game_name: str, instance: Path, game_exe: str, prefer_argument: str,
-           direct_args: list[str], disable_command: str) -> str:
-    """``game_exe`` is the program MO2's executables for playing run, and the one
-    whose arguments include ``prefer_argument`` is played; ``direct_args`` are
-    MO2's arguments while it has saved no such executable."""
+def render(game: HeroicGame, *, game_name: str, instance: Path, game_exe: str, prefer_argument: str,
+           direct_args: list[str], disable_command: str, dll_overrides: tuple[str, ...] = ()) -> str:
+    """``game_exe`` is the program MO2's executables for playing run ("" for
+    the first one MO2 lists from the game's folder), and the one whose
+    arguments include ``prefer_argument`` is played; ``direct_args`` are MO2's
+    arguments while it has saved no such executable. ``dll_overrides`` are the
+    DLLs Wine must load from the game's folder first."""
     text = TEMPLATE.read_text(encoding="utf-8")
     for key, value in {
         "GAME_NAME": game_name,
+        "STORE": {"gog": "GOG", "epic": "Epic"}.get(game.store, game.store),
+        "DLL_OVERRIDES": " ".join(shlex.quote(d.lower()) for d in dll_overrides),
         "APP_NAME": game.app_name,
         "MODSYNC_VERSION": __version__,
         "HOOK_VERSION": str(HOOK_VERSION),
@@ -152,7 +156,7 @@ def _is_ours(entry: object) -> bool:
     return isinstance(entry, dict) and MARKER in str(entry.get("args", "")).split()
 
 
-def _load_settings(game: GogGame) -> tuple[dict, dict]:
+def _load_settings(game: HeroicGame) -> tuple[dict, dict]:
     path = _settings_path(game)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -192,7 +196,7 @@ def heroic_running() -> bool:
     return found.returncode == 0
 
 
-def status(game: GogGame, expected: str | None = None) -> HookStatus:
+def status(game: HeroicGame, expected: str | None = None) -> HookStatus:
     """``expected`` is the script as :func:`render` would write it now."""
     script = script_path(game)
     try:
@@ -226,7 +230,7 @@ def grant_flatpak_access(path: Path) -> bool:
     return True
 
 
-def enable(game: GogGame, script_text: str, instance: Path) -> list[str]:
+def enable(game: HeroicGame, script_text: str, instance: Path) -> list[str]:
     """Write the script and put it first among the game's wrappers. Returns
     what was done, for the user."""
     if heroic_running():
@@ -244,7 +248,7 @@ def enable(game: GogGame, script_text: str, instance: Path) -> list[str]:
     return done
 
 
-def disable(game: GogGame) -> str:
+def disable(game: HeroicGame) -> str:
     if heroic_running():
         raise HookError("Close Heroic first: it writes the game's settings back from memory while it runs.")
     try:
@@ -265,7 +269,7 @@ def disable(game: GogGame) -> str:
     return "Heroic's Play button on the game starts it as before."
 
 
-def refresh(game: GogGame, script_text: str, instance: Path) -> list[str]:
+def refresh(game: HeroicGame, script_text: str, instance: Path) -> list[str]:
     """Bring an enabled hook up to date: the script, and Heroic's Flatpak's
     access to the instance. Safe while Heroic runs. Returns what the user
     should know; [] when nothing changed."""

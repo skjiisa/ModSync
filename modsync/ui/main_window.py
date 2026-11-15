@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from modsync import __version__, cyberpunk, dfu, launchhook
+from modsync import __version__, dfu, launchhook, mo2games
 from modsync.games import SKYRIM_SE
 from modsync.state import State
 from modsync.service import ModSyncService
@@ -39,10 +39,10 @@ from modsync.ui import nav, theme, worker
 from modsync.ui.input import Action, DIRECTIONS, InputRouter
 from modsync.ui.overlays import ConfirmSheet, GameSheet, Overlay, PageSheet
 from modsync.ui.pages import Page
-from modsync.ui.pages.cyberpunk import CyberpunkPage
 from modsync.ui.pages.daggerfall import DaggerfallPage
 from modsync.ui.pages.game import GamePage
 from modsync.ui.pages.home import HomePage
+from modsync.ui.pages.managed import ManagedGamePage, game_summary
 from modsync.ui.pages.mods import ModsPage
 from modsync.ui.pages.setup import SetupFlow
 from modsync.ui.pages.sync import SyncPage
@@ -63,13 +63,18 @@ _POLL_MS = 4000
 
 APP_ID = "io.github.skjiisa.ModSync"
 
-PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage, DaggerfallPage, CyberpunkPage)
+PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage, DaggerfallPage)
 TAB_KEYS = ("home", "sync", "system")
-# The games Home can show: key, the page that is their Home, name in the switcher.
-GAMES = (("skyrim", "home", "Skyrim"), ("daggerfall", "daggerfall", "Daggerfall Unity"),
-         ("cyberpunk", "cyberpunk", "Cyberpunk 2077"))
+# The games with a page of their own that Home can show: key, the page that is
+# their Home, name in the switcher. Every other game is one from the table
+# (modsync.mo2games), with a ManagedGamePage under its own key.
+GAMES = (("skyrim", "home", "Skyrim"), ("daggerfall", "daggerfall", "Daggerfall Unity"))
 GAME_PAGES = {key: page for key, page, _name in GAMES}
+# The table's games the picker offers whether or not they're installed; the
+# rest appear once Steam or Heroic has them.
+ALWAYS_OFFERED = ("cyberpunk",)
 _GAME_POLLS = 8  # how many polls apart the other games are looked for
+_SWITCH_NAME_MAX = 26  # a longer name is cut short in the switcher, never in the picker
 
 
 def alive(w: QWidget | None) -> bool:
@@ -81,9 +86,21 @@ def dfu_here(ov: dfu.Overview | None) -> bool:
     return ov is not None and (ov.dagger is not None or ov.install is not None)
 
 
-def cyberpunk_here(ov: cyberpunk.Overview | None) -> bool:
-    """Cyberpunk 2077 is on this machine: Heroic installed it."""
+def managed_here(ov: mo2games.Overview | None) -> bool:
+    """A game from the table is on this machine: Steam or Heroic installed it."""
     return ov is not None and ov.game is not None
+
+
+def look_for_managed(skip: str) -> dict[str, mo2games.Overview]:
+    """How each of the table's games on this machine stands, by its key in the
+    app, plus the ones the picker always offers. ``skip`` is the one shown,
+    which reads itself."""
+    wanted = {game.ui_key: game for game in mo2games.here()}
+    for key in ALWAYS_OFFERED:
+        game = mo2games.for_ui(key)
+        if game is not None:
+            wanted.setdefault(key, game)
+    return {key: game.overview(hook=False) for key, game in wanted.items() if key != skip}
 
 
 def app_mark(size: int) -> QWidget:
@@ -123,7 +140,7 @@ class TopBar(QWidget):
         g.addWidget(self.game_glyph)
         self.game_switch = GameSwitch()
         self.game_switch.clicked.connect(window.open_game_picker)
-        self.game_switch.fit([name for _key, _page, name in GAMES])
+        self.game_switch.fit(window.switch_names())
         g.addWidget(self.game_switch)
         self.game_box = game
         h.addWidget(game)
@@ -207,14 +224,21 @@ class MainWindow(QMainWindow):
         self._busy: set[str] = set()
         self._rebuild_pending = False
         self._current = "home"
-        # Steam's Play button opened this for Skyrim: only Skyrim is shown.
+        # The table's games Home can show, by their key in the app: the ones
+        # always offered, the one it was left on, and those found on this machine.
+        self.managed: dict[str, mo2games.ManagedGame] = {}
+        self.managed_overviews: dict[str, mo2games.Overview] = {}
         saved = self.service.state.home_game
-        self.game = saved if steam_launch is None and saved in GAME_PAGES else "skyrim"
+        for key in (*ALWAYS_OFFERED, saved):
+            game = mo2games.for_ui(key) if key else None
+            if game is not None:
+                self.managed[key] = game
+        # Steam's Play button opened this for Skyrim: only Skyrim is shown.
+        self.game = saved if steam_launch is None and (saved in GAME_PAGES or saved in self.managed) else "skyrim"
         # Reopened on a game other than Skyrim: until the first read says it's
         # still on this machine, the window may open on Skyrim instead.
         self._restored = self.game != "skyrim"
         self.dfu_overview: dfu.Overview | None = None
-        self.cyberpunk_overview: cyberpunk.Overview | None = None
         self._game_polls = 0
         self._call.connect(lambda fn: fn())
 
@@ -262,8 +286,9 @@ class MainWindow(QMainWindow):
 
     # --- pages ---------------------------------------------------------------------
     def _build_pages(self) -> None:
-        for page_cls in PAGES:
-            page = page_cls(self)
+        made = [page_cls(self) for page_cls in PAGES]
+        made += [ManagedGamePage(self, game) for game in self.managed.values()]
+        for page in made:
             self.pages[page.key] = page
             self.stack.addWidget(page)
             if page.key not in TAB_KEYS:
@@ -296,12 +321,12 @@ class MainWindow(QMainWindow):
 
     def _page_key(self, key: str) -> str:
         """The page a section shows: Home is the chosen game's."""
-        return GAME_PAGES[self.game] if key == "home" else key
+        return GAME_PAGES.get(self.game, self.game) if key == "home" else key
 
     def go(self, key: str, *, focus: bool = True) -> None:
         if key not in self.pages or self.setup is not None:
             return
-        game = next((g for g, page in GAME_PAGES.items() if page == key and page != "home"), None)
+        game = next((g for g in self.game_keys() if GAME_PAGES.get(g, g) == key and key != "home"), None)
         if game is not None:
             self.switch_game(game, focus=focus)
             return
@@ -350,10 +375,35 @@ class MainWindow(QMainWindow):
         it. A window Steam's Play button opened for Skyrim shows only Skyrim."""
         return self.steam_launch is None
 
+    def game_keys(self) -> list[str]:
+        """Every game Home can show, in the picker's order."""
+        return [*GAME_PAGES, *self.managed]
+
+    def switch_name(self, game: str) -> str:
+        """The game's name in the switcher at the top."""
+        fixed = {key: name for key, _page, name in GAMES}
+        name = fixed.get(game) or self.managed[game].name
+        return name if len(name) <= _SWITCH_NAME_MAX else name[:_SWITCH_NAME_MAX - 1].rstrip() + "…"
+
+    def switch_names(self) -> list[str]:
+        return [self.switch_name(key) for key in self.game_keys()]
+
     def _update_game_switch(self) -> None:
-        name = dict((key, name) for key, _page, name in GAMES)[self.game]
-        self.topbar.set_game(name if self.switchable else "")
+        self.topbar.set_game(self.switch_name(self.game) if self.switchable else "")
         self.refresh_hints()
+
+    def _offer(self, game: mo2games.ManagedGame) -> None:
+        """A game from the table turned up on this machine: the picker offers
+        it from now on, and it gets its page."""
+        key = game.ui_key
+        if key in self.managed:
+            return
+        self.managed[key] = game
+        if self.pages and key not in self.pages:
+            page = ManagedGamePage(self, game)
+            self.pages[key] = page
+            self.stack.addWidget(page)
+        self.topbar.game_switch.fit(self.switch_names())
 
     def _show_skyrim(self) -> None:
         """Make Home Skyrim's without going there, and remember it."""
@@ -376,16 +426,25 @@ class MainWindow(QMainWindow):
             return
         if self.game != "daggerfall":
             worker.run_async(dfu.overview, hook=False, on_done=self.dfu_checked, on_failed=lambda _e: None)
-        if self.game != "cyberpunk":
-            worker.run_async(cyberpunk.overview, hook=False, on_done=self.cyberpunk_checked,
-                             on_failed=lambda _e: None)
+        worker.run_async(look_for_managed, self.game, on_done=self._managed_found, on_failed=lambda _e: None)
 
     def game_here(self, game: str) -> bool:
         if game == "daggerfall":
             return dfu_here(self.dfu_overview)
-        if game == "cyberpunk":
-            return cyberpunk_here(self.cyberpunk_overview)
+        if game in self.managed:
+            return managed_here(self.managed_overviews.get(game))
         return True
+
+    def _managed_found(self, found: dict[str, mo2games.Overview]) -> None:
+        """The table's games on this machine were read: each one new here is
+        offered from now on."""
+        if not shiboken6.isValid(self):
+            return
+        for key, ov in found.items():
+            game = mo2games.for_ui(key)
+            if game is not None:
+                self._offer(game)
+                self.managed_checked(key, ov)
 
     def dfu_checked(self, ov: dfu.Overview) -> None:
         """Daggerfall Unity was read (here, or by its page): the picker says how it stands."""
@@ -394,12 +453,16 @@ class MainWindow(QMainWindow):
         self.dfu_overview = ov
         self._game_checked("daggerfall")
 
-    def cyberpunk_checked(self, ov: cyberpunk.Overview) -> None:
-        """Cyberpunk was read (here, or by its page): the picker says how it stands."""
+    def managed_checked(self, key: str, ov: mo2games.Overview) -> None:
+        """A game from the table was read (here, or by its page): the picker says how it stands."""
         if not shiboken6.isValid(self):
             return
-        self.cyberpunk_overview = ov
-        self._game_checked("cyberpunk")
+        self.managed_overviews[key] = ov
+        self._game_checked(key)
+
+    @property
+    def cyberpunk_overview(self) -> mo2games.Overview | None:
+        return self.managed_overviews.get("cyberpunk")
 
     def _game_checked(self, game: str) -> None:
         """The first read of the game the window reopened on: not on this machine,
@@ -412,7 +475,7 @@ class MainWindow(QMainWindow):
     def _open_on_skyrim(self) -> None:
         """Reopened on a game this machine doesn't have: Home is Skyrim's this
         time. The choice stays saved, for once the game is here."""
-        shown = self.pages[GAME_PAGES[self.game]]
+        shown = self.pages[GAME_PAGES.get(self.game, self.game)]
         was_inside = alive(self.focusWidget()) and shown.isAncestorOf(self.focusWidget())
         self.game = "skyrim"
         self._update_game_switch()
@@ -425,34 +488,43 @@ class MainWindow(QMainWindow):
         """Each game the picker offers, with how it stands."""
         return [("skyrim", SKYRIM_SE.name, *self.pages["home"].summary()),
                 ("daggerfall", "Daggerfall Unity", *DaggerfallPage.summary(self.dfu_overview)),
-                ("cyberpunk", "Cyberpunk 2077", *CyberpunkPage.summary(self.cyberpunk_overview))]
+                *((key, game.name, *game_summary(game, self.managed_overviews.get(key)))
+                  for key, game in self.managed.items())]
 
     def open_game_picker(self) -> None:
         if not self.switchable or self.setup is not None or self.overlays:
             return
         # Nothing to switch to while no other game is here: focus stays, so X then A
         # doesn't head for Steam's install dialog.
-        here = self.game != "skyrim" or any(self.game_here(key) for key in GAME_PAGES if key != "skyrim")
+        here = self.game != "skyrim" or any(self.game_here(key) for key in self.game_keys() if key != "skyrim")
         GameSheet(self, self.game_choices(), self.game, lambda key: self.switch_game(key),
                   start=None if here else self.game).open()
 
     def switch_game(self, game: str, *, focus: bool = True) -> None:
         """Show ``game`` on Home and go there. Remembered for next time."""
-        if game not in GAME_PAGES or self.setup is not None or self.overlays:
+        if game not in self.game_keys() or self.setup is not None or self.overlays:
             return
         if game != "skyrim" and self.steam_launch is not None:
             return
-        order = list(GAME_PAGES)
+        order = self.game_keys()
         step = order.index(game) - order.index(self.game)
         self._restored = False  # chosen now: stays, here or not
         if game != self.game:
             self.game = game
-            self.topbar.set_game(dict((key, name) for key, _page, name in GAMES)[game])
+            self.topbar.set_game(self.switch_name(game))
             self._remember_game("" if game == "skyrim" else game)
         was_home = self._current == "home"
         self.go("home", focus=focus and self.router.mode != "mouse")
         if was_home:
             self._slide(self.page, step)
+
+    def show_game(self, key: str) -> None:
+        """Go to a game's page by its key, also one from the table that the
+        picker doesn't offer yet."""
+        game = mo2games.for_ui(key)
+        if game is not None:
+            self._offer(game)
+        self.go(key)
 
     def cycle(self, step: int) -> None:
         keys = list(self.tabs)
@@ -728,7 +800,7 @@ class MainWindow(QMainWindow):
         for page in self.pages.values():
             page.poll()
         # Now and then, so the picker knows about a game installed meanwhile
-        # (Daggerfall through Steam, Cyberpunk through Heroic).
+        # (Daggerfall through Steam, the table's games through Steam or Heroic).
         self._game_polls += 1
         if self._game_polls % _GAME_POLLS == 0:
             self._look_for_games()

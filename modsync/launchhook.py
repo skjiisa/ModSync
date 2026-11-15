@@ -31,6 +31,10 @@ For Daggerfall the hook runs a *native* program instead: Play starts Daggerfall
 Unity (see :mod:`modsync.dfu`) in place of the original game in DOSBox, and
 opens no window. When Daggerfall Unity is missing, or the game's launch
 options set ``MODSYNC_ORIGINAL_GAME=1``, the launch goes on to Proton as usual.
+
+For every other Steam game ModSync runs Mod Organizer 2 for
+(:mod:`modsync.mo2games`) the hook is the same script, and ``modsync launch
+hub`` answers it without a window: it hands MO2's Play straight back.
 """
 
 from __future__ import annotations
@@ -51,7 +55,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from modsync import __version__, config, platforms, steamos
-from modsync.games import DAGGERFALL, GAMES, SKYRIM_SE, Game
+from modsync.games import DAGGERFALL, GAMES, MO2_GAMES, SKYRIM_SE, Game
 from modsync.steam import compattools, shortcuts
 from modsync.steam import libraries as libs
 from modsync.steam.compattools import CompatTool
@@ -62,9 +66,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-TEMPLATE_VERSION = 8  # 2: the MO2 launch the window hands back; 3: a native program; 4: DFU's saves around it;
+TEMPLATE_VERSION = 9  # 2: the MO2 launch the window hands back; 3: a native program; 4: DFU's saves around it;
 # 5: a newer setup (state.EXIT_NEWER_STATE) ends the launch; 6: DFU follows Daggerfall to another library;
-# 7: an x86-64 DFU through Steam's FEX on ARM; 8: MODSYNC_ORIGINAL_GAME skips ModSync for Skyrim too
+# 7: an x86-64 DFU through Steam's FEX on ARM; 8: MODSYNC_ORIGINAL_GAME skips ModSync for Skyrim too;
+# 9: a handoff can set environment variables (HANDOFF_ENV_TAG)
 TEMPLATE_DIR = Path(__file__).parent / "steam" / "launchhook_template"
 MARKER = ".modsync-launch-hook"  # only directories carrying this are ever removed
 
@@ -76,6 +81,11 @@ EXIT_CANCEL = 10
 # arguments, each ending in a NUL. The hook runs that through Steam's launch in
 # place of the game's own program; with nothing handed back it runs the game's.
 HANDOFF_TAG = "modsync-handoff-1"
+# The same with environment variables for the launch (a game's DLL overrides):
+# after the folder comes how many, then that many NAME=value fields. Only a
+# launch that needs any is sent this way, so a script from before understands
+# every other one.
+HANDOFF_ENV_TAG = "modsync-handoff-2"
 
 # Steam Cloud maps a game's Windows save locations (WinMyDocuments and the like)
 # into the Proton prefix only when the tool's internal name contains "proton".
@@ -85,12 +95,39 @@ HANDOFF_TAG = "modsync-handoff-1"
 _TOOL_ID_RE = re.compile(r"^modsync_(\d+)_(?:proton|hub)$")
 
 
-# The games a hook can be installed for.
-HOOK_GAMES: dict[int, Game] = {**GAMES, DAGGERFALL.appid: DAGGERFALL}
+# The games a hook can be installed for: the ones with a path of their own,
+# and every Steam game in the table.
+HOOK_GAMES: dict[int, Game] = {
+    **{game.appid: game for game in MO2_GAMES.values() if game.appid},
+    **GAMES,
+    DAGGERFALL.appid: DAGGERFALL,
+}
 
 
 def hook_game(appid: int) -> Game:
     return HOOK_GAMES.get(appid, SKYRIM_SE)
+
+
+def hooked_appids() -> list[int]:
+    """The games with anything of a hook on this machine: its record, a change
+    queued for it, or its tool directory. Most of HOOK_GAMES never have one,
+    and each one looked at reads Steam's config."""
+    found: set[int] = set()
+    for stem in ("launch-hook", "pending-launch"):
+        if (config.config_dir() / f"{stem}.json").exists():
+            found.add(SKYRIM_SE.appid)
+        for path in config.config_dir().glob(f"{stem}-*.json"):
+            appid = path.stem.removeprefix(f"{stem}-")
+            if appid.isdigit():
+                found.add(int(appid))
+    for root in platforms.current().steam_roots():
+        tools = compattools.compatibilitytools_dir(root)
+        try:
+            names = [entry.name for entry in tools.iterdir()]
+        except OSError:
+            continue
+        found |= {int(m[1]) for name in names if (m := _TOOL_ID_RE.match(name))}
+    return sorted(appid for appid in found if appid in HOOK_GAMES)
 
 
 def _config_file(stem: str, appid: int) -> Path:
@@ -435,8 +472,14 @@ class SteamLaunch:
 
 
 def encode_handoff(plan: "LaunchPlan") -> bytes:
-    """The hook's half of :data:`HANDOFF_TAG`: the plan's Proton, folder and command."""
-    fields = [HANDOFF_TAG, str(plan.proton), str(plan.cwd), *plan.command]
+    """The hook's half of :data:`HANDOFF_TAG`: the plan's Proton, folder and
+    command, and (:data:`HANDOFF_ENV_TAG`) the environment it adds to Steam's."""
+    env = [f"{name}={value}" for name, value in plan.hook_env.items()]
+    if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in plan.hook_env):
+        raise ValueError("this launch plan's environment cannot be handed to the hook")
+    head = [HANDOFF_ENV_TAG, str(plan.proton), str(plan.cwd), str(len(env)), *env] if env else \
+        [HANDOFF_TAG, str(plan.proton), str(plan.cwd)]
+    fields = [*head, *plan.command]
     if plan.proton is None or not plan.command or any("\0" in f for f in fields):
         raise ValueError("this launch plan cannot be handed to the hook")
     return b"".join(f.encode("utf-8", "surrogateescape") + b"\0" for f in fields)
@@ -544,6 +587,7 @@ def render(
         "@@MODSYNC_COMMAND@@": _bash_array(command),
         "@@LIBRARY_PATHS@@": _bash_array([str(p) for p in library_paths]),
         "@@HANDOFF_TAG@@": HANDOFF_TAG,
+        "@@HANDOFF_ENV_TAG@@": HANDOFF_ENV_TAG,
         "@@NATIVE_PROGRAM@@": shlex.quote(str(native)) if native else "''",
     }
     target.mkdir(parents=True, exist_ok=True)

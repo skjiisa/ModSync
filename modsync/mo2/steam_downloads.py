@@ -13,10 +13,12 @@ Steam too, but the hook would play it.
 Without the hook, or with Steam closed, ModSync opens MO2 itself. The game
 starts Steam on its own if it's then played from MO2.
 
-Skyrim Special Edition is the only Steam game ModSync runs MO2 for so far.
-Another one needs its instance in :func:`instance` and its launch in
-:func:`_plan`; everything else here goes by its :class:`~modsync.games.Game`
-entry.
+Skyrim Special Edition's instance and launch are its own (the state file,
+``ModSyncService``); every other Steam game's come from its
+:class:`~modsync.mo2games.ManagedGame`. Those games' own Play and Open MO2 go
+through Steam the same way, with :data:`~modsync.mo2.downloads.PLAY` or
+``OPEN`` in the note in place of a link (:func:`ask_steam`,
+:func:`take_request`).
 """
 
 from __future__ import annotations
@@ -36,10 +38,17 @@ from modsync.mo2.launch import LaunchPlan, host_command, proton_command
 # --- what differs between games ----------------------------------------------------
 
 
+def _managed(game: Game):
+    from modsync import mo2games
+
+    return mo2games.for_steam(game.appid)
+
+
 def instance(game: Game) -> Path | None:
     """The MO2 instance ModSync runs for the game, or None for none."""
     if game.appid != SKYRIM_SE.appid:
-        return None
+        managed = _managed(game)
+        return managed.steam_instance() if managed is not None else None
     from modsync.state import State
 
     path = State.load().instance_path
@@ -51,7 +60,10 @@ def _plan(game: Game, url: str, *, prepare: bool) -> LaunchPlan:
     before MO2 starts (for a launch that starts it, not one that only says
     where it runs)."""
     if game.appid != SKYRIM_SE.appid:
-        raise RuntimeError(f"ModSync doesn't run Mod Organizer 2 for {game.name}.")
+        managed = _managed(game)
+        if managed is None:
+            raise RuntimeError(f"ModSync doesn't run Mod Organizer 2 for {game.name}.")
+        return managed.steam_plan(download=url, prepare=prepare)
     if prepare:
         from modsync.service import ModSyncService
 
@@ -101,6 +113,31 @@ def _record_path(game: Game) -> Path:
 def take_link(game: Game) -> str | None:
     """For the hub: the link ModSync left for this launch, taken once, or None."""
     return downloads.take_note(note_path(game), taken_path(game))
+
+
+def take_request(game: Game) -> str | None:
+    """For the hub: what ModSync left for this launch, taken once: a link,
+    :data:`~modsync.mo2.downloads.PLAY` or ``OPEN``, or None."""
+    return downloads.take_note(note_path(game), taken_path(game), requests=True)
+
+
+def ask_steam(game: Game, note: str) -> None:
+    """Leave ``note`` (a link, PLAY or OPEN) for the hub and have Steam launch
+    the game. Takes the note out again when the launch couldn't be asked for."""
+    path = note_path(game)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(note + "\n", encoding="utf-8")
+    tmp.replace(path)
+    try:
+        result = background.run_host(["xdg-open", f"steam://rungameid/{game.appid}"], timeout=15)
+    except (OSError, subprocess.SubprocessError) as e:
+        path.unlink(missing_ok=True)  # no launch will take it
+        raise RuntimeError(f"Couldn't ask Steam to launch {game.name}: {e}") from e
+    if result.returncode != 0:
+        path.unlink(missing_ok=True)
+        raise RuntimeError(f"Couldn't ask Steam to launch {game.name}: "
+                           f"{(result.stderr or '').strip() or result.returncode}")
 
 
 def prepare(game: Game, url: str) -> LaunchPlan:
@@ -168,19 +205,7 @@ class SteamDownloads:
         return hook.installed and hook.selected and hook.steam_running
 
     def ask_hook(self, url: str) -> str:
-        self.note.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.note.with_suffix(".tmp")
-        tmp.write_text(url + "\n", encoding="utf-8")
-        tmp.replace(self.note)
-        try:
-            result = background.run_host(["xdg-open", f"steam://rungameid/{self.game.appid}"], timeout=15)
-        except (OSError, subprocess.SubprocessError) as e:
-            self.note.unlink(missing_ok=True)  # no launch will take it
-            raise RuntimeError(f"Couldn't ask Steam to launch {self.game.name}: {e}") from e
-        if result.returncode != 0:
-            self.note.unlink(missing_ok=True)
-            raise RuntimeError(f"Couldn't ask Steam to launch {self.game.name}: "
-                               f"{(result.stderr or '').strip() or result.returncode}")
+        ask_steam(self.game, url)
         return "Opening Mod Organizer 2 through Steam to download the file…"
 
     def open_direct(self, url: str) -> str:
@@ -193,5 +218,6 @@ def download(game: Game, url: str, *, poll: float = 2.0, on_wait: Callable[[str]
     """Hand a Nexus download to the game's MO2 (see the module's docstring).
     Returns what happened."""
     plan = _plan(game, url, prepare=False)
-    _refuse_if_blocked()  # before asking Steam for a launch that could only show why
+    if game.appid == SKYRIM_SE.appid:
+        _refuse_if_blocked()  # before asking Steam for a launch that could only show why
     return downloads.download(SteamDownloads(game, plan), url, poll=poll, on_wait=on_wait)
