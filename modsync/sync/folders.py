@@ -247,12 +247,22 @@ def share(client: SyncthingClient, spec: FolderSpec) -> Path:
     if root is None:
         raise RuntimeError(f"{spec.label}: set the game up on this machine first.")
     kept = State.load().held_folders.get(spec.key)
+    before = None
     if kept is not None:
+        try:
+            before = client.get_folder(spec.folder_id)
+        except Exception:
+            before = None  # not in Syncthing (removed by hand): nothing to put back
         _release(client, spec)
-    joined = (kept is not None and _has_content(Path(kept))) or _offered(client, spec)
-    if spec.on_share is not None and not joined:
-        spec.on_share(root)  # a new shared folder; one already offered is joined as it is
-    _put(client, spec, root, peers(client))
+    try:
+        joined = (kept is not None and _has_content(Path(kept))) or _offered(client, spec)
+        if spec.on_share is not None and not joined:
+            spec.on_share(root)  # a new shared folder; one already offered is joined as it is
+        _put(client, spec, root, peers(client))
+    except Exception:
+        if kept is not None:
+            _restore_kept(client, spec, before, Path(kept))
+        raise
     _remember(spec.key, root)
     log.info("sharing %s (%s) from %s", spec.folder_id, spec.label, root)
     return root
@@ -299,6 +309,19 @@ def _release(client: SyncthingClient, spec: FolderSpec) -> None:
         raise RuntimeError(f"Syncthing didn't let go of the copy of {spec.label} kept here. Try again.")
     _forget(spec.key)
     log.info("the copy of %s kept here gives way", spec.folder_id)
+
+
+def _restore_kept(client: SyncthingClient, spec: FolderSpec, folder: dict | None, root: Path) -> None:
+    """Sharing failed after the kept copy gave way: keep it as it was, so the
+    other machines still sync through it."""
+    try:
+        if folder is not None:
+            client.put_folder(folder)
+        _remember(spec.key, root, held=True)
+        log.info("sharing %s failed; the copy kept here stays", spec.folder_id)
+    except Exception as exc:
+        log.warning("sharing %s failed, and the copy kept at %s couldn't be put back: %s",
+                    spec.folder_id, root, exc)
 
 
 def _has_content(root: Path) -> bool:
@@ -367,10 +390,23 @@ def stop(client: SyncthingClient | None, spec: FolderSpec) -> bool:
 
 def _finish_stop(spec: FolderSpec) -> None:
     """Syncthing has let go of it: forget it here, and let the game tidy up
-    (not after a kept copy, which the game never used)."""
-    held = spec.key in State.load().held_folders
-    _forget(spec.key)
-    if spec.on_stop is not None and not held:
+    (only after a folder the game used, never a kept copy). Nothing happens
+    if it was taken up again meanwhile (shared or kept: no longer declined),
+    say by the app while the background service retried an earlier stop."""
+    used = []
+
+    def change(st: State) -> None:
+        if spec.key not in st.declined_folders:
+            return
+        used.append(spec.key in st.game_folders)
+        st.game_folders = {k: v for k, v in st.game_folders.items() if k != spec.key}
+        st.held_folders = {k: v for k, v in st.held_folders.items() if k != spec.key}
+
+    State.change(change)
+    if not used:
+        log.info("%s was taken up again before its stop finished", spec.folder_id)
+        return
+    if spec.on_stop is not None and used[0]:
         try:
             spec.on_stop()
         except Exception as exc:
@@ -450,6 +486,17 @@ def take_offers(client: SyncthingClient) -> list[str]:
     return taken
 
 
+def _retry_stop(client: SyncthingClient, spec: FolderSpec) -> None:
+    """Finish a stop Syncthing refused before. Checked again and removed
+    under the state's lock, so a 'share' or 'hold' in another process can't
+    take the folder up again between the check and the removal, and have its
+    new folder removed instead."""
+    with State.held() as st:
+        removed = stopping(spec.key, st) and _remove(client, spec)
+    if removed:
+        _finish_stop(spec)
+
+
 def refresh(client: SyncthingClient) -> None:
     """Finish stopping folders Syncthing didn't let go of before, keep each
     synced folder's .stignore current with this version of ModSync, and
@@ -460,8 +507,7 @@ def refresh(client: SyncthingClient) -> None:
         if spec is None:
             continue
         if stopping(key, st):
-            if _remove(client, spec):
-                _finish_stop(spec)
+            _retry_stop(client, spec)
             continue
         try:
             write_stignore(spec, Path(recorded))
@@ -472,8 +518,7 @@ def refresh(client: SyncthingClient) -> None:
         if spec is None:
             continue
         if stopping(key, st):
-            if _remove(client, spec):
-                _finish_stop(spec)
+            _retry_stop(client, spec)
             continue
         root = spec.path()
         if root is None:

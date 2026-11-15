@@ -151,6 +151,19 @@ class GamesOnlyTests(UiTestCase):
         self.assertFalse(State.load().hold_all)
         self.assertEqual(tile.badge.text(), "Off")
 
+    def test_the_switch_follows_a_change_made_elsewhere(self):
+        window = self.window()
+        sync = window.pages["sync"]
+        self.assertEqual(sync.hold_tile.badge.text(), "Off")
+        State.update(hold_all=True)  # 'modsync sync hold all' while the page is open
+        sync.poll()
+        self.settle()
+        self.assertEqual(sync.hold_tile.badge.text(), "On")
+        State.update(hold_all=False)
+        window.service.state.hold_all = True  # the page hasn't polled since
+        sync.hold_tile.click()
+        self.assertEqual(window.top_overlay.title.text(), "Keep games not installed here?")  # asks, as it's off
+
     def test_the_pin_and_code_tell_the_other_machine_to_pair(self):
         window = self.window()
         sync = window.pages["sync"]

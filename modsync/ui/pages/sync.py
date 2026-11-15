@@ -443,6 +443,7 @@ class SyncPage(Page):
             return
         self._show_games(status.game_folders)
         self._show_devices(status.devices)
+        self._show_hold()
 
     def _games_panel(self) -> Panel:
         panel = Panel()
@@ -516,6 +517,8 @@ class SyncPage(Page):
                              "at the same time.")
 
     def toggle_hold_all(self) -> None:
+        self.service.reload_state()  # 'modsync sync hold' may have changed it meanwhile
+        self._show_hold()
         if self.service.state.hold_all:
             self._set_hold_all(False)
             return
@@ -706,6 +709,7 @@ class SyncPage(Page):
             self.conflicts_tile.set_description("MO2 uses the newer version of each. Choose which to keep.")
         self._show_devices(status.devices)
         self._show_games(status.game_folders)
+        self._show_hold()  # 'modsync sync hold' may have changed it meanwhile
 
         if status.copy is not None:
             self._show_copy(status)

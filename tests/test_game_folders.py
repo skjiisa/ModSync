@@ -786,6 +786,41 @@ class KeptCopies(GameFolderBase):
         self.assertNotIn("modsync-test-mods", self.st.folders)
         self.assertEqual(State.load().held_folders, {})
 
+    def test_a_retried_stop_leaves_a_folder_taken_up_again_alone(self):
+        """The background service retries a refused stop while the app shares
+        the folder: the retry checks again under the state's lock."""
+        self.service.hold_game_folder("test-mods")
+        self.st.refuse_delete = True
+        self.service.stop_game_folder("test-mods")
+        self.st.refuse_delete = False
+        self.root = self.game_root
+        self.service.share_game_folder("test-mods")  # takes it up again: no longer stopping
+        folders._retry_stop(_Client(self.st), self.spec)
+        self.assertEqual(self.st.folders["modsync-test-mods"]["path"], str(self.game_root))
+        self.assertEqual(State.load().game_folders, {"test-mods": str(self.game_root)})
+
+    def test_a_stop_finishing_after_a_share_forgets_nothing_and_runs_no_on_stop(self):
+        self.spec = dataclasses.replace(self.spec, on_stop=unittest.mock.Mock())
+        State.update(game_folders={"test-mods": str(self.game_root)})  # shared again meanwhile
+        folders._finish_stop(self.spec)
+        self.assertEqual(State.load().game_folders, {"test-mods": str(self.game_root)})
+        # Half-way: the share has let go of the kept copy but not recorded its own yet.
+        State.update(game_folders={}, declined_folders=["test-mods"])
+        folders._finish_stop(self.spec)
+        self.spec.on_stop.assert_not_called()  # the game never used a kept copy
+
+    def test_a_share_that_fails_keeps_the_copy_as_it_was(self):
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.service.hold_game_folder("test-mods")
+        self.root = self.game_root
+        with patch.object(folders, "_put", side_effect=OSError("Syncthing said no")), \
+                self.assertRaisesRegex(OSError, "said no"):
+            self.service.share_game_folder("test-mods")
+        folder = self.st.folders["modsync-test-mods"]
+        self.assertEqual((folder["path"], folder["type"]), (str(self.kept), "receiveonly"))
+        self.assertEqual(folder_devices(self.st, "modsync-test-mods"), {"ME", "DESKTOP"})
+        self.assertEqual(State.load().held_folders, {"test-mods": str(self.kept)})
+
     def test_a_kept_copy_stays_put_when_the_game_is_set_up_later(self):
         self.service.hold_game_folder("test-mods")
         self.root = self.game_root
