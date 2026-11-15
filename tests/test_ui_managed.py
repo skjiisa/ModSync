@@ -224,13 +224,40 @@ class ManagedGameUiTests(UiTestCase):
         hold.assert_called_once_with("starfield-mo2")
         self.assertEqual(window.messages[-1], "A copy of your Starfield mods is kept here for Steam Deck.")
 
-    def test_a_kept_copy_with_mo2_installed_offers_to_sync_here_instead(self):
+    def test_a_kept_copy_moves_into_a_new_mo2_with_no_mods(self):
         window, page = self.open_page(overview(mods="kept", machines=DECK))
-        self.assertIn("Press to sync your mods with this Mod Organizer 2 instead", page.mods_row.description)
+        self.assertIn("Press to use it with this Mod Organizer 2. It moves in", page.mods_row.description)
         with patch.object(window.service, "share_game_folder", return_value=INSTANCE) as share:
             page.mods_row.click()
             self.settle(4)
         share.assert_called_once_with("starfield-mo2")
+        self.assertIn("are now this Mod Organizer 2's", window.messages[-1])
+
+    def test_a_kept_copy_and_an_instance_with_mods_merge_and_download_again(self):
+        ov = overview(mods="kept", machines=DECK)
+        ov.own_mods = True
+        window, page = self.open_page(ov)
+        self.assertIn("they merge with the ones it has, and download again", page.mods_row.description)
+
+    def test_installing_mo2_for_a_kept_game_moves_the_copy_in(self):
+        ov = overview(instance=False, mods="kept", machines=DECK)
+        window, page = self.open_page(ov)
+        self.assertIn("Then it uses your mods from Steam Deck kept here", page.install_tile.description)
+        with patch.object(self.game, "install_mo2", return_value=INSTANCE) as install, \
+                patch.object(window.service, "share_game_folder", return_value=INSTANCE) as share:
+            page.install_tile.click()
+            self.settle(4)
+        install.assert_called_once()
+        share.assert_called_once_with("starfield-mo2")
+        self.assertIn("with your mods from Steam Deck", window.messages[-1])
+
+    def test_installing_mo2_for_a_game_with_nothing_kept_doesnt_share(self):
+        window, page = self.open_page(overview(instance=False))
+        with patch.object(self.game, "install_mo2", return_value=INSTANCE), \
+                patch.object(window.service, "share_game_folder") as share:
+            page.install_tile.click()
+            self.settle(4)
+        share.assert_not_called()
 
     def test_steams_play_button_is_switched_and_waits_for_steam_to_close(self):
         window, page = self.open_page(overview())

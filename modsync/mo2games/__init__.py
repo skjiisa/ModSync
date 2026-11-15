@@ -81,6 +81,7 @@ class Overview:
     machines: list[str] = field(default_factory=list)
     kept_bytes: int | None = None  # how much the copy kept here takes
     kept_versions: list[tuple[str, str]] = field(default_factory=list)  # what the kept mods are for
+    own_mods: bool = False  # the instance has mods installed: a kept copy can't simply move in
 
     @property
     def elsewhere(self) -> bool:
@@ -769,7 +770,8 @@ class ManagedGame:
                         needs_setup=instance is not None and problem is None and not self.setup_finished(instance),
                         machines=list(machines or ()),
                         kept_bytes=tree_bytes(Path(kept)) if kept else None,
-                        kept_versions=self.vault_versions(Path(kept)) if kept else [])
+                        kept_versions=self.vault_versions(Path(kept)) if kept else [],
+                        own_mods=instance is not None and problem is None and not self._accepts_offer(instance))
 
 
 # --- the games -----------------------------------------------------------------------

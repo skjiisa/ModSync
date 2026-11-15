@@ -295,6 +295,9 @@ class ManagedGamePage(Page):
         has = ov.instance is not None and not ov.instance_problem
         finishing = has and ov.needs_setup
         self.install_tile.setText("Finish setting up Mod Organizer 2" if finishing else "Install Mod Organizer 2")
+        self.install_tile.set_description(
+            f"Then it uses your mods from {machines_text(ov.machines)} kept here: nothing downloads again."
+            if ov.mods == "kept" and not finishing else mg.install_note())
         self.install_tile.setVisible(ready and (ov.instance is None or finishing) and not self._working)
         through_store = game is not None and hook is not None and hook.enabled
         self.play.set_description(
@@ -384,11 +387,26 @@ class ManagedGamePage(Page):
             if not _TOOL_LINE.match(line):
                 bridge.said.emit(line.strip())
 
-        self._run(lambda: self.mg.install_mo2(dest, output),
+        use_kept = ov is not None and ov.mods == "kept" and not finishing
+        machines = machines_text(ov.machines) if ov is not None else ""
+
+        def install():
+            instance = self.mg.install_mo2(dest, output)
+            if use_kept:  # the copy kept for the other machines moves into the new instance
+                bridge.said.emit("Moving in the mods kept here…")
+                self.service.share_game_folder(self.mg.folder.key)
+            return instance
+
+        def done(instance) -> str:
+            if use_kept:
+                return (f"Mod Organizer 2 is installed in {_short(instance)}, with your mods from {machines}. "
+                        "They sync with your other machines from there.")
+            return f"Mod Organizer 2 is installed in {_short(instance)}. Open it to add mods, or play."
+
+        self._run(install,
                   message="Finishing Mod Organizer 2's setup…" if finishing
                   else f"Installing Mod Organizer 2 for {self.mg.short}… This takes a few minutes.",
-                  on_done=lambda instance: f"Mod Organizer 2 is installed in {_short(instance)}. "
-                                           "Open it to add mods, or play.")
+                  on_done=done)
 
     def _on_output(self, line: str) -> None:
         if self._working and line:
@@ -432,9 +450,13 @@ class ManagedGamePage(Page):
             return word, tone, "Finishes once Syncthing answers."
         if ov.mods == "kept":
             size = size_text(ov.kept_bytes)
-            if has:
+            if has and ov.own_mods:
                 return word, tone, (f"A copy is kept here for {machines}. Press to sync your mods with this "
-                                    "Mod Organizer 2 instead; they download again from your other machines.")
+                                    "Mod Organizer 2 instead: they merge with the ones it has, and download "
+                                    "again from your other machines.")
+            if has:
+                return word, tone, (f"A copy is kept here for {machines}. Press to use it with this Mod "
+                                    "Organizer 2. It moves in, so nothing downloads again.")
             return word, tone, (f"Kept here for {machines}" + (f" ({size})" if size else "")
                                 + ", so they sync through this machine. Press to stop keeping it.")
         if ov.mods == "on":
@@ -479,8 +501,11 @@ class ManagedGamePage(Page):
                     self.mg.use_instance(ov.instance)
                 return self.service.share_game_folder(key)
 
-            self._run(share, message="Starting mods sync…",
-                      on_done=lambda _root: f"Your {self.mg.short} mods now sync with your paired machines.")
+            used = ov.mods == "kept" and not ov.own_mods
+            self._run(share, message="Moving in the mods kept here…" if used else "Starting mods sync…",
+                      on_done=lambda _root: (f"Your {self.mg.short} mods kept here are now this Mod Organizer 2's, "
+                                             "and sync with your paired machines from there." if used else
+                                             f"Your {self.mg.short} mods now sync with your paired machines."))
         else:
             self._run(self.service.stop_game_folder, key, message="Stopping mods sync…",
                       on_done=lambda done: (f"{self.mg.short} mods no longer sync here. Nothing was deleted."
