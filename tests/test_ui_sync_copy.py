@@ -57,6 +57,55 @@ class JoinModeTests(UiTestCase):
         self.assertTrue(run.call_args.kwargs["merge"])
 
 
+class KeptVaultJoinTests(UiTestCase):
+    """A Skyrim vault kept here for the other machines is joined without a code (#149)."""
+
+    KEY = "0123456789abcdef"
+
+    def _window(self, *, kept=True):
+        State(instance_path=str(self.tmp),
+              held_folders={self.KEY: str(self.tmp / "held")} if kept else {}).save()
+        window = self.window()
+        window.go("sync")
+        return window, window.pages["sync"]
+
+    def test_the_kept_copy_is_the_first_choice(self):
+        window, page = self._window()
+        self.assertEqual(page.use_kept.text(), "Use the mods kept here")
+        self.assertEqual(page.use_kept.property("tileRole"), "primary")
+        self.assertIs(page.preferred_focus(), page.use_kept)
+        with patch("modsync.ui.pages.sync.worker.run_async") as run:
+            page.use_kept.click()
+        self.assertIsNone(window.top_overlay)
+        self.assertEqual(run.call_args.args[:2], (window.service.join_kept_vault, str(self.tmp)))
+        self.assertEqual(run.call_args.kwargs["merge"], False)
+
+    def test_mods_here_ask_copy_or_merge_first(self):
+        (self.tmp / "mods" / "Mine").mkdir(parents=True)
+        window, page = self._window()
+        with patch("modsync.ui.pages.sync.worker.run_async") as run:
+            page.use_kept.click()
+            window.top_overlay.choose("merge")
+        self.assertEqual(run.call_args.args[0], window.service.join_kept_vault)
+        self.assertTrue(run.call_args.kwargs["merge"])
+
+    def test_without_a_kept_copy_theres_no_such_choice(self):
+        _window, page = self._window(kept=False)
+        self.assertIsNone(page.use_kept)
+        self.assertIs(page.preferred_focus(), page.share)
+
+    def test_the_setup_wizard_offers_it_too(self):
+        State(instance_path=str(self.tmp), held_folders={self.KEY: str(self.tmp / "held")}).save()
+        window = self.window()
+        setup = window.start_setup()
+        setup.go_to(2)
+        self.settle()
+        self.assertIs(window.focusWidget(), setup.use_kept)
+        with patch("modsync.ui.pages.sync.worker.run_async") as run:
+            setup.use_kept.click()
+        self.assertEqual(run.call_args.args[0], window.service.join_kept_vault)
+
+
 class LiveSyncTests(UiTestCase):
     def _window(self, **state):
         State(instance_path=str(self.tmp), folder_id="modsync-abc", **state).save()

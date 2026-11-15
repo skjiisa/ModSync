@@ -14,7 +14,7 @@ from unittest.mock import patch
 from modsync.pairing_code import PairingCode
 from modsync.service import ModSyncService
 from modsync.state import State
-from modsync.sync import folders
+from modsync.sync import folders, stignore
 
 
 class FakeSyncthing:
@@ -1014,6 +1014,196 @@ class KeptCopies(GameFolderBase):
         self.assertEqual((st.held_folders, st.hold_all, st.paired), ({"test-mods": str(self.kept)}, True, True))
         self.assertIn("DESKTOP", self.st.devices)
 
+class KeptSkyrimVault(GameFolderBase):
+    """A copy of a Skyrim vault kept for the other machines (#149): its id is
+    random, and Skyrim joins it rather than sharing it."""
+
+    KEY = "0123456789abcdef"
+    VAULT = "modsync-" + KEY
+
+    def setUp(self):
+        super().setUp()
+        self.kept = self.tmp / "data" / "modsync" / "held" / self.VAULT
+        self.instance = self.tmp / "MO2"
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.st.devices["DESKTOP"]["name"] = "desktop"
+        self.st.connected = {"DESKTOP"}
+
+    def offer(self, by="DESKTOP", folder_id=None):
+        self.st.pending_folders[folder_id or self.VAULT] = {"offeredBy": {by: {"label": "Skyrim SE"}}}
+
+    def keep_with_mods(self):
+        self.offer()
+        self.service.hold_all_games(True)
+        for rel, text in (("mods/A Mod/plugin.esp", "esp"), ("profiles/Default/modlist.txt", "+A Mod\n"),
+                          ("modsync-vault.json", "{}")):
+            (self.kept / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.kept / rel).write_text(text)
+
+    def new_instance(self):
+        (self.instance / "profiles/Default").mkdir(parents=True)
+        (self.instance / "profiles/Default/modlist.txt").write_text("# new\n")
+        (self.instance / "ModOrganizer.exe").write_text("exe")
+        State.update(instance_path=str(self.instance))
+        self.service.reload_state()
+
+    def test_kept_like_a_games_folder_when_skyrim_isnt_set_up_here(self):
+        self.offer()
+        self.assertEqual(self.service.hold_all_games(True), [self.KEY])
+        folder = self.st.folders[self.VAULT]
+        self.assertEqual((folder["path"], folder["type"]), (str(self.kept), "receiveonly"))
+        self.assertEqual(folder_devices(self.st, self.VAULT), {"ME", "DESKTOP"})
+        self.assertEqual((self.kept / ".stignore").read_text(), stignore.stignore_text())
+        st = State.load()
+        self.assertEqual((st.held_folders, st.folder_id), ({self.KEY: str(self.kept)}, None))
+        self.assertEqual(folders.kept_vault(st), self.KEY)
+        [fs] = self.service.status().game_folders
+        self.assertEqual((fs.spec.label, fs.held), ("Skyrim SE mods (ModSync)", True))
+
+    def test_with_skyrim_set_up_here_an_offer_waits_for_a_join(self):
+        self.new_instance()
+        self.offer()
+        self.assertEqual(self.service.hold_all_games(True), [])
+        self.service.accept_pending()
+        self.assertNotIn(self.VAULT, self.st.folders)
+        with self.assertRaisesRegex(RuntimeError, "modsync sync join"):
+            self.service.hold_game_folder(self.KEY)
+
+    def test_the_vault_used_here_is_never_kept(self):
+        State.update(folder_id=self.VAULT)
+        self.offer()
+        self.service.hold_all_games(True)
+        self.assertNotIn(self.VAULT, self.st.folders)
+
+    def test_hold_skyrim_keeps_the_one_offered(self):
+        with self.assertRaisesRegex(RuntimeError, "No paired machine offers"):
+            self.service.hold_skyrim_vault()
+        self.offer()
+        self.assertEqual(self.service.hold_skyrim_vault(), self.kept)
+        self.offer(folder_id="modsync-fedcba9876543210")
+        self.offer(folder_id="modsync-dfu-mods")  # a game's folder, not a vault
+        self.assertEqual(folders.offered_vaults(_Client(self.st)), ["fedcba9876543210"])
+
+    def test_joining_moves_the_kept_copy_into_a_new_instance(self):
+        self.keep_with_mods()
+        self.new_instance()
+        self.service.join_vault(PairingCode("DESKTOP", self.VAULT, "Skyrim SE", 12), self.instance)
+        self.assertEqual((self.instance / "mods/A Mod/plugin.esp").read_text(), "esp")
+        self.assertEqual((self.instance / "profiles/Default/modlist.txt").read_text(), "+A Mod\n")
+        self.assertEqual((self.instance / "modsync-vault.json").read_text(), "{}")
+        self.assertEqual((self.instance / "ModOrganizer.exe").read_text(), "exe")
+        replaced = list((self.kept / folders.REPLACED_DIR).glob("*/profiles/Default/modlist.txt"))
+        self.assertEqual([p.read_text() for p in replaced], ["# new\n"])
+        folder = self.st.folders[self.VAULT]
+        self.assertEqual((folder["path"], folder["type"]), (str(self.instance), "receiveonly"))
+        st = State.load()
+        self.assertEqual((st.folder_id, st.held_folders, st.copy_phase, st.copy_source),
+                         (self.VAULT, {}, "receiving", "DESKTOP"))
+        self.assertNotIn(self.KEY, st.declined_folders)
+
+    def test_a_code_join_keeps_the_machines_the_copy_was_kept_for(self):
+        self.st.devices["DECK"] = {"deviceID": "DECK", "name": "deck"}
+        self.keep_with_mods()
+        self.new_instance()
+        self.service.join_vault(PairingCode("DESKTOP", self.VAULT, "Skyrim SE"), self.instance)
+        self.assertEqual(folder_devices(self.st, self.VAULT), {"ME", "DESKTOP", "DECK"})
+
+    def test_sharing_a_vault_like_a_games_folder_is_refused(self):
+        self.keep_with_mods()
+        self.new_instance()
+        with self.assertRaisesRegex(RuntimeError, "join"):
+            self.service.share_game_folder(self.KEY)
+        self.assertEqual(self.st.folders[self.VAULT]["path"], str(self.kept))
+
+    def test_an_instance_with_mods_leaves_the_kept_copy_where_it_is(self):
+        self.keep_with_mods()
+        self.new_instance()
+        (self.instance / "mods/My Mod").mkdir(parents=True)
+        self.service.join_vault(PairingCode("DESKTOP", self.VAULT, "Skyrim SE"), self.instance)
+        self.assertEqual((self.kept / "mods/A Mod/plugin.esp").read_text(), "esp")
+        self.assertFalse((self.instance / "mods/A Mod").exists())
+        self.assertEqual(self.st.folders[self.VAULT]["path"], str(self.instance))
+        self.assertEqual(State.load().held_folders, {})
+
+    def test_downloads_of_its_own_count_as_mods(self):
+        self.keep_with_mods()
+        self.new_instance()
+        (self.instance / "downloads").mkdir()
+        (self.instance / "downloads/SkyUI.7z").write_text("7z")
+        self.service.join_vault(PairingCode("DESKTOP", self.VAULT, "Skyrim SE"), self.instance)
+        self.assertFalse((self.instance / "mods/A Mod").exists())
+
+    def test_a_join_that_fails_keeps_the_copy_as_it_was(self):
+        self.keep_with_mods()
+        self.new_instance()
+        with patch("modsync.service.pairing.share_instance_folder", side_effect=OSError("Syncthing said no")), \
+                self.assertRaisesRegex(OSError, "said no"):
+            self.service.join_vault(PairingCode("DESKTOP", self.VAULT, "Skyrim SE"), self.instance)
+        self.assertEqual((self.kept / "mods/A Mod/plugin.esp").read_text(), "esp")
+        self.assertEqual((self.instance / "profiles/Default/modlist.txt").read_text(), "# new\n")
+        folder = self.st.folders[self.VAULT]
+        self.assertEqual((folder["path"], folder["type"]), (str(self.kept), "receiveonly"))
+        st = State.load()
+        self.assertEqual((st.held_folders, st.folder_id), ({self.KEY: str(self.kept)}, None))
+
+    def test_joining_another_vault_leaves_the_kept_one_alone(self):
+        self.keep_with_mods()
+        self.new_instance()
+        self.service.join_vault(PairingCode("DESKTOP", "modsync-fedcba9876543210", "Skyrim SE"), self.instance)
+        self.assertEqual(self.st.folders[self.VAULT]["path"], str(self.kept))
+        self.assertEqual(State.load().held_folders, {self.KEY: str(self.kept)})
+
+    def test_join_kept_needs_no_code_and_leaves_the_pairing_as_it_is(self):
+        self.st.devices["DECK"] = {"deviceID": "DECK", "name": "deck"}
+        self.keep_with_mods()
+        self.assertEqual(folder_devices(self.st, self.VAULT), {"ME", "DESKTOP", "DECK"})
+        self.st.connected = {"DECK"}
+        self.new_instance()
+        before = copy.deepcopy(self.st.devices)
+        self.service.join_kept_vault(self.instance)
+        self.assertEqual(self.st.devices, before)  # not paired again
+        self.assertEqual(folder_devices(self.st, self.VAULT), {"ME", "DESKTOP", "DECK"})
+        self.assertEqual(State.load().copy_source, "DECK")  # the one connected now
+        self.assertEqual((self.instance / "mods/A Mod/plugin.esp").read_text(), "esp")
+
+    def test_join_kept_without_a_kept_copy(self):
+        self.new_instance()
+        with self.assertRaisesRegex(RuntimeError, "No copy of Skyrim's mods is kept here"):
+            self.service.join_kept_vault(self.instance)
+
+    def test_leaving_the_vault_stops_keeping_it_until_asked_again(self):
+        self.keep_with_mods()
+        self.new_instance()
+        self.service.join_kept_vault(self.instance)
+        self.service.forget_instance()  # leaves the vault, and Skyrim isn't set up here any more
+        self.assertIn(self.KEY, State.load().declined_folders)
+        self.assertIn("DESKTOP", self.st.devices)  # still paired: games are kept here for it
+        self.offer()
+        self.service.accept_pending()
+        self.assertNotIn(self.VAULT, self.st.folders)
+        self.service.hold_all_games(False)
+        self.assertEqual(self.service.hold_all_games(True), [self.KEY])
+        self.assertEqual(self.st.folders[self.VAULT]["type"], "receiveonly")
+
+    def test_forgetting_mo2_keeps_what_this_machine_knows_about_its_pairings(self):
+        State.update(instance_path=str(self.instance), forgotten_devices=["OLD"], one_way_introducers=True,
+                     paused_for_play=["modsync-dfu-mods"], firewall_rules_stamp="abc", copy_phase="receiving")
+        self.service.reload_state()
+        self.service.forget_instance()
+        st = State.load()
+        self.assertEqual((st.instance_path, st.copy_phase), (None, ""))
+        self.assertEqual((st.forgotten_devices, st.one_way_introducers, st.paused_for_play, st.firewall_rules_stamp),
+                         (["OLD"], True, ["modsync-dfu-mods"], "abc"))
+
+    def test_stopping_the_kept_copy(self):
+        self.keep_with_mods()
+        self.assertTrue(self.service.stop_game_folder(self.KEY))
+        self.assertNotIn(self.VAULT, self.st.folders)
+        self.assertEqual((self.kept / "mods/A Mod/plugin.esp").read_text(), "esp")
+        st = State.load()
+        self.assertEqual((st.held_folders, st.declined_folders), ({}, [self.KEY]))
+
+
 class PauseForPlay(GameFolderBase):
     """While a game runs the background service pauses ModSync's folders."""
 
@@ -1150,6 +1340,28 @@ class Cli(GameFolderBase):
             code, out = self._run("join", text)
         self.assertEqual(code, 1)
         self.assertIn("Couldn't pair: Syncthing did not start", out)
+
+    def test_hold_skyrim_and_join_kept(self):
+        vault = "modsync-0123456789abcdef"
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        code, out = self._run("hold", "skyrim")
+        self.assertEqual(code, 1)
+        self.assertIn("No paired machine offers Skyrim's mods here", out)
+        self.st.pending_folders[vault] = {"offeredBy": {"DESKTOP": {}}}
+        code, out = self._run("hold", "skyrim")
+        self.assertEqual(code, 0, out)
+        self.assertIn("Keeping a copy of Skyrim's mods in", out)
+        self.assertEqual(self._run("join", "kept")[0], 2)
+        instance = self.tmp / "MO2"
+        instance.mkdir()
+        with patch("modsync.cli._run_until_interrupt", return_value=0):
+            code, out = self._run("join", "kept", str(instance))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.st.folders[vault]["path"], str(instance))
+        with patch("modsync.cli._run_until_interrupt", return_value=0):
+            code, out = self._run("join", "kept", str(instance))
+        self.assertEqual(code, 1)
+        self.assertIn("No copy of Skyrim's mods is kept here", out)
 
     def test_hold(self):
         self.root = None

@@ -172,7 +172,8 @@ modsync mo2 status | use <dir> | install <dest>
 modsync mo2 usvfs status | apply | restore   # MO2 2.5.2's ARM64 workaround, see usvfs-arm64.md
 modsync game status | downgrade <version> | restore | pin | unpin | skse
 modsync sync create <instance-dir> | join <code> <instance-dir> [--merge]
-modsync sync hold <folder> | all | off   # keep games not installed here, see below
+modsync sync join kept <instance-dir> [--merge]   # join the Skyrim vault kept here, see below
+modsync sync hold <folder> | skyrim | all | off   # keep games not installed here, see below
 modsync serve                       # foreground loop; what the background service runs
 modsync service install [--linger] | status | uninstall
 modsync firewall status | allow | remove   # ModSync's ports in ufw or firewalld
@@ -481,11 +482,30 @@ For a game under "Other games", installing MO2 from its page while a copy is
 kept moves the copy in right away. `modsync games <key> install` says to run
 `modsync sync share <key>-mo2` for the same.
 
+Skyrim's MO2 vault is kept the same way on a machine where Skyrim's MO2
+isn't set up. "Keep games not installed here" keeps it with the rest, and
+`modsync sync hold skyrim` keeps it alone. On a machine where Skyrim's MO2
+is set up but doesn't sync, an offer of the vault waits for you to join it,
+as before.
+
+Once Skyrim's MO2 is set up on a machine that keeps the vault, "Use the mods
+kept here" on the Sync page (and in the setup's sync step) joins it without
+a code, since the machines that share it are paired already. So does
+`modsync sync join kept <instance-dir> [--merge]`. Joining with another
+machine's pairing code uses the kept copy too. Either way, the kept copy's
+files move into the instance under the conditions above. For Skyrim, the
+instance has nothing of its own while it has no mods and no downloads.
+Joining then copies the vault as usual (see "Copying from another machine"
+below), and the moved files already match, so nothing downloads again.
+
+Leaving the vault on that machine stops keeping it, like stopping a game's
+folder: joining again, or turning "Keep games not installed here" off and
+on, takes it back. The machine stays paired while it keeps games for others.
+
 A machine with nothing installed pairs by entering another machine's code
 with `modsync sync join <code>`, then runs `modsync sync hold all` and
 `modsync service install --linger`. Linger starts the background service at
-boot, before anyone logs in. Skyrim's MO2 vault isn't kept this way yet; the
-games' folders are.
+boot, before anyone logs in.
 
 ### Copying from another machine
 
