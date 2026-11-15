@@ -127,6 +127,7 @@ class ManagedGamePage(Page):
         self._focus_on_load = False
         self._shown_at = 0.0
         self._reads = 0  # the latest read's number: older ones are dropped
+        self._pending = 0  # reads under way: a poll waits for them rather than overtaking them
         self.head = self.header(mg.name, mg.summary)
         self.note = label("", "warning")
         self.note.hide()
@@ -179,23 +180,37 @@ class ManagedGamePage(Page):
 
     # --- reading ---
     def refresh(self) -> None:
+        """Read everything again. A read under way is overtaken: refresh is
+        for after an action, or when the page opens. Polls go through
+        :meth:`poll`, which waits for one under way, so a slow Syncthing
+        (asked which machines sync the game) can't keep the page unread."""
         self._reads += 1
+        self._pending += 1
         read = self._reads
 
+        def landed() -> bool:
+            if not shiboken6.isValid(self):  # gone with its window
+                return False
+            self._pending -= 1
+            return True
+
         def done(ov: Overview) -> None:
-            # Gone with its window (Qt drops only bound methods' connections by
-            # itself), or overtaken by a newer read or an action that changed what it read.
-            if shiboken6.isValid(self) and read == self._reads and not self._working:
+            # Overtaken by a newer read, or by an action that changed what it read.
+            if landed() and read == self._reads and not self._working:
                 self._show(ov)
+
+        def failed(error: str) -> None:
+            if landed():
+                self.host.notify(f"⚠ {error}")
 
         def look() -> Overview:
             machines = self.service.games_elsewhere().get(self.mg.folder.key, [])
             return self.mg.overview(machines=machines)
 
-        worker.run_async(look, on_done=done, on_failed=lambda e: self.host.notify(f"⚠ {e}"))
+        worker.run_async(look, on_done=done, on_failed=failed)
 
     def poll(self) -> None:
-        if not self._working and self.isVisible():
+        if not self._working and self.isVisible() and not self._pending:
             self.refresh()
 
     def hints(self):

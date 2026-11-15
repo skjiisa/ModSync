@@ -87,9 +87,10 @@ def dfu_here(ov: dfu.Overview | None) -> bool:
 
 
 def managed_here(ov: mo2games.Overview | None) -> bool:
-    """A game from the table belongs here: Steam or Heroic installed it, a
-    copy of its mods is kept here, or a paired machine syncs them."""
-    return ov is not None and (ov.game is not None or ov.elsewhere)
+    """A game from the table belongs here: Steam or Heroic installed it, it
+    has an MO2 instance here, a copy of its mods is kept here, or a paired
+    machine syncs them (what mo2games.listed lists, and installed)."""
+    return ov is not None and (ov.game is not None or ov.instance is not None or ov.elsewhere)
 
 
 @dataclass
@@ -100,16 +101,22 @@ class GameLook:
     installed: dict[str, str]  # every game Steam or Heroic has here, by key in the app: the store's name
 
 
-def look_for_managed(skip: str, service: ModSyncService) -> GameLook:
+def look_for_managed(skip: str, service: ModSyncService, known: tuple[str, ...] = ()) -> GameLook:
     """Which of the table's games the switcher lists (set up here, kept here,
     or synced on a paired machine, see mo2games.listed) and how each stands,
-    and which are installed here, for "Add a game…". ``skip`` is the one
-    shown, which reads itself."""
+    and which are installed here, for "Add a game…". ``known`` are the ones
+    it lists already, read again too, so one that no longer qualifies doesn't
+    keep showing how it stood. ``skip`` is the one shown, which reads itself."""
     from modsync.games import STORE_NAMES
 
     elsewhere = service.games_elsewhere()
-    overviews = {game.ui_key: game.overview(hook=False, machines=elsewhere.get(game.folder.key, []))
-                 for game in mo2games.listed(elsewhere) if game.ui_key != skip}
+    wanted = {game.ui_key: game for game in mo2games.listed(elsewhere)}
+    for key in known:
+        game = mo2games.for_ui(key)
+        if game is not None:
+            wanted.setdefault(key, game)
+    overviews = {key: game.overview(hook=False, machines=elsewhere.get(game.folder.key, []))
+                 for key, game in wanted.items() if key != skip}
     installed = {}
     for game in mo2games.here():
         found = game.installs()
@@ -442,8 +449,8 @@ class MainWindow(QMainWindow):
             return
         if self.game != "daggerfall":
             worker.run_async(dfu.overview, hook=False, on_done=self.dfu_checked, on_failed=lambda _e: None)
-        worker.run_async(look_for_managed, self.game, self.service, on_done=self._managed_found,
-                         on_failed=lambda _e: None)
+        worker.run_async(look_for_managed, self.game, self.service, tuple(self.managed),
+                         on_done=self._managed_found, on_failed=lambda _e: None)
 
     def game_here(self, game: str) -> bool:
         if game == "daggerfall":

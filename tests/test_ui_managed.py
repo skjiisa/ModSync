@@ -300,3 +300,45 @@ class ManagedGameUiTests(UiTestCase):
         self.assertEqual(size_text(48_000_000), "48 MB")
         self.assertEqual(size_text(10), "under 1 MB")
         self.assertEqual(size_text(None), "")
+
+    def test_a_poll_waits_for_a_slow_read_instead_of_overtaking_it(self):
+        """Syncthing slow to say which machines sync the game: the page still loads."""
+        window, page = self.open_page(overview())
+        jobs = []
+        with patch("modsync.ui.pages.managed.worker.run_async", side_effect=lambda fn, *a, **kw: jobs.append(kw)):
+            page.refresh()
+            page.poll()
+            page.poll()  # a slow read: polls go by meanwhile
+            self.assertEqual(len(jobs), 1)
+            jobs[0]["on_done"](overview(hook_status=hook(on=True)))
+            self.assertEqual(page.hook_row.badge.text(), "Mod Organizer 2")  # it lands
+            page.poll()
+            self.assertEqual(len(jobs), 2)  # and polling goes on
+            jobs[1]["on_failed"]("Syncthing didn't answer")
+            page.poll()
+            self.assertEqual(len(jobs), 3)  # a failed read doesn't stop it either
+
+    def test_a_game_that_drops_off_the_list_shows_how_it_stands_now(self):
+        """Kept, then stopped elsewhere: the switcher keeps it, with today's words."""
+        from modsync.ui.main_window import look_for_managed
+
+        self.listed(overview(here=False, instance=False, mods="kept", machines=DECK), installed=False)
+        window = self.window()
+        self.settle(3)
+        self.assertEqual(self.picker(window).rows["mo2-starfield"].badge.text(), "Kept")
+        window.top_overlay.cancel()
+        later = overview(here=False, instance=False)
+        with patch.object(mo2games, "listed", lambda elsewhere=None: []), \
+                patch.object(self.game, "overview", lambda hook=True, machines=None: later):
+            look = look_for_managed("skyrim", window.service, ("mo2-starfield",))
+            self.assertIs(look.overviews["mo2-starfield"], later)
+            window._look_for_games()
+            self.settle(3)
+        self.assertEqual(self.picker(window).rows["mo2-starfield"].badge.text(), "Not installed")
+
+    def test_reopening_on_a_game_with_mo2_but_not_installed_stays_on_it(self):
+        State.update(home_game="mo2-starfield")
+        self.listed(overview(here=False, instance=True), installed=False)
+        window = self.window()
+        self.settle(3)
+        self.assertIs(window.page, window.pages["mo2-starfield"])
