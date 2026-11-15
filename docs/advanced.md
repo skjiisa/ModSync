@@ -995,11 +995,14 @@ A link reaches MO2 in one of three ways:
   (or, for Cyberpunk, for ModSync's Play) waits for it and then goes to it
   directly. So does a Skyrim link clicked while Steam is already launching
   the game for something else, such as Play with ModSync's window waiting
-  on a choice: Steam would ignore another launch. It waits up to five
-  minutes for MO2 to open.
+  on a choice: Steam would ignore another launch. A notification says it's
+  waiting, for up to five minutes, for MO2 to open.
 - Otherwise MO2 opens with the link the way Open Mod Organizer 2 opens it.
   For Skyrim that includes Steam being closed: the game starts Steam itself
   if you then play from MO2.
+
+While mods are still being copied from another machine, a download doesn't
+open MO2, just as Open Mod Organizer 2 doesn't.
 
 If a link fails, ModSync shows a desktop notification, because no terminal is
 open to show the error. `modsync nxm status` shows the handler; `modsync nxm disable`

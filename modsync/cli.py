@@ -1341,22 +1341,8 @@ def _nxm_open(url: str) -> int:
 
         logging.getLogger(__name__).exception("couldn't open %s link", handler.game_of(url))
         print(f"error: {e}", file=sys.stderr)
-        _notify(f"The Nexus Mods download didn't start: {e}")
+        handler.notify(f"The Nexus Mods download didn't start: {e}")
         return 1
-
-
-def _notify(message: str) -> None:
-    from modsync import background
-
-    try:
-        if background.run_host(["notify-send", "--app-name=ModSync", "--icon=io.github.skjiisa.ModSync",
-                                "ModSync", message], timeout=15).returncode == 0:
-            return
-    except Exception:  # noqa: BLE001 — no notification service: a dialog instead
-        pass
-    from modsync.__main__ import _show_error
-
-    _show_error(message)
 
 
 def launch(args: list[str]) -> int:
@@ -1484,7 +1470,11 @@ def _open_for_download(appid: int | None, handoff) -> tuple[bool, str]:
     from modsync.mo2 import steam_downloads
 
     game = GAMES.get(appid) if appid is not None else None
-    url = steam_downloads.take_link(game) if game is not None else None
+    try:
+        url = steam_downloads.take_link(game) if game is not None else None
+    except Exception:  # noqa: BLE001 — a note it can't read is no reason to keep the game from starting
+        logging.getLogger(__name__).exception("Steam launch: couldn't read the note for a Nexus download")
+        return False, ""
     if url is None:
         return False, ""
     configure("hub", ["launch", "hub", "--download"])

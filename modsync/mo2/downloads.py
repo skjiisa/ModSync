@@ -26,7 +26,7 @@ import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from modsync import background, config
 
@@ -74,9 +74,11 @@ class Target(Protocol):
         """Start MO2 with the link. Returns what happened."""
 
 
-def download(target: Target, url: str, *, poll: float = 2.0) -> str:
+def download(target: Target, url: str, *, poll: float = 2.0,
+             on_wait: Callable[[str], None] | None = None) -> str:
     """Hand a Nexus download to the target's MO2 (see the module's
-    docstring). Returns what happened."""
+    docstring). ``on_wait`` hears once when the link starts waiting on a
+    launch the store already has under way. Returns what happened."""
     busy_since: float | None = None
     while True:
         with launch_lock(target.record) as record:
@@ -85,14 +87,24 @@ def download(target: Target, url: str, *, poll: float = 2.0) -> str:
                 return target.pass_link(url)
             if not under_way(record, target.note, target.taken):
                 busy = target.launching()
+                hooked = target.through_hook()
                 if busy is None:
-                    if target.through_hook():
+                    if hooked:
                         with launched(record, "hook"):
                             return target.ask_hook(url)
                     with launched(record, "direct"):
                         return target.open_direct(url)
-                busy_since = time.monotonic() if busy_since is None else busy_since
-                if time.monotonic() - busy_since >= BUSY_WAIT:
+                if busy_since is None:
+                    busy_since = time.monotonic()
+                    if on_wait is not None:
+                        on_wait(f"The download waits for Mod Organizer 2: {busy}.")
+                # Only a launch through the store collides with the store's own.
+                # Otherwise the launch under way may still bring MO2 up (another
+                # program's hook, MO2-LINT's), so it gets as long as one of ours.
+                if time.monotonic() - busy_since >= (BUSY_WAIT if hooked else MO2_START_WAIT):
+                    if not hooked:
+                        with launched(record, "direct"):
+                            return target.open_direct(url)
                     raise RuntimeError(f"{busy}, and Mod Organizer 2 didn't open for the download. "
                                        "Click it again once MO2 is open.")
         time.sleep(poll)
@@ -223,7 +235,7 @@ def take_note(note: Path, taken: Path) -> str | None:
         return None
     try:
         left = taken.stat().st_mtime
-        with taken.open("r+", encoding="utf-8") as f:
+        with taken.open("r+", encoding="utf-8", errors="replace") as f:
             text = f.readline().strip()
             f.truncate(0)
         os.utime(taken)

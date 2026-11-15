@@ -65,7 +65,7 @@ def _steam(game: Game) -> Callable[[], GameHandler]:
         from modsync.mo2 import steam_downloads
 
         return GameHandler(game.name, lambda: steam_downloads.takes_downloads(game),
-                           lambda url: steam_downloads.download(game, url))
+                           lambda url: steam_downloads.download(game, url, on_wait=notify))
     return make
 
 
@@ -425,6 +425,20 @@ def forward(url: str) -> str:
     subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True, env=env)
     return f"Passed the link to {previous}."
+
+
+def notify(message: str) -> None:
+    """Tell the user, who has no terminal open for a link: a desktop
+    notification, or a dialog without a notification service."""
+    try:
+        if background.run_host(["notify-send", "--app-name=ModSync", "--icon=io.github.skjiisa.ModSync",
+                                "ModSync", message], timeout=15).returncode == 0:
+            return
+    except Exception:  # noqa: BLE001 — no notification service: a dialog instead
+        pass
+    from modsync.__main__ import _show_error
+
+    _show_error(message)
 
 
 def handle(url: str) -> str:

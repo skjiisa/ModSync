@@ -24,6 +24,7 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from modsync import background
 from modsync.games import SKYRIM_SE, Game
@@ -54,10 +55,24 @@ def _plan(game: Game, url: str, *, prepare: bool) -> LaunchPlan:
     if prepare:
         from modsync.service import ModSyncService
 
-        return ModSyncService().prepare_mo2(download=url)[0]
+        service = ModSyncService()
+        _refuse_if_blocked(service)
+        return service.prepare_mo2(download=url)[0]
     from modsync.mo2.launch import build_plan
 
     return build_plan(instance(game), download=url)
+
+
+def _refuse_if_blocked(service=None) -> None:
+    """What keeps Open MO2 from starting here (the first copy from another
+    machine still running) keeps a download from starting it too."""
+    if service is None:
+        from modsync.service import ModSyncService
+
+        service = ModSyncService()
+    blocked = service.launch_check().blocked
+    if blocked:
+        raise RuntimeError(f"Mod Organizer 2 can't open for the download yet. {blocked}")
 
 
 # --- the same for every Steam game -------------------------------------------------
@@ -174,7 +189,9 @@ class SteamDownloads:
         return Launcher().start(_plan(self.game, url, prepare=True))
 
 
-def download(game: Game, url: str, *, poll: float = 2.0) -> str:
+def download(game: Game, url: str, *, poll: float = 2.0, on_wait: Callable[[str], None] | None = None) -> str:
     """Hand a Nexus download to the game's MO2 (see the module's docstring).
     Returns what happened."""
-    return downloads.download(SteamDownloads(game, _plan(game, url, prepare=False)), url, poll=poll)
+    plan = _plan(game, url, prepare=False)
+    _refuse_if_blocked()  # before asking Steam for a launch that could only show why
+    return downloads.download(SteamDownloads(game, plan), url, poll=poll, on_wait=on_wait)

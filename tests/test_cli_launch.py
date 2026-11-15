@@ -171,6 +171,35 @@ class PlayRightAwayTests(unittest.TestCase):
         self.assertEqual(written, b"")
         self.assertIn("MO2 hasn't been set up", run_hub.call_args.kwargs["reason"])
 
+    def test_a_launch_for_a_download_opens_mo2_with_its_link_without_the_window(self):
+        from modsync.games import SKYRIM_SE
+        from modsync.mo2 import steam_downloads
+
+        link = "nxm://skyrimspecialedition/mods/266/files/1000?key=k"
+        note = steam_downloads.note_path(SKYRIM_SE)
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(link + "\n")
+        self.addCleanup(steam_downloads.taken_path(SKYRIM_SE).unlink, missing_ok=True)
+        asked = []
+        code, written, run_hub = self.hub(prepare=lambda **kw: asked.append(kw) or (self.plan, ""))
+        self.assertEqual(code, launchhook.EXIT_CONTINUE)
+        self.assertEqual(written, launchhook.encode_handoff(self.plan))
+        self.assertEqual(asked, [{"download": link}])  # Open MO2 with the link, not Play
+        run_hub.assert_not_called()
+
+    def test_a_download_mo2_cant_open_for_shows_the_window_instead_of_playing(self):
+        from modsync.games import SKYRIM_SE
+        from modsync.mo2 import steam_downloads
+
+        note = steam_downloads.note_path(SKYRIM_SE)
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text("nxm://skyrimspecialedition/mods/266/files/1000?key=k\n")
+        self.addCleanup(steam_downloads.taken_path(SKYRIM_SE).unlink, missing_ok=True)
+        code, written, run_hub = self.hub(prepare=RuntimeError("Steam is updating Skyrim."))
+        self.assertEqual(written, b"")
+        self.assertIn("the Nexus download couldn't open Mod Organizer 2: Steam is updating Skyrim.",
+                      run_hub.call_args.kwargs["reason"])
+
     def test_other_modes_open_the_window(self):
         launchhook.set_play_mode("countdown")
         code, written, run_hub = self.hub()

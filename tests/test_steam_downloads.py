@@ -47,6 +47,7 @@ class Downloading:
             patch.object(steam_downloads, "state_dir", return_value=tmp_path / "state"),
             patch.object(downloads, "shared_dir", return_value=tmp_path / "shared"),
             patch.object(steam_downloads, "_plan", return_value=self.plan),
+            patch.object(steam_downloads, "_refuse_if_blocked"),
             patch.object(steam_downloads.downloads, "mo2_running", return_value=running),
             patch.object(launchhook, "status", return_value=hook),
             patch.object(steam_downloads.background, "run_host", side_effect=self._host),
@@ -66,7 +67,8 @@ class Downloading:
 
     def __enter__(self):
         mocks = [p.start() for p in self.patches]
-        self.mo2_running, self.run_host, self.popen, self.start = mocks[3], mocks[5], mocks[7], mocks[8]
+        self.refuse, self.mo2_running, self.run_host, self.popen, self.start = (
+            mocks[3], mocks[4], mocks[6], mocks[8], mocks[9])
         self.popen.return_value.wait.return_value = 0
         return self
 
@@ -135,11 +137,57 @@ def test_a_link_while_mo2_is_starting_through_steam_waits_for_it(tmp_path):
 
 def test_a_link_while_steam_launches_the_game_for_play_waits_for_its_mo2(tmp_path):
     """Steam would ignore a launch for the link, leaving its note for the next Play."""
+    waits = []
     with Downloading(tmp_path, hook_on=True, launching=True) as d:
         d.mo2_running.side_effect = [False, False, True]
-        assert d.download(poll=0) == "Passed the download to Mod Organizer 2."
+        assert d.download(poll=0, on_wait=waits.append) == "Passed the download to Mod Organizer 2."
         assert d.opens() == [] and not d.start.called
         assert not steam_downloads.note_path(SKYRIM_SE).exists()
+        pgrep = [c.args[0] for c in d.run_host.call_args_list if c.args[0][0] == "pgrep"]
+    assert pgrep[0] == ["pgrep", "-f", "SteamLaunch AppId=489830( |$)"]
+    assert waits == ["The download waits for Mod Organizer 2: Steam is already launching Skyrim Special Edition."]
+
+
+def test_without_the_hook_a_steam_launch_holds_a_link_only_as_long_as_mo2_takes_to_start(tmp_path):
+    """Skyrim started plain from Steam: nothing ModSync asks of Steam collides
+    with it, and it may never bring MO2 up."""
+    with Downloading(tmp_path, launching=True) as d, patch.object(downloads, "MO2_START_WAIT", 0):
+        assert d.download(poll=0) == "Starting Mod Organizer 2…"
+        assert d.start.call_args.args == (d.plan,) and d.opens() == []
+
+
+def test_a_launch_steam_took_for_a_link_is_waited_on_past_mo2s_start_wait(tmp_path):
+    """The hub took the note long ago, but Steam is still on that launch
+    (MO2 slow, or the window opened to say why it couldn't): asking again
+    would be ignored."""
+    with Downloading(tmp_path, hook_on=True) as d:
+        d.download()
+        old = time.time() - downloads.MO2_START_WAIT - 10
+        steam_downloads.note_path(SKYRIM_SE).replace(steam_downloads.taken_path(SKYRIM_SE))
+        os.utime(steam_downloads.taken_path(SKYRIM_SE), (old,) * 2)
+        os.utime(steam_downloads._record_path(SKYRIM_SE), (old - 1,) * 2)
+        d.launching = True
+        d.mo2_running.side_effect = [False, False, True]
+        assert d.download(LINK + "2", poll=0) == "Passed the download to Mod Organizer 2."
+        assert len(d.opens()) == 1
+
+
+def test_a_copy_still_coming_keeps_a_download_from_opening_mo2(tmp_path):
+    with Downloading(tmp_path, hook_on=True) as d:
+        d.refuse.side_effect = RuntimeError("Mods are still being copied from Deck.")
+        with pytest.raises(RuntimeError, match="still being copied"):
+            d.download()
+        assert d.opens() == [] and not d.start.called
+        assert not steam_downloads.note_path(SKYRIM_SE).exists()
+
+
+def test_what_blocks_open_mo2_blocks_a_download_too():
+    from modsync.service import LaunchCheck
+
+    service = SimpleNamespace(launch_check=lambda: LaunchCheck(blocked="Mods are still being copied from Deck."))
+    with pytest.raises(RuntimeError, match="can't open for the download yet. Mods are still being copied"):
+        steam_downloads._refuse_if_blocked(service)
+    steam_downloads._refuse_if_blocked(SimpleNamespace(launch_check=LaunchCheck))  # nothing in the way
 
 
 def test_a_link_gives_up_on_a_steam_launch_that_never_opens_mo2(tmp_path):
@@ -199,6 +247,13 @@ def test_a_stale_or_unknown_note_is_taken_but_not_followed(state, text, ago):
     assert not note.exists()
 
 
+def test_a_note_that_isnt_text_is_taken_but_not_followed(state):
+    note = steam_downloads.note_path(SKYRIM_SE)
+    note.write_bytes(b"\xff\xfenxm://broken\n")
+    assert steam_downloads.take_link(SKYRIM_SE) is None
+    assert not note.exists()
+
+
 def hub(appid):
     from modsync.cli import _open_for_download
 
@@ -222,6 +277,11 @@ def test_without_a_note_the_hub_goes_on_as_usual(state):
         leave(LINK)
         assert hub(DAGGERFALL.appid) == ((False, ""), b"")  # not an MO2 game: its note isn't looked for
     prepare.assert_not_called()
+
+
+def test_a_note_the_hub_cant_read_never_keeps_the_game_from_starting(state):
+    with patch.object(steam_downloads, "take_link", side_effect=PermissionError("no")):
+        assert hub(SKYRIM_SE.appid) == ((False, ""), b"")
 
 
 def test_an_mo2_that_cant_open_for_the_link_keeps_the_window_open_with_why(state):
