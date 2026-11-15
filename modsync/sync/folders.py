@@ -350,6 +350,25 @@ def _empty_here(spec: FolderSpec, root: Path) -> bool:
     return True
 
 
+def _synced_paths(spec: FolderSpec, root: Path) -> list[str]:
+    """``spec.content`` as it stands in ``root``: each synced file with the
+    conflict copies Syncthing left beside it, which sync too and still wait
+    for a choice. (A synced folder holds its own.)"""
+    paths = []
+    for rel in spec.content:
+        paths.append(rel)
+        path = root / rel
+        if path.is_dir() or "." not in path.name:
+            continue
+        stem, dot, ext = path.name.rpartition(".")
+        try:
+            paths += sorted(str(Path(rel).with_name(p.name)) for p in path.parent.iterdir()
+                            if p.name.startswith(f"{stem}.sync-conflict-") and p.name.endswith(f"{dot}{ext}"))
+        except OSError:
+            pass
+    return paths
+
+
 def _same_disk(a: Path, b: Path) -> bool:
     """Whether a rename between the two can't fail half way: same filesystem."""
     while not b.exists() and b != b.parent:
@@ -377,7 +396,7 @@ def _use_kept(spec: FolderSpec, kept: Path, root: Path) -> list[_Move]:
     aside = kept / REPLACED_DIR / time.strftime("%Y%m%d-%H%M%S")
     moved: list[_Move] = []
     try:
-        for rel in spec.content:
+        for rel in _synced_paths(spec, kept):
             source, target = kept / rel, root / rel
             if not (source.exists() or source.is_symlink()):
                 continue
@@ -503,7 +522,7 @@ def _carry_over(spec: FolderSpec, old: Path, new: Path) -> None:
     """Copy the synced content of ``old`` to ``new`` where ``new`` has nothing
     yet, so what hadn't reached another machine moves too. Nothing at
     ``new`` is replaced, and ``old`` stays as it is."""
-    for rel in spec.content:
+    for rel in _synced_paths(spec, old):
         source = old / rel
         if source.is_file() and not (new / rel).exists():
             (new / rel).parent.mkdir(parents=True, exist_ok=True)

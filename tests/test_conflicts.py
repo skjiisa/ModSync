@@ -69,29 +69,23 @@ class ConflictTests(unittest.TestCase):
         (c,) = conflicts.find(self.inst)
         self.assertEqual(conflicts.differences(c), ["The contents differ (2 bytes in use, 3 in the other)."])
 
-    def test_finds_copies_beside_a_single_synced_file(self):
-        """Daggerfall Unity's mods folder syncs one file, KeyBinds.txt, from a folder it otherwise leaves out."""
-        self.write("PortableAppdata/KeyBinds.txt", "{}")
-        self.write(f"PortableAppdata/KeyBinds.{STAMP}.txt", "{}")
-        self.write(f"PortableAppdata/settings.{STAMP}.ini", "")  # beside it, but not synced
-        self.write(f"PortableAppdata/Mods/GameData/Mods.{STAMP}.json", "")
-        self.write(f"top.{STAMP}.json", "")  # at the root, listed once although the root is searched twice
-        found = conflicts.find(self.inst, ("PortableAppdata/Mods", "PortableAppdata/KeyBinds.txt", "top.json",
-                                           "Not/made/yet"))
-        self.assertEqual(sorted(c.relative(self.inst) for c in found),
-                         ["PortableAppdata/KeyBinds.txt", "PortableAppdata/Mods/GameData/Mods.json", "top.json"])
-
     def test_describes_daggerfall_key_bindings_by_action(self):
         import json
-        self.write("PortableAppdata/KeyBinds.txt", json.dumps({
-            "actionKeyBinds": {"W": "MoveForwards", "Space": "Jump"},
+        base = {"axisActionKeyBinds": {"Axis1": "MovementHorizontal"}, "axisActionInversions": {"CameraVertical": "False"}}
+        self.write("modsync-dfu-keybinds.txt", json.dumps({
+            **base, "actionKeyBinds": {"W": "MoveForwards", "Space": "Jump"},
             "secondaryActionKeyBinds": {"JoystickButton1": "CastSpell", "JoystickButton3": "Jump"}}))
-        self.write(f"PortableAppdata/KeyBinds.{STAMP}.txt", json.dumps({
-            "actionKeyBinds": {"W": "MoveForwards", "J": "Jump"}, "secondaryActionKeyBinds": {}}))
-        (c,) = conflicts.find(self.inst, ("PortableAppdata/KeyBinds.txt",))
+        other = self.write(f"modsync-dfu-keybinds.{STAMP}.txt", json.dumps({
+            **base, "actionKeyBinds": {"W": "MoveForwards", "J": "Jump"}, "secondaryActionKeyBinds": {}}))
+        (c,) = conflicts.find(self.inst, ())
         self.assertEqual(conflicts.differences(c), ["Primary bindings that differ: Jump.",
                                                     "Secondary bindings that differ: CastSpell, Jump."])
-        self.write(f"PortableAppdata/KeyBinds.{STAMP}.txt", "not json")
+        other.write_text(json.dumps({**base, "axisActionInversions": {"CameraVertical": "True"},
+                                     "actionKeyBinds": {"W": "MoveForwards", "Space": "Jump"},
+                                     "secondaryActionKeyBinds": {"JoystickButton1": "CastSpell",
+                                                                 "JoystickButton3": "Jump"}}))
+        self.assertEqual(conflicts.differences(c), ["Also different: inverted axes."])
+        other.write_text("not json")
         self.assertTrue(conflicts.differences(c)[0].startswith("The contents differ ("))
 
     def test_describes_an_ini_difference_by_setting(self):

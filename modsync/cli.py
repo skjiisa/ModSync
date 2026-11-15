@@ -1189,6 +1189,14 @@ def _dfu_controller() -> int:
 def _dfu_saves(*, quiet: bool, playing: bool = False) -> int:
     from modsync import dfu
 
+    inst = dfu.current_install()
+    if inst is not None:
+        try:  # the key bindings too: the Play hook runs this just before and after DFU
+            moved = dfu.sync_keybinds(inst, playing=playing)
+            if moved:
+                print(moved)
+        except Exception as exc:  # run by the Play hook: say so, never block the game
+            print(f"Key bindings didn't sync: {exc}")
     try:
         report = dfu.sync_saves(playing=playing)
     except Exception as exc:  # run by the Play hook: say so, never block the game

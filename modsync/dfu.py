@@ -29,10 +29,11 @@ Linux Runtime container (see :func:`emulator`). The launch hook does the same.
 allowing only what users add (the folders under ``StreamingAssets`` that DFU
 ships empty but for a readme) and ``PortableAppdata/Mods``, where DFU keeps
 the load order (``GameData/Mods.json``) and each mod's settings, and
-``PortableAppdata/KeyBinds.txt``, the key bindings (keyboard and controller
-both: DFU keeps a Primary and a Secondary set, both in use at once).
-Everything DFU ships itself, its ``settings.ini`` (resolution and other
-machine-specific settings) and saves stay out.
+:data:`SHARED_KEYBINDS`, the key bindings (keyboard and controller both: DFU
+keeps a Primary and a Secondary set, both in use at once), which ModSync
+copies to and from DFU's own ``KeyBinds.txt`` while DFU is closed (see
+:func:`sync_keybinds`). Everything DFU ships itself, its ``settings.ini``
+(resolution and other machine-specific settings) and saves stay out.
 """
 
 from __future__ import annotations
@@ -47,6 +48,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -89,7 +91,9 @@ USER_ASSET_DIRS = ("Mods", "Textures", "Sound", "Books", "Movies", "Presets", "Q
                    "WorldData")
 _ASSETS = "DaggerfallUnity_Data/StreamingAssets"
 SYNCED_DIRS = (*(f"{_ASSETS}/{d}" for d in USER_ASSET_DIRS), "PortableAppdata/Mods")
-KEYBINDS = "PortableAppdata/KeyBinds.txt"  # DFU's key bindings; synced with the mods
+KEYBINDS = "PortableAppdata/KeyBinds.txt"  # DFU's key bindings; never synced as they are
+SHARED_KEYBINDS = "modsync-dfu-keybinds.txt"  # their synced copy, which DFU never reads
+KEYBINDS_SYNCED = "PortableAppdata/.modsync-keybinds.json"  # the bindings both last held, here; never synced
 
 # How Steam runs an x86 Linux game on ARM: FEX-Emu, in the Steam Linux Runtime
 # (4.0, else 3.0) for its libraries. The launch hook template looks for the same.
@@ -766,19 +770,19 @@ MODS_FOLDER = FolderSpec(
         "// the key bindings. Never the program, the files DFU ships itself, settings.ini or saves.",
         "",
         *(f"!/{d}" for d in SYNCED_DIRS),
-        f"!/{KEYBINDS}",
-        # Syncthing's copy of the other version when two machines change the bindings
-        # apart, so ModSync can offer the choice on every machine (modsync.sync.conflicts).
-        f"!/{KEYBINDS.removesuffix('.txt')}.sync-conflict-*.txt",
+        f"!/{SHARED_KEYBINDS}",
+        # The other version when two machines changed the bindings apart, so ModSync
+        # can offer the choice on every machine (modsync.sync.conflicts).
+        f"!/{SHARED_KEYBINDS.removesuffix('.txt')}.sync-conflict-*.txt",
         f"!/{VAULT_RECORD}",
         "",
         "// Everything else. Syncthing still looks inside these for the folders above.",
         "/*",
     ),
-    content=(*SYNCED_DIRS, KEYBINDS, VAULT_RECORD),
+    content=(*SYNCED_DIRS, SHARED_KEYBINDS, VAULT_RECORD),
     on_share=_record_vault_version,
     in_use=lambda: is_running(),  # looked up when asked, so tests and callers see the live check
-    tidy=lambda root: set_aside_mod_copies(root),
+    tidy=lambda root: (set_aside_mod_copies(root), sync_keybinds(Install(root))),
 )
 
 
@@ -1011,6 +1015,7 @@ def launch(inst: Install) -> str:
     report = sync_saves()
     if report.changed:
         log.info("before playing: %s", report.summary())
+    sync_keybinds(inst)
     if background.in_flatpak():
         cmd = ["flatpak-spawn", "--host", f"--directory={inst.path}",
                *(f"--env={k}={v}" for k, v in extra_env.items()), *cmd]
@@ -1048,9 +1053,9 @@ def open_mods_folder() -> Path:
 # Daggerfall Unity's wiki suggests a controller layout ("Setting Up Controls"),
 # built on the key combos it supports since 1.0 (LT + A, say), and suggests
 # putting it on the Secondary bindings so keyboard and mouse keep the Primary
-# ones. ModSync writes it there, in PortableAppdata/KeyBinds.txt, which syncs
-# with the mods (KEYBINDS in MODS_FOLDER): both sets work at once, so one file
-# serves a machine played with a controller and one played with a keyboard.
+# ones. ModSync writes it there, in PortableAppdata/KeyBinds.txt, and the
+# bindings sync with the mods (sync_keybinds): both sets work at once, so one
+# file serves a machine played with a controller and one played with a keyboard.
 #
 # DFU's KeyBinds.txt maps a key's name to an action's name. Its names for a
 # controller are Unity's, as Unity's input on Linux reads an Xbox-layout pad
@@ -1158,8 +1163,9 @@ def set_controller_bindings(inst: Install) -> str:
     A missing KeyBinds.txt (DFU not started yet) is made with only these:
     DFU fills in its defaults around them when it starts."""
     if is_running():
-        # DFU keeps its bindings in memory and writes them out again when they change.
+        # DFU keeps its bindings in memory and writes them out again when it closes.
         raise DfuError("Close Daggerfall Unity first; it would undo the change.")
+    sync_keybinds(inst)  # another machine's change first, so this one builds on it
     path = keybinds_file(inst)
     old = path.read_bytes() if path.is_file() else None
     data = _read_keybinds(path)
@@ -1198,4 +1204,107 @@ def set_controller_bindings(inst: Install) -> str:
     os.replace(tmp, path)
     log.info("set the suggested controller bindings in %s (%d primary bindings moved off controller keys)",
              path, len(taken))
+    sync_keybinds(inst)
     return "Daggerfall Unity has the suggested controller bindings, on its Secondary bindings."
+
+
+# --- syncing the key bindings ---------------------------------------------------
+#
+# DFU reads KeyBinds.txt when it starts, writes it again at once, and writes
+# what it holds in memory once more when it quits. Syncthing replacing the
+# file while DFU runs (a window keeps ModSync's folders going during play)
+# would be undone by that last write, and the undoing would sync back to
+# every machine as a newer change. So the file never syncs as it is: its
+# copy in the mods folder, SHARED_KEYBINDS, does, and sync_keybinds carries
+# changes between the two only while DFU is closed. KEYBINDS_SYNCED notes the
+# bindings both last held here, so a change on either side is told from a
+# change on both. Bindings are compared by their content, not their bytes:
+# DFU's own rewrites change nothing.
+
+
+def _keybinds_digest(path: Path) -> str | None:
+    """What ``path``'s bindings are, as a digest; None when it isn't there."""
+    import hashlib
+
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return None
+    try:
+        raw = json.dumps(json.loads(raw.decode("utf-8-sig")), sort_keys=True).encode()
+    except ValueError:
+        pass  # compared as bytes
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _copy_whole(source: Path, dest: Path) -> None:
+    """``source`` to ``dest`` in one step, with its modification time (which
+    decides between two versions Syncthing finds changed apart)."""
+    tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+    shutil.copy2(source, tmp)
+    os.replace(tmp, dest)
+
+
+def _machine_tag() -> str:
+    """This machine in a conflict copy's name, which takes seven of base32's
+    letters where Syncthing puts the first of its device id's."""
+    import base64
+    import hashlib
+    import socket
+
+    return base64.b32encode(hashlib.sha256(socket.gethostname().encode()).digest()).decode()[:7]
+
+
+def sync_keybinds(inst: Install, *, playing: bool = False) -> str:
+    """Carry key-binding changes between ``inst``'s KeyBinds.txt and their
+    synced copy, while mods sync is on here and DFU is closed. A change on
+    one side goes to the other; a change on both keeps the synced copy in
+    use and the version here as a conflict copy beside it, which every
+    machine is then asked about (modsync.sync.conflicts). Returns what it
+    did, "" for nothing."""
+    from modsync.sync import folders
+
+    st = State.load()
+    root = st.game_folders.get(MODS_FOLDER.key)
+    if root is None or Path(root) != inst.path or folders.stopping(MODS_FOLDER.key, st):
+        return ""
+    with _free_to_sync(inst, playing) as busy:
+        if busy:
+            return ""
+        return _carry_keybinds(inst)
+
+
+def _carry_keybinds(inst: Install) -> str:
+    local, shared, noted = inst.path / KEYBINDS, inst.path / SHARED_KEYBINDS, inst.path / KEYBINDS_SYNCED
+    here, there = _keybinds_digest(local), _keybinds_digest(shared)
+    try:
+        last = json.loads(noted.read_text(encoding="utf-8")).get("synced")
+    except (OSError, ValueError, AttributeError):
+        last = None
+    done = ""
+    if here is None and there is None:
+        return ""
+    if here == there:
+        pass
+    elif there is None or (here is not None and there == last):
+        _copy_whole(local, shared)
+        done = "Shared this machine's key bindings."
+    elif here is None or here == last:
+        local.parent.mkdir(parents=True, exist_ok=True)
+        _copy_whole(shared, local)
+        done = "Took the key bindings from your other machines."
+    else:
+        # Changed on both sides since they last agreed (or never agreed here).
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        copy = inst.path / f"{SHARED_KEYBINDS.removesuffix('.txt')}.sync-conflict-{stamp}-{_machine_tag()}.txt"
+        shutil.copy2(local, copy)
+        _copy_whole(shared, local)
+        done = "Your key bindings changed here and on another machine; ModSync asks which to keep."
+        log.warning("key bindings changed here and elsewhere; this machine's are in %s", copy)
+    if done:
+        log.info("%s", done)
+    synced = _keybinds_digest(local)
+    if synced != last:
+        noted.parent.mkdir(parents=True, exist_ok=True)
+        noted.write_text(json.dumps({"synced": synced}) + "\n", encoding="utf-8")
+    return done

@@ -13,11 +13,14 @@ All notable changes to ModSync are documented here. The format follows
   with another button for the rest) on DFU's Secondary bindings, leaving
   the keyboard and mouse as they are. The old bindings are kept in
   `KeyBinds.modsync-backup.txt`. `modsync dfu controller` does the same.
-- Daggerfall Unity's key bindings (`PortableAppdata/KeyBinds.txt`) now sync
-  with its mods. Keyboard and controller bindings sit side by side, so one
-  file works on every machine. When two machines change them before they
-  sync, `modsync sync conflicts` lists which actions differ, and you keep
-  one version or the other.
+- Daggerfall Unity's key bindings now sync with its mods. Keyboard and
+  controller bindings sit side by side, so one set works on every machine.
+  ModSync copies them in and out of DFU's `KeyBinds.txt` only while DFU is
+  closed, so DFU never writes old bindings back over new ones. When two
+  machines change them before they sync, `modsync sync conflicts` lists
+  which actions differ, and you keep one version or the other.
+- A synced file's conflict copies now go with it when a game moves to
+  another folder or takes over a kept copy.
 - While the background service is on, a desktop session (Desktop Mode on
   the Deck) shows a ModSync icon in the system tray, so it isn't left
   running and forgotten. Its menu says what the service is doing ("Syncing

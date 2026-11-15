@@ -820,9 +820,9 @@ paths:
   `Movies`, `Presets`, `QuestPacks`, `SoundFonts` and `WorldData`.
 - `PortableAppdata/Mods`, which holds the load order and on/off switches
   (`GameData/Mods.json`) and each mod's settings.
-- `PortableAppdata/KeyBinds.txt`, the key bindings. DFU keeps two sets,
-  Primary and Secondary, and both work at once, so keyboard and mouse on
-  one and a controller on the other serve every machine (see "Controller
+- `modsync-dfu-keybinds.txt`, a copy of the key bindings. DFU keeps two
+  sets, Primary and Secondary, and both work at once, so keyboard and mouse
+  on one and a controller on the other serve every machine (see "Controller
   bindings" below).
 - `modsync-dfu-vault.json`, which records the DFU version the mods are for.
   `modsync dfu status` warns when this machine runs a different version.
@@ -937,13 +937,19 @@ are unbound, as DFU's own Controls screen does when you rebind one. The file
 as it was is kept as `PortableAppdata/KeyBinds.modsync-backup.txt`. Close DFU
 first: it would write its own bindings back.
 
-Bindings live in `PortableAppdata/KeyBinds.txt`, which syncs with the mods,
-so once mods sync is on, every paired machine gets the controller bindings
-and keeps the keyboard ones beside them. The backup stays on this machine.
-DFU writes the file again each time it starts. That's harmless when nothing
-changed, but bindings changed on one machine while another plays offline
-end up as a conflict, settled like the load order's (above). The names are
-those of an Xbox-layout controller, as
+With mods sync on, the bindings sync too, so every paired machine gets the
+controller bindings and keeps the keyboard ones beside them. DFU reads
+`PortableAppdata/KeyBinds.txt` when it starts and writes it back when it
+quits, so a change arriving while it ran would be undone. That file
+therefore never syncs as it is. Its copy, `modsync-dfu-keybinds.txt` at the
+top of the install, does, and ModSync carries changes between the two only
+while DFU is closed: when it checks sync status, before Play in ModSync,
+and around Play in Steam. Bindings are compared by what they bind, so DFU
+rewriting the file changes nothing. If they changed on two machines before
+syncing, the synced copy stays in use and this machine's version waits
+beside it as a conflict, which `modsync sync conflicts` describes by the
+actions that differ, settled like the load order's (above). The backup
+stays on this machine. The names are those of an Xbox-layout controller, as
 Steam Input presents any controller to a game it starts, the Deck's own
 controls included. If Steam gives Daggerfall a keyboard-and-mouse layout,
 pick a gamepad one in its controller settings. DFU's wiki also suggests the

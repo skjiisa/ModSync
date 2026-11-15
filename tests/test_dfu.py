@@ -498,7 +498,8 @@ class ModsFolder(_ModsFolderBase):
         self.assertIn(assets + "Mods", allowed)
         self.assertIn(assets + "Textures", allowed)
         self.assertIn("PortableAppdata/Mods", allowed)
-        self.assertIn("PortableAppdata/KeyBinds.txt", allowed)
+        self.assertIn(dfu.SHARED_KEYBINDS, allowed)
+        self.assertNotIn("PortableAppdata/KeyBinds.txt", allowed)
         self.assertNotIn("PortableAppdata/settings.ini", allowed)
         self.assertIn(dfu.VAULT_RECORD, allowed)
         for own in ("Quests", "Text", "Tables", "Fonts", "BIOGs", "Factions", "aa", "SpellIcons", "GameFiles"):
@@ -1187,9 +1188,9 @@ class ControllerBindingsTests(unittest.TestCase):
         self.inst = dfu.Install(Path(tmp.name))
         self.inst.data_dir.mkdir()
         self.file = self.inst.data_dir / "KeyBinds.txt"
-        running = patch.object(dfu, "is_running", lambda: False)
-        running.start()
-        self.addCleanup(running.stop)
+        for p in (patch.object(dfu, "is_running", lambda: False), patch.object(dfu, "sync_keybinds", lambda *a, **k: "")):
+            p.start()
+            self.addCleanup(p.stop)
 
     def _write(self, data: dict) -> None:
         # As DFU writes it: four-space JSON, no BOM.
@@ -1305,13 +1306,134 @@ class ControllerBindingsTests(unittest.TestCase):
             dfu.set_controller_bindings(self.inst)
         self.assertFalse(self.file.exists())
 
-    def test_synced_with_the_mods(self):
-        """Keyboard (Primary) and controller (Secondary) bindings live side by side, so one
-        file serves every machine. ModSync's backup of it stays here."""
-        self.assertIn(dfu.KEYBINDS, dfu.MODS_FOLDER.content)
-        self.assertEqual(dfu.keybinds_file(self.inst), self.inst.path / dfu.KEYBINDS)
+    def test_only_the_shared_copy_syncs(self):
+        """DFU's own file never syncs as it is (DFU would write it back over a change that
+        arrived while it ran); its copy at the install's top does. The backup stays here."""
+        self.assertIn(dfu.SHARED_KEYBINDS, dfu.MODS_FOLDER.content)
+        self.assertNotIn(dfu.KEYBINDS, dfu.MODS_FOLDER.content)
         allowed = {l[2:] for l in dfu.MODS_FOLDER.ignore if l.startswith("!/")}
-        self.assertIn("PortableAppdata/KeyBinds.txt", allowed)
-        self.assertIn("PortableAppdata/KeyBinds.sync-conflict-*.txt", allowed)
-        backup = f"PortableAppdata/{dfu.KEYBINDS_BACKUP}"
-        self.assertFalse(any(fnmatch.fnmatchcase(backup, a) for a in allowed))
+        self.assertIn("modsync-dfu-keybinds.txt", allowed)
+        self.assertIn("modsync-dfu-keybinds.sync-conflict-*.txt", allowed)
+        for local in (dfu.KEYBINDS, dfu.KEYBINDS_SYNCED, f"PortableAppdata/{dfu.KEYBINDS_BACKUP}"):
+            self.assertFalse(any(fnmatch.fnmatchcase(local, a) for a in allowed), local)
+
+
+class KeyBindsSyncTests(unittest.TestCase):
+    """DFU's KeyBinds.txt and its synced copy, carried only while DFU is closed."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.inst = dfu.Install(Path(tmp.name))
+        self.inst.data_dir.mkdir()
+        self.local = self.inst.path / dfu.KEYBINDS
+        self.shared = self.inst.path / dfu.SHARED_KEYBINDS
+        self.running = False
+        self.state = State(game_folders={dfu.MODS_FOLDER.key: str(self.inst.path)})
+        for p in (patch.object(dfu, "is_running", lambda: self.running),
+                  patch.object(State, "load", classmethod(lambda cls, *a, **k: self.state))):
+            p.start()
+            self.addCleanup(p.stop)
+
+    @staticmethod
+    def binds(secondary: dict | None = None, *, indent=4) -> str:
+        return json.dumps({"actionKeyBinds": {"W": "MoveForwards"}, "secondaryActionKeyBinds": secondary or {},
+                           "$version": "v1"}, indent=indent)
+
+    def read(self, path: Path) -> dict:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def conflict_copies(self) -> list[Path]:
+        return sorted(self.inst.path.glob("modsync-dfu-keybinds.sync-conflict-*.txt"))
+
+    def test_first_machine_shares_its_bindings(self):
+        self.local.write_text(self.binds({"JoystickButton1": "CastSpell"}))
+        self.assertIn("Shared", dfu.sync_keybinds(self.inst))
+        self.assertEqual(self.shared.read_text(), self.local.read_text())
+        self.assertEqual(dfu.sync_keybinds(self.inst), "")
+
+    def test_a_machine_without_bindings_takes_the_shared_ones(self):
+        self.shared.write_text(self.binds({"JoystickButton1": "CastSpell"}))
+        self.assertIn("Took", dfu.sync_keybinds(self.inst))
+        self.assertEqual(self.local.read_text(), self.shared.read_text())
+
+    def test_a_change_on_one_side_goes_to_the_other(self):
+        self.local.write_text(self.binds())
+        dfu.sync_keybinds(self.inst)
+        self.shared.write_text(self.binds({"JoystickButton1": "CastSpell"}))  # arrived from another machine
+        dfu.sync_keybinds(self.inst)
+        self.assertEqual(self.read(self.local)["secondaryActionKeyBinds"], {"JoystickButton1": "CastSpell"})
+        self.local.write_text(self.binds({"JoystickButton2": "Jump"}))  # rebound in DFU here
+        dfu.sync_keybinds(self.inst)
+        self.assertEqual(self.read(self.shared)["secondaryActionKeyBinds"], {"JoystickButton2": "Jump"})
+        self.assertEqual(self.conflict_copies(), [])
+
+    def test_dfu_writing_its_old_bindings_on_quit_never_undoes_a_change_from_elsewhere(self):
+        """Another machine's change arrives while DFU runs here; DFU then writes what it
+        started with when it quits. The change from elsewhere is what stays."""
+        old = self.binds()
+        self.local.write_text(old)
+        dfu.sync_keybinds(self.inst)
+        self.running = True
+        self.shared.write_text(self.binds({"JoystickButton1": "CastSpell"}))
+        self.assertEqual(dfu.sync_keybinds(self.inst), "")  # nothing moves while DFU runs
+        self.assertEqual(self.local.read_text(), old)
+        self.local.write_text(self.binds(indent=2))  # DFU's write on quit: the same bindings
+        self.running = False
+        dfu.sync_keybinds(self.inst)
+        self.assertEqual(self.read(self.local)["secondaryActionKeyBinds"], {"JoystickButton1": "CastSpell"})
+        self.assertEqual(self.read(self.shared)["secondaryActionKeyBinds"], {"JoystickButton1": "CastSpell"})
+
+    def test_dfus_rewrites_change_nothing(self):
+        self.local.write_text(self.binds())
+        dfu.sync_keybinds(self.inst)
+        shared = self.shared.read_bytes()
+        self.local.write_text(self.binds(indent=None))  # same bindings, other bytes
+        self.assertEqual(dfu.sync_keybinds(self.inst), "")
+        self.assertEqual(self.shared.read_bytes(), shared)
+
+    def test_changes_on_both_sides_ask_which_to_keep(self):
+        self.local.write_text(self.binds())
+        dfu.sync_keybinds(self.inst)
+        self.shared.write_text(self.binds({"JoystickButton1": "CastSpell"}))
+        self.local.write_text(self.binds({"F": "CastSpell"}))
+        self.assertIn("asks which to keep", dfu.sync_keybinds(self.inst))
+        (copy,) = self.conflict_copies()
+        self.assertEqual(self.read(copy)["secondaryActionKeyBinds"], {"F": "CastSpell"})  # this machine's
+        self.assertEqual(self.read(self.local)["secondaryActionKeyBinds"], {"JoystickButton1": "CastSpell"})
+        from modsync.sync import conflicts
+        (found,) = conflicts.find(self.inst.path, dfu.MODS_FOLDER.content)
+        self.assertEqual(found.original, self.shared)
+        self.assertEqual(conflicts.differences(found), ["Secondary bindings that differ: CastSpell."])
+        self.assertEqual(dfu.sync_keybinds(self.inst), "")  # settled until a choice is made
+        copy.replace(self.shared)  # "keep the other version"
+        dfu.sync_keybinds(self.inst)
+        self.assertEqual(self.read(self.local)["secondaryActionKeyBinds"], {"F": "CastSpell"})
+
+    def test_two_machines_that_never_synced_bindings_ask_once(self):
+        self.local.write_text(self.binds({"F": "CastSpell"}))
+        self.shared.write_text(self.binds({"JoystickButton1": "CastSpell"}))
+        dfu.sync_keybinds(self.inst)
+        self.assertEqual(len(self.conflict_copies()), 1)
+        dfu.sync_keybinds(self.inst)
+        self.assertEqual(len(self.conflict_copies()), 1)
+
+    def test_nothing_moves_without_mods_sync_here(self):
+        self.state = State()
+        self.local.write_text(self.binds())
+        self.assertEqual(dfu.sync_keybinds(self.inst), "")
+        self.assertFalse(self.shared.exists())
+
+    def test_setting_up_the_controller_shares_it(self):
+        self.local.write_text(self.binds())
+        dfu.sync_keybinds(self.inst)
+        self.shared.write_text(self.binds({"Keypad8": "MoveForwards"}))  # from another machine, not taken in yet
+        dfu.set_controller_bindings(self.inst)
+        shared = self.read(self.shared)["secondaryActionKeyBinds"]
+        self.assertEqual(shared, {"Keypad8": "MoveForwards", **dfu.controller_bindings()})
+        self.assertEqual(self.conflict_copies(), [])
+
+    def test_the_folders_tidy_syncs_them(self):
+        self.local.write_text(self.binds())
+        dfu.MODS_FOLDER.tidy(self.inst.path)
+        self.assertTrue(self.shared.exists())
