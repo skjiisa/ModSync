@@ -1182,14 +1182,21 @@ def set_controller_bindings(inst: Install) -> str:
 
     A missing KeyBinds.txt (DFU not started yet) is made with only these:
     DFU fills in its defaults around them when it starts."""
+    closed_first = "Close Daggerfall Unity first; it would undo the change."
     if is_running():
         # DFU keeps its bindings in memory and writes them out again when it closes.
-        raise DfuError("Close Daggerfall Unity first; it would undo the change.")
-    with _keybinds_lock(inst):
-        # Another machine's change first, so this one builds on it; this one goes out after.
-        _sync_keybinds(inst)
+        raise DfuError(closed_first)
+    # Checked again once nothing else may change the bindings, and kept so until done:
+    # DFU may have started while this waited, and Steam's Play waits for this.
+    with _keybinds_lock(inst), _free_to_sync(inst, False) as busy:
+        if busy:
+            raise DfuError(closed_first)
+        syncing = _keybinds_sync_here(inst)
+        if syncing:  # another machine's change first, so this one builds on it
+            _carry_keybinds(inst)
         done = _set_controller_bindings(inst)
-        _sync_keybinds(inst)
+        if syncing:
+            _carry_keybinds(inst)
     return done
 
 
@@ -1264,20 +1271,70 @@ def _keybinds_digest(path: Path) -> str | None:
     return hashlib.sha256(raw).hexdigest()
 
 
-def _copy_whole(source: Path, dest: Path, *, unless_changed_from: str | None = None) -> str | None:
+def _copy_whole(source: Path, dest: Path) -> str | None:
     """``source`` to ``dest`` in one step, with its modification time (which
     decides between two versions Syncthing finds changed apart). Returns the
-    digest of what was copied. With ``unless_changed_from``, only while
-    ``dest`` still holds those bindings (Syncthing may have brought in
-    another version meanwhile): None, and nothing changed, otherwise."""
+    digest of what was copied."""
     tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
     shutil.copy2(source, tmp)
     copied = _keybinds_digest(tmp)
-    if unless_changed_from is not None and _keybinds_digest(dest) != unless_changed_from:
-        tmp.unlink()
-        return None
     os.replace(tmp, dest)
     return copied
+
+
+def _publish(source: Path, dest: Path, expected: str | None) -> str | None:
+    """``source`` to ``dest``, the synced copy, only over the version just
+    looked at (``expected``; None: there was none). Syncthing may bring in
+    another version at any moment, and a check followed by a replace could
+    land on it unseen, so neither step here can overwrite: the version in
+    place moves aside in one step and is checked there, and the new one goes
+    in as a hard link, which fails if anything took the name meanwhile.
+    Returns the digest of what was published, or None when another version
+    got there first (it stays; the next look finds both changed and asks)."""
+    tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+    aside = dest.with_name(f".{dest.name}.{os.getpid()}.old")
+    shutil.copy2(source, tmp)
+    copied = _keybinds_digest(tmp)
+    try:
+        if expected is not None:
+            try:
+                os.rename(dest, aside)
+            except FileNotFoundError:
+                return None  # gone meanwhile: another change, looked at next time
+            if _keybinds_digest(aside) != expected:
+                _put_back(aside, dest)
+                return None
+        try:
+            os.link(tmp, dest)
+        except FileExistsError:
+            # Arrived meanwhile: it stays. What was set aside is older than it.
+            aside.unlink(missing_ok=True)
+            return None
+        except OSError:  # a filesystem without hard links: the same, by exclusive creation
+            try:
+                with open(dest, "xb") as out, open(tmp, "rb") as src:
+                    shutil.copyfileobj(src, out)
+            except FileExistsError:
+                aside.unlink(missing_ok=True)
+                return None
+            shutil.copystat(tmp, dest)
+        aside.unlink(missing_ok=True)
+        return copied
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _put_back(aside: Path, dest: Path) -> None:
+    """Return a version :func:`_publish` set aside, unless another took its place."""
+    try:
+        os.link(aside, dest)
+    except FileExistsError:
+        log.info("the synced key bindings changed again meanwhile; %s is older and goes", aside.name)
+    except OSError:
+        if not dest.exists():
+            os.replace(aside, dest)
+            return
+    aside.unlink(missing_ok=True)
 
 
 def _machine_tag() -> str:
@@ -1374,7 +1431,7 @@ def _carry_keybinds(inst: Install) -> str:
     elif there is None or (here is not None and there == last):
         # Only over the version just looked at: one Syncthing brings in meanwhile is
         # never replaced unseen. The next look finds it, and both changed: a conflict.
-        synced = _copy_whole(local, shared, unless_changed_from=there)
+        synced = _publish(local, shared, there)
         if synced is None:
             return ""
         done = "Shared this machine's key bindings."

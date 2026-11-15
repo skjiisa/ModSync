@@ -1641,3 +1641,12 @@ class ConflictCopiesMove(unittest.TestCase):
         moved = folders._use_kept(self.spec, kept, root)
         self.assertEqual((root / f"binds.{self.STAMP}.txt").read_text(), "other")
         self.assertEqual(len(moved), 3)
+
+    def test_a_conflict_copy_alone_is_something_of_its_own(self):
+        """A game folder holding only a copy still waiting for a choice doesn't take the
+        kept copy's files over it: they download again instead."""
+        root = self.base / "game"
+        root.mkdir()
+        self.assertTrue(folders._empty_here(self.spec, root))
+        (root / f"binds.{self.STAMP}.txt").write_text("waiting")
+        self.assertFalse(folders._empty_here(self.spec, root))

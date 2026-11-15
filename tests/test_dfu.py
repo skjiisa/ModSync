@@ -1464,6 +1464,65 @@ class KeyBindsSyncTests(unittest.TestCase):
         self.assertEqual(self.read(copy)["secondaryActionKeyBinds"], {"F": "CastSpell"})
         self.assertEqual(self.read(self.local)["secondaryActionKeyBinds"], {"JoystickButton1": "CastSpell"})
 
+    def test_the_first_shared_copy_arriving_while_publishing_stays(self):
+        self.local.write_text(self.binds({"F": "CastSpell"}))
+        arrived = self.binds({"JoystickButton1": "CastSpell"})
+        real_copy = dfu.shutil.copy2
+
+        def copy_then_arrive(src, dst, *a, **k):
+            real_copy(src, dst, *a, **k)
+            self.shared.write_text(arrived)
+
+        with patch.object(dfu.shutil, "copy2", copy_then_arrive):
+            self.assertEqual(dfu.sync_keybinds(self.inst), "")
+        self.assertEqual(self.shared.read_text(), arrived)
+        self.assertFalse((self.inst.path / dfu.KEYBINDS_SYNCED).exists())  # nothing noted as synced
+        dfu.sync_keybinds(self.inst)
+        (copy,) = self.conflict_copies()
+        self.assertEqual(self.read(copy)["secondaryActionKeyBinds"], {"F": "CastSpell"})
+
+    def test_a_version_arriving_just_before_the_swap_stays(self):
+        """Between setting the old version aside and putting the new one in place."""
+        self.local.write_text(self.binds())
+        dfu.sync_keybinds(self.inst)
+        self.local.write_text(self.binds({"F": "CastSpell"}))
+        arrived = self.binds({"JoystickButton1": "CastSpell"})
+        real_link = dfu.os.link
+
+        def arrive_then_link(src, dst, *a, **k):
+            if Path(dst) == self.shared and not self.shared.exists():
+                self.shared.write_text(arrived)
+            return real_link(src, dst, *a, **k)
+
+        with patch.object(dfu.os, "link", arrive_then_link):
+            self.assertEqual(dfu.sync_keybinds(self.inst), "")
+        self.assertEqual(self.shared.read_text(), arrived)
+        self.assertEqual(sorted(p.name for p in self.inst.path.iterdir() if p.name.startswith(".modsync-dfu")), [])
+        dfu.sync_keybinds(self.inst)
+        self.assertEqual(len(self.conflict_copies()), 1)
+
+    def test_publishing_without_hard_links(self):
+        self.local.write_text(self.binds({"F": "CastSpell"}))
+        with patch.object(dfu.os, "link", side_effect=PermissionError("no hard links here")):
+            self.assertIn("Shared", dfu.sync_keybinds(self.inst))
+        self.assertEqual(self.shared.read_text(), self.local.read_text())
+
+    def test_controller_setup_waits_for_dfu_that_started_meanwhile(self):
+        """DFU started while setup waited for the lock: nothing is written."""
+        from contextlib import contextmanager
+        self.local.write_text(self.binds())
+        real_lock = dfu._keybinds_lock
+
+        @contextmanager
+        def lock_while_dfu_starts(inst):
+            with real_lock(inst):
+                self.running = True
+                yield
+
+        with patch.object(dfu, "_keybinds_lock", lock_while_dfu_starts), self.assertRaises(dfu.DfuError):
+            dfu.set_controller_bindings(self.inst)
+        self.assertEqual(self.read(self.local)["secondaryActionKeyBinds"], {})
+
     def test_controller_setup_holds_the_lock_throughout(self):
         """A status read in another process (or the Flatpak's ModSync) waits for it, so it can't
         note the new bindings as synced before they are."""

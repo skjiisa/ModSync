@@ -442,7 +442,7 @@ def _empty_here(spec: FolderSpec, root: Path) -> bool:
     installed), else nothing at all at the synced paths."""
     if spec.accepts is not None:
         return spec.accepts(root)
-    for rel in spec.content:
+    for rel in _synced_paths(spec, root):  # a conflict copy waiting for a choice is something of its own
         path = root / rel
         if path.is_file():
             return False
