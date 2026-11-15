@@ -13,7 +13,10 @@ All notable changes to ModSync are documented here. The format follows
   Dragon Age: Origins and 2, Enderal, Fallout 3, 4, New Vegas and London,
   Morrowind, Oblivion, Skyrim Legendary Edition, Skyrim VR, Starfield,
   Subnautica, Valheim and The Witcher 3. One of them appears in the game
-  switcher (X) once Steam or Heroic has it installed. Its page installs MO2,
+  switcher (X) once it has mods somewhere: an MO2 instance here, a copy kept
+  here for another machine, or a paired machine that syncs them ("Modded on
+  Steam Deck"). The rest are under "Add a game…", installed ones first.
+  Cyberpunk 2077 is listed only once it has mods too. Its page installs MO2,
   plays through it or opens it, switches the store's own Play button, and
   turns mods sync on and off. `modsync games` lists the ones on this
   machine, and `modsync games <key> status | install | use | open | play |
@@ -33,6 +36,12 @@ All notable changes to ModSync are documented here. The format follows
 - `modsync doctor` lists each of those games that Steam or Heroic has, with
   its prefix and MO2 instance.
 - The game switcher scrolls when more than five games are on a machine.
+- A game whose mods are kept here for another machine (#142) has its page,
+  even if it isn't installed: which machines the copy is for, how much it
+  takes, which game version the mods are set up for, a button that installs
+  the game in Steam, and the sync row to stop keeping it. A game another
+  machine mods can be kept here from its page. On the Sync page, a kept
+  copy's row opens that page. `modsync games` lists kept copies too.
 - A machine can keep games that aren't installed on it, so machines that are
   never on at the same time still sync through it. "Keep games not
   installed here" on the Sync page (or `modsync sync hold all`) keeps a

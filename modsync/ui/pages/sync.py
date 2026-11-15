@@ -496,9 +496,9 @@ class SyncPage(Page):
                 row = StatusRow(fs.spec.label.removesuffix(" (ModSync)"), "sync")
                 row.setProperty("held", fs.held)
                 page = _folder_page(fs.spec.key)
-                if fs.held:
+                if fs.held and (page is None or page == "daggerfall"):
                     row.clicked.connect(lambda _=False, spec=fs.spec: self.stop_holding(spec))
-                elif page is not None:
+                elif page is not None:  # a kept copy of an MO2 game's mods: its page keeps or stops it
                     row.clicked.connect(lambda _=False, p=page: self.host.show_game(p))
                 self._game_rows[fs.spec.key] = row
                 self.games.addWidget(row)

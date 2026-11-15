@@ -1228,24 +1228,27 @@ def games(args: list[str]) -> int:
 def _games_list(*, everything: bool) -> int:
     from modsync import mo2games
     from modsync.games import STORE_NAMES
+    from modsync.state import State
 
-    here = {game.key for game in mo2games.here()}
+    kept = State.load().held_folders
+    here = {game.key for game in mo2games.here()} | {g.key for g in mo2games.all_games().values()
+                                                     if g.folder.key in kept}
     shown = [game for game in mo2games.all_games().values() if everything or game.key in here]
     if not shown:
-        print("None of the games ModSync knows are installed in Steam or Heroic here.")
+        print("None of the games ModSync knows are installed in Steam or Heroic here, or kept here.")
         print("'modsync games list --all' shows every game it knows.")
         return 1
     width = max(len(game.key) for game in shown)
     for game in shown:
-        if game.key not in here:
+        found = game.find_game() if game.key in here else None
+        keeping = "; a copy of its mods is kept here for other machines" if game.folder.key in kept else ""
+        if found is None:
             stores = ", ".join(STORE_NAMES[s] for s in game.game.stores)
-            print(f"{game.key:<{width}}  {game.name}  (not installed; {stores})")
+            print(f"{game.key:<{width}}  {game.name}  (not installed; {stores}{keeping})")
             continue
-        found = game.find_game()
         instance = game.find_instance()
-        where = STORE_NAMES[found.store] if found is not None else "not installed"
         mo2 = str(instance) if instance is not None else "no MO2 instance"
-        print(f"{game.key:<{width}}  {game.name}  ({where}; {mo2})")
+        print(f"{game.key:<{width}}  {game.name}  ({STORE_NAMES[found.store]}; {mo2}{keeping})")
     if not everything:
         print("\n'modsync games <key> status' shows one; 'modsync games list --all' every game ModSync knows.")
     return 0

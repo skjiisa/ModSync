@@ -1101,6 +1101,44 @@ class ModSyncService:
                 log.warning("could not tidy %s: %s", spec.folder_id, exc)
         return root
 
+    def games_elsewhere(self) -> dict[str, list[str]]:
+        """The paired machines that sync each game's folder, by name, keyed
+        by the folder's key: the ones offering it here, and the ones a copy
+        kept here is shared with. Only what a running Syncthing knows; this
+        never starts one, and says {} when there's none or it doesn't answer."""
+        st = State.load()
+        if not st.active:
+            return {}
+        try:
+            if not (self.manager.running or self.manager.attach()):
+                return {}
+            with self.manager.client() as client:
+                me = client.my_id()
+                forgotten = set(st.forgotten_devices)
+                names = {d["deviceID"]: d.get("name") or d["deviceID"][:7]
+                         for d in client.devices() if d.get("deviceID") and d["deviceID"] != me
+                         and d["deviceID"] not in forgotten}
+                found: dict[str, list[str]] = {}
+
+                def add(folder_id: str, devices) -> None:
+                    if not folder_id.startswith(folders.FOLDER_PREFIX):
+                        return
+                    key = folder_id.removeprefix(folders.FOLDER_PREFIX)
+                    machines = found.setdefault(key, [])
+                    for device in devices:
+                        if device in names and names[device] not in machines:
+                            machines.append(names[device])
+
+                for folder_id, info in (client.pending_folders() or {}).items():
+                    add(folder_id, (info or {}).get("offeredBy") or {})
+                for folder in client.folders():
+                    if folder.get("id", "").removeprefix(folders.FOLDER_PREFIX) in st.held_folders:
+                        add(folder["id"], [d.get("deviceID") for d in folder.get("devices", [])])
+        except Exception as exc:  # noqa: BLE001 — the app shows what it knows without this
+            log.info("can't tell which games the other machines sync: %s", exc)
+            return {}
+        return {key: machines for key, machines in found.items() if machines}
+
     def hold_game_folder(self, key: str) -> Path:
         """Keep a copy of one of a game's folders here for the other machines,
         the game not being set up here."""

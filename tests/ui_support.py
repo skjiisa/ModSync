@@ -92,9 +92,11 @@ class UiTestCase(unittest.TestCase):
             # No Daggerfall on the test machine, unless a test says otherwise.
             # None of the table's games either (Cyberpunk, and the rest): no test
             # reads this machine's Steam or Heroic.
-            patch.object(mo2games.ManagedGame, "overview", lambda self, hook=True: mo2games.Overview(
+            patch.object(mo2games.ManagedGame, "overview", lambda self, hook=True, machines=None: mo2games.Overview(
                 None, None, False, None, None, "off", None, None)),
             patch.object(mo2games, "here", lambda: []),
+            patch.object(mo2games, "listed", lambda elsewhere=None: []),
+            patch.object(ModSyncService, "games_elsewhere", lambda self: {}),
             patch.object(mo2games, "refresh_hooks", lambda: []),
             patch.object(dfu, "overview", lambda hook=True: dfu.Overview(
                 None, ["Steam hasn't installed it."], None, None, None, "off", "off", None)),

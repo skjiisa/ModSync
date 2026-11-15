@@ -105,8 +105,10 @@ def main():
         # None of the table's games (modsync.mo2games) unless a shot says otherwise:
         # this machine's Steam and Heroic are not read.
         patch("modsync.mo2games.here", return_value=[]),
+        patch("modsync.mo2games.listed", return_value=[]),
         patch("modsync.mo2games.refresh_hooks", return_value=[]),
-        patch.object(mo2games.ManagedGame, "overview", lambda self, hook=True: mo2games.Overview(
+        patch.object(ModSyncService, "games_elsewhere", lambda self: {}),
+        patch.object(mo2games.ManagedGame, "overview", lambda self, hook=True, machines=None: mo2games.Overview(
             None, None, False, None, None, "off", None, None)),
         patch("modsync.ui.pages.system.firewall.check", return_value=Check(Firewall("ufw"), False, "ufw:1")),
         patch("modsync.ui.pages.mods.scan_instances", return_value=[INSTANCE]),
@@ -243,16 +245,27 @@ def main():
             return mo2games.Overview(in_steam, instance, installed, None, status, "on" if installed else "off",
                                      ("1.16.244.0", "1.16.244.0"), None, prefix_ready=True)
 
+        fallout = mo2games.get("fallout4")
+        kept = mo2games.Overview(None, None, False, None, None, "kept", None, None, machines=["Steam Deck"],
+                                 kept_bytes=3_240_000_000, kept_versions=[("1.11.191.0", "1.11.191.0")])
         for installed, name in ((False, "game-table-install"), (True, "game-table")):
             with patch("modsync.mo2games.here", return_value=[starfield]), \
-                    patch.object(starfield, "overview", lambda hook=True, i=installed: table_overview(i)):
+                    patch("modsync.mo2games.listed", return_value=[starfield, fallout]), \
+                    patch.object(starfield, "installs", return_value=[in_steam]), \
+                    patch.object(fallout, "overview", lambda hook=True, machines=None: kept), \
+                    patch.object(starfield, "overview", lambda hook=True, machines=None, i=installed: table_overview(i)):
                 tw = window_for(State(**configured, paired=True), mode="gamepad")
                 router._pad_seen = True
                 router.controllersChanged.emit()
                 if installed:
                     tw.open_game_picker()
                     capture(tw, "game-switch-table")
-                    tw.top_overlay.choose(starfield.ui_key)
+                    tw.top_overlay.choose("add-game")
+                    capture(tw, "game-add")
+                    tw.top_overlay.cancel()
+                    tw.switch_game(fallout.ui_key)
+                    capture(tw, "game-kept")
+                    tw.switch_game(starfield.ui_key)
                 else:
                     tw.switch_game(starfield.ui_key)
                 capture(tw, name)

@@ -288,11 +288,16 @@ class GameSheet(Overlay):
     SCROLL_HEIGHT = 470  # five rows at 1280 × 800, with the sixth showing its edge
 
     def __init__(self, host, games: list[GameChoice], current: str,
-                 on_choice: Callable[[str], None], *, start: str | None = None) -> None:
-        super().__init__(host, "Switch game", width=640)
+                 on_choice: Callable[[str], None], *, start: str | None = None,
+                 extra: tuple[str, str, str] | None = None, title: str = "Switch game",
+                 accept: str = "Switch") -> None:
+        """``extra``: a last row (key, title, detail) that leads somewhere
+        else rather than to a game, such as "Add a game…"."""
+        super().__init__(host, title, width=640)
         self._on_choice = on_choice
         self._current = current
         self._start = start
+        self._accept = accept
         self.body.addSpacing(2)
         self.rows: dict[str, Tile] = {}
         rows = QVBoxLayout()
@@ -304,8 +309,14 @@ class GameSheet(Overlay):
             row.clicked.connect(lambda _checked=False, k=key: self.choose(k))
             self.rows[key] = row
             rows.addWidget(row)
+        self.extra: Tile | None = None
+        if extra is not None:
+            key, name, detail = extra
+            self.extra = Tile(name, detail, "plus", chevron=True)
+            self.extra.clicked.connect(lambda _checked=False, k=key: self.choose(k))
+            rows.addWidget(self.extra)
         self.area: QScrollArea | None = None
-        if len(self.rows) > self.ROWS_BEFORE_SCROLLING:
+        if len(self.rows) + (self.extra is not None) > self.ROWS_BEFORE_SCROLLING:
             content = QWidget()
             rows.setContentsMargins(0, 0, 10, 0)
             content.setLayout(rows)
@@ -319,7 +330,7 @@ class GameSheet(Overlay):
         focus = self.host.focusWidget()
         for key, row in self.rows.items():
             if focus is row:
-                return "Stay" if key == self._current else "Switch"
+                return "Stay" if key == self._current else self._accept
         return "Select"
 
     def choose(self, key: str) -> None:

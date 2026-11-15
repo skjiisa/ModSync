@@ -150,8 +150,9 @@ Home offers MO2 installation and selection, matching SKSE, and the next
 repair when the game version, SKSE or MO2 needs attention. The MO2 and Game
 version rows open maintenance sheets; restore, unpin and installation details
 remain available there. Home, Sync and Settings are the three tabs. The game
-switcher beside the ModSync name (X) picks whether Home shows Skyrim or
-Daggerfall Unity, installed or not. Play or
+switcher beside the ModSync name (X) picks which game Home shows: Skyrim,
+Daggerfall Unity, or another game with mods somewhere (see "Other games").
+Play or
 Continue remains available and says what may fail if you launch now. Missing
 SKSE is an optional suggestion: it leaves Play primary and never takes default
 controller focus, including when Steam's Play button opened ModSync. The Steam
@@ -445,8 +446,13 @@ record, doesn't move saves into a game, and doesn't ask about conflicts. The
 machines that play the game settle conflicts. A copy takes as much space as
 the folder does on the other machines, `downloads/` included.
 
-To stop keeping one game, choose it under Games on the Sync page, or run
-`modsync sync stop <folder>`. Its files stay, and it isn't taken up again.
+A kept copy of a game's mods (any game under "Other games") also puts that
+game in the game switcher, with a page that says whom the copy is for and
+how much it takes.
+
+To stop keeping one game, choose it under Games on the Sync page (for a
+game under "Other games", that opens its page, where the sync row stops it),
+or run `modsync sync stop <folder>`. Its files stay, and it isn't taken up again.
 Turning "Keep games not installed here" off and on again (`modsync sync hold
 off`, then `all`) takes up again the copies stopped this way. `modsync sync
 hold off` keeps the copies already here, but takes up no new games.
@@ -910,9 +916,30 @@ and The Witcher 3 among them. ModSync's maintainers don't own most of them,
 so a game other than Cyberpunk 2077 has only been tested as far as the notes
 under "What has and hasn't been tested" say.
 
-In the app, a game from this list appears in the game switcher (X) once Steam
-or Heroic has it installed. Cyberpunk 2077 is always offered. The game's page
-has the same rows and actions for every game.
+In the app, the game switcher (X) lists a game from this list when it has
+mods somewhere:
+
+- an MO2 instance here, installed by ModSync or MO2-LINT, or chosen with
+  `use`;
+- a copy of its mods kept here for your other machines (see "Keeping games
+  not installed here");
+- or a paired machine that syncs its mods, which the switcher names
+  ("Modded on Steam Deck").
+
+Every other game is under "Add a game…" at the bottom of the switcher. The
+ones Steam or Heroic has installed come first, then the rest, each with
+the stores that sell it. Choosing one shows its page, and it stays in the
+switcher while the window is open, and the next time if Home was left on it.
+
+The game's page has the same rows and actions for every game. For a game
+that isn't installed here, it offers to install it in Steam (Heroic-only
+games say to install them in Heroic). If a paired machine syncs the game's
+mods, the sync row can keep a copy here for it. If a copy is kept, the page
+says which machines it's for, how much it takes and which game version the
+mods are set up for, and the sync row stops keeping it. Once the game and
+MO2 are installed, the sync row syncs the mods with that MO2 in place of the
+kept copy. For now they download again from the other machines, and the
+copy's files stay in `held/`.
 
 ```sh
 modsync games                       # the games on this machine, and their MO2 instances
@@ -1041,7 +1068,8 @@ Heroic, which is how it has been tested.
 ModSync sets up Cyberpunk 2077 from GOG, installed with the
 [Heroic Games Launcher](https://heroicgameslauncher.com/), with Mod
 Organizer 2. In the app, choose Cyberpunk 2077 in the game switcher beside
-the ModSync name (or press X), and Home shows all of it: installing MO2,
+the ModSync name (or press X; before it has mods, it's under "Add a game…"),
+and Home shows all of it: installing MO2,
 Play and Open Mod Organizer 2, Heroic's Play button, and mods sync. The
 commands below do the same from a terminal. ModSync reads Heroic's own
 settings (native or the Flatpak) for the game's folder, prefix and Proton,
