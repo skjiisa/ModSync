@@ -179,7 +179,7 @@ modsync firewall status | allow | remove   # ModSync's ports in ufw or firewalld
 modsync steam shortcut [--remove]   # add ModSync as a non-Steam game, or remove it
 modsync launch status | enable [--through <tool>] | disable
 modsync launch mode [countdown | play | wait]   # what Steam's Play does once ModSync opens, see below
-modsync dfu status | install [<dest>] | use <dir> | hook enable | disable   # Daggerfall Unity, see below
+modsync dfu status | install [<dest>] | use <dir> | hook enable | disable | controller   # Daggerfall Unity, see below
 modsync games [list [--all]]        # the other games ModSync runs MO2 for, see "Other games"
 modsync games <key> status | install [<dir>] | use <dir> | open | play | hook enable | disable | status
 modsync nxm status | enable | disable   # Nexus downloads for the games ModSync runs, see "Nexus downloads"
@@ -915,6 +915,28 @@ version check under "Syncing Daggerfall Unity's mods" covers DFU itself.
 DFU only has an x86_64 build. On the Steam Frame it would have to run under
 emulation, which is untested (#110). DFU's developers don't support builds or setups from third parties,
 so report problems with a ModSync-installed DFU to ModSync.
+
+### Controller bindings
+
+"Set up controller bindings" on Daggerfall Unity's Home (or `modsync dfu
+controller`) sets the controller layout suggested in DFU's wiki
+([Setting Up Controls](https://github.com/Interkarma/daggerfall-unity/wiki/Setting-Up-Controls)):
+B casts a spell, RT swings the weapon, Start pauses, and holding LT reaches
+more (LT + A recasts, LT + Y opens the inventory, and so on). The wiki's L2
+and R2 are the bumpers.
+
+They go on DFU's Secondary bindings, as the wiki suggests, so the keyboard
+and mouse keep the Primary ones. Controller buttons bound anywhere before
+are unbound, as DFU's own Controls screen does when you rebind one. The file
+as it was is kept as `PortableAppdata/KeyBinds.modsync-backup.txt`. Close DFU
+first: it would write its own bindings back.
+
+Bindings live in `PortableAppdata/KeyBinds.txt`, which never syncs, so each
+machine keeps its own. The names are those of an Xbox-layout controller, as
+Steam Input presents any controller to a game it starts, the Deck's own
+controls included. If Steam gives Daggerfall a keyboard-and-mouse layout,
+pick a gamepad one in its controller settings. DFU's wiki also suggests the
+Click weapon swing mode for controllers, on its startup screen.
 
 ## Other games
 

@@ -1173,3 +1173,115 @@ class OnArm(unittest.TestCase):
     def test_without_fex_it_says_so_and_starts_nothing(self):
         with self.assertRaisesRegex(dfu.DfuError, "Steam's FEX"):
             self._launch(flatpak=False)
+
+
+class ControllerBindingsTests(unittest.TestCase):
+    """The suggested controller layout, written to KeyBinds.txt as DFU reads it."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.inst = dfu.Install(Path(tmp.name))
+        self.inst.data_dir.mkdir()
+        self.file = self.inst.data_dir / "KeyBinds.txt"
+        running = patch.object(dfu, "is_running", lambda: False)
+        running.start()
+        self.addCleanup(running.stop)
+
+    def _write(self, data: dict) -> None:
+        # As DFU writes it: four-space JSON, no BOM.
+        self.file.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+    def _read(self) -> dict:
+        return json.loads(self.file.read_text(encoding="utf-8"))
+
+    def test_names_match_dfu(self):
+        binds = dfu.controller_bindings()
+        self.assertEqual(len(binds), len(dfu.CONTROLLER_LAYOUT))  # no two actions on one key
+        self.assertEqual(binds["JoystickButton1"], "CastSpell")
+        self.assertEqual(binds["JoystickAxis3Button0 + JoystickButton0"], "RecastSpell")
+        self.assertEqual(binds["JoystickAxis6Button0"], "SwingWeapon")
+        self.assertEqual(binds["JoystickAxis3Button0 + JoystickAxis8Button0"], "StealMode")
+        self.assertEqual(binds["JoystickButton7"], "Escape")
+        self.assertEqual(binds["JoystickAxis3Button0 + JoystickButton6"], "QuickLoad")
+        self.assertEqual(dfu._modifiers(), {"JoystickAxis3Button0"})
+
+    def test_secondary_only_keyboard_kept(self):
+        keyboard = {"Escape": "Escape", "W": "MoveForwards", "Backspace": "CastSpell", "Mouse0": "ActivateCenterObject"}
+        self._write({
+            "actionKeyBinds": keyboard,
+            "secondaryActionKeyBinds": {"JoystickButton1": "Jump", "Keypad8": "MoveForwards", "F": "CastSpell"},
+            "axisActionKeyBinds": {"Axis1": "MovementHorizontal"},
+            "joystickUIKeyBinds": {"JoystickButton0": "LeftClick"},
+            "removedPrimaryActions": [],
+            "$version": "v1",
+        })
+        self.assertFalse(dfu.has_controller_bindings(self.inst))
+        dfu.set_controller_bindings(self.inst)
+        data = self._read()
+        self.assertEqual(data["actionKeyBinds"], keyboard)
+        secondary = data["secondaryActionKeyBinds"]
+        # Kept: a secondary binding the layout doesn't touch. Gone: CastSpell's old one
+        # (F), and Jump's (B is CastSpell's now).
+        self.assertEqual(secondary, {"Keypad8": "MoveForwards", **dfu.controller_bindings()})
+        self.assertEqual(data["axisActionKeyBinds"], {"Axis1": "MovementHorizontal"})
+        self.assertEqual(data["joystickUIKeyBinds"], {"JoystickButton0": "LeftClick"})
+        self.assertEqual(data["$version"], "v1")
+        self.assertTrue(dfu.has_controller_bindings(self.inst))
+        backup = json.loads((self.inst.data_dir / dfu.KEYBINDS_BACKUP).read_text(encoding="utf-8"))
+        self.assertEqual(backup["secondaryActionKeyBinds"]["F"], "CastSpell")
+
+    def test_controller_keys_leave_primary(self):
+        """As DFU's Controls screen does: a key bound on one side is unbound on the other,
+        and a combo's modifier can't stay bound on its own."""
+        self._write({
+            "actionKeyBinds": {"W": "MoveForwards", "JoystickButton3": "Jump", "JoystickAxis3Button0": "Run"},
+            "secondaryActionKeyBinds": {"JoystickAxis3Button0": "Sneak"},
+            "removedPrimaryActions": [],
+            "$version": "v1",
+        })
+        dfu.set_controller_bindings(self.inst)
+        data = self._read()
+        self.assertEqual(data["actionKeyBinds"], {"W": "MoveForwards"})
+        self.assertEqual(data["secondaryActionKeyBinds"], dfu.controller_bindings())
+
+    def test_again_changes_nothing(self):
+        self._write({"actionKeyBinds": {"W": "MoveForwards"}, "secondaryActionKeyBinds": {},
+                     "removedPrimaryActions": [], "$version": "v1"})
+        dfu.set_controller_bindings(self.inst)
+        written = self.file.read_bytes()
+        backup = (self.inst.data_dir / dfu.KEYBINDS_BACKUP).read_bytes()
+        self.assertIn("already", dfu.set_controller_bindings(self.inst))
+        self.assertEqual(self.file.read_bytes(), written)
+        self.assertEqual((self.inst.data_dir / dfu.KEYBINDS_BACKUP).read_bytes(), backup)
+
+    def test_before_dfu_first_ran(self):
+        """No KeyBinds.txt yet: DFU loads this one and fills in its defaults around it."""
+        dfu.set_controller_bindings(self.inst)
+        data = self._read()
+        self.assertEqual(data["actionKeyBinds"], {})
+        self.assertEqual(data["secondaryActionKeyBinds"], dfu.controller_bindings())
+        self.assertEqual(data["removedPrimaryActions"], [])
+        self.assertFalse((self.inst.data_dir / dfu.KEYBINDS_BACKUP).exists())
+
+    def test_bom_read(self):
+        self.file.write_text(json.dumps({"actionKeyBinds": {}, "secondaryActionKeyBinds": {}}), encoding="utf-8-sig")
+        dfu.set_controller_bindings(self.inst)
+        self.assertTrue(dfu.has_controller_bindings(self.inst))
+
+    def test_unreadable_left_alone(self):
+        self.file.write_text("{not json", encoding="utf-8")
+        with self.assertRaises(dfu.DfuError):
+            dfu.set_controller_bindings(self.inst)
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "{not json")
+        self.assertFalse(dfu.has_controller_bindings(self.inst))
+
+    def test_not_while_running(self):
+        with patch.object(dfu, "is_running", lambda: True), self.assertRaises(dfu.DfuError):
+            dfu.set_controller_bindings(self.inst)
+        self.assertFalse(self.file.exists())
+
+    def test_never_synced(self):
+        """KeyBinds.txt stays out of the mods folder, which is the only one rooted at the install."""
+        allowed = dfu.SYNCED_DIRS
+        self.assertFalse(any(f"PortableAppdata/{dfu.KEYBINDS_NAME}".startswith(d) for d in allowed))

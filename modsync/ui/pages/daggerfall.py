@@ -9,7 +9,9 @@ saves sync on and off on this machine. The blue action gets Daggerfall from
 Steam until Steam has it, then installs Daggerfall Unity, then plays it.
 "Use an existing installation…" (once one is in use, "Use another
 installation…") picks a Daggerfall Unity the user installed themselves (see
-``dfu.adopt``), whatever state the one in use is in.
+``dfu.adopt``), whatever state the one in use is in. "Set up controller
+bindings" puts DFU's suggested controller layout on its Secondary bindings, on
+this machine only (see ``dfu.set_controller_bindings``).
 """
 
 from __future__ import annotations
@@ -110,16 +112,19 @@ class DaggerfallPage(Page):
         self.play.clicked.connect(self._play)
         self.mods_folder = Tile("Open the mods folder", "", "folder", size="compact")
         self.mods_folder.clicked.connect(self._open_mods_folder)
+        self.controller = Tile("Set up controller bindings", "", "gamepad", size="compact")
+        self.controller.clicked.connect(self._confirm_controller)
         self.work = label("", "secondary")
         self.work_bar = QProgressBar()
-        for widget in (self.steam_tile, self.install_tile, self.play, self.mods_folder, self.use_existing,
-                       self.work, self.work_bar):
+        for widget in (self.steam_tile, self.install_tile, self.play, self.mods_folder, self.controller,
+                       self.use_existing, self.work, self.work_bar):
             right.addWidget(widget)
         self.steam_tile.hide()
         self.install_tile.hide()
         self.use_existing.hide()
         self.play.hide()
         self.mods_folder.hide()
+        self.controller.hide()
         self.work.hide()
         self.work_bar.hide()
         right.addStretch(1)
@@ -223,8 +228,11 @@ class DaggerfallPage(Page):
         self.use_existing.setText("Use another installation…" if inst is not None else "Use an existing installation…")
         self.play.setVisible(inst is not None and not self._working)
         self.mods_folder.setVisible(inst is not None)
+        self.controller.setVisible(inst is not None)
         if inst is not None:
             self.mods_folder.set_description(_short(inst.mods_dir))
+            self.controller.set_description("The suggested layout is set." if ov.controller else
+                                            "Daggerfall Unity's suggested layout, on this machine.")
         self._update_enabled()
         if self._focus_on_load:
             # Shown before this was read: the blue action wasn't there to take focus.
@@ -250,6 +258,7 @@ class DaggerfallPage(Page):
         self.install_row.setEnabled((ready or choosing) and not busy)
         self.use_existing.setEnabled(ov is not None and not busy)
         self.play.setEnabled(has and not busy)
+        self.controller.setEnabled(has and not busy)
         for row in (self.hook_row, self.mods_row, self.saves_row):
             row.setEnabled(has and not busy)
 
@@ -418,6 +427,30 @@ class DaggerfallPage(Page):
         if ov is None or ov.install is None:
             return
         self._run(dfu.launch, ov.install, message="Starting Daggerfall Unity…")
+
+    def _confirm_controller(self) -> None:
+        """Say what changes before it does: the layout replaces controller
+        bindings, and only here."""
+        ov = self.overview
+        if ov is None or ov.install is None or self.host.busy or self._working:
+            return
+        self.host.confirm(
+            "Set up controller bindings?",
+            "Daggerfall Unity's suggested controller layout goes on its Secondary bindings, so your keyboard "
+            "and mouse keep working as they do. Controller buttons already bound there are replaced. "
+            "Only this machine changes: key bindings don't sync. The old ones are kept in "
+            f"{dfu.KEYBINDS_BACKUP}, next to them.",
+            [("go", "Set them up", "Cast spells with B, attack with RT, and hold LT for more.", "primary", "check"),
+             ("cancel", "Cancel", "", "normal", "close")],
+            lambda key: self._set_controller() if key == "go" else None,
+            default="go",
+        )
+
+    def _set_controller(self) -> None:
+        ov = self.overview
+        if ov is None or ov.install is None:
+            return
+        self._run(dfu.set_controller_bindings, ov.install, message="Setting up controller bindings…")
 
     def _open_mods_folder(self) -> None:
         if self.overview is None or self.overview.install is None:

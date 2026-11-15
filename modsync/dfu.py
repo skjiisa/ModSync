@@ -906,6 +906,7 @@ class Overview:
     version: str | None = None  # the install's DFU version, read with the rest
     configured_ok: bool = False  # DFU would accept the data the install uses (Steam's or its own copy)
     emulation_problem: str | None = None  # why it can't run on this machine (an ARM one without FEX)
+    controller: bool = False  # the suggested controller layout is on its Secondary bindings
 
     @property
     def stale_path(self) -> bool:
@@ -944,7 +945,8 @@ def overview(*, hook: bool = True) -> Overview:
     return Overview(dagger, problems, inst, configured, status,
                     sync_state(MODS_FOLDER), sync_state(SAVES_FOLDER),
                     version_problem(inst) if inst else None, inst.version if inst else None, configured_ok,
-                    emulation_problem(inst) if inst else None)
+                    emulation_problem(inst) if inst else None,
+                    has_controller_bindings(inst) if inst else False)
 
 
 def setup(dest: Path | str | None = None, *, progress: engine.ProgressFn | None = None) -> tuple[Installed, str | None]:
@@ -1031,3 +1033,153 @@ def open_mods_folder() -> Path:
         raise DfuError("Daggerfall Unity isn't installed.")
     inst.mods_dir.mkdir(parents=True, exist_ok=True)
     return inst.mods_dir
+
+
+# --- controller bindings ----------------------------------------------------------
+#
+# Daggerfall Unity's wiki suggests a controller layout ("Setting Up Controls"),
+# built on the key combos it supports since 1.0 (LT + A, say), and suggests
+# putting it on the Secondary bindings so keyboard and mouse keep the Primary
+# ones. ModSync writes it there, in PortableAppdata/KeyBinds.txt. That file
+# never syncs (MODS_FOLDER leaves it out), so each machine's bindings stay its own.
+#
+# DFU's KeyBinds.txt maps a key's name to an action's name. Its names for a
+# controller are Unity's, as Unity's input on Linux reads an Xbox-layout pad
+# (what Steam Input presents, the Deck's own controls included):
+# buttons are JoystickButton<n>, and a direction of an axis is
+# JoystickAxis<n>Button0 (positive) or JoystickAxis<n>Button1 (negative).
+# A combo is "<modifier> + <key>". The wiki names the bumpers L2 and R2: LT
+# and RT are the triggers there, and L3 and R3 the sticks.
+
+KEYBINDS_NAME = "KeyBinds.txt"
+KEYBINDS_BACKUP = "KeyBinds.modsync-backup.txt"  # the bindings as they were before the last change
+
+PAD = {
+    "A": "JoystickButton0", "B": "JoystickButton1", "X": "JoystickButton2", "Y": "JoystickButton3",
+    "LB": "JoystickButton4", "RB": "JoystickButton5", "Select": "JoystickButton6", "Start": "JoystickButton7",
+    "L3": "JoystickButton9", "R3": "JoystickButton10",
+    "LT": "JoystickAxis3Button0", "RT": "JoystickAxis6Button0",
+    "D-Left": "JoystickAxis7Button1", "D-Right": "JoystickAxis7Button0",
+    "D-Up": "JoystickAxis8Button1", "D-Down": "JoystickAxis8Button0",
+}
+
+# The wiki's layout, in its order: DFU's action name, and the buttons ("LT + A" is a combo).
+CONTROLLER_LAYOUT = (
+    ("CastSpell", "B"),
+    ("RecastSpell", "LT + A"),
+    ("UseMagicItem", "LT + B"),
+    ("ReadyWeapon", "X"),
+    ("SwingWeapon", "RT"),
+    ("SwitchHand", "RB"),
+    ("Status", "D-Down"),
+    ("CharacterSheet", "D-Up"),
+    ("Inventory", "LT + Y"),
+    ("Jump", "Y"),
+    ("Crouch", "L3"),
+    ("AutoRun", "LB"),
+    ("Run", "LT + LB"),
+    ("Rest", "Select"),
+    ("Transport", "R3"),
+    ("StealMode", "LT + D-Down"),
+    ("GrabMode", "LT + D-Up"),
+    ("InfoMode", "LT + D-Left"),
+    ("TalkMode", "LT + D-Right"),
+    ("ActivateCenterObject", "A"),
+    ("Sneak", "LT + L3"),
+    ("LogBook", "LT + RB"),
+    ("NoteBook", "LT + X"),
+    ("AutoMap", "D-Left"),
+    ("TravelMap", "D-Right"),
+    ("Escape", "Start"),
+    ("QuickSave", "LT + Start"),
+    ("QuickLoad", "LT + Select"),
+)
+
+
+def _key_name(buttons: str) -> str:
+    """DFU's name for ``buttons``: one button, or a combo as DFU writes it."""
+    return " + ".join(PAD[b.strip()] for b in buttons.split("+"))
+
+
+def controller_bindings() -> dict[str, str]:
+    """The suggested layout as KeyBinds.txt holds it: key name → action."""
+    return {_key_name(buttons): action for action, buttons in CONTROLLER_LAYOUT}
+
+
+def _modifiers() -> set[str]:
+    """Keys the layout holds down for combos. DFU won't bind one of these on
+    its own: it would fire every time a combo starts."""
+    return {_key_name(buttons.split("+")[0]) for _, buttons in CONTROLLER_LAYOUT if "+" in buttons}
+
+
+def keybinds_file(inst: Install) -> Path:
+    return inst.data_dir / KEYBINDS_NAME
+
+
+def _read_keybinds(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        raise DfuError(f"Can't read Daggerfall Unity's key bindings in {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise DfuError(f"Daggerfall Unity's key bindings in {path} aren't in a form ModSync knows.")
+    return data
+
+
+def has_controller_bindings(inst: Install) -> bool:
+    """Whether every binding of the suggested layout is on ``inst``'s Secondary bindings."""
+    try:
+        secondary = _read_keybinds(keybinds_file(inst)).get("secondaryActionKeyBinds")
+    except DfuError:
+        return False
+    if not isinstance(secondary, dict):
+        return False
+    return all(secondary.get(key) == action for key, action in controller_bindings().items())
+
+
+def set_controller_bindings(inst: Install) -> str:
+    """Put the suggested controller layout on ``inst``'s Secondary bindings, as
+    DFU's own Controls screen would bind each one: an action's old Secondary
+    binding goes, and so does whatever else held its key, on either side.
+    Keyboard and mouse bindings, and Secondary bindings the layout doesn't
+    use, stay. The file as it was is kept in :data:`KEYBINDS_BACKUP`.
+
+    A missing KeyBinds.txt (DFU not started yet) is made with only these:
+    DFU fills in its defaults around them when it starts."""
+    if is_running():
+        # DFU keeps its bindings in memory and writes them out again when they change.
+        raise DfuError("Close Daggerfall Unity first; it would undo the change.")
+    path = keybinds_file(inst)
+    old = path.read_bytes() if path.is_file() else None
+    data = _read_keybinds(path)
+    before = json.loads(json.dumps(data))
+    wanted = controller_bindings()
+    actions = set(wanted.values())
+    drop = set(wanted) | _modifiers()
+
+    def kept(binds, *, secondary: bool) -> dict[str, str]:
+        if not isinstance(binds, dict):
+            return {}
+        return {k: v for k, v in binds.items() if k not in drop and not (secondary and v in actions)}
+
+    primary = kept(data.get("actionKeyBinds"), secondary=False)
+    secondary = kept(data.get("secondaryActionKeyBinds"), secondary=True)
+    taken = [k for k in data.get("actionKeyBinds") or {} if k in drop]
+    secondary.update(wanted)
+    data["actionKeyBinds"] = primary
+    data["secondaryActionKeyBinds"] = secondary
+    data.setdefault("removedPrimaryActions", [])
+    data.setdefault("$version", "v1")
+    if old is not None and data == before:
+        return "Daggerfall Unity already has the suggested controller bindings."
+    inst.data_dir.mkdir(parents=True, exist_ok=True)
+    if old is not None:
+        (inst.data_dir / KEYBINDS_BACKUP).write_bytes(old)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, indent=4) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    log.info("set the suggested controller bindings in %s (%d primary bindings moved off controller keys)",
+             path, len(taken))
+    return "Daggerfall Unity has the suggested controller bindings, on its Secondary bindings."
