@@ -106,12 +106,39 @@ def command(*args: str) -> list[str]:
 
 
 def _desktop_quote(arg: str) -> str:
-    """An argument of a desktop entry's Exec key (the Desktop Entry spec):
-    quoted when it needs to be, and ``%`` doubled either way."""
-    if arg and not any(c in arg for c in ' \t\n"\'\\><~|&;$*?#()`='):
+    """One argument of a desktop entry's Exec key, before the key's own
+    string escapes (``_exec_value``): quoted when it needs to be, with
+    ``"``, `` ` ``, ``$`` and ``\\`` escaped inside the quotes, and ``%`` doubled."""
+    if arg and not any(c in arg for c in ' \t\n"\'\\><~|&;$*?#()`'):
         return arg.replace("%", "%%")
     escaped = "".join("\\" + c if c in '"`$\\' else c for c in arg)
     return f'"{escaped}"'.replace("%", "%%")
+
+
+def _exec_value(args: list[str]) -> str:
+    """The Exec key's value: the quoted arguments, then the escapes every
+    desktop-entry string takes (a literal backslash in a quoted argument
+    ends up as four)."""
+    line = " ".join(_desktop_quote(a) for a in args)
+    for raw, escaped in (("\\", "\\\\"), ("\n", "\\n"), ("\t", "\\t"), ("\r", "\\r")):
+        line = line.replace(raw, escaped)
+    return line
+
+
+def _unit_identity(text: str) -> list[str]:
+    """What says which copy of ModSync and which setup a unit runs."""
+    return [line for line in text.splitlines() if line.startswith(("ExecStart=", "Environment="))]
+
+
+def installed_here() -> bool:
+    """The background service is on, and runs this copy and setup (not one
+    installed from another copy, or with another MODSYNC_HOME, since: the
+    unit and the autostart entry are one per user)."""
+    try:
+        installed = unit_path().read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return _unit_identity(installed) == _unit_identity(unit_text())
 
 
 def autostart_path() -> Path:
@@ -129,7 +156,7 @@ def autostart_text() -> str:
 Type=Application
 Name=ModSync (background)
 Comment=Shows that ModSync's background service is on
-Exec={" ".join(_desktop_quote(a) for a in command("tray"))}
+Exec={_exec_value(command("tray"))}
 Icon={APP_ID}
 Terminal=false
 NoDisplay=true
@@ -154,23 +181,23 @@ def remove_tray_autostart() -> None:
 
 def ensure_tray_autostart() -> bool:
     """For a service installed before there was a tray: add its autostart
-    entry, once. The background service calls it when it starts. Whether it
-    added it."""
+    entry, once. The background service calls it when it starts; only the
+    copy and setup the unit runs does it. Whether it added it."""
     from modsync import config
 
-    if not unit_path().exists() or autostart_path().exists() or (config.config_dir() / _TRAY_ADDED).exists():
+    if not installed_here() or autostart_path().exists() or (config.config_dir() / _TRAY_ADDED).exists():
         return False
     add_tray_autostart()
     return True
 
 
 def spawn_detached(argv: list[str]) -> None:
-    """Start a program in this desktop session that outlives this process,
-    and inside the Flatpak this sandbox too (as a new instance from the
-    host), the window's display passed on."""
+    """Start a program that outlives this process, and inside the Flatpak this
+    sandbox too: from the host, which runs it with the desktop session's
+    own environment. The sandbox's display names aren't the host's (Flatpak
+    gives X11 ``:99``, and may rename the Wayland socket), so none is passed."""
     if in_flatpak():
-        env = [f"--env={k}={os.environ[k]}" for k in ("WAYLAND_DISPLAY", "DISPLAY") if os.environ.get(k)]
-        argv = ["flatpak-spawn", "--host", *env, *argv]
+        argv = ["flatpak-spawn", "--host", *argv]
     subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, start_new_session=True)
 

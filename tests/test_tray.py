@@ -1,6 +1,7 @@
 """The tray icon a desktop session shows while the background service is on."""
 
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 from tests import ui_support  # noqa: F401 - offscreen Qt
@@ -37,7 +38,7 @@ class TrayTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.unit = Path(tmp.name) / background.UNIT_NAME
-        self.unit.write_text("service")
+        self.unit.write_text(background.unit_text())
         p = patch.object(background, "unit_path", return_value=self.unit)
         p.start()
         self.addCleanup(p.stop)
@@ -56,6 +57,8 @@ class TrayTests(unittest.TestCase):
         self.assertIn("Syncing Skyrim SE", self.texts(t))
         self.assertNotIn("Nothing syncs here; it only watches Steam", self.texts(t))
         self.assertIn("Syncing Skyrim SE", t.icon.toolTip())
+        # Installing again rewrites the unit in place: only a watch on the file sees that.
+        self.assertIn(str(self.unit), t.watcher.files())
 
     def test_it_quits_once_the_service_is_off(self):
         t = tray.Tray(self.app)
@@ -63,6 +66,43 @@ class TrayTests(unittest.TestCase):
         with patch.object(self.app, "quit") as quit:
             t.refresh()
         quit.assert_called_once()
+        self.assertTrue(t.closed)
+
+    def test_it_quits_once_the_service_runs_another_setup(self):
+        import os
+
+        t = tray.Tray(self.app)
+        with patch.dict(os.environ, {"MODSYNC_HOME": "/home/me/other"}):
+            self.unit.write_text(background.unit_text())  # installed again from another setup
+        with patch.object(self.app, "quit") as quit:
+            t.refresh()
+        quit.assert_called_once()
+
+    def test_a_window_opened_from_it_closes_first(self):
+        # Inside the Flatpak it shares the tray's sandbox, which goes when the tray does.
+        t = tray.Tray(self.app)
+        child = unittest.mock.Mock()
+        child.poll.return_value = None
+        t.children.append(child)
+        with patch.object(self.app, "quit") as quit, patch("PySide6.QtCore.QTimer.singleShot") as later:
+            t.close()
+            quit.assert_not_called()
+            later.assert_called_once()
+            child.poll.return_value = 0
+            t.close()
+        quit.assert_called_once()
+
+    def test_turned_off_while_starting_it_does_not_linger(self):
+        # quit() before exec() is ignored: run() must not reach exec().
+        real = tray.Tray.__init__
+
+        def init(t, app):
+            self.unit.unlink()  # turned off between run()'s check and the watcher
+            real(t, app)
+
+        with patch.object(tray.Tray, "__init__", init), patch.object(self.app, "exec") as exec_:
+            self.assertEqual(tray.run(), 0)
+        exec_.assert_not_called()
 
     def test_turning_off_from_the_tray(self):
         from PySide6.QtWidgets import QMessageBox
@@ -78,11 +118,15 @@ class TrayTests(unittest.TestCase):
             t.turn_off()
         quit.assert_called_once()
 
-    def test_open_starts_the_app_detached(self):
+    def test_open_starts_the_app_from_this_process(self):
+        import subprocess
+        import sys
+
         t = tray.Tray(self.app)
-        with patch.object(background, "spawn_detached") as spawn:
+        with patch.object(subprocess, "Popen") as popen:
             t.open_app()
-        self.assertEqual(spawn.call_args.args[0], background.command())
+        self.assertEqual(popen.call_args.args[0], [sys.executable, "-m", "modsync"])
+        self.assertEqual(t.children, [popen.return_value])
 
     def test_one_tray_per_setup(self):
         import os

@@ -5,13 +5,15 @@ Started at each desktop login by the autostart entry ``modsync service
 install`` adds (see modsync.background), and right away by the install. It
 costs nothing while idle: it reads the state file only when that changes, and
 never talks to Syncthing. It quits once the service is off, whoever turned it
-off, and at once where there is no tray (Gaming Mode has none).
+off, or runs another copy or setup of ModSync, and at once where there is no
+tray (Gaming Mode has none).
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -94,6 +96,8 @@ class Tray:
         from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
         self.app = app
+        self.closed = False
+        self.children: list[subprocess.Popen] = []  # windows opened from here
         self.icon = QSystemTrayIcon(_icon())
         self.menu = QMenu()
         self.title = self.menu.addAction("ModSync is running in the background")
@@ -111,14 +115,21 @@ class Tray:
             if folder.is_dir():
                 self.watcher.addPath(str(folder))
         self.watcher.directoryChanged.connect(lambda _: self.refresh())
+        # And the unit itself: installing again from another setup rewrites it
+        # in place, which the folder's watch doesn't report.
+        self.watcher.fileChanged.connect(lambda _: self.refresh())
         self.refresh()
 
     def refresh(self) -> None:
-        if not background.unit_path().exists():
-            log.info("tray: the background service is off; quitting")
-            self.icon.hide()
-            self.app.quit()
+        if self.closed:
             return
+        if not background.installed_here():
+            log.info("tray: the background service is off, or another setup's; quitting")
+            self.close()
+            return
+        unit = str(background.unit_path())
+        if unit not in self.watcher.files():  # a file replaced on disk drops out of the watch
+            self.watcher.addPath(unit)
         try:
             lines = summary(State.load())
         except Exception as exc:  # a newer ModSync's state, say: still say it runs
@@ -139,9 +150,26 @@ class Tray:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self.open_app()
 
+    def close(self) -> None:
+        """Hide the icon and quit; once a window opened from here has closed,
+        since inside the Flatpak it shares this sandbox and would go with it."""
+        from PySide6.QtCore import QTimer
+
+        self.closed = True
+        self.icon.hide()
+        self.children = [c for c in self.children if c.poll() is None]
+        if self.children:
+            QTimer.singleShot(2000, self.close)
+        else:
+            self.app.quit()
+
     def open_app(self) -> None:
+        # From this process, not the host: here the display is this session's
+        # for certain, and the environment carries the setup (MODSYNC_HOME).
         try:
-            background.spawn_detached(background.command())
+            self.children.append(subprocess.Popen(
+                [sys.executable, "-m", "modsync"], stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
         except OSError as exc:
             self._warn(f"Could not open ModSync: {exc}")
 
@@ -172,8 +200,8 @@ def run() -> int:
     from modsync.logging_setup import configure
 
     configure("tray", ["tray"])
-    if not background.unit_path().exists():
-        log.info("tray: the background service is off")
+    if not background.installed_here():
+        log.info("tray: the background service is off, or runs another copy or setup")
         return 0
     lock = _hold_lock()
     if lock is None:
@@ -188,11 +216,15 @@ def run() -> int:
     app.setDesktopFileName(background.APP_ID)
     app.setQuitOnLastWindowClosed(False)  # the turn-off question is a window
     tray = Tray(app)
+    if tray.closed:  # turned off meanwhile: quit() before exec() would be ignored
+        return 0
 
     waited = 0
 
     def show() -> None:
         nonlocal waited
+        if tray.closed:
+            return
         if QSystemTrayIcon.isSystemTrayAvailable():
             tray.icon.show()
             return
