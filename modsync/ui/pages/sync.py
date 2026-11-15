@@ -280,6 +280,35 @@ class JoinPanel(QWidget):
         self.choose_mode(path, join)
 
 
+def kept_vault_tile(host, panel: JoinPanel) -> Tile | None:
+    """"Use the mods kept here", when this machine keeps a copy of a Skyrim
+    vault for the others and Mod Organizer 2 is chosen but not shared:
+    joining it needs no code, since those machines are paired already. None
+    when no copy is kept here."""
+    if folders.kept_vault(host.service.state) is None:
+        return None
+    tile = Tile("Use the mods kept here", "This machine keeps Skyrim's mods for your other machines. Join "
+                "them without a code. If this instance has no mods yet, the copy moves in instead of "
+                "downloading again.", "box", size="choice", role="primary")
+    tile.clicked.connect(lambda: join_kept_vault(host, panel))
+    return tile
+
+
+def join_kept_vault(host, panel: JoinPanel) -> None:
+    """Join the Skyrim vault kept here (asking copy or merge first when this
+    instance has mods of its own). ``host.vault_joined`` finishes."""
+    path = host.service.state.instance_path
+    if not path or host.busy:
+        return
+
+    def join(merge: bool) -> None:
+        host.sync_started("Joining the mods kept here…")
+        worker.run_async(host.service.join_kept_vault, path, merge=merge,
+                         on_done=lambda _: host.vault_joined(), on_failed=host.sync_failed)
+
+    panel.choose_mode(path, join)
+
+
 def create_vault(host) -> None:
     """Share this instance. ``host.vault_created`` finishes the wizard, or
     rebuilds the window, once Syncthing is up."""
@@ -330,10 +359,13 @@ class SyncPage(Page):
         self.copy = Tile("Copy from another machine", "Find the machine with the mods on your network, or "
                          "paste its pairing code.", "download", size="choice")
         self.copy.clicked.connect(self.toggle_join)
+        self.join = JoinPanel(self.host)
+        self.use_kept = kept_vault_tile(self.host, self.join)
+        if self.use_kept is not None:
+            row.addWidget(self.use_kept)
         row.addWidget(self.share)
         row.addWidget(self.copy)
         self.content_layout.addLayout(row)
-        self.join = JoinPanel(self.host)
         self.join.setVisible(False)
         self.join_panel = Panel()
         self.join_panel.add(self.join)
@@ -354,7 +386,7 @@ class SyncPage(Page):
                 return self.conflicts_tile
             return self.resume_tile or self.pair_tile
         if self.service.state.has_instance:
-            return self.share
+            return getattr(self, "use_kept", None) or self.share
         return self.pair_tile if self.service.state.syncs_anything else self.join_tile
 
     # --- pairing without a vault ------------------------------------------------------

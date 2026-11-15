@@ -208,9 +208,12 @@ def vault(args: list[str]) -> int:
         "  modsync sync create <instance-dir> [--label NAME]\n"
         "  modsync sync join <pairing-code> <instance-dir> [--merge]\n"
         "  modsync sync join <machine-code>    pair with a machine that syncs only games' folders\n"
+        "  modsync sync join kept <instance-dir> [--merge]\n"
+        "                                      join the Skyrim mods kept here for the other machines\n"
         "  modsync sync share | stop <folder>  start or stop syncing a game's folder (e.g. dfu-mods)\n"
         "  modsync sync hold <folder>          keep a copy of a game's folder for other machines, the game\n"
         "                                      not being set up here ('stop' stops keeping it)\n"
+        "  modsync sync hold skyrim            the same for the Skyrim mods a paired machine offers\n"
         "  modsync sync hold all | off         keep a copy of every game's folder offered here, or stop\n"
         "                                      taking new ones up\n"
         "  modsync sync code                   this machine's pairing code\n"
@@ -260,10 +263,10 @@ def _sync_hold(what: str) -> int:
     from modsync.service import ModSyncService
     from modsync.sync import folders
 
-    spec = None if what in {"all", "off"} else folders.spec_for(what)
-    if spec is None and what not in {"all", "off"}:
+    spec = None if what in {"all", "off", "skyrim"} else folders.spec_for(what)
+    if spec is None and what not in {"all", "off", "skyrim"}:
         known = ", ".join(s.key for s in folders.specs()) or "none yet"
-        print(f"ModSync has no folder called {what!r} (known: {known}, or 'all' / 'off').")
+        print(f"ModSync has no folder called {what!r} (known: {known}, or 'skyrim' / 'all' / 'off').")
         return 2
     service = ModSyncService()
     try:
@@ -279,6 +282,9 @@ def _sync_hold(what: str) -> int:
                 print(f"Keeping {key} in {service.state.held_folders.get(key)}.")
             if not service.state.paired:
                 print("No machine is paired yet: 'modsync sync join <code>' pairs with one.")
+        elif what == "skyrim":
+            root = service.hold_skyrim_vault()
+            print(f"Keeping a copy of Skyrim's mods in {root} for the other machines.")
         else:
             root = service.hold_game_folder(what)
             print(f"Keeping a copy of {spec.label} in {root} for the other machines.")
@@ -505,8 +511,11 @@ def _vault_join(args: list[str]) -> int:
     args = [a for a in args if a != "--merge"]
     if len(args) not in (1, 2):
         print("usage: modsync sync join <pairing-code> <instance-dir> [--merge]")
+        print("       modsync sync join kept <instance-dir> [--merge]")
         return 2
     code_text, instance = args[0], (args[1] if len(args) == 2 else None)
+    if code_text == "kept":
+        return _vault_join_kept(instance, merge)
 
     from modsync.pairing_code import PairingCode
     from modsync.service import ModSyncService
@@ -542,6 +551,29 @@ def _vault_join(args: list[str]) -> int:
         print(f"vault doesn't have are set aside in {instance}/.modsync-before-join, not deleted.")
     print("\nThis machine's pairing code (add it on the other machine to sync back):\n")
     print(f"  {mine.encode()}\n")
+    return _run_until_interrupt(service)
+
+
+def _vault_join_kept(instance: str | None, merge: bool) -> int:
+    from modsync.service import ModSyncService
+
+    if instance is None:
+        print("usage: modsync sync join kept <instance-dir> [--merge]")
+        return 2
+    service = ModSyncService()
+    print(f"Starting Syncthing and joining the Skyrim mods kept here into {instance} …")
+    try:
+        service.join_kept_vault(instance, merge=merge)
+    except RuntimeError as exc:
+        print(exc)
+        service.shutdown()
+        return 1
+    if merge:
+        print("Merging: mods from both machines end up on both; where a file differs, the newer one wins.")
+    else:
+        print("Copying: this machine only receives until it matches the other machines. The kept copy's")
+        print("files moved in if the instance had no mods or downloads yet; otherwise they arrive again,")
+        print(f"and files here that the vault doesn't have are set aside in {instance}/.modsync-before-join.")
     return _run_until_interrupt(service)
 
 

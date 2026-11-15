@@ -86,7 +86,17 @@ All notable changes to ModSync are documented here. The format follows
   copy of every game's folder another machine offers; `modsync sync hold
   <folder>` keeps one. The copies are receive-only and nothing on that
   machine uses them. A home server with no games installed can do this
-  too. Skyrim's MO2 vault isn't covered yet.
+  too.
+- Skyrim's MO2 vault can be kept the same way, on a machine without Skyrim's
+  MO2: "Keep games not installed here" keeps it along with the games'
+  folders, and `modsync sync hold skyrim` keeps it alone. Once MO2 is set up
+  for Skyrim there, "Use the mods kept here" on the Sync page and in the
+  setup's sync step (or `modsync sync join kept <instance-dir>`) joins the
+  vault without a code. Joining with a pairing code uses the kept copy too.
+  When the instance has no mods or downloads yet, the kept copy's files move
+  in, under the same conditions as the games' folders, and don't download
+  again. Leaving the vault stops keeping it until you join again or turn
+  "Keep games not installed here" off and on.
 - Nexus Mods downloads for Skyrim Special Edition reach its Mod Organizer 2,
   as Cyberpunk 2077's do. Turning Steam's launch hook on also makes ModSync
   the handler for `nxm://` links. While the hook is on and Steam is running,
@@ -209,6 +219,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Forgetting Skyrim's Mod Organizer 2 instance kept the other games, but
+  also cleared the machines forgotten here (so they could come back), the
+  folders paused for a game (so they stayed paused), and the record that
+  pairings had been settled to introduce one way (so it ran again).
+- Leaving Skyrim's vault on a machine that keeps games for others, but
+  syncs nothing else, no longer unpairs every machine.
 - Installing Mod Organizer 2 for a Steam game, Skyrim included, works without
   Proton 11.0 installed. MO2-LINT asked for it and stopped. ModSync now gives
   MO2-LINT the Proton the game runs with in that case, under the name
