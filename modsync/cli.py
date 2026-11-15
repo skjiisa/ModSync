@@ -1367,6 +1367,11 @@ def _managed_install(mg, dest: str | None) -> int:
         print(f"error: {e}")
         return 1
     print(f"Installed and now in use: {instance}")
+    from modsync.state import State
+
+    if mg.folder.key in State.load().held_folders:
+        print(f"A copy of its mods is kept here for your other machines. 'modsync sync share {mg.folder.key}' "
+              "moves it into this instance, so nothing downloads again.")
     print(f"Open MO2 with '{mg.command} open' to add mods, or play with '{mg.command} play'.")
     return 0
 
