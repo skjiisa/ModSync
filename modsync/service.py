@@ -1724,6 +1724,42 @@ class ModSyncService:
             log.error("queued pin failed: %s", exc)
             return PinOutcome(False, True, [], f"pin failed: {exc}")
 
+    def steam_change_queued(self) -> bool:
+        """A pin or a launch-hook switch waits for Steam to exit. Only file
+        checks: whether Steam runs is asked only when something waits."""
+        from modsync import launchhook
+
+        return self._pending_pin_path().exists() or bool(launchhook.Pending.load_all())
+
+    # --- the background service ---
+    _WAKE_EVENTS = ("PendingDevicesChanged", "PendingFoldersChanged", "DeviceConnected")
+    _event_id = 0
+
+    def wait_for_sync_events(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds, returning early when a machine asks
+        to pair, offers a folder or connects: what the background service
+        answers (``accept_pending``). Syncthing holds the request open, so
+        nothing here wakes in between. False when Syncthing didn't answer,
+        so the caller waits some other way."""
+        try:
+            with self.manager.client() as client:
+                events = client.events(self._event_id, self._WAKE_EVENTS, timeout)
+        except Exception as exc:
+            # Down or restarted: event ids start again from 1 after a restart.
+            log.debug("sync events unavailable: %s", exc)
+            self._event_id = 0
+            return False
+        ids = [e["id"] for e in events if isinstance(e, dict) and isinstance(e.get("id"), int)]
+        if ids:
+            self._event_id = max(ids)
+        return True
+
+    def upkeep(self) -> None:
+        """What the games' folders need done here between syncs (see
+        ``folders.tidy``), without reading their status."""
+        if self.state.game_folders:
+            folders.tidy()
+
     # --- status ---
     def status(self) -> SyncStatus:
         """Where syncing is. Only reports: ``advance_copy`` moves a copy on."""

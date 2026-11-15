@@ -137,6 +137,15 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Changed
 
+- The background service does much less while it runs, for the Steam Deck.
+  It wakes every 30 seconds instead of every 5. It still wakes every 5 while
+  a Steam pin or launch-hook switch waits for Steam to exit, or while a copy
+  is under way. Syncthing wakes it at once when a machine asks to pair or
+  offers a folder. It no longer reads the sync status or searches for
+  conflicts on every pass, because nothing there shows them. It tidies the
+  games' folders and syncs Daggerfall's saves once a minute, and it no longer
+  writes a status line to the log every few seconds.
+
 - Copies of ModSync on a machine share one setup. While the Flatpak is
   installed, a copy run from source or installed with pip uses the
   Flatpak's settings and data, unless it already has a setup of its own in

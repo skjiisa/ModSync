@@ -1255,7 +1255,11 @@ Without the app window it applies a queued Steam pin or launch-hook switch the
 moment Steam exits, notices when Steam updates the game, and keeps a vault
 syncing if one exists. If the service initially shares the app's process, it
 starts a replacement on its next poll after the app closes, and transfers
-resume. Both machines still need to be awake and connected, unless a third
+resume. To stay light on a Steam Deck, it wakes every 30 seconds, or every
+5 while a Steam change waits or a copy is under way. In between, Syncthing
+wakes it only when a machine asks to pair or offers a folder. Syncthing does
+the syncing itself, at low priority. Both machines still need to be awake
+and connected, unless a third
 one keeps the games for them (see "Keeping games not installed here").
 
 Under Settings, "Run in background" shows whether the service is running,

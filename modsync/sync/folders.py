@@ -699,6 +699,25 @@ def refresh(client: SyncthingClient) -> None:
             pass
 
 
+def _tidy(spec: FolderSpec, key: str, path: str, st: State) -> None:
+    if spec.tidy is not None and not stopping(key, st):
+        try:
+            spec.tidy(Path(path))
+        except Exception as exc:  # neither a status read nor the background service may fail over it
+            log.warning("could not tidy %s: %s", spec.folder_id, exc)
+
+
+def tidy() -> None:
+    """Each game folder's upkeep (its ``tidy``) without reading its status:
+    what the background service runs, since nothing there shows the status.
+    Kept copies have none: nothing here uses them."""
+    st = State.load()
+    for key, path in st.game_folders.items():
+        spec = spec_for(key)
+        if spec is not None:
+            _tidy(spec, key, path, st)
+
+
 def status(client: SyncthingClient) -> list[FolderStatus]:
     out = []
     st = State.load()
@@ -710,11 +729,7 @@ def status(client: SyncthingClient) -> list[FolderStatus]:
         if held:  # nothing here uses it: no tidying, and the machines that play settle conflicts
             fs = FolderStatus(spec, path, stopping=stopping(key, st), held=True)
         else:
-            if spec.tidy is not None and not stopping(key, st):
-                try:
-                    spec.tidy(Path(path))
-                except Exception as exc:  # a status read must never fail over it
-                    log.warning("could not tidy %s: %s", spec.folder_id, exc)
+            _tidy(spec, key, path, st)
             fs = FolderStatus(spec, path, stopping=stopping(key, st),
                               conflicts=len(conflicts.find(path, spec.content)) if spec.content else 0)
         try:

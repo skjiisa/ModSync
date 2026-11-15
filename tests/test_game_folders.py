@@ -1132,5 +1132,54 @@ class PairingCodes(unittest.TestCase):
             json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("utf-8"))
 
 
+class BackgroundUpkeep(GameFolderBase):
+    """The background service tidies the games' folders without reading their status."""
+
+    def test_upkeep_tidies_folders_synced_here_only(self):
+        tidied = []
+        self.spec = folders.FolderSpec("test-mods", "Test mods (ModSync)", lambda: self.root,
+                                       ("/*",), tidy=tidied.append)
+        State.update(game_folders={"test-mods": str(self.root)}, held_folders={"test-mods-kept": "/kept"})
+        self.service.reload_state()
+        self.service.upkeep()
+        self.assertEqual(tidied, [self.root])
+        State.update(declined_folders=["test-mods"])  # stopping: left alone
+        self.service.reload_state()
+        self.service.upkeep()
+        self.assertEqual(tidied, [self.root])
+
+    def test_a_failing_tidy_never_stops_it(self):
+        def broken(root):
+            raise OSError("read-only")
+
+        self.spec = folders.FolderSpec("test-mods", "Test mods (ModSync)", lambda: self.root, ("/*",), tidy=broken)
+        State.update(game_folders={"test-mods": str(self.root)})
+        self.service.reload_state()
+        with self.assertLogs("modsync.sync.folders", "WARNING"):
+            self.service.upkeep()
+
+
+class SyncEvents(GameFolderBase):
+    """Between passes the background service waits on Syncthing's events."""
+
+    def test_it_follows_event_ids_and_starts_over_when_syncthing_does_not_answer(self):
+        calls = []
+        replies = [[{"id": 7, "type": "PendingDevicesChanged"}], [], OSError("connection refused"), []]
+
+        def events(since, types, timeout):
+            calls.append(since)
+            reply = replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        with patch.object(_Client, "events", lambda self, *a: events(*a), create=True):
+            self.assertTrue(self.service.wait_for_sync_events(30))
+            self.assertTrue(self.service.wait_for_sync_events(30))
+            self.assertFalse(self.service.wait_for_sync_events(30))
+            self.assertTrue(self.service.wait_for_sync_events(30))
+        self.assertEqual(calls, [0, 7, 7, 0])
+
+
 if __name__ == "__main__":
     unittest.main()
