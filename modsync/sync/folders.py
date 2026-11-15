@@ -251,23 +251,34 @@ def share(client: SyncthingClient, spec: FolderSpec) -> Path:
     """Start syncing ``spec`` from this machine, with every paired machine.
     A copy kept here for other machines gives way: the folder syncs where the
     game is from now on. When the game's folder has nothing of its own yet
-    (a new MO2 instance), the kept copy's files move there, so nothing
-    downloads again (:func:`_use_kept`); otherwise they stay where they were."""
+    (a new MO2 instance) and the kept copy is current, its files move there,
+    so nothing downloads again (:func:`_use_kept`); otherwise they stay where
+    they were."""
     root = spec.path()
     if root is None:
         raise RuntimeError(f"{spec.label}: set the game up on this machine first.")
     kept = State.load().held_folders.get(spec.key)
     before = None
+    current = False
     if kept is not None:
         try:
             before = client.get_folder(spec.folder_id)
         except Exception:
             before = None  # not in Syncthing (removed by hand): nothing to put back
-        _release(client, spec)
+        current = _kept_is_current(client, spec, before)
+        # Until it syncs at the game's folder, offers of it are left alone, so
+        # another process (the background service) can't take it up there
+        # while the kept copy moves in. _remember takes it off again.
+        _decline(spec.key)
+        try:
+            _release(client, spec)
+        except Exception:
+            _undecline(spec.key)
+            raise
     moved: list[_Move] = []
     try:
         joined = (kept is not None and _has_content(Path(kept))) or _offered(client, spec)
-        if kept is not None:
+        if kept is not None and current:
             moved = _use_kept(spec, Path(kept), root)
         if spec.on_share is not None and not joined:
             spec.on_share(root)  # a new shared folder; one already offered is joined as it is
@@ -283,6 +294,33 @@ def share(client: SyncthingClient, spec: FolderSpec) -> Path:
         log.info("%s now uses the copy that was kept here: %s moved to %s", spec.folder_id, kept, root)
     log.info("sharing %s (%s) from %s", spec.folder_id, spec.label, root)
     return root
+
+
+def _undecline(key: str) -> None:
+    def change(st: State) -> None:
+        st.declined_folders = [k for k in st.declined_folders if k != key]
+
+    State.change(change)
+
+
+def _kept_is_current(client: SyncthingClient, spec: FolderSpec, folder: dict | None) -> bool:
+    """Whether the kept copy has everything the other machines have, as far
+    as Syncthing can tell: nothing left to receive, and a machine it's shared
+    with connected now. A copy that missed a deletion elsewhere would bring
+    the deleted files back once it syncs from the game's folder."""
+    if folder is None:
+        return False
+    try:
+        status = client.folder_status(spec.folder_id)
+        connections = client.connections().get("connections", {})
+        me = client.my_id()
+    except Exception as exc:
+        log.info("can't tell whether the copy of %s kept here is current: %s", spec.folder_id, exc)
+        return False
+    if status.get("state") != "idle" or int(status.get("needTotalItems") or 0):
+        return False
+    return any((connections.get(d.get("deviceID")) or {}).get("connected")
+               for d in folder.get("devices", []) if d.get("deviceID") and d.get("deviceID") != me)
 
 
 @dataclass(frozen=True)
@@ -312,14 +350,29 @@ def _empty_here(spec: FolderSpec, root: Path) -> bool:
     return True
 
 
+def _same_disk(a: Path, b: Path) -> bool:
+    """Whether a rename between the two can't fail half way: same filesystem."""
+    while not b.exists() and b != b.parent:
+        b = b.parent
+    try:
+        return os.stat(a).st_dev == os.stat(b).st_dev
+    except OSError:
+        return False
+
+
 def _use_kept(spec: FolderSpec, kept: Path, root: Path) -> list[_Move]:
     """Move the kept copy's synced files into the game's folder, which has
-    nothing of its own yet. On the same disk each is a rename, and Syncthing
-    finds the files it already knows from the other machines, so nothing
-    downloads again. What the game's folder has at those paths (a new MO2's
-    empty profile, say) goes to :data:`REPLACED_DIR` in the kept copy's
-    folder. Returns the moves, for :func:`_undo_moves`."""
+    nothing of its own yet. Only by renaming, on the same disk, so each move
+    happens whole or not at all and the files stay exactly as Syncthing knows
+    them; on another disk nothing moves, and the files download again. What
+    the game's folder has at those paths (a new MO2's empty profile, say)
+    goes to :data:`REPLACED_DIR` in the kept copy's folder. Returns the
+    moves, for :func:`_undo_moves`."""
     if not spec.content or not kept.is_dir() or not _empty_here(spec, root):
+        return []
+    if not _same_disk(kept, root):
+        log.info("the copy of %s kept at %s is on another disk than %s; its files download again",
+                 spec.folder_id, kept, root)
         return []
     aside = kept / REPLACED_DIR / time.strftime("%Y%m%d-%H%M%S")
     moved: list[_Move] = []
@@ -332,13 +385,13 @@ def _use_kept(spec: FolderSpec, kept: Path, root: Path) -> list[_Move]:
             if target.exists() or target.is_symlink():
                 replaced = aside / rel
                 replaced.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(target), str(replaced))
+                os.rename(target, replaced)
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(source), str(target))
+                os.rename(source, target)
             except Exception:
                 if replaced is not None:
-                    shutil.move(str(replaced), str(target))
+                    os.rename(replaced, target)
                 raise
             moved.append(_Move(source, target, replaced))
     except Exception:
@@ -351,17 +404,21 @@ def _undo_moves(moved: list[_Move]) -> None:
     """Put what :func:`_use_kept` moved back where it was."""
     for move in reversed(moved):
         try:
-            shutil.move(str(move.target), str(move.source))
+            os.rename(move.target, move.source)
             if move.replaced is not None:
-                shutil.move(str(move.replaced), str(move.target))
+                os.rename(move.replaced, move.target)
         except OSError as exc:
             log.warning("couldn't move %s back to %s: %s", move.target, move.source, exc)
 
 
 def _tidy_kept(kept: Path) -> None:
     """Remove the kept copy's folder once only Syncthing's own files are left
-    in it. What a move replaced stays, and so does the folder with it."""
+    in it. What a move replaced stays, and so does the folder with it, as do
+    old versions Syncthing archived there (.stversions)."""
     if _has_content(kept):
+        return
+    versions = kept / ".stversions"
+    if versions.is_dir() and any(files for _top, _dirs, files in os.walk(versions)):
         return
     try:
         shutil.rmtree(kept)

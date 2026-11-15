@@ -459,15 +459,23 @@ hold off` keeps the copies already here, but takes up no new games.
 
 If the game is set up on that machine later, turning its sync on (on the
 game's page, or `modsync sync share <folder>`) syncs the folder where the
-game is from then on. When the game's folder has nothing of its own yet,
-such as a new MO2 instance with no mods, the kept copy's files move there
-first. On the same disk that's a rename, and Syncthing finds the files it
-already has from the other machines, so nothing downloads again. What the
-game's folder had at those paths (a new MO2's empty profile) goes to
-`.modsync-replaced/` inside the kept copy's folder, and an emptied kept copy
-is removed. When the game's folder has content of its own (an MO2 instance
-with mods), the kept copy's files stay in `held/` until you delete them, the
-two merge, and the files arrive again from the other machines.
+game is from then on. The kept copy's files move there first, so nothing
+downloads again, when all of these hold:
+
+- the game's folder has nothing of its own yet, such as a new MO2 instance
+  with no mods;
+- the kept copy is up to date: Syncthing has nothing left to receive for it,
+  and a machine it's shared with is connected. A copy that missed a deletion
+  on another machine would bring the deleted files back;
+- the kept copy and the game's folder are on the same disk, so each move is
+  a rename that happens whole or not at all.
+
+What the game's folder had at those paths (a new MO2's empty profile) goes
+to `.modsync-replaced/` inside the kept copy's folder. An emptied kept copy
+is removed, unless Syncthing archived old versions in it (`.stversions`).
+Otherwise the kept copy's files stay in `held/` until you delete them, and
+the files arrive again from the other machines (merging with the game
+folder's own, when it has any).
 
 For a game under "Other games", installing MO2 from its page while a copy is
 kept moves the copy in right away. `modsync games <key> install` says to run
@@ -948,9 +956,9 @@ games say to install them in Heroic). If a paired machine syncs the game's
 mods, the sync row can keep a copy here for it. If a copy is kept, the page
 says which machines it's for, how much it takes and which game version the
 mods are set up for, and the sync row stops keeping it. Once the game and
-MO2 are installed, the kept copy moves into the new instance, so nothing
-downloads again (see "Keeping games not installed here"). Installing MO2 from
-the page does that by itself.
+MO2 are installed, the kept copy moves into the new instance when it's up
+to date, so nothing downloads again (see "Keeping games not installed
+here" for when it can). Installing MO2 from the page does that by itself.
 
 ```sh
 modsync games                       # the games on this machine, and their MO2 instances

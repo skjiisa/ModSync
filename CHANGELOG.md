@@ -43,10 +43,11 @@ All notable changes to ModSync are documented here. The format follows
   machine mods can be kept here from its page. On the Sync page, a kept
   copy's row opens that page. `modsync games` lists kept copies too.
 - Setting up a game whose mods are kept here uses the kept copy. When the
-  game's folder has nothing of its own yet, such as a new MO2 instance, the
-  kept copy's files move in, and nothing downloads again from the other
-  machines. Installing MO2 from a kept game's page does it right away. What
-  the move replaces (a new MO2's empty profile) is set aside, not deleted.
+  game's folder has nothing of its own yet, such as a new MO2 instance, and
+  the kept copy is up to date with a machine that's on and on the same disk,
+  its files move in, and nothing downloads again from the other machines.
+  Installing MO2 from a kept game's page does it right away. What the move
+  replaces (a new MO2's empty profile) is set aside, not deleted.
 - A machine can keep games that aren't installed on it, so machines that are
   never on at the same time still sync through it. "Keep games not
   installed here" on the Sync page (or `modsync sync hold all`) keeps a

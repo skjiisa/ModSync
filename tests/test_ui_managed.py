@@ -226,7 +226,8 @@ class ManagedGameUiTests(UiTestCase):
 
     def test_a_kept_copy_moves_into_a_new_mo2_with_no_mods(self):
         window, page = self.open_page(overview(mods="kept", machines=DECK))
-        self.assertIn("Press to use it with this Mod Organizer 2. It moves in", page.mods_row.description)
+        self.assertIn("Press to use it with this Mod Organizer 2. It moves in if it's up to date",
+                      page.mods_row.description)
         with patch.object(window.service, "share_game_folder", return_value=INSTANCE) as share:
             page.mods_row.click()
             self.settle(4)

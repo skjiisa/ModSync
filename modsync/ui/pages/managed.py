@@ -296,7 +296,7 @@ class ManagedGamePage(Page):
         finishing = has and ov.needs_setup
         self.install_tile.setText("Finish setting up Mod Organizer 2" if finishing else "Install Mod Organizer 2")
         self.install_tile.set_description(
-            f"Then it uses your mods from {machines_text(ov.machines)} kept here: nothing downloads again."
+            f"Then it uses your mods from {machines_text(ov.machines)} kept here, without downloading them again."
             if ov.mods == "kept" and not finishing else mg.install_note())
         self.install_tile.setVisible(ready and (ov.instance is None or finishing) and not self._working)
         through_store = game is not None and hook is not None and hook.enabled
@@ -456,7 +456,8 @@ class ManagedGamePage(Page):
                                     "again from your other machines.")
             if has:
                 return word, tone, (f"A copy is kept here for {machines}. Press to use it with this Mod "
-                                    "Organizer 2. It moves in, so nothing downloads again.")
+                                    "Organizer 2. It moves in if it's up to date with a machine that's on; "
+                                    "otherwise the mods download again.")
             return word, tone, (f"Kept here for {machines}" + (f" ({size})" if size else "")
                                 + ", so they sync through this machine. Press to stop keeping it.")
         if ov.mods == "on":

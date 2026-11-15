@@ -847,6 +847,8 @@ class KeptCopies(GameFolderBase):
         """A game whose folder syncs mods/ and profiles/, and fills by itself
         only while it has no mods, like an MO2 instance (mo2games)."""
         self.spec = dataclasses.replace(self.spec, content=("mods", "profiles", "record.json"), accepts=accepts)
+        self.service.pair(PairingCode("DESKTOP", "", "Desktop"))
+        self.st.connected = {"DESKTOP"}  # the copy is current: a machine it's shared with is here
         self.service.hold_game_folder("test-mods")
         for rel, text in (("mods/A Mod/plugin.esp", "esp"), ("profiles/Default/modlist.txt", "+A Mod\n"),
                           ("record.json", "{}")):
@@ -903,6 +905,88 @@ class KeptCopies(GameFolderBase):
         (self.game_root / "profiles/mine.txt").write_text("mine")
         self.service.share_game_folder("test-mods")
         self.assertEqual((self.kept / "mods/A Mod/plugin.esp").read_text(), "esp")  # nothing moved
+
+    def test_a_copy_that_may_be_behind_isnt_moved_in(self):
+        """It may have missed a deletion on another machine, and would bring it back."""
+        self.use_mods_spec()
+        self.st.connected = set()
+        self.service.share_game_folder("test-mods")
+        self.assertEqual((self.kept / "mods/A Mod/plugin.esp").read_text(), "esp")
+        self.assertFalse((self.game_root / "mods").exists())
+
+    def test_a_copy_is_current_only_with_nothing_to_receive_and_a_machine_connected(self):
+        client = self.st.client().__enter__()
+        folder = {"devices": [{"deviceID": "ME"}, {"deviceID": "DESKTOP"}]}
+        self.st.connected = {"DESKTOP"}
+        self.assertTrue(folders._kept_is_current(client, self.spec, folder))
+        self.assertFalse(folders._kept_is_current(client, self.spec, None))
+        with patch.object(type(client), "folder_status", lambda *_: {"state": "idle", "needTotalItems": 3}):
+            self.assertFalse(folders._kept_is_current(client, self.spec, folder))
+        with patch.object(type(client), "folder_status", lambda *_: {"state": "syncing", "needTotalItems": 0}):
+            self.assertFalse(folders._kept_is_current(client, self.spec, folder))
+        with patch.object(type(client), "folder_status", side_effect=RuntimeError("no answer")):
+            self.assertFalse(folders._kept_is_current(client, self.spec, folder))
+        self.st.connected = {"ME"}  # only this machine: nobody to be current with
+        self.assertFalse(folders._kept_is_current(client, self.spec, folder))
+
+    def test_on_another_disk_nothing_moves(self):
+        """A move there is a copy that can stop half way; the files download instead."""
+        self.use_mods_spec()
+        with patch.object(folders, "_same_disk", return_value=False):
+            self.service.share_game_folder("test-mods")
+        self.assertEqual((self.kept / "mods/A Mod/plugin.esp").read_text(), "esp")
+        self.assertFalse((self.game_root / "mods").exists())
+
+    def test_a_rename_that_fails_half_way_puts_everything_back(self):
+        self.use_mods_spec()
+        (self.game_root / "profiles/Default").mkdir(parents=True)
+        (self.game_root / "profiles/Default/modlist.txt").write_text("# new\n")
+        real = os.rename
+
+        def rename(src, dst):
+            if Path(src) == self.kept / "profiles":
+                raise OSError(28, "No space left on device")
+            return real(src, dst)
+
+        with patch.object(folders.os, "rename", side_effect=rename), \
+                self.assertRaisesRegex(OSError, "No space"):
+            self.service.share_game_folder("test-mods")
+        self.assertEqual((self.kept / "mods/A Mod/plugin.esp").read_text(), "esp")
+        self.assertEqual((self.kept / "profiles/Default/modlist.txt").read_text(), "+A Mod\n")
+        self.assertEqual((self.game_root / "profiles/Default/modlist.txt").read_text(), "# new\n")
+        self.assertFalse((self.game_root / "mods").exists())
+        self.assertEqual(State.load().held_folders, {"test-mods": str(self.kept)})
+        self.assertNotIn("test-mods", State.load().declined_folders)
+
+    def test_old_versions_syncthing_kept_stay_with_the_copy(self):
+        self.use_mods_spec()
+        (self.kept / ".stversions/mods/Gone Mod").mkdir(parents=True)
+        (self.kept / ".stversions/mods/Gone Mod/plugin~20261101.esp").write_text("old")
+        self.service.share_game_folder("test-mods")
+        self.assertEqual((self.kept / ".stversions/mods/Gone Mod/plugin~20261101.esp").read_text(), "old")
+
+    def test_offers_of_it_are_left_alone_while_the_copy_moves_in(self):
+        """Another process taking up the offer at the game's folder meanwhile
+        would sync it there before the files have moved."""
+        self.use_mods_spec()
+        seen = []
+        real = folders._use_kept
+
+        def use_kept(spec, kept, root):
+            seen.append(spec.key in State.load().declined_folders)
+            return real(spec, kept, root)
+
+        with patch.object(folders, "_use_kept", side_effect=use_kept):
+            self.service.share_game_folder("test-mods")
+        self.assertEqual(seen, [True])
+        self.assertNotIn("test-mods", State.load().declined_folders)
+
+    def test_a_release_syncthing_refuses_leaves_the_folder_offerable(self):
+        self.use_mods_spec()
+        self.st.refuse_delete = True
+        with self.assertRaisesRegex(RuntimeError, "didn't let go"):
+            self.service.share_game_folder("test-mods")
+        self.assertNotIn("test-mods", State.load().declined_folders)
 
     def test_sharing_after_an_empty_kept_copy_starts_the_folder(self):
         self.spec = dataclasses.replace(self.spec, on_share=unittest.mock.Mock())
