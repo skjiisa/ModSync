@@ -36,11 +36,18 @@ note_ttl=@@NOTE_TTL@@     # seconds
 
 say() { printf 'ModSync: %s\n' "$*" >&2; }  # Heroic keeps it in the game's log
 
-# A Windows path (Z:\home\…) as the Linux one it stands for.
+# A Windows path (Z:\home\…) as the Linux one it stands for. MO2's settings
+# double some backslashes, which leaves doubled slashes here.
 unix_path() {
     local p="${1//\\//}"
     [[ "${p,,}" == z:/* ]] && p="${p:2}"
+    while [[ "$p" == *//* ]]; do p="${p//\/\//\/}"; done
     printf '%s' "$p"
+}
+
+# A path with its links followed, so /home/x and /var/home/x (SteamOS) compare equal.
+real_path() {
+    realpath -m -- "$1" 2>/dev/null || printf '%s' "$1"
 }
 
 [[ "${1-}" == "@@MARKER@@" ]] && shift 2
@@ -142,13 +149,15 @@ else
         esac
     done < "$instance/ModOrganizer.ini"
     chosen="" fallback=""
+    real_game_dir=$(real_path "$game_dir")
     for n in "${!binaries[@]}"; do  # in MO2's order
         b=$(unix_path "${binaries[n]}")
         [[ -n "${titles[n]-}" ]] || continue
         if [[ -n "$game_exe" ]]; then
             [[ "${b,,}" == */"${game_exe,,}" ]] || continue
         else  # one that is still there: a script extender taken out again leaves its entry
-            [[ "${b,,}" == "${game_dir,,}"/* && -f "$b" ]] || continue
+            real=$(real_path "$b")
+            [[ "${real,,}" == "${real_game_dir,,}"/* && -f "$b" ]] || continue
         fi
         [[ -z "$fallback" ]] && fallback="${titles[n]}"
         if [[ -z "$chosen" && -n "$prefer" && " ${arguments[n]-} " == *" $prefer "* ]]; then

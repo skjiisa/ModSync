@@ -48,6 +48,10 @@ log = logging.getLogger(__name__)
 
 OnOutput = Callable[[str], None]
 
+# What MO2 calls each store in ModOrganizer.ini (game_edition), as MO2-LINT writes it.
+EDITIONS = {"steam": "steam", "gog": "gog", "epic games": "epic", "epic": "epic"}
+assert set(EDITIONS.values()) == set(STORES)
+
 # MO2-LINT's own prefix steps for every game; the game's own (Game.tricks) follow.
 BASE_TRICKS = ("win10", "arial", "fontsmooth=rgb")
 
@@ -250,8 +254,8 @@ class ManagedGame:
         if instance is None:
             return None
         general = ini.read_ini(instance / "ModOrganizer.ini").get("General", {})
-        edition = (ini.unwrap_bytearray(ini.get_ci(general, "game_edition")) or "").lower()
-        return edition if edition in STORES else None
+        edition = (ini.unwrap_bytearray(ini.get_ci(general, "game_edition")) or "").strip().lower()
+        return EDITIONS.get(edition)
 
     def where_to_get(self) -> str:
         """Where the game comes from, for a sentence about it missing."""
@@ -319,10 +323,18 @@ class ManagedGame:
 
     # --- launching ----------------------------------------------------------------
 
+    def program(self, game_dir: Path, store: str) -> Path:
+        """The game's own program in ``game_dir``. MO2-LINT names Baldur's
+        Gate 3's without its extension (``bin/bg3``, the Linux build's name)."""
+        exe = game_dir / self.game.exe_for(store)
+        if not exe.suffix and not exe.is_file() and exe.with_name(exe.name + ".exe").is_file():
+            return exe.with_name(exe.name + ".exe")
+        return exe
+
     def direct_args(self, game_dir: Path, store: str) -> list[str]:
         """MO2 running the game's own program, for an MO2 that hasn't listed
         its programs yet."""
-        exe = game_dir / self.game.exe_for(store)
+        exe = self.program(game_dir, store)
         arguments = ["-a", self.game.direct_arguments] if self.game.direct_arguments else []
         return ["run", *arguments, "-c", "Z:" + str(exe.parent), "Z:" + str(exe)]
 
@@ -344,7 +356,7 @@ class ManagedGame:
             found.sort(key=lambda e: self.game.play_argument not in e.get("arguments", ""))
         if found:
             return ["run", "-e", found[0]["title"]], found[0]["title"]
-        exe = game_dir / self.game.exe_for(store)
+        exe = self.program(game_dir, store)
         if not exe.is_file():
             raise self.Error(f"{exe} is missing. Check the game's files in "
                              f"{'Steam' if store == 'steam' else 'Heroic'}.")
@@ -570,7 +582,7 @@ class ManagedGame:
         exe = self.game.exe_for(game.store)
         if not exe or "launcher" in Path(exe).name.lower():
             return None
-        return game.install_path / exe
+        return self.program(game.install_path, game.store)
 
     def game_version(self, game=None) -> tuple[str, str] | None:
         """The game here as (patch, build): ``("2.5", "3.0.88.46235")``."""

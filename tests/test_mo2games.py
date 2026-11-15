@@ -185,6 +185,24 @@ def test_a_game_in_two_stores_is_the_one_its_instance_was_set_up_for(machine):
     assert witcher.steam_instance() is None  # Steam's launches and links aren't this instance's
 
 
+@pytest.mark.parametrize("edition, store", [("Steam", "steam"), ("GOG", "gog"), ("Epic Games", "epic")])
+def test_the_store_is_read_the_way_mo2lint_writes_it(machine, edition, store):
+    """An Epic instance must never be handed to Steam's launch, in Steam's prefix."""
+    cyberpunk = mo2games.get("cyberpunk2077")
+    steam_dir = add_steam_game(machine.root, 1091500, "Cyberpunk 2077")
+    in_steam = steam_store.find(cyberpunk.game)
+    wine = library.WineVersion(Path("/p/proton"), "p", "proton")
+    others = [library.HeroicGame("1423049311", steam_dir, "2.5", "1", False, machine.heroic, wine=wine),
+              library.HeroicGame("77f2b98e2cef40c8a7437518bf420e47", steam_dir, "2.5", "", False, machine.heroic,
+                                 wine=wine, runner="legendary")]
+    instance = make_instance(machine.tmp, "Cyberpunk 2077", f"game_edition={edition}\n")
+
+    with patch.object(cyberpunk, "installs", return_value=[in_steam, *others]), \
+            patch.object(cyberpunk, "find_instance", return_value=instance):
+        assert cyberpunk.find_game().store == store
+        assert (cyberpunk.steam_instance() == instance) is (store == "steam")
+
+
 def test_each_game_keeps_its_own_settings_and_folder(machine):
     game = starfield()
     instance = game.use_instance(make_instance(machine.tmp, "Starfield"))
@@ -245,6 +263,19 @@ def test_before_mo2_lists_its_programs_the_games_own_runs_through_mo2(machine):
     exe.unlink()
     with pytest.raises(mo2games.GameError, match="is missing. Check the game's files in Steam"):
         game.build_plan(instance, game.find_game(), play=True)
+
+
+def test_a_program_mo2lint_names_without_its_extension_is_still_found(machine):
+    """Baldur's Gate 3: ``bin/bg3`` in MO2-LINT's list, ``bin/bg3.exe`` on disk."""
+    game = mo2games.get("baldursgate3")
+    folder = add_steam_game(machine.root, 1086940, "Baldurs Gate 3")
+    (folder / "bin").mkdir()
+    (folder / "bin/bg3.exe").write_bytes(b"MZ")
+    instance = make_instance(machine.tmp, "Baldur's Gate 3")
+
+    plan = game.build_plan(instance, game.find_game(), play=True)
+
+    assert plan.command[-2:] == [f"Z:{folder}/bin", f"Z:{folder}/bin/bg3.exe"]
 
 
 # --- Steam ---------------------------------------------------------------------------
@@ -540,6 +571,39 @@ def test_heroics_play_hook_plays_the_first_program_from_the_games_folder(machine
     assert call["argv"] == [f"{instance}/ModOrganizer.exe", "run", "-e", "The Witcher 3"]
     assert call["overrides"] == "dxgi=n"  # as Heroic set it
     # ModSync's own Play picks the same one.
+    assert game.build_plan(instance, found, play=True).command[-3:] == ["run", "-e", "The Witcher 3"]
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash required")
+@pytest.mark.parametrize("how", ["doubled backslashes", "home through a link"])
+def test_heroics_play_hook_knows_the_games_folder_however_mo2_spells_it(machine, how):
+    """MO2-LINT writes paths with doubled backslashes, and on SteamOS /home
+    is a link to /var/home, so Heroic and MO2 can each spell the folder
+    their own way. ModSync's own Play follows links too."""
+    game = mo2games.get("witcher3")
+    found = game.find_game()
+    (machine.witcher / "bin/x64_dx12").mkdir(parents=True)
+    (machine.witcher / "bin/x64_dx12/witcher3.exe").write_bytes(b"MZ")
+    spelled = machine.witcher
+    if how == "home through a link":
+        (machine.tmp / "home").symlink_to(machine.tmp / "Games")
+        spelled = machine.tmp / "home" / machine.witcher.name
+    binary = f"Z:{spelled}/bin/x64_dx12/witcher3.exe"
+    if how == "doubled backslashes":
+        binary = binary.replace("/", "\\\\")
+    listed = f"\n[customExecutables]\nsize=1\n1\\arguments=\n1\\binary={binary}\n1\\title=The Witcher 3\n"
+    instance = make_instance(machine.tmp, "The Witcher 3: Wild Hunt", listed)
+    script = executable(machine.tmp / "play.sh", heroic_store.hook_script(game, found, instance))
+    umu = executable(machine.tmp / "bin/umu-run", RECORDER)
+    record = machine.tmp / "record.jsonl"
+
+    result = subprocess.run(
+        ["bash", str(script), heroic_hook.MARKER, WITCHER_GOG, str(umu), str(machine.witcher / "REDprelauncher.exe")],
+        capture_output=True, text=True, timeout=30, env={"PATH": "/usr/bin:/bin", "RECORD": str(record)})
+
+    assert result.returncode == 0, result.stderr
+    (call,) = [json.loads(line) for line in record.read_text().splitlines()]
+    assert call["argv"] == [f"{instance}/ModOrganizer.exe", "run", "-e", "The Witcher 3"]
     assert game.build_plan(instance, found, play=True).command[-3:] == ["run", "-e", "The Witcher 3"]
 
 

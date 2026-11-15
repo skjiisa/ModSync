@@ -1015,6 +1015,13 @@ yet installed MO2 for a Steam game other than Skyrim through ModSync, played
 an Epic game, or tried any of this on a Steam Deck or Steam Frame. The ARM64
 fix for MO2 (`modsync mo2 usvfs`) only knows Skyrim's instance so far.
 
+One known gap is Epic's login arguments. Heroic passes an Epic game its login
+tokens as arguments to the game's program, and Heroic's Play hook runs MO2 in
+place of that program, so they don't reach the game. A game that checks them
+may refuse to start through the hook. MO2-LINT's "Launch Mod Organizer"
+option in Heroic saves those arguments into MO2 first, so opening MO2 that
+way and playing from it is the way around.
+
 ## Cyberpunk 2077
 
 Cyberpunk 2077 is one of the games above, with a few things of its own. Its
