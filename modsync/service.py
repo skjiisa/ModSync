@@ -330,7 +330,7 @@ class ModSyncService:
         """Follow games that moved and keep their .stignore current: at most
         once a minute, since everything Syncthing-bound comes through here."""
         now = time.monotonic()
-        if not self.state.game_folders:
+        if not (self.state.game_folders or self.state.held_folders):
             return
         if not force and self._folders_refreshed_at is not None and now - self._folders_refreshed_at < self._FOLDERS_REFRESH_S:
             return
@@ -494,7 +494,7 @@ class ModSyncService:
         keep = self.reload_state()
         self.state = State(dfu_path=keep.dfu_path, game_folders=keep.game_folders,
                            declined_folders=keep.declined_folders, paired=keep.paired,
-                           home_game=keep.home_game)
+                           home_game=keep.home_game, held_folders=keep.held_folders, hold_all=keep.hold_all)
         self.state.save()
 
     # --- vaults ---
@@ -1101,6 +1101,32 @@ class ModSyncService:
                 log.warning("could not tidy %s: %s", spec.folder_id, exc)
         return root
 
+    def hold_game_folder(self, key: str) -> Path:
+        """Keep a copy of one of a game's folders here for the other machines,
+        the game not being set up here."""
+        spec = folders.spec_for(key)
+        if spec is None:
+            raise RuntimeError(f"ModSync has no folder called {key!r}")
+        self.ensure_running()
+        with self.manager.client() as client:
+            root = folders.hold(client, spec)
+        self.reload_state()
+        return root
+
+    def hold_all_games(self, on: bool) -> list[str]:
+        """Keep a copy of every game's folder paired machines offer, for games
+        not set up here, now and later (or stop taking new ones up). Returns
+        the keys taken up now."""
+        if not on:
+            folders.hold_all(None, False)
+            self.reload_state()
+            return []
+        self.ensure_running()
+        with self.manager.client() as client:
+            taken = folders.hold_all(client, True)
+        self.reload_state()
+        return taken
+
     def use_dfu_install(self, path: Path | str):
         """Use a Daggerfall Unity installed by hand (see ``dfu.adopt``). Mods
         sync, if on, moves to it now rather than at the next refresh, so it's
@@ -1289,9 +1315,10 @@ class ModSyncService:
 
     def _leave_vault(self, forget_devices: bool) -> None:
         folder_id = self.reload_state().folder_id
-        if forget_devices and self.state.game_folders:
+        games = [*self.state.game_folders, *self.state.held_folders]
+        if forget_devices and games:
             # Pairing is machine-wide: the games' folders still sync with them.
-            log.info("keeping the paired machines for %s", ", ".join(self.state.game_folders))
+            log.info("keeping the paired machines for %s", ", ".join(games))
             forget_devices = False
         log.info("leaving vault %s (forget devices: %s)", folder_id, forget_devices)
         try:
@@ -1329,7 +1356,7 @@ class ModSyncService:
         if self.state.syncing:
             return PairingCode(self.device_id(), self.state.folder_id, self.state.instance_label,
                                self._folder_sequence())
-        if self.state.game_folders:
+        if self.state.game_folders or self.state.held_folders:
             return PairingCode(self.device_id(), "", "ModSync")
         return None
 
@@ -1710,7 +1737,7 @@ class ModSyncService:
                 need_items=need,
                 copy=copy,
                 conflicts=self._conflict_count() if self.state.folder_id else 0,
-                game_folders=folders.status(client) if self.state.game_folders else [],
+                game_folders=folders.status(client) if self.state.game_folders or self.state.held_folders else [],
             )
 
     # --- internal ---

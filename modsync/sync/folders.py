@@ -10,6 +10,14 @@ set up here (its spec finds a local path); until then it waits, and Syncthing
 keeps offering it. A folder stopped here is remembered as declined, so offers
 of it are left alone until it is started again.
 
+A machine can also keep a copy of a folder whose game isn't set up there
+(``hold``, or every one offered with ``State.hold_all``). The copy lives under
+ModSync's data folder, is receive-only, and is never used here: the game's
+own hooks (``on_share``, ``tidy``, ``in_use``, ``accepts``, ``on_stop``) leave
+it alone. It's there for the other machines, which sync through it, so a
+machine that is often on passes changes between two that rarely are at the
+same time. Syncthing passes on what a receive-only folder has received.
+
 Skyrim's vault stays as it was (``ModSyncService``): a random folder id that
 the pairing code carries, a copy that starts receive-only, and MO2-aware
 conflicts. Nothing here touches it.
@@ -33,6 +41,7 @@ if TYPE_CHECKING:  # `modsync doctor` reads FOLDER_PREFIX without httpx
 log = logging.getLogger(__name__)
 
 FOLDER_PREFIX = "modsync-"
+HELD_DIR = "held"  # under ModSync's data folder: the copies kept for other machines
 
 
 @dataclass(frozen=True)
@@ -84,6 +93,19 @@ class FolderStatus:
     need_items: int = 0
     stopping: bool = False  # stopped here; Syncthing lets go of it once it answers
     conflicts: int = 0  # conflict copies waiting for a choice
+    held: bool = False  # a copy kept for other machines; the game isn't set up here
+
+
+def held_root(spec: FolderSpec) -> Path:
+    """Where a copy of ``spec`` kept for other machines goes on this machine."""
+    from modsync import config
+
+    return config.data_dir() / HELD_DIR / spec.folder_id
+
+
+def _synced(st: State) -> dict[str, str]:
+    """Every game folder in Syncthing here, used or kept: key to path."""
+    return {**st.held_folders, **st.game_folders}
 
 
 def device_entries(ids) -> list[dict]:
@@ -154,10 +176,12 @@ def _relocate(client: SyncthingClient, spec: FolderSpec, folder: dict, root: Pat
     log.info("%s moved from %s to %s", spec.folder_id, folder.get("path"), root)
 
 
-def _put(client: SyncthingClient, spec: FolderSpec, root: Path, device_ids: list[str]) -> None:
+def _put(client: SyncthingClient, spec: FolderSpec, root: Path, device_ids: list[str], *,
+         receive_only: bool = False) -> None:
     """Create the folder, or add machines to it as it is: its other settings
     (paused, versioning, ...) and the machines it already has stay. One that
-    is configured somewhere else here is moved, never repointed."""
+    is configured somewhere else here is moved, never repointed. A new one is
+    ``receive_only`` from its first PUT, so nothing found here is announced."""
     try:
         folder = client.get_folder(spec.folder_id)
     except Exception:
@@ -168,6 +192,8 @@ def _put(client: SyncthingClient, spec: FolderSpec, root: Path, device_ids: list
         folder["id"] = spec.folder_id
         folder["label"] = spec.label
         folder["path"] = str(root)
+        if receive_only:
+            folder["type"] = "receiveonly"
         folder["devices"] = device_entries([client.my_id(), *device_ids])
         client.put_folder(folder)
         return
@@ -181,9 +207,12 @@ def _put(client: SyncthingClient, spec: FolderSpec, root: Path, device_ids: list
     client.put_folder(folder)
 
 
-def _remember(key: str, path: Path) -> None:
+def _remember(key: str, path: Path, *, held: bool = False) -> None:
     def change(st: State) -> None:
-        st.game_folders = {**st.game_folders, key: str(path)}
+        used = {k: v for k, v in st.game_folders.items() if k != key}
+        kept = {k: v for k, v in st.held_folders.items() if k != key}
+        (kept if held else used)[key] = str(path)
+        st.game_folders, st.held_folders = used, kept
         st.declined_folders = [k for k in st.declined_folders if k != key]
 
     State.change(change)
@@ -192,6 +221,7 @@ def _remember(key: str, path: Path) -> None:
 def _forget(key: str) -> None:
     def change(st: State) -> None:
         st.game_folders = {k: v for k, v in st.game_folders.items() if k != key}
+        st.held_folders = {k: v for k, v in st.held_folders.items() if k != key}
 
     State.change(change)
 
@@ -206,20 +236,100 @@ def _decline(key: str) -> None:
 def stopping(key: str, st: State | None = None) -> bool:
     """Stopped here, but not yet removed from Syncthing (it wasn't answering)."""
     st = st or State.load()
-    return key in st.game_folders and key in st.declined_folders
+    return key in _synced(st) and key in st.declined_folders
 
 
 def share(client: SyncthingClient, spec: FolderSpec) -> Path:
-    """Start syncing ``spec`` from this machine, with every paired machine."""
+    """Start syncing ``spec`` from this machine, with every paired machine.
+    A copy kept here for other machines gives way: the folder syncs where the
+    game is from now on, and the kept copy's files stay where they were."""
     root = spec.path()
     if root is None:
         raise RuntimeError(f"{spec.label}: set the game up on this machine first.")
-    if spec.on_share is not None and not _offered(client, spec):
-        spec.on_share(root)  # a new shared folder; one already offered is joined as it is
-    _put(client, spec, root, peers(client))
+    kept = State.load().held_folders.get(spec.key)
+    before = None
+    if kept is not None:
+        try:
+            before = client.get_folder(spec.folder_id)
+        except Exception:
+            before = None  # not in Syncthing (removed by hand): nothing to put back
+        _release(client, spec)
+    try:
+        joined = (kept is not None and _has_content(Path(kept))) or _offered(client, spec)
+        if spec.on_share is not None and not joined:
+            spec.on_share(root)  # a new shared folder; one already offered is joined as it is
+        _put(client, spec, root, peers(client))
+    except Exception:
+        if kept is not None:
+            _restore_kept(client, spec, before, Path(kept))
+        raise
     _remember(spec.key, root)
     log.info("sharing %s (%s) from %s", spec.folder_id, spec.label, root)
     return root
+
+
+def hold(client: SyncthingClient, spec: FolderSpec) -> Path:
+    """Keep a copy of ``spec`` here for the other machines, the game not
+    being set up here. Shared with every paired machine; receive-only."""
+    st = State.load()
+    if spec.key in st.game_folders and not stopping(spec.key, st):
+        raise RuntimeError(f"{spec.label} already syncs here, where the game is.")
+    if spec.path() is not None:
+        raise RuntimeError(f"{spec.label}: the game is set up here, so its folder syncs where the game is "
+                           f"('modsync sync share {spec.key}').")
+    root = held_root(spec)
+    _put(client, spec, root, peers(client), receive_only=True)
+    _remember(spec.key, root, held=True)
+    log.info("keeping a copy of %s (%s) at %s", spec.folder_id, spec.label, root)
+    return root
+
+
+def hold_all(client: SyncthingClient | None, on: bool) -> list[str]:
+    """Keep a copy of every game's folder paired machines offer (games not
+    set up here), now and later; or stop taking new ones up. Copies already
+    kept stay either way. Turned on, it takes up again the folders stopped
+    here whose game isn't set up here: "every" includes those. Returns the
+    keys taken up now."""
+    if not on:
+        State.update(hold_all=False)
+        return []
+    elsewhere = {s.key for s in specs() if s.path() is None}
+
+    def change(st: State) -> None:
+        st.hold_all = True
+        st.declined_folders = [k for k in st.declined_folders if k not in elsewhere or stopping(k, st)]
+
+    State.change(change)
+    return take_offers(client)
+
+
+def _release(client: SyncthingClient, spec: FolderSpec) -> None:
+    """Take the copy kept here out of Syncthing and the state. Its files stay."""
+    if not _remove(client, spec):
+        raise RuntimeError(f"Syncthing didn't let go of the copy of {spec.label} kept here. Try again.")
+    _forget(spec.key)
+    log.info("the copy of %s kept here gives way", spec.folder_id)
+
+
+def _restore_kept(client: SyncthingClient, spec: FolderSpec, folder: dict | None, root: Path) -> None:
+    """Sharing failed after the kept copy gave way: keep it as it was, so the
+    other machines still sync through it."""
+    try:
+        if folder is not None:
+            client.put_folder(folder)
+        _remember(spec.key, root, held=True)
+        log.info("sharing %s failed; the copy kept here stays", spec.folder_id)
+    except Exception as exc:
+        log.warning("sharing %s failed, and the copy kept at %s couldn't be put back: %s",
+                    spec.folder_id, root, exc)
+
+
+def _has_content(root: Path) -> bool:
+    """Anything in the folder besides what Syncthing and ModSync put there."""
+    try:
+        return any(p.name not in {".stignore", ".stfolder", ".stversions"} for p in root.iterdir())
+    except OSError:
+        return False
 
 
 def _offered(client: SyncthingClient, spec: FolderSpec) -> bool:
@@ -279,9 +389,24 @@ def stop(client: SyncthingClient | None, spec: FolderSpec) -> bool:
 
 
 def _finish_stop(spec: FolderSpec) -> None:
-    """Syncthing has let go of it: forget it here, and let the game tidy up."""
-    _forget(spec.key)
-    if spec.on_stop is not None:
+    """Syncthing has let go of it: forget it here, and let the game tidy up
+    (only after a folder the game used, never a kept copy). Nothing happens
+    if it was taken up again meanwhile (shared or kept: no longer declined),
+    say by the app while the background service retried an earlier stop."""
+    used = []
+
+    def change(st: State) -> None:
+        if spec.key not in st.declined_folders:
+            return
+        used.append(spec.key in st.game_folders)
+        st.game_folders = {k: v for k, v in st.game_folders.items() if k != spec.key}
+        st.held_folders = {k: v for k, v in st.held_folders.items() if k != spec.key}
+
+    State.change(change)
+    if not used:
+        log.info("%s was taken up again before its stop finished", spec.folder_id)
+        return
+    if spec.on_stop is not None and used[0]:
         try:
             spec.on_stop()
         except Exception as exc:
@@ -290,7 +415,7 @@ def _finish_stop(spec: FolderSpec) -> None:
 
 
 def share_with(client: SyncthingClient, device_id: str) -> list[str]:
-    """Add a newly paired machine to every game folder synced here."""
+    """Add a newly paired machine to every game folder synced or kept here."""
     return _share_with_all(client, [device_id])
 
 
@@ -305,7 +430,7 @@ def share_with_peers(client: SyncthingClient) -> list[str]:
 def _share_with_all(client: SyncthingClient, device_ids: list[str]) -> list[str]:
     added = []
     st = State.load()
-    for key in st.game_folders:
+    for key in _synced(st):
         spec = spec_for(key)
         if spec is None or stopping(key, st):
             continue
@@ -324,7 +449,8 @@ def _share_with_all(client: SyncthingClient, device_ids: list[str]) -> list[str]
 
 def take_offers(client: SyncthingClient) -> list[str]:
     """Sync the game folders paired machines offer, where the game is set up
-    here and the folder wasn't stopped here. Returns their keys."""
+    here and the folder wasn't stopped here; with ``hold_all``, keep a copy
+    of the others. Returns their keys."""
     if not specs():
         return []
     try:
@@ -338,20 +464,37 @@ def take_offers(client: SyncthingClient) -> list[str]:
     taken = []
     for folder_id, info in pending.items():
         spec = _spec_for_id(folder_id)
-        if spec is None or spec.key in st.declined_folders or spec.key in st.game_folders:
+        if spec is None or spec.key in st.declined_folders or spec.key in _synced(st):
             continue
         offered_by = [d for d in ((info or {}).get("offeredBy") or {}) if d in paired]
-        root = spec.path()
-        if not offered_by or root is None:
+        if not offered_by:
             continue
-        if spec.accepts is not None and not spec.accepts(root):
+        root = spec.path()
+        held = root is None
+        if held:
+            if not st.hold_all:
+                continue
+            root = held_root(spec)
+        elif spec.accepts is not None and not spec.accepts(root):
             log.info("%s is offered, but %s has content of its own; waiting for 'share'", folder_id, root)
             continue
-        _put(client, spec, root, sorted(share | set(offered_by)))
-        _remember(spec.key, root)
+        _put(client, spec, root, sorted(share | set(offered_by)), receive_only=held)
+        _remember(spec.key, root, held=held)
         taken.append(spec.key)
-        log.info("took up %s from %s at %s", folder_id, ", ".join(d[:7] for d in offered_by), root)
+        log.info("%s %s from %s at %s", "keeping a copy of" if held else "took up", folder_id,
+                 ", ".join(d[:7] for d in offered_by), root)
     return taken
+
+
+def _retry_stop(client: SyncthingClient, spec: FolderSpec) -> None:
+    """Finish a stop Syncthing refused before. Checked again and removed
+    under the state's lock, so a 'share' or 'hold' in another process can't
+    take the folder up again between the check and the removal, and have its
+    new folder removed instead."""
+    with State.held() as st:
+        removed = stopping(spec.key, st) and _remove(client, spec)
+    if removed:
+        _finish_stop(spec)
 
 
 def refresh(client: SyncthingClient) -> None:
@@ -359,13 +502,23 @@ def refresh(client: SyncthingClient) -> None:
     synced folder's .stignore current with this version of ModSync, and
     follow a game that moved on this machine (say, reinstalled elsewhere)."""
     st = State.load()
+    for key, recorded in st.held_folders.items():
+        spec = spec_for(key)
+        if spec is None:
+            continue
+        if stopping(key, st):
+            _retry_stop(client, spec)
+            continue
+        try:
+            write_stignore(spec, Path(recorded))
+        except OSError:
+            pass
     for key, recorded in st.game_folders.items():
         spec = spec_for(key)
         if spec is None:
             continue
         if stopping(key, st):
-            if _remove(client, spec):
-                _finish_stop(spec)
+            _retry_stop(client, spec)
             continue
         root = spec.path()
         if root is None:
@@ -391,17 +544,21 @@ def refresh(client: SyncthingClient) -> None:
 def status(client: SyncthingClient) -> list[FolderStatus]:
     out = []
     st = State.load()
-    for key, path in st.game_folders.items():
+    for key, path in [*st.game_folders.items(), *st.held_folders.items()]:
         spec = spec_for(key)
         if spec is None:
             continue
-        if spec.tidy is not None and not stopping(key, st):
-            try:
-                spec.tidy(Path(path))
-            except Exception as exc:  # a status read must never fail over it
-                log.warning("could not tidy %s: %s", spec.folder_id, exc)
-        fs = FolderStatus(spec, path, stopping=stopping(key, st),
-                          conflicts=len(conflicts.find(path, spec.content)) if spec.content else 0)
+        held = key in st.held_folders
+        if held:  # nothing here uses it: no tidying, and the machines that play settle conflicts
+            fs = FolderStatus(spec, path, stopping=stopping(key, st), held=True)
+        else:
+            if spec.tidy is not None and not stopping(key, st):
+                try:
+                    spec.tidy(Path(path))
+                except Exception as exc:  # a status read must never fail over it
+                    log.warning("could not tidy %s: %s", spec.folder_id, exc)
+            fs = FolderStatus(spec, path, stopping=stopping(key, st),
+                              conflicts=len(conflicts.find(path, spec.content)) if spec.content else 0)
         try:
             folder = client.folder_status(spec.folder_id)
             fs.state = folder.get("state")
