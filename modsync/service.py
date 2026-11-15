@@ -1148,21 +1148,19 @@ class ModSyncService:
                     log.warning("mods sync didn't move to %s yet: %s", path, exc)
                 self.reload_state()
 
-    def use_cyberpunk_instance(self, path: Path | str) -> list[str]:
-        """Use another MO2 instance for Cyberpunk (see ``cyberpunk.use_instance``).
-        Mods sync, if on, moves to it now rather than at the next refresh, so it's
-        in place before the game can start from there; with the game running it
-        couldn't, so that's refused. Heroic's Play hook follows. Returns what the
-        user should know."""
-        from modsync import cyberpunk
-
-        key = cyberpunk.MODS_FOLDER.key
+    def use_game_instance(self, game, path: Path | str) -> list[str]:
+        """Use another MO2 instance for a game from the table (see
+        ``mo2games.ManagedGame.use_instance``). Mods sync, if on, moves to it
+        now rather than at the next refresh, so it's in place before the game
+        can start from there; with the game running it couldn't, so that's
+        refused. The store's Play hook follows. Returns what the user should know."""
+        key = game.folder.key
         syncing = key in State.load().game_folders
-        if syncing and cyberpunk.game_running():
-            raise RuntimeError("Close Cyberpunk 2077 and Mod Organizer 2 first: mods sync moves to the new instance.")
-        instance = cyberpunk.use_instance(path)
+        if syncing and game.game_running():
+            raise RuntimeError(f"Close {game.name} and Mod Organizer 2 first: mods sync moves to the new instance.")
+        instance = game.use_instance(path)
         notes = [f"Using Mod Organizer 2 in {instance}."]
-        notes += cyberpunk.refresh_hook()
+        notes += game.refresh_hook()
         self.reload_state()
         if syncing:
             try:

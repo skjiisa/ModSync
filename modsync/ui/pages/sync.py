@@ -43,7 +43,14 @@ from modsync.ui.pages.daggerfall import _short
 from modsync.ui.widgets import Panel, StatusRow, SyncMeter, Tile, clear_layout, discard, label
 
 
-_FOLDER_PAGES = {"dfu": "daggerfall", "cp2077": "cyberpunk"}  # a folder key's first part: its game's page
+def _folder_page(key: str) -> str | None:
+    """The page of the game a synced folder belongs to."""
+    if key.split("-")[0] == "dfu":
+        return "daggerfall"
+    from modsync import mo2games
+
+    game = mo2games.for_folder(key)
+    return game.ui_key if game is not None else None
 
 
 def _folder_words(fs: folders.FolderStatus) -> tuple[str, str, str]:
@@ -488,11 +495,11 @@ class SyncPage(Page):
             if row is None:
                 row = StatusRow(fs.spec.label.removesuffix(" (ModSync)"), "sync")
                 row.setProperty("held", fs.held)
-                page = _FOLDER_PAGES.get(fs.spec.key.split("-")[0])
+                page = _folder_page(fs.spec.key)
                 if fs.held:
                     row.clicked.connect(lambda _=False, spec=fs.spec: self.stop_holding(spec))
                 elif page is not None:
-                    row.clicked.connect(lambda _=False, p=page: self.host.go(p))
+                    row.clicked.connect(lambda _=False, p=page: self.host.show_game(p))
                 self._game_rows[fs.spec.key] = row
                 self.games.addWidget(row)
             row.set_state(*_folder_words(fs))

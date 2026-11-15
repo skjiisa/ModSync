@@ -1,15 +1,16 @@
-"""Cyberpunk 2077 from GOG through the Heroic Games Launcher, modded with Mod
-Organizer 2 (see modsync.cyberpunk). Home shows it once Cyberpunk 2077 is
-chosen in the game switcher at the top, whether or not Heroic has it yet.
+"""A game ModSync runs Mod Organizer 2 for (see modsync.mo2games), as Home
+shows it once the game is chosen in the switcher at the top. One page class
+serves every game from the table; which game, and which store has it, only
+change the words.
 
 The rows say how each part stands and change it when pressed: the MO2 row
-picks another instance, Heroic's Play button switches between playing through
-MO2 and the game as Heroic starts it, and the sync row turns mods sync on and
-off here. The blue action installs MO2 until there is an instance (or
-finishes an install that stopped part way), then plays through it. "Use an
-existing installation…" picks an MO2 instance set up for Cyberpunk some other
+picks another instance, the store's Play button switches between playing
+through MO2 and the game as the store starts it, and the sync row turns mods
+sync on and off here. The blue action installs MO2 until there is an instance
+(or finishes an install that stopped part way), then plays through it. "Use an
+existing installation…" picks an MO2 instance set up for the game some other
 way. Everything shown comes from one read off the UI thread
-(``cyberpunk.overview``); a read that an action has overtaken is dropped.
+(``ManagedGame.overview``); a read that an action has overtaken is dropped.
 """
 
 from __future__ import annotations
@@ -21,7 +22,10 @@ from pathlib import Path
 import shiboken6
 from PySide6.QtCore import QObject, Signal
 
-from modsync import cyberpunk
+from modsync import steamos
+from modsync.games import STORE_NAMES
+from modsync.mo2games import ManagedGame, Overview
+from modsync.steam import compattools
 from modsync.ui import worker
 from modsync.ui.input import Action
 from modsync.ui.overlays import FolderSheet
@@ -29,7 +33,6 @@ from modsync.ui.pages import Page
 from modsync.ui.pages.daggerfall import _short
 from modsync.ui.widgets import HeroTile, StatusRow, Tile, label
 
-BUSY_KEY = "cyberpunk"
 _SYNC_WORDS = {"on": ("On", "ok"), "off": ("Off", "off"), "stopping": ("Stopping", "busy")}
 _TOOL_LINE = re.compile(r"^\s*(\d{4}-\d\d-\d\d |\$ |$)")  # MO2-LINT's log lines and commands
 
@@ -40,31 +43,65 @@ class _OutputBridge(QObject):
     said = Signal(str)
 
 
-class CyberpunkPage(Page):
-    key = "cyberpunk"
-    label = "Cyberpunk 2077"
+def launcher_of(game) -> str:
+    """The program that starts the game: "Steam" or "Heroic"."""
+    return "Steam" if game.store == "steam" else "Heroic"
+
+
+def where_to_install(mg: ManagedGame) -> str:
+    """Where the game comes from, as a sentence for a machine without it."""
+    heroic = " or ".join(name for name, has in (("GOG", mg.game.gog_id), ("Epic", mg.game.epic_id)) if has)
+    if mg.game.appid and heroic:
+        return f"Install it from Steam, or from {heroic} in the Heroic Games Launcher."
+    if heroic:
+        return f"Install it from {heroic} in the Heroic Games Launcher."
+    return "Install it from Steam."
+
+
+def game_summary(mg: ManagedGame, ov: Overview | None) -> tuple[str, str, str]:
+    """How the game stands, as the game picker shows it: value word, tone, detail.
+    ``None`` before it has been read."""
+    if ov is None:
+        return "Checking", "off", ""
+    if ov.game is None:
+        return "Not installed", "off", where_to_install(mg)
+    if not ov.prefix_ready:
+        return "Not set up", "off", f"Launch it once from {launcher_of(ov.game)}."
+    if ov.instance is None:
+        return "No mods yet", "off", "Install Mod Organizer 2 for it."
+    if ov.instance_problem or ov.version_problem:
+        return "Needs a look", "warn", ov.instance_problem or ov.version_problem
+    if ov.needs_setup:
+        return "Needs a look", "warn", "Finish setting up Mod Organizer 2 for it."
+    return "Ready", "ok", "Syncing mods." if ov.mods == "on" else ""
+
+
+class ManagedGamePage(Page):
     icon = "gamepad"
 
-    def __init__(self, host) -> None:
+    def __init__(self, host, mg: ManagedGame) -> None:
+        self.mg = mg
+        self.key = mg.ui_key
+        self.label = mg.name
+        self.busy_key = mg.ui_key
         super().__init__(host)
         self.content_layout.setContentsMargins(40, 16, 40, 12)
         self.content_layout.setSpacing(14)
-        self.overview: cyberpunk.Overview | None = None
+        self.overview: Overview | None = None
         self._working = False
         self._focus_on_load = False
         self._shown_at = 0.0
         self._reads = 0  # the latest read's number: older ones are dropped
-        self.head = self.header("Cyberpunk 2077", "From GOG, through the Heroic Games Launcher, with mods "
-                                "in Mod Organizer 2. Cyber Engine Tweaks and RED4ext load as they should.")
+        self.head = self.header(mg.name, mg.summary)
         self.note = label("", "warning")
         self.note.hide()
         self.content_layout.addWidget(self.note)
 
         left, right = self.columns(1, 1)
         left.setSpacing(4)
-        self.game_row = StatusRow("Cyberpunk 2077 in Heroic", "gamepad")
+        self.game_row = StatusRow(mg.name, "gamepad")
         self.mo2_row = StatusRow("Mod Organizer 2", "box")
-        self.hook_row = StatusRow("Heroic's Play button", "rocket")
+        self.hook_row = StatusRow("The store's Play button", "rocket")
         self.mods_row = StatusRow("Mods sync", "sync")
         for row in (self.game_row, self.mo2_row, self.hook_row, self.mods_row):
             row.set_state("Checking", "off")
@@ -75,14 +112,13 @@ class CyberpunkPage(Page):
         self.mods_row.clicked.connect(self._toggle_sync)
         left.addStretch(1)
 
-        self.install_tile = HeroTile("Install Mod Organizer 2",
-                                     "Set up for Cyberpunk, with RootBuilder for CET and RED4ext.", "download")
+        self.install_tile = HeroTile("Install Mod Organizer 2", mg.install_note(), "download")
         self.install_tile.clicked.connect(self._install)
-        self.play = HeroTile("Play Cyberpunk 2077", "Through Mod Organizer 2, with your mods.", "play")
+        self.play = HeroTile(f"Play {mg.name}", "Through Mod Organizer 2, with your mods.", "play")
         self.play.clicked.connect(lambda: self._launch(play=True))
         self.open_mo2 = Tile("Open Mod Organizer 2", "Add, order and turn on mods.", "play-circle")
         self.open_mo2.clicked.connect(lambda: self._launch(play=False))
-        self.use_existing = Tile("Use an existing installation…", "Pick an MO2 instance set up for Cyberpunk.",
+        self.use_existing = Tile("Use an existing installation…", f"Pick an MO2 instance set up for {mg.short}.",
                                  "folder", chevron=True)
         self.use_existing.clicked.connect(self._choose_existing)
         self.work = label("", "secondary")
@@ -106,13 +142,13 @@ class CyberpunkPage(Page):
         self._reads += 1
         read = self._reads
 
-        def done(ov: cyberpunk.Overview) -> None:
+        def done(ov: Overview) -> None:
             # Gone with its window (Qt drops only bound methods' connections by
             # itself), or overtaken by a newer read or an action that changed what it read.
             if shiboken6.isValid(self) and read == self._reads and not self._working:
                 self._show(ov)
 
-        worker.run_async(cyberpunk.overview, on_done=done, on_failed=lambda e: self.host.notify(f"⚠ {e}"))
+        worker.run_async(self.mg.overview, on_done=done, on_failed=lambda e: self.host.notify(f"⚠ {e}"))
 
     def poll(self) -> None:
         if not self._working and self.isVisible():
@@ -128,58 +164,68 @@ class CyberpunkPage(Page):
             return True
         return False
 
-    @staticmethod
-    def summary(ov: cyberpunk.Overview | None) -> tuple[str, str, str]:
-        """How Cyberpunk stands, as the game picker shows it: value word, tone, detail.
-        ``None`` before it has been read."""
-        if ov is None:
-            return "Checking", "off", ""
-        if ov.game is None:
-            return "Not installed", "off", "Install it from GOG in the Heroic Games Launcher."
-        if not ov.prefix_ready:
-            return "Not set up", "off", "Launch it once from Heroic."
-        if ov.instance is None:
-            return "No mods yet", "off", "Install Mod Organizer 2 for it."
-        if ov.instance_problem or ov.version_problem:
-            return "Needs a look", "warn", ov.instance_problem or ov.version_problem
-        if ov.needs_setup:
-            return "Needs a look", "warn", "Finish setting up Mod Organizer 2 for it."
-        return "Ready", "ok", "Syncing mods." if ov.mods == "on" else ""
+    def summary(self, ov: Overview | None) -> tuple[str, str, str]:
+        return game_summary(self.mg, ov)
 
-    def _show(self, ov: cyberpunk.Overview) -> None:
+    def _hook_words(self, ov: Overview) -> tuple[str, str, str]:
+        """The store's Play button: value word, tone, detail."""
+        hook, game = ov.hook, ov.game
+        if ov.instance is None:
+            return "Game only", "off", "Starts the game without mods until MO2 is installed."
+        pending = getattr(hook, "pending", None)
+        if pending is not None:  # Steam only changes its settings while it's closed
+            turning_on = pending.action == "select"
+            return ("Waiting for Steam", "busy",
+                    ("Plays through MO2" if turning_on else "Starts the game as before")
+                    + f" once Steam has closed. {steamos.steam_restart_hint()}")
+        if hook is not None and hook.enabled:
+            return "Mod Organizer 2", "ok", "Press to have it start the game as before."
+        if game is not None and game.store == "steam":
+            current = getattr(hook, "current_mapping", None)
+            if current and compattools.MO2LINT_TOOL_RE.match(current):
+                return "Opens MO2", "off", "Press to have it play through MO2 instead of opening it."
+            return "Game only", "off", "Press to have it play through MO2."
+        return "Game only", "off", "Press to have it play through MO2. Close Heroic first."
+
+    def _show(self, ov: Overview) -> None:
         self.overview = ov
-        self.host.cyberpunk_checked(ov)
-        game = ov.game
+        self.host.managed_checked(self.mg.ui_key, ov)
+        mg, game = self.mg, ov.game
         if game is None:
-            self.game_row.set_state("Not installed", "off", "Install it from GOG in Heroic, then launch it once.")
-        elif not ov.prefix_ready:
-            self.game_row.set_state("Not set up", "warn", "Launch it once from Heroic, so Heroic sets up its prefix.")
+            self.head.set_subtitle(mg.summary)
+            self.game_row.set_state("Not installed", "off", where_to_install(mg))
+            self.hook_row.setText("The store's Play button")
         else:
-            version = ov.version[0] if ov.version else (game.version or "Installed")
-            pinned = ", kept on this version by Heroic" if game.pinned else ""
-            self.game_row.set_state(version, "ok", f"{_short(game.install_path)}{pinned}")
+            launcher = launcher_of(game)
+            origin = "From Steam." if game.store == "steam" else \
+                f"From {STORE_NAMES[game.store]}, through the Heroic Games Launcher."
+            self.head.set_subtitle(f"{origin} {mg.summary}")
+            self.hook_row.setText(f"{launcher}'s Play button")
+            if not ov.prefix_ready:
+                self.game_row.set_state("Not set up", "warn",
+                                        f"Launch it once from {launcher}, so {launcher} sets up its prefix.")
+            else:
+                version = ov.version[0] if ov.version else (
+                    game.version if game.store != "steam" and game.version else "Installed")
+                pinned = ", kept on this version by Heroic" if game.pinned else ""
+                self.game_row.set_state(version, "ok", f"{_short(game.install_path)}{pinned}")
         if ov.instance is None:
             self.mo2_row.set_state("Not installed", "off", "Install it with the blue button.")
         elif ov.instance_problem:
             self.mo2_row.set_state("Needs a look", "warn", ov.instance_problem)
         elif ov.needs_setup:
-            self.mo2_row.set_state("Not finished", "warn",
-                                   "RootBuilder is missing, so CET and RED4ext won't load. Use the blue button.")
+            self.mo2_row.set_state("Not finished", "warn", f"{mg.setup_missing} Use the blue button.".strip())
         else:
             self.mo2_row.set_state("Installed", "ok", _short(ov.instance))
         hook = ov.hook
-        if ov.instance is None:
-            self.hook_row.set_state("Game only", "off", "Starts the game without mods until MO2 is installed.")
-        elif hook is not None and hook.enabled:
-            self.hook_row.set_state("Mod Organizer 2", "ok", "Press to have it start the game as before.")
-        else:
-            self.hook_row.set_state("Game only", "off",
-                                    "Press to have it play through MO2. Close Heroic first.")
+        self.hook_row.set_state(*self._hook_words(ov))
         word, tone = _SYNC_WORDS[ov.mods]
         if ov.mods == "off" and ov.instance is not None and not ov.chosen:
             detail = "Press to use this instance here and sync its mods with your paired machines."
         else:
-            detail = {"on": "Your mods sync with your paired machines. Saves sync through the game itself."
+            saves = mg.saves_note or (f"Saves sync through {launcher_of(game)}, as they do without mods."
+                                      if game is not None else "")
+            detail = {"on": f"Your mods sync with your paired machines. {saves}".strip()
                       if self.service.reload_state().paired else "No machine is paired yet. Pair one under Sync.",
                       "off": "Press to sync your mods with your paired machines.",
                       "stopping": "Finishes once Syncthing answers."}[ov.mods]
@@ -191,9 +237,10 @@ class CyberpunkPage(Page):
         finishing = has and ov.needs_setup
         self.install_tile.setText("Finish setting up Mod Organizer 2" if finishing else "Install Mod Organizer 2")
         self.install_tile.setVisible(ready and (ov.instance is None or finishing) and not self._working)
-        through_heroic = hook is not None and hook.enabled
-        self.play.set_description("Through Heroic and Mod Organizer 2, with your mods and GOG cloud saves."
-                                  if through_heroic else "Through Mod Organizer 2, with your mods.")
+        through_store = game is not None and hook is not None and hook.enabled
+        self.play.set_description(
+            f"Through {launcher_of(game)} and Mod Organizer 2, with your mods and {STORE_NAMES[game.store]} cloud saves."
+            if through_store else "Through Mod Organizer 2, with your mods.")
         self.play.setVisible(has and not self._working)
         self.open_mo2.setVisible(has and not self._working)
         self.use_existing.setVisible(not self._working)
@@ -239,7 +286,7 @@ class CyberpunkPage(Page):
             return
         self._working = True
         self._reads += 1  # a read under way now may predate what this changes
-        self.host.set_busy(BUSY_KEY, True)
+        self.host.set_busy(self.busy_key, True)
         self.work.setText(message)
         self.work.show()
         self._update_enabled()
@@ -258,7 +305,7 @@ class CyberpunkPage(Page):
 
     def _finish(self) -> None:
         self._working = False
-        self.host.set_busy(BUSY_KEY, False)
+        self.host.set_busy(self.busy_key, False)
         self.work.hide()
         self.refresh()
 
@@ -267,7 +314,7 @@ class CyberpunkPage(Page):
         skips MO2-LINT for an instance that's there and does what's missing."""
         ov = self.overview
         finishing = ov is not None and ov.instance is not None and ov.needs_setup
-        dest = ov.instance if finishing else cyberpunk.default_instance_dir()
+        dest = ov.instance if finishing else self.mg.default_instance_dir()
         bridge = _OutputBridge(self)
         bridge.said.connect(self._on_output)
         self.install_tile.hide()
@@ -276,9 +323,9 @@ class CyberpunkPage(Page):
             if not _TOOL_LINE.match(line):
                 bridge.said.emit(line.strip())
 
-        self._run(lambda: cyberpunk.install_mo2(dest, output),
+        self._run(lambda: self.mg.install_mo2(dest, output),
                   message="Finishing Mod Organizer 2's setup…" if finishing
-                  else "Installing Mod Organizer 2 for Cyberpunk… This takes a few minutes.",
+                  else f"Installing Mod Organizer 2 for {self.mg.short}… This takes a few minutes.",
                   on_done=lambda instance: f"Mod Organizer 2 is installed in {_short(instance)}. "
                                            "Open it to add mods, or play.")
 
@@ -291,38 +338,44 @@ class CyberpunkPage(Page):
         if ov is None or self.host.busy or self._working:
             return
         start = ov.instance.parent if ov.instance is not None else Path.home()
-        FolderSheet(self.host, "Select your Mod Organizer 2 folder for Cyberpunk", start, self._use,
+        FolderSheet(self.host, f"Select your Mod Organizer 2 folder for {self.mg.short}", start, self._use,
                     description="The folder with ModOrganizer.exe in it.").open()
 
     def _use(self, path: Path) -> None:
         """Mods sync, if on, moves along before this finishes (see the service)."""
-        self._run(lambda: " ".join(self.service.use_cyberpunk_instance(path)), message="Checking that folder…")
+        self._run(lambda: " ".join(self.service.use_game_instance(self.mg, path)), message="Checking that folder…")
 
     def _toggle_hook(self) -> None:
         ov = self.overview
-        if ov is None or ov.instance is None:
+        if ov is None or ov.instance is None or ov.game is None:
             return
-        if ov.hook is not None and ov.hook.enabled:
-            self._run(cyberpunk.disable_hook, message="Giving Heroic's Play button back to the game…")
+        launcher = launcher_of(ov.game)
+        pending = getattr(ov.hook, "pending", None)
+        if pending is not None:  # a change waiting for Steam to close: pressing takes it back
+            turning_off = pending.action == "select"
         else:
-            self._run(lambda: " ".join(cyberpunk.enable_hook()), message="Pointing Heroic's Play button at MO2…")
+            turning_off = ov.hook is not None and ov.hook.enabled
+        if turning_off:
+            self._run(self.mg.disable_hook, message=f"Giving {launcher}'s Play button back to the game…")
+        else:
+            self._run(lambda: " ".join(self.mg.enable_hook()), message=f"Pointing {launcher}'s Play button at MO2…")
 
     def _toggle_sync(self) -> None:
         ov = self.overview
         if ov is None or (ov.mods == "off" and ov.instance is None):
             return
-        key = cyberpunk.MODS_FOLDER.key
+        key = self.mg.folder.key
         if ov.mods == "off":
             def share():
                 if not ov.chosen:  # found, not handed over: pressing here hands it over
-                    cyberpunk.use_instance(ov.instance)
+                    self.mg.use_instance(ov.instance)
                 return self.service.share_game_folder(key)
 
             self._run(share, message="Starting mods sync…",
-                      on_done=lambda _root: "Your Cyberpunk mods now sync with your paired machines.")
+                      on_done=lambda _root: f"Your {self.mg.short} mods now sync with your paired machines.")
         else:
             self._run(self.service.stop_game_folder, key, message="Stopping mods sync…",
-                      on_done=lambda done: ("Cyberpunk mods no longer sync here. Nothing was deleted."
+                      on_done=lambda done: (f"{self.mg.short} mods no longer sync here. Nothing was deleted."
                                             if done else "Mods sync stops once Syncthing answers."))
 
     def _launch(self, *, play: bool) -> None:
@@ -331,7 +384,7 @@ class CyberpunkPage(Page):
             return
 
         def start() -> str:
-            message = cyberpunk.launch(self.service.launcher, play=play)
+            message = self.mg.launch(self.service.launcher, play=play)
             return f"{message} {ov.version_problem}" if ov.version_problem else message
 
-        self._run(start, message="Starting Cyberpunk 2077 through MO2…" if play else "Opening Mod Organizer 2…")
+        self._run(start, message=f"Starting {self.mg.name} through MO2…" if play else "Opening Mod Organizer 2…")

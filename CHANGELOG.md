@@ -8,6 +8,31 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
+- The games MO2-LINT can install Mod Organizer 2 for now work in ModSync
+  the same way, from Steam and from Heroic (GOG and Epic): Baldur's Gate 3,
+  Dragon Age: Origins and 2, Enderal, Fallout 3, 4, New Vegas and London,
+  Morrowind, Oblivion, Skyrim Legendary Edition, Skyrim VR, Starfield,
+  Subnautica, Valheim and The Witcher 3. One of them appears in the game
+  switcher (X) once Steam or Heroic has it installed. Its page installs MO2,
+  plays through it or opens it, switches the store's own Play button, and
+  turns mods sync on and off. `modsync games` lists the ones on this
+  machine, and `modsync games <key> status | install | use | open | play |
+  hook` does the same from a terminal. Saves stay with the store, which
+  still launches the game. Skyrim Special Edition and Daggerfall keep their
+  own paths. Only Cyberpunk 2077 from GOG has been played this way so far.
+  "Other games" in docs/advanced.md says what was and wasn't tested.
+- Steam's Play button on one of those games plays through MO2 without
+  opening ModSync's window, once its launch hook is on. ModSync's own Play
+  and Open Mod Organizer 2 go through Steam while the hook is on, so Steam
+  Cloud syncs the saves.
+- Play runs the first program MO2 lists from the game's folder, so a script
+  extender starts when MO2 lists one ahead of the game, and reordering MO2's
+  list changes what Play starts.
+- Cyberpunk 2077 from Steam or Epic is found as well as from GOG. `modsync
+  cyberpunk …` is now the same as `modsync games cyberpunk2077 …`.
+- `modsync doctor` lists each of those games that Steam or Heroic has, with
+  its prefix and MO2 instance.
+- The game switcher scrolls when more than five games are on a machine.
 - A machine can keep games that aren't installed on it, so machines that are
   never on at the same time still sync through it. "Keep games not
   installed here" on the Sync page (or `modsync sync hold all`) keeps a
@@ -128,6 +153,10 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- Installing Mod Organizer 2 for a Steam game, Skyrim included, works without
+  Proton 11.0 installed. MO2-LINT asked for it and stopped. ModSync now gives
+  MO2-LINT the Proton the game runs with in that case, under the name
+  protontricks knows it by.
 - Installing the Visual C++ runtime into Skyrim's prefix no longer reports
   a failure when the installer succeeds but asks for a reboot or finds a
   newer runtime already there. Wine passes its exit codes (3010, 1638) on

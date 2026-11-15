@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Callable
 
 from modsync import background, config
-from modsync.games import GAMES, Game
+from modsync.games import GAMES, MO2_GAMES, Game
 
 log = logging.getLogger(__name__)
 
@@ -53,10 +53,14 @@ class GameHandler:
     download: Callable[[str], str]  # hands the link to MO2; returns what happened
 
 
-def _cyberpunk() -> GameHandler:
-    from modsync import cyberpunk
+def _managed(key: str) -> Callable[[], GameHandler]:
+    """A game from the table (modsync.mo2games), in whichever store has it."""
+    def make() -> GameHandler:
+        from modsync import mo2games
 
-    return GameHandler(cyberpunk.CYBERPUNK.name, cyberpunk.takes_downloads, cyberpunk.download)
+        game = mo2games.all_games()[key]
+        return GameHandler(game.name, game.takes_downloads, lambda url: game.download(url, on_wait=notify))
+    return make
 
 
 def _steam(game: Game) -> Callable[[], GameHandler]:
@@ -69,11 +73,22 @@ def _steam(game: Game) -> Callable[[], GameHandler]:
     return make
 
 
-# Keyed by the game in the link: Nexus' name for it (Game.nexus_slug).
-HANDLERS: dict[str, Callable[[], GameHandler]] = {
-    **{game.nexus_slug: _steam(game) for game in GAMES.values() if game.nexus_slug},
-    "cyberpunk2077": _cyberpunk,
-}
+def _handlers() -> dict[str, list[Callable[[], GameHandler]]]:
+    """Keyed by the game in the link: Nexus' name for it (Game.nexus_slug).
+    Editions of a game share a name (Skyrim Special Edition and Skyrim VR),
+    so each name has every game that answers to it, the ones with a path of
+    their own first; the first one set up here takes the link."""
+    found: dict[str, list[Callable[[], GameHandler]]] = {}
+    for game in GAMES.values():
+        if game.nexus_slug:
+            found.setdefault(game.nexus_slug, []).append(_steam(game))
+    for key, game in MO2_GAMES.items():
+        if game.nexus_slug:
+            found.setdefault(game.nexus_slug, []).append(_managed(key))
+    return found
+
+
+HANDLERS: dict[str, list[Callable[[], GameHandler]]] = _handlers()
 
 
 def game_of(url: str) -> str | None:
@@ -447,9 +462,8 @@ def handle(url: str) -> str:
     game = game_of(url)
     if game is None or "\n" in url or "\r" in url:
         raise NxmError("That isn't an nxm:// link.")
-    make = HANDLERS.get(game)
-    handler = make() if make is not None else None
-    if handler is None or not handler.claims():
+    handler = next((h for h in (make() for make in HANDLERS.get(game, ())) if h.claims()), None)
+    if handler is None:
         return forward(url)
     log.info("downloading a %s file from Nexus Mods", handler.name)
     return handler.download(url)

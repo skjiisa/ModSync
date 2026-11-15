@@ -1,0 +1,420 @@
+{
+  "mo2lint": "7.0.3",
+  "games": {
+    "baldursgate3": {
+      "name": "Baldur's Gate 3",
+      "nexus": "baldursgate3",
+      "steam": 1086940,
+      "gog": "1456460669",
+      "epic": null,
+      "exe": {
+        "steam": "bin/bg3",
+        "gog": "bin/bg3"
+      },
+      "tricks": []
+    },
+    "cyberpunk2077": {
+      "name": "Cyberpunk 2077",
+      "nexus": "cyberpunk2077",
+      "steam": 1091500,
+      "gog": "1423049311",
+      "epic": "77f2b98e2cef40c8a7437518bf420e47",
+      "exe": {
+        "steam": "bin/x64/Cyberpunk2077.exe",
+        "gog": "bin/x64/Cyberpunk2077.exe",
+        "epic": "bin/x64/Cyberpunk2077.exe"
+      },
+      "tricks": [
+        "xaudio2_7=native",
+        "d3dcompiler_47"
+      ]
+    },
+    "dragonage": {
+      "name": "Dragon Age: Origins",
+      "nexus": "dragonage",
+      "steam": 47810,
+      "gog": "1949616134",
+      "epic": null,
+      "exe": {
+        "steam": "DAOriginsLauncher.exe",
+        "gog": "DAOriginsLauncher.exe"
+      },
+      "tricks": [
+        "xaudio2_7=native",
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "dragonage2": {
+      "name": "Dragon Age 2",
+      "nexus": "dragonage2",
+      "steam": 1238040,
+      "gog": null,
+      "epic": "4e8c0f56bcf948d581e30c58283d183c",
+      "exe": {
+        "steam": "DragonAge2.exe",
+        "epic": "DragonAge2.exe"
+      },
+      "tricks": []
+    },
+    "enderal": {
+      "name": "Enderal",
+      "nexus": "enderal",
+      "steam": 933480,
+      "gog": "1708684988",
+      "epic": null,
+      "exe": {
+        "steam": "Enderal Launcher.exe",
+        "gog": "Enderal Launcher.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "enderal_se": {
+      "name": "Enderal Special Edition",
+      "nexus": "enderalspecialedition",
+      "steam": 976620,
+      "gog": null,
+      "epic": null,
+      "exe": {
+        "steam": "Enderal Launcher.exe"
+      },
+      "tricks": [
+        "xaudio2_7=native",
+        "xact",
+        "d3dcompiler_43"
+      ]
+    },
+    "fallout3": {
+      "name": "Fallout 3",
+      "nexus": "fallout3",
+      "steam": 22300,
+      "gog": null,
+      "epic": null,
+      "exe": {
+        "steam": "Fallout3Launcher.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "fallout3_goty": {
+      "name": "Fallout 3",
+      "nexus": "fallout3",
+      "steam": 22370,
+      "gog": "1454315831",
+      "epic": "adeae8bbfc94427db57c7dfecce3f1d4",
+      "exe": {
+        "steam": "Fallout3Launcher.exe",
+        "gog": "FalloutLauncher.exe",
+        "epic": "Fallout 3 GOTY English/FalloutLauncherEpic.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "fallout4": {
+      "name": "Fallout 4",
+      "nexus": "fallout4",
+      "steam": 377160,
+      "gog": "1998527297",
+      "epic": "61d52ce4d09d41e48800c22784d13ae8",
+      "exe": {
+        "steam": "Fallout4Launcher.exe",
+        "gog": "Fallout4Launcher.exe",
+        "epic": "Fallout4Launcher.exe"
+      },
+      "tricks": [
+        "xaudio2_7=native",
+        "grabfullscreen=y"
+      ]
+    },
+    "fallout4_vr": {
+      "name": "Fallout 4 VR",
+      "nexus": "fallout4",
+      "steam": 611660,
+      "gog": null,
+      "epic": null,
+      "exe": {
+        "steam": "Fallout4VR.exe"
+      },
+      "tricks": [
+        "xaudio2_7=native",
+        "xact",
+        "d3dcompiler_43"
+      ]
+    },
+    "falloutlondon": {
+      "name": "Fallout 4 London",
+      "nexus": "fallout4london",
+      "steam": null,
+      "gog": "1897848199",
+      "epic": null,
+      "exe": {
+        "gog": "Fallout4Launcher.exe"
+      },
+      "tricks": [
+        "xaudio2_7=native",
+        "grabfullscreen=y"
+      ]
+    },
+    "falloutnv": {
+      "name": "New Vegas",
+      "nexus": "newvegas",
+      "steam": 22380,
+      "gog": "1454587428",
+      "epic": "5daeb974a22a435988892319b3a4f476",
+      "exe": {
+        "steam": "FalloutNVLauncher.exe",
+        "gog": "FalloutNVLauncher.exe",
+        "epic": "FalloutNVLauncher.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "falloutnv_ru": {
+      "name": "New Vegas",
+      "nexus": "newvegas",
+      "steam": 22490,
+      "gog": "1454587428",
+      "epic": "5daeb974a22a435988892319b3a4f476",
+      "exe": {
+        "steam": "FalloutNVLauncher.exe",
+        "gog": "FalloutNVLauncher.exe",
+        "epic": "FalloutNVLauncher.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "morrowind": {
+      "name": "Morrowind",
+      "nexus": "morrowind",
+      "steam": 22320,
+      "gog": "1435828767",
+      "epic": "2b04b1a83647411e956695342f1d14b6",
+      "exe": {
+        "steam": "Morrowind Launcher.exe",
+        "gog": "Morrowind Launcher.exe",
+        "epic": "Morrowind GOTY English/Morrowind Launcher.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "oblivion": {
+      "name": "Oblivion",
+      "nexus": "oblivion",
+      "steam": 22330,
+      "gog": "1458058109",
+      "epic": "0d0c62755e5a45c7a07fd9cc0b61c39c",
+      "exe": {
+        "steam": "OblivionLauncher.exe",
+        "gog": "OblivionLauncher.exe",
+        "epic": "Oblivion GOTY English/OblivionLauncher.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "oblivion_fr": {
+      "name": "Oblivion",
+      "nexus": "oblivion",
+      "steam": 22330,
+      "gog": "1458058109",
+      "epic": "0d0c62755e5a45c7a07fd9cc0b61c39c",
+      "exe": {
+        "steam": "OblivionLauncher.exe",
+        "gog": "OblivionLauncher.exe",
+        "epic": "Oblivion GOTY French/OblivionLauncher.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "oblivion_de": {
+      "name": "Oblivion",
+      "nexus": "oblivion",
+      "steam": 22330,
+      "gog": "1458058109",
+      "epic": "0d0c62755e5a45c7a07fd9cc0b61c39c",
+      "exe": {
+        "steam": "OblivionLauncher.exe",
+        "gog": "OblivionLauncher.exe",
+        "epic": "Oblivion GOTY German/OblivionLauncher.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "oblivion_it": {
+      "name": "Oblivion",
+      "nexus": "oblivion",
+      "steam": 22330,
+      "gog": "1458058109",
+      "epic": "0d0c62755e5a45c7a07fd9cc0b61c39c",
+      "exe": {
+        "steam": "OblivionLauncher.exe",
+        "gog": "OblivionLauncher.exe",
+        "epic": "Oblivion GOTY Italian/OblivionLauncher.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "oblivion_es": {
+      "name": "Oblivion",
+      "nexus": "oblivion",
+      "steam": 22330,
+      "gog": "1458058109",
+      "epic": "0d0c62755e5a45c7a07fd9cc0b61c39c",
+      "exe": {
+        "steam": "OblivionLauncher.exe",
+        "gog": "OblivionLauncher.exe",
+        "epic": "Oblivion GOTY Spanish/OblivionLauncher.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "skyrim": {
+      "name": "Skyrim",
+      "nexus": "skyrim",
+      "steam": 72850,
+      "gog": null,
+      "epic": null,
+      "exe": {
+        "steam": "SkyrimLauncher.exe"
+      },
+      "tricks": [
+        "d3dcompiler_43",
+        "d3dx9"
+      ]
+    },
+    "skyrim_se": {
+      "name": "Skyrim Special Edition",
+      "nexus": "skyrimspecialedition",
+      "steam": 489830,
+      "gog": "1711230643",
+      "epic": "ac82db5035584c7f8a2c548d98c86b2c",
+      "exe": {
+        "steam": "SkyrimSELauncher.exe",
+        "gog": "SkyrimSELauncher.exe",
+        "epic": "SkyrimSELauncher.exe"
+      },
+      "tricks": [
+        "xaudio2_7=native",
+        "xact",
+        "d3dcompiler_43",
+        "d3dcompiler_47"
+      ]
+    },
+    "skyrim_ae": {
+      "name": "Skyrim Special Edition",
+      "nexus": "skyrimspecialedition",
+      "steam": null,
+      "gog": "1711230643",
+      "epic": "ac82db5035584c7f8a2c548d98c86b2c",
+      "exe": {
+        "gog": "SkyrimSELauncher.exe",
+        "epic": "SkyrimSELauncher.exe"
+      },
+      "tricks": [
+        "xaudio2_7=native",
+        "xact",
+        "d3dcompiler_43",
+        "d3dcompiler_47"
+      ]
+    },
+    "skyrim_vr": {
+      "name": "Skyrim VR",
+      "nexus": "skyrimspecialedition",
+      "steam": 611670,
+      "gog": "1711230643",
+      "epic": "ac82db5035584c7f8a2c548d98c86b2c",
+      "exe": {
+        "steam": "SkyrimVR.exe",
+        "gog": "SkyrimVR.exe",
+        "epic": "SkyrimVR.exe"
+      },
+      "tricks": [
+        "xaudio2_7=native",
+        "xact",
+        "d3dcompiler_43",
+        "d3dcompiler_47"
+      ]
+    },
+    "starfield": {
+      "name": "Starfield",
+      "nexus": "starfield",
+      "steam": 1716740,
+      "gog": null,
+      "epic": null,
+      "exe": {
+        "steam": "Starfield.exe"
+      },
+      "tricks": [
+        "xaudio2_7=native"
+      ]
+    },
+    "subnautica": {
+      "name": "Subnautica",
+      "nexus": "subnautica",
+      "steam": 264710,
+      "gog": null,
+      "epic": "Jaguar",
+      "exe": {
+        "steam": "Subnautica.exe",
+        "epic": "Subnautica.exe"
+      },
+      "tricks": []
+    },
+    "valheim": {
+      "name": "Valheim",
+      "nexus": "valheim",
+      "steam": 892970,
+      "gog": null,
+      "epic": null,
+      "exe": {
+        "steam": "valheim.exe"
+      },
+      "tricks": []
+    },
+    "witcher3": {
+      "name": "The Witcher 3: Wild Hunt",
+      "nexus": "witcher3",
+      "steam": 292030,
+      "gog": "1207664643",
+      "epic": null,
+      "exe": {
+        "steam": "bin/x64/witcher3.exe",
+        "gog": "bin/x64/witcher3.exe"
+      },
+      "tricks": []
+    },
+    "witcher3_goty": {
+      "name": "The Witcher 3: Wild Hunt",
+      "nexus": "witcher3",
+      "steam": null,
+      "gog": "1495134320",
+      "epic": null,
+      "exe": {
+        "gog": "bin/x64/witcher3.exe"
+      },
+      "tricks": []
+    }
+  }
+}

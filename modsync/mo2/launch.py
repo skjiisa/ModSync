@@ -1,4 +1,5 @@
-"""Launch the chosen portable MO2 instance using Skyrim's existing Proton prefix.
+"""Launch a portable MO2 instance in a Steam game's existing Proton prefix:
+Skyrim's, by default, or any game's from :mod:`modsync.games`.
 
 A :class:`LaunchPlan` is what ModSync's Play and Open MO2 run, from either
 side. Opened directly, ModSync starts it itself (:class:`Launcher`). Opened by
@@ -14,6 +15,7 @@ profile remain active. Steam launch mappings and MO2 settings are never edited.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 import logging
 import os
 from pathlib import Path, PureWindowsPath
@@ -22,7 +24,7 @@ import subprocess
 import threading
 
 from modsync import background, launchhook, platforms
-from modsync.games import SKYRIM_SE
+from modsync.games import SKYRIM_SE, Game
 from modsync.logging_setup import state_dir
 from modsync.mo2 import ini
 from modsync.steam import compattools, libraries, shortcuts
@@ -40,6 +42,23 @@ class LaunchPlan:
     play: bool
     proton: Path | None = None  # the Proton directory argv runs
     command: list[str] = field(default_factory=list)  # what Proton runs: ModOrganizer.exe and its arguments
+    # The part of env that isn't Steam's own: what a store's hook must set too
+    # when it runs the command as the store's launch.
+    hook_env: dict[str, str] = field(default_factory=dict)
+
+
+def with_dll_overrides(existing: str | None, dlls: tuple[str, ...]) -> str:
+    """``WINEDLLOVERRIDES`` with ``dlls`` native-then-builtin, keeping every
+    other override that was already set. ``n,b`` falls back to Wine's own DLL
+    when the game's folder has none, so it is harmless without mods."""
+    ours = {d.lower() for d in dlls}
+    kept: list[str] = []
+    for entry in (existing or "").split(";"):
+        names, sep, mode = entry.partition("=")
+        left = [d for d in names.split(",") if d.strip() and d.strip().lower() not in ours]
+        if left:
+            kept.append(",".join(left) + sep + mode)
+    return ";".join([*kept, ",".join(dlls) + "=n,b"] if dlls else kept)
 
 
 def _game_target(sections: dict, game_dir: Path) -> tuple[list[str], str]:
@@ -67,10 +86,14 @@ def _game_target(sections: dict, game_dir: Path) -> tuple[list[str], str]:
     raise RuntimeError("Skyrim's executable was not found. Open MO2 and check its game folder.")
 
 
-def _proton_for(compat: Path, libs: list) -> Path:
+def _short_name(game: Game) -> str:
+    return "Skyrim" if game.appid == SKYRIM_SE.appid else game.name
+
+
+def _proton_for(compat: Path, libs: list, game: Game = SKYRIM_SE) -> Path:
     """The Proton to run MO2 with: Steam's current choice for the game (seen
     through ModSync's launch hook), else the one that last set up the prefix."""
-    tool = launchhook.game_proton(SKYRIM_SE.appid)
+    tool = launchhook.game_proton(game.appid)
     if tool is not None:
         return tool.path
     try:
@@ -83,10 +106,25 @@ def _proton_for(compat: Path, libs: list) -> Path:
                 candidate = Path(line.split(marker, 1)[0])
                 if candidate.is_absolute() and (candidate / "proton").is_file():
                     return candidate
+    name = _short_name(game)
     raise RuntimeError(
-        "Skyrim's Proton wasn't found. Pick one under Properties → Compatibility in Steam, "
-        "or launch Skyrim once through Steam, then try again."
+        f"{name}'s Proton wasn't found. Pick one under Properties → Compatibility in Steam, "
+        f"or launch {name} once through Steam, then try again."
     )
+
+
+def game_proton_dir(game: Game) -> Path | None:
+    """The Proton the game runs with in Steam, as :func:`build_plan` picks it
+    for MO2, or None when Steam doesn't have the game or that can't be told."""
+    for root in platforms.current().steam_roots():
+        libs = libraries.read_libraries(root)
+        app = libraries.find_app(libs, game.appid)
+        if app is not None:
+            try:
+                return _proton_for(app.library.steamapps / "compatdata" / str(game.appid), libs, game)
+            except RuntimeError:
+                return None
+    return None
 
 
 def nested_desktop_display() -> str | None:
@@ -104,9 +142,14 @@ def nested_desktop_display() -> str | None:
     return None
 
 
-def build_plan(instance_path: Path | str | None, *, play: bool = False, download: str | None = None) -> LaunchPlan:
+def build_plan(instance_path: Path | str | None, *, play: bool = False, download: str | None = None,
+               game: Game = SKYRIM_SE,
+               target: Callable[[dict, Path], tuple[list[str], str]] | None = None) -> LaunchPlan:
     """MO2's launch: open, playing the game (``play``), or open with a Nexus
-    download's nxm:// link (``download``)."""
+    download's nxm:// link (``download``). ``game`` is the Steam game whose
+    prefix it runs in, and ``target`` picks which of MO2's programs plays it
+    (from MO2's settings and the game's folder); Skyrim's by default."""
+    name = _short_name(game)
     if play and download:
         raise ValueError("a download opens MO2; it doesn't play")
     if not instance_path:
@@ -117,24 +160,24 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False, download
         raise RuntimeError("ModOrganizer.exe is missing from the chosen folder. Choose or install MO2 again.")
     sections = ini.read_ini(instance / "ModOrganizer.ini")
     general = sections.get("General", {})
-    name = ini.unwrap_bytearray(ini.get_ci(general, "gameName"))
-    if name and name != SKYRIM_SE.mo2_game_name:
-        raise RuntimeError("The chosen MO2 instance is not configured for Skyrim Special Edition.")
+    mo2_name = ini.unwrap_bytearray(ini.get_ci(general, "gameName"))
+    if mo2_name and not game.is_mo2_name(mo2_name):
+        raise RuntimeError(f"The chosen MO2 instance is not configured for {game.name}.")
 
     for root in platforms.current().steam_roots():
         libs = libraries.read_libraries(root)
-        app = libraries.find_app(libs, SKYRIM_SE.appid)
+        app = libraries.find_app(libs, game.appid)
         if app is not None:
             break
     else:
-        raise RuntimeError("Skyrim wasn't found in Steam. Install it and launch it once through Steam first.")
-    manifest = AppManifest.load(app.library.steamapps / f"appmanifest_{SKYRIM_SE.appid}.acf")
+        raise RuntimeError(f"{name} wasn't found in Steam. Install it and launch it once through Steam first.")
+    manifest = AppManifest.load(app.library.steamapps / f"appmanifest_{game.appid}.acf")
     if manifest.update_in_progress:
-        raise RuntimeError("Steam is updating Skyrim. Wait for it to finish before launching MO2 or playing.")
-    compat = app.library.steamapps / "compatdata" / str(SKYRIM_SE.appid)
+        raise RuntimeError(f"Steam is updating {name}. Wait for it to finish before launching MO2 or playing.")
+    compat = app.library.steamapps / "compatdata" / str(game.appid)
     if not (compat / "pfx").is_dir():
-        raise RuntimeError("Skyrim's Proton setup is missing. Launch Skyrim once through Steam first.")
-    proton = _proton_for(compat, libs)
+        raise RuntimeError(f"{name}'s Proton setup is missing. Launch {name} once through Steam first.")
+    proton = _proton_for(compat, libs, game)
 
     # Passing no profile preserves MO2's own choice. The portable instance is
     # pinned with MO2's portable.txt marker at launch time (see Launcher.start):
@@ -143,11 +186,11 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False, download
     profile = ini.unwrap_bytearray(ini.get_ci(general, "selected_profile"))
     if profile:
         mo2_args += ["-p", profile]
-    target = "Mod Organizer 2"
+    target_name = "Mod Organizer 2"
     if play:
         if not shortcuts.steam_is_running():
-            raise RuntimeError("Start Steam, then try Play Skyrim again.")
-        if not name:
+            raise RuntimeError(f"Start Steam, then try Play {name} again.")
+        if not mo2_name:
             # MO2 stops at "Select the game managed by this instance" (seen with
             # an instance that had only ever been opened once).
             raise RuntimeError("Open MO2 and finish setting up the instance before playing.")
@@ -161,7 +204,7 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False, download
             else:
                 raise RuntimeError("MO2's game folder could not be resolved. Check its game path in MO2.")
         game_dir = configured_dir or app.install_path
-        args, target = _game_target(sections, game_dir)
+        args, target_name = (target or _game_target)(sections, game_dir)
         mo2_args += args
     elif download:
         mo2_args.append(download)
@@ -172,7 +215,7 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False, download
     if runtime_id is not None:
         runtime = compattools.runtime_path(runtime_id, libs)
         if runtime is None:
-            raise RuntimeError(f"Steam Linux Runtime {runtime_id} is missing. Launch Skyrim once through Steam to install it.")
+            raise RuntimeError(f"Steam Linux Runtime {runtime_id} is missing. Launch {name} once through Steam to install it.")
         argv = [str(runtime / "_v2-entry-point"), "--verb=run", "--", *argv]
         tool_paths.append(str(runtime))
     env = {
@@ -180,23 +223,28 @@ def build_plan(instance_path: Path | str | None, *, play: bool = False, download
         "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(root),
         "STEAM_COMPAT_LIBRARY_PATHS": ":".join(str(lib.path) for lib in libs),
         "STEAM_COMPAT_TOOL_PATHS": ":".join(tool_paths),
-        "SteamAppId": str(SKYRIM_SE.appid),
-        "SteamGameId": str(SKYRIM_SE.appid),
-        "STEAM_COMPAT_APP_ID": str(SKYRIM_SE.appid),
+        "SteamAppId": str(game.appid),
+        "SteamGameId": str(game.appid),
+        "STEAM_COMPAT_APP_ID": str(game.appid),
     }
+    hook_env: dict[str, str] = {}
+    if game.dll_overrides:
+        hook_env["WINEDLLOVERRIDES"] = with_dll_overrides(os.environ.get("WINEDLLOVERRIDES"), game.dll_overrides)
+        env.update(hook_env)
     display = nested_desktop_display()
     if display:
         # Run the whole Wine session on gamescope's display. Gamescope's Vulkan
         # layer only knows windows gamescope launched itself, so it is turned off.
         env.update({"DISPLAY": display, "ENABLE_GAMESCOPE_WSI": "0", "DISABLE_GAMESCOPE_WSI": "1"})
-    return LaunchPlan(argv, env, instance, target, play, proton, command)
+    return LaunchPlan(argv, env, instance, target_name, play, proton, command, hook_env)
 
 
 
-def run_in_prefix(instance_path: Path | str, exe: Path, args: list[str], *, timeout: float = 600) -> subprocess.CompletedProcess:
+def run_in_prefix(instance_path: Path | str, exe: Path, args: list[str], *, timeout: float = 600,
+                  game: Game = SKYRIM_SE) -> subprocess.CompletedProcess:
     """Run a Windows program to completion in the game's Proton prefix, the same
     way MO2 is started (Steam's Proton, inside its Steam Linux Runtime)."""
-    plan = build_plan(instance_path)
+    plan = build_plan(instance_path, game=game)
     at = next(i for i, a in enumerate(plan.argv) if a.endswith("ModOrganizer.exe"))
     argv, env = host_command(plan, [*plan.argv[:at], str(exe), *args])
     log.info("running %s %s in the prefix", exe.name, " ".join(args))

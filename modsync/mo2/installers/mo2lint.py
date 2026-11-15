@@ -121,6 +121,125 @@ def ensure_mo2lint(force: bool = False) -> Path:
     return dest
 
 
+# The Proton MO2-LINT's Steam tool runs when it isn't told one (its
+# util/steam/proton_wrapper.py), by CPU. Its docs ask for it to be installed.
+DEFAULT_PROTONS = {"x86_64": "Proton 11.0", "aarch64": "Proton 11.0 (ARM64)"}
+
+# Where MO2-LINT 7.0.3 looks for Steam (util/steam/find_library.py), in its
+# order, and the system folders it also looks in for a Proton by name
+# (util/steam/proton.py).
+MO2LINT_STEAM_DIRS = ("~/.steam/root", "~/.steam/steam", "~/.local/share/Steam",
+                      "~/.var/app/com.valvesoftware.Steam/.local/share/Steam",
+                      "~/snap/steam/common/.local/share/Steam", "~/.snap/steam/common/.local/share/Steam")
+MO2LINT_TOOL_DIRS = ("~/.steam/root/compatibilitytools.d", "~/.local/share/Steam/compatibilitytools.d",
+                     "/usr/share/steam/compatibilitytools.d", "/usr/local/share/steam/compatibilitytools.d")
+
+
+def mo2lint_libraries() -> list[Path]:
+    """The Steam libraries MO2-LINT 7.0.3 looks in: those of the last Steam
+    it finds (each one found replaces the list), or of $STEAM_DIR. With
+    native and Flatpak Steam both installed, that's the Flatpak's."""
+    import re
+
+    found: list[Path] = []
+    dirs = [os.environ["STEAM_DIR"]] if os.environ.get("STEAM_DIR") else MO2LINT_STEAM_DIRS
+    for raw in dirs:
+        where = Path(raw).expanduser().resolve()
+        if not where.exists():
+            continue
+        library = where if (where / "steamapps").exists() else where / "steam"
+        listing = library / "steamapps" / "libraryfolders.vdf"
+        try:
+            found = [Path(p) for p in re.findall(r'/[^"]+', listing.read_text(encoding="utf-8"))]
+        except OSError:
+            continue
+    return found
+
+
+def _looks_like_proton(path: Path) -> bool:
+    return (path / "proton").exists() and (path / "toolmanifest.vdf").exists()
+
+
+def default_proton_installed() -> bool:
+    """Whether MO2-LINT will find its own default Proton, looking where it
+    looks. When it will, an install goes exactly as MO2-LINT intends."""
+    machine = platform.machine().lower()
+    name = DEFAULT_PROTONS.get(_MACHINE_ALIASES.get(machine, machine))
+    if name is None:
+        return False
+    places = [p for lib in mo2lint_libraries() for p in (lib / "steamapps" / "common", lib / "compatibilitytools.d")]
+    places += [Path(p).expanduser() for p in MO2LINT_TOOL_DIRS]
+    return any(_looks_like_proton(place / name) for place in places)
+
+
+def _steam_proton(game: Game) -> Path | None:
+    """The Proton Steam runs the game with, which is also the one ModSync
+    starts MO2 with. Without Proton 11.0, MO2-LINT 7.0.3 would stop."""
+    from modsync.mo2.launch import game_proton_dir
+
+    try:
+        return game_proton_dir(game)
+    except Exception as exc:  # noqa: BLE001 — MO2-LINT can still pick one itself
+        log.warning("couldn't tell which Proton %s runs with: %s", game.name, exc)
+        return None
+
+
+def _same(a: Path, b: Path) -> bool:
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return False
+
+
+def steam_tool_name(proton: Path) -> str:
+    """What protontricks calls a Proton, which is what MO2-LINT hands it: the
+    internal name it's declared under in a compatibilitytool.vdf for one in
+    a compatibilitytools.d (the declaration can sit beside it, with an
+    install_path), else the app's name in Steam for one Steam installed
+    ("Proton Experimental", in a folder called "Proton - Experimental").
+    Matched by where it really is, so a link to it is the same Proton."""
+    from modsync import platforms
+    from modsync.steam import compattools, libraries, vdf
+
+    roots = platforms.current().steam_roots()
+    tool_roots = [*roots, Path("/usr/share/steam"), Path("/usr/local/share/steam")]
+    # A compatibilitytools.d it's in, whichever Steam that belongs to.
+    tool_roots += [folder.parent for folder in proton.parents if folder.name == "compatibilitytools.d"]
+    for root in tool_roots:
+        for tool in compattools.custom_tools(root):
+            if _same(tool.path, proton):
+                return tool.name
+    steamapps = [lib.steamapps for lib in libraries.all_libraries(roots)]
+    if proton.parent.name == "common":
+        steamapps.append(proton.parent.parent)  # a library Steam's own list leaves out
+    for folder in steamapps:
+        for acf in sorted(folder.glob("appmanifest_*.acf")):
+            try:
+                state = vdf.load(acf).get("AppState", {})
+            except (OSError, ValueError):
+                continue
+            if (isinstance(state, dict) and state.get("installdir") and state.get("name")
+                    and _same(folder / "common" / str(state["installdir"]), proton)):
+                return str(state["name"])
+    return proton.name
+
+
+def _proton_lookup(name: str, proton: Path) -> Path | None:
+    """A new folder with a link called ``name`` to the Proton, for MO2-LINT
+    to run in; the caller removes it. MO2-LINT finds a --proton-version as a
+    path (also relative to where it runs) or as a folder name in Steam's
+    libraries, and protontricks finds it only by the name above, so the link
+    makes one value work for both. None when the name can't be a file name;
+    the Proton's path is passed then."""
+    if not name or "/" in name or name in (".", ".."):
+        return None
+    base = data_dir() / "tmp"
+    base.mkdir(parents=True, exist_ok=True)
+    folder = Path(tempfile.mkdtemp(prefix="proton-lookup-", dir=base))  # one per install
+    (folder / name).symlink_to(proton)
+    return folder
+
+
 class Mo2LintBackend(InstallerBackend):
     name = "MO2-LINT"
 
@@ -166,8 +285,11 @@ class Mo2LintBackend(InstallerBackend):
         on_output: OnOutput | None = None,
         launcher: str | None = None,  # MO2-LINT's --launcher: "steam", "gog" or "epic"; None lets it pick
         env: dict[str, str] | None = None,  # added to MO2-LINT's environment
+        proton: Path | None = None,  # the Proton MO2-LINT's Steam tool runs; None: the game's own
     ) -> InstallResult:
-        dest_dir = Path(dest_dir)  # MO2-LINT creates it; pre-creating it left an empty folder on failure
+        # MO2-LINT creates it; pre-creating it left an empty folder on failure. Absolute,
+        # since MO2-LINT may run in another folder (_proton_lookup).
+        dest_dir = Path(dest_dir).expanduser().absolute()
 
         # MO2-LINT refuses a directory that's in its registry. If the instance
         # is really there, installing is the wrong move; if only the registry
@@ -205,8 +327,20 @@ class Mo2LintBackend(InstallerBackend):
             args.append("--script-extender")
         if launcher:
             args += ["--launcher", launcher]
+        lookup = None  # where MO2-LINT runs, so it finds the Proton by the name protontricks knows
+        if launcher in (None, "steam") and game.appid:
+            if proton is None and not default_proton_installed():
+                proton = _steam_proton(game)
+            if proton is not None:
+                name = steam_tool_name(proton)
+                lookup = _proton_lookup(name, proton)
+                args += ["--proton-version", name if lookup is not None else str(proton)]
         log.info("installing MO2 with MO2-LINT: %s", " ".join(args))
-        returncode = self._run(args, on_output, env)
+        try:
+            returncode = self._run(args, on_output, env, cwd=lookup)
+        finally:
+            if lookup is not None:
+                shutil.rmtree(lookup, ignore_errors=True)
 
         has_exe = (dest_dir / "ModOrganizer.exe").exists()
         success = returncode == 0 and has_exe
@@ -223,11 +357,13 @@ class Mo2LintBackend(InstallerBackend):
         return InstallResult(success, returncode, dest_dir if success else None, message)
 
     @staticmethod
-    def _run(args: list[str], on_output: OnOutput | None, env: dict[str, str] | None = None) -> int:
+    def _run(args: list[str], on_output: OnOutput | None, env: dict[str, str] | None = None,
+             cwd: Path | None = None) -> int:
         """Run mo2-lint (on the host when sandboxed), streaming its output."""
         env = env or {}
         if background.in_flatpak():
-            args = ["flatpak-spawn", "--host", *(f"--env={k}={v}" for k, v in env.items()), *args]
+            where = [f"--directory={cwd}"] if cwd is not None else []
+            args = ["flatpak-spawn", "--host", *where, *(f"--env={k}={v}" for k, v in env.items()), *args]
         if on_output:
             on_output("$ " + " ".join([*(f"{k}={v}" for k, v in env.items()), *args]))
         with subprocess.Popen(
@@ -237,6 +373,7 @@ class Mo2LintBackend(InstallerBackend):
             text=True,
             bufsize=1,
             env={**os.environ, **env} if env else None,
+            cwd=cwd,
         ) as proc:
             assert proc.stdout is not None
             for line in proc.stdout:

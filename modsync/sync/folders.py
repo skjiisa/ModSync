@@ -69,11 +69,18 @@ class FolderSpec:
         return "\n".join(self.ignore) + "\n"
 
 
-def specs() -> list[FolderSpec]:
-    """Every game folder ModSync knows. The games add theirs here."""
-    from modsync import cyberpunk, dfu  # import this module's users; loaded on first use
+_specs: list[FolderSpec] | None = None
 
-    return [dfu.MODS_FOLDER, dfu.SAVES_FOLDER, cyberpunk.MODS_FOLDER]
+
+def specs() -> list[FolderSpec]:
+    """Every game folder ModSync knows: Daggerfall Unity's two, and the mods
+    of each game ModSync runs Mod Organizer 2 for (modsync.mo2games)."""
+    global _specs
+    if _specs is None:
+        from modsync import dfu, mo2games  # import this module's users; loaded on first use
+
+        _specs = [dfu.MODS_FOLDER, dfu.SAVES_FOLDER, *(game.folder for game in mo2games.all_games().values())]
+    return _specs
 
 
 def spec_for(key: str) -> FolderSpec | None:

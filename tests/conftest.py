@@ -114,3 +114,36 @@ def _no_real_dfu_install(_scratch_home):
 
     with patch("modsync.dfu.default_install_dir", lambda: _scratch_home / "no-default-dfu"):
         yield
+
+
+REAL_HOME = Path.home()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_game_stores(_scratch_home):
+    """The developer's machine looks like CI: no Steam, no Heroic and nothing
+    MO2-LINT installed. The games from the table (modsync.mo2games) are looked
+    for in all three, and a Play hook found for one is rewritten whenever
+    ModSync starts, which a test run once did to a real Heroic. A test that
+    needs a store points HOME at a folder of its own, or patches
+    ``modsync.platforms.current`` with a fake platform."""
+    from unittest.mock import patch
+
+    from modsync import platforms
+    from modsync.mo2.installers import mo2lint
+
+    class NoRealStores(type(platforms.current())):
+        def steam_roots(self):
+            return [] if Path.home() == REAL_HOME else super().steam_roots()
+
+        def heroic_config_dirs(self):
+            return [] if Path.home() == REAL_HOME else super().heroic_config_dirs()
+
+    real_state_path = mo2lint.mo2lint_state_path
+
+    def state_path():
+        return _scratch_home / "no-mo2-lint" / "state.json" if Path.home() == REAL_HOME else real_state_path()
+
+    with patch("modsync.platforms.current", lambda: NoRealStores()), \
+            patch.object(mo2lint, "mo2lint_state_path", state_path):
+        yield

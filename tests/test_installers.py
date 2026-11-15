@@ -1,3 +1,6 @@
+import json
+import os
+import shutil
 import stat
 import tempfile
 import textwrap
@@ -103,6 +106,113 @@ class Mo2LintBackendTests(unittest.TestCase):
             self.assertEqual(seen["args"][:2], ["flatpak-spawn", "--host"])
             self.assertEqual(seen["args"][2], str(fake))
 
+    def test_without_proton_11_a_steam_install_uses_the_games_proton_by_protontricks_name(self):
+        """MO2-LINT 7.0.3 asks for "Proton 11.0" unless told otherwise. Told
+        another, it finds it by path (also relative to where it runs) or by
+        folder name, requiring proton and toolmanifest.vdf, and hands the same
+        value to protontricks, which matches only Steam's names for tools
+        ("Proton Experimental", in "Proton - Experimental"). The fake does
+        both lookups the way they do."""
+        from unittest.mock import patch
+
+        from modsync.games import CYBERPUNK
+        from modsync.mo2.installers import mo2lint
+        from modsync.steam import vdf
+
+        lookups = textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import json, os, sys, pathlib
+            args = sys.argv[1:]
+            if "--proton-version" in args:
+                value = args[args.index("--proton-version") + 1]
+                found = pathlib.Path(value).expanduser()
+                ok = (found / "proton").exists() and (found / "toolmanifest.vdf").exists()
+                print("mo2-lint finds:", found.resolve() if ok else None)
+                names = json.loads(os.environ["PROTONTRICKS_NAMES"])
+                print("protontricks finds:", names.get(value))
+            dest = pathlib.Path(sys.argv[3])
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "ModOrganizer.exe").write_bytes(b"MZ")
+            print("installed in:", dest)
+            """)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            fake = _script(tmp / "fake-mo2-lint", lookups)
+            steamapps = tmp / "steamapps"
+            experimental = steamapps / "common" / "Proton - Experimental"
+            ge = tmp / "compatibilitytools.d" / "GE-Proton10-34"
+            vendor = tmp / "compatibilitytools.d" / "vendor" / "runtime"
+            for proton in (experimental, ge, vendor):
+                proton.mkdir(parents=True)
+                (proton / "proton").write_text("")
+                (proton / "toolmanifest.vdf").write_text("")
+            (steamapps / "appmanifest_1493710.acf").write_text(vdf.dumps({"AppState": {
+                "appid": "1493710", "name": "Proton Experimental", "installdir": "Proton - Experimental"}}))
+            (ge / "compatibilitytool.vdf").write_text(vdf.dumps({"compatibilitytools": {"compat_tools": {
+                "GE-Proton10-34": {"install_path": ".", "display_name": "GE-Proton10-34"}}}}))
+            # Declared beside it, not inside: a valid layout too.
+            (tmp / "compatibilitytools.d" / "vendor.vdf").write_text(vdf.dumps({"compatibilitytools": {
+                "compat_tools": {"vendor-proton": {"install_path": "vendor/runtime", "display_name": "Vendor"}}}}))
+            # What protontricks would match each name to.
+            names = {"Proton Experimental": str(experimental), "GE-Proton10-34": str(ge),
+                     "vendor-proton": str(vendor)}
+            os.environ["PROTONTRICKS_NAMES"] = json.dumps(names)
+            self.addCleanup(os.environ.pop, "PROTONTRICKS_NAMES", None)
+            os.chdir(tmp)
+            self.addCleanup(os.chdir, Path(__file__).resolve().parent.parent)
+
+            def install(game, launcher, found, *, default=False, dest="MO2"):
+                lines: list[str] = []
+                with patch("modsync.mo2.launch.game_proton_dir", return_value=found), \
+                        patch.object(mo2lint, "default_proton_installed", return_value=default), \
+                        patch.object(mo2lint, "data_dir", return_value=tmp / "data"):
+                    result = Mo2LintBackend(binary=fake).install(game, dest, on_output=lines.append,
+                                                                 launcher=launcher)
+                self.assertTrue(result.success, "\n".join(lines))
+                shutil.rmtree(result.instance_path)
+                return "\n".join(lines), result
+
+            for game, launcher, proton in ((SKYRIM_SE, None, experimental), (CYBERPUNK, "steam", ge),
+                                           (CYBERPUNK, "steam", vendor)):
+                with self.subTest(proton=proton.name):
+                    said, result = install(game, launcher, proton)
+                    self.assertIn(f"mo2-lint finds: {proton.resolve()}", said)
+                    self.assertIn(f"protontricks finds: {proton}", said)
+                    # A relative destination is where it was asked for, not in the lookup folder.
+                    self.assertEqual(result.instance_path, tmp / "MO2")
+                    self.assertIn(f"installed in: {tmp / 'MO2'}", said)
+            self.assertEqual(list((tmp / "data" / "tmp").iterdir()), [])  # each lookup folder is removed
+            # Proton 11.0 where MO2-LINT looks: MO2-LINT picks, as it intends.
+            self.assertNotIn("--proton-version", install(SKYRIM_SE, None, experimental, default=True)[0])
+            self.assertNotIn("--proton-version", install(SKYRIM_SE, None, None)[0])  # Steam can't say
+            self.assertNotIn("--proton-version", install(CYBERPUNK, "gog", experimental)[0])  # not Steam's game
+
+    def test_proton_11_counts_only_where_mo2lint_looks(self):
+        """MO2-LINT uses the libraries of the last Steam it finds: with native
+        and Flatpak Steam, the Flatpak's. Proton 11.0 in native Steam's library
+        alone isn't found."""
+        from unittest.mock import patch
+
+        from modsync.mo2.installers import mo2lint
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            native, flatpak = home / ".local/share/Steam", home / ".var/app/com.valvesoftware.Steam/.local/share/Steam"
+            for root in (native, flatpak):
+                (root / "steamapps").mkdir(parents=True)
+                (root / "steamapps/libraryfolders.vdf").write_text(f'"libraryfolders"\n{{\n "0"\n {{\n  "path" "{root}"\n }}\n}}\n')
+            proton = native / "steamapps/common/Proton 11.0"
+            proton.mkdir(parents=True)
+            for name in ("proton", "toolmanifest.vdf"):
+                (proton / name).write_text("")
+            with patch.dict(os.environ, {"HOME": str(home)}), patch.object(mo2lint.platform, "machine", return_value="x86_64"):
+                os.environ.pop("STEAM_DIR", None)
+                self.assertEqual(mo2lint.mo2lint_libraries(), [flatpak])
+                self.assertFalse(mo2lint.default_proton_installed())
+                with patch.dict(os.environ, {"STEAM_DIR": str(native)}):
+                    self.assertTrue(mo2lint.default_proton_installed())
+
     def test_launcher_and_environment_reach_mo2lint(self):
         """Cyberpunk on GOG: --launcher gog, and Wine stand-ins in the environment
         (modsync.cyberpunk.MO2LINT_ENV) — also through flatpak-spawn."""
@@ -176,7 +286,7 @@ class Mo2LintBackendTests(unittest.TestCase):
             fake = _script(tmp / "fake-mo2-lint", FAKE_OK)
             calls = []
 
-            def run(args, on_output, env=None):
+            def run(args, on_output, env=None, cwd=None):
                 calls.append(args[1:])
                 if args[1] == "uninstall":
                     state.write_text('{"instances": []}')  # what mo2-lint uninstall does

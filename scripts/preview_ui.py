@@ -22,7 +22,7 @@ from PySide6.QtCore import QThreadPool
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea
 
-from modsync import dfu, gameversion, launchhook
+from modsync import dfu, gameversion, launchhook, mo2games
 from modsync.firewall import Check, Firewall
 from modsync.games import DAGGERFALL, SKYRIM_SE
 from modsync.mo2 import usvfs
@@ -102,6 +102,12 @@ def main():
         patch("modsync.ui.pages.system.background.status", return_value={"installed": True, "active": "active"}),
         patch("modsync.ui.pages.system.launchhook.status", return_value=hook),
         patch("modsync.launchhook.upgrade", return_value=None),
+        # None of the table's games (modsync.mo2games) unless a shot says otherwise:
+        # this machine's Steam and Heroic are not read.
+        patch("modsync.mo2games.here", return_value=[]),
+        patch("modsync.mo2games.refresh_hooks", return_value=[]),
+        patch.object(mo2games.ManagedGame, "overview", lambda self, hook=True: mo2games.Overview(
+            None, None, False, None, None, "off", None, None)),
         patch("modsync.ui.pages.system.firewall.check", return_value=Check(Firewall("ufw"), False, "ufw:1")),
         patch("modsync.ui.pages.mods.scan_instances", return_value=[INSTANCE]),
         patch("modsync.ui.pages.mods.describe_setup", return_value=["Profile: Default  ·  42 mods enabled"]),
@@ -220,6 +226,37 @@ def main():
                     capture(dw, "daggerfall-existing")
                     dw.top_overlay.cancel()
                 dw.close()
+                router._pad_seen = False
+                router.controllersChanged.emit()
+        # A game from the table, as Steam has it: Starfield, with MO2 installed for it.
+        from modsync.mo2games.steam import SteamGame
+
+        starfield = mo2games.get("starfield")
+        in_steam = SteamGame(starfield.game.appid, Path("/home/you/.local/share/Steam/steamapps/common/Starfield"),
+                             Path("/home/you/.local/share/Steam/steamapps"), "23518663")
+
+        def table_overview(installed: bool):
+            status = launchhook.LaunchHookStatus(
+                starfield.game, installed, f"modsync_{starfield.game.appid}_proton" if installed else None,
+                installed, None, None, True, None, False, True)
+            instance = Path("/home/you/ModOrganizer2-starfield") if installed else None
+            return mo2games.Overview(in_steam, instance, installed, None, status, "on" if installed else "off",
+                                     ("1.16.244.0", "1.16.244.0"), None, prefix_ready=True)
+
+        for installed, name in ((False, "game-table-install"), (True, "game-table")):
+            with patch("modsync.mo2games.here", return_value=[starfield]), \
+                    patch.object(starfield, "overview", lambda hook=True, i=installed: table_overview(i)):
+                tw = window_for(State(**configured, paired=True), mode="gamepad")
+                router._pad_seen = True
+                router.controllersChanged.emit()
+                if installed:
+                    tw.open_game_picker()
+                    capture(tw, "game-switch-table")
+                    tw.top_overlay.choose(starfield.ui_key)
+                else:
+                    tw.switch_game(starfield.ui_key)
+                capture(tw, name)
+                tw.close()
                 router._pad_seen = False
                 router.controllersChanged.emit()
         w.activateWindow()

@@ -159,13 +159,29 @@ elif [[ -z "$native" && "$verb" == "waitforexitandrun" && -z "${MODSYNC_LAUNCH_H
     esac
     # The handoff: a tag, the Proton directory, the folder to start in, then the
     # program and its arguments. They replace the game's program and Steam's
-    # arguments for it; the verb, Steam's environment and the prefix stay.
+    # arguments for it; the verb, Steam's environment and the prefix stay. Under
+    # the second tag, environment variables for the launch come before the
+    # program: how many, then that many NAME=value.
+    handoff_env=()
+    if (( ${#handoff[@]} >= 5 )) && [[ "${handoff[0]}" == "@@HANDOFF_ENV_TAG@@" ]]; then
+        count="${handoff[3]}"
+        if [[ "$count" =~ ^[0-9]+$ ]] && (( ${#handoff[@]} >= 5 + count )); then
+            handoff_env=("${handoff[@]:4:count}")
+            handoff=("@@HANDOFF_TAG@@" "${handoff[1]}" "${handoff[2]}" "${handoff[@]:4+count}")
+        fi
+    fi
     if (( ${#handoff[@]} >= 4 )) && [[ "${handoff[0]}" == "@@HANDOFF_TAG@@" ]]; then
         if [[ -e "${handoff[1]}/proton" && -d "${handoff[2]}" ]]; then
             underlying="${handoff[1]}"
             underlying_name="${underlying##*/}"
             cd "${handoff[2]}" || exit 1
-            log "playing through ModSync: ${handoff[*]:3} (with $underlying_name, in ${handoff[2]})"
+            for entry in "${handoff_env[@]}"; do
+                if [[ "$entry" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+                    export "$entry"
+                    log "with ${entry%%=*}=${entry#*=}"
+                fi
+            done
+            log "launching through ModSync: ${handoff[*]:3} (with $underlying_name, in ${handoff[2]})"
             set -- "$verb" "${handoff[@]:3}"
         else
             log "WARNING: ModSync handed back ${handoff[1]} and ${handoff[2]}, which are not there; launching the game"

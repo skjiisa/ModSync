@@ -1,12 +1,14 @@
-"""The GOG games Heroic installed, read from its config folder.
+"""The GOG and Epic games Heroic installed, read from its config folder.
 
 Heroic keeps GOG installs in ``gog_store/installed.json`` (folder, GOG build,
-whether that build is pinned) and each game's own settings in
-``GamesConfig/<appName>.json`` (its Wine or Proton and its prefix). A setting
-the game's file leaves out comes from Heroic's defaults in ``config.json``,
-and a prefix missing there too is Heroic's shared one, the way Heroic 2.22's
-``GameConfig`` resolves them. A prefix Heroic hasn't launched anything in yet
-has no C: drive. The ``appName`` of a GOG game is its GOG product id.
+whether that build is pinned), Epic installs in Legendary's
+``legendaryConfig/legendary/installed.json`` (keyed by Epic's app name), and
+each game's own settings in ``GamesConfig/<appName>.json`` (its Wine or Proton
+and its prefix). A setting the game's file leaves out comes from Heroic's
+defaults in ``config.json``, and a prefix missing there too is Heroic's shared
+one, the way Heroic 2.22's ``GameConfig`` resolves them. A prefix Heroic hasn't
+launched anything in yet has no C: drive. The ``appName`` of a GOG game is its
+GOG product id; an Epic game's is Epic's app name.
 
 Heroic runs natively (``~/.config/heroic``) or as the Flatpak
 ``com.heroicgameslauncher.hgl``; both are read, native first.
@@ -43,16 +45,26 @@ class WineVersion:
         return self.bin.parent if self.is_proton else None
 
 
+# Heroic's name for each store's backend ("runner"), by ModSync's name for the store.
+RUNNERS = {"gog": "gog", "epic": "legendary"}
+
+
 @dataclass(frozen=True)
-class GogGame:
-    app_name: str  # the GOG product id
+class HeroicGame:
+    app_name: str  # the GOG product id, or Epic's app name
     install_path: Path
-    version: str  # the GOG build's name, e.g. "2.5_RedModFix"
+    version: str  # the build's name, e.g. "2.5_RedModFix"
     build_id: str
     pinned: bool  # Heroic won't update past this build
     config_dir: Path  # the Heroic config folder it was found in
     prefix: Path | None = None  # the prefix Heroic runs it in (its compat data, for Proton)
     wine: WineVersion | None = None
+    runner: str = "gog"  # Heroic's backend for the store: "gog", or "legendary" for Epic
+
+    @property
+    def store(self) -> str:
+        """ModSync's name for the store: "gog" or "epic"."""
+        return next((store for store, runner in RUNNERS.items() if runner == self.runner), self.runner)
 
     @property
     def flatpak(self) -> bool:
@@ -107,6 +119,9 @@ def _game_settings(config_dir: Path, app_name: str) -> tuple[Path, WineVersion |
     return prefix, wine
 
 
+GogGame = HeroicGame  # what it was called while GOG was the only store read
+
+
 def gog_games(config_dir: Path) -> list[GogGame]:
     """Every GOG game (not DLC) Heroic installed from this config folder."""
     data = _read_json(config_dir / "gog_store" / "installed.json")
@@ -134,12 +149,60 @@ def gog_games(config_dir: Path) -> list[GogGame]:
     return games
 
 
-def find_gog_game(app_name: str, config_dirs: Iterable[Path] | None = None) -> GogGame | None:
-    """The GOG game with this product id, from the first Heroic that has it
-    installed in a folder that still exists."""
+def epic_games(config_dir: Path) -> list[HeroicGame]:
+    """Every Epic game (not DLC) Heroic installed from this config folder.
+    Legendary has no pinned builds; Heroic just doesn't update a game by itself."""
+    data = _read_json(config_dir / "legendaryConfig" / "legendary" / "installed.json")
+    if not isinstance(data, dict):
+        return []
+    games: list[HeroicGame] = []
+    for app_name, entry in data.items():
+        if not isinstance(entry, dict) or entry.get("is_dlc") or not isinstance(app_name, str) or not app_name:
+            continue
+        if str(entry.get("platform") or "Windows").lower() not in ("windows", "win32"):
+            continue  # a macOS build: nothing Mod Organizer 2 can run
+        install_path = _heroic_path(entry.get("install_path"))
+        if install_path is None:
+            continue
+        prefix, wine = _game_settings(config_dir, app_name)
+        games.append(HeroicGame(
+            app_name=app_name,
+            install_path=install_path,
+            version=str(entry.get("version") or ""),
+            build_id="",
+            pinned=False,
+            config_dir=config_dir,
+            prefix=prefix,
+            wine=wine,
+            runner=RUNNERS["epic"],
+        ))
+    return games
+
+
+def installed(config_dirs: Iterable[Path] | None = None) -> list[HeroicGame]:
+    """Every GOG and Epic game Heroic has installed in a folder that still
+    exists, each Heroic (native, then Flatpak) in turn."""
     dirs = platforms.current().heroic_config_dirs() if config_dirs is None else config_dirs
+    return [game for config_dir in dirs
+            for game in (*gog_games(Path(config_dir)), *epic_games(Path(config_dir)))
+            if game.install_path.is_dir()]
+
+
+def find_game(store: str, app_name: str, config_dirs: Iterable[Path] | None = None) -> HeroicGame | None:
+    """The game with this id in ``store`` ("gog" or "epic"), from the first
+    Heroic that has it installed in a folder that still exists."""
+    dirs = platforms.current().heroic_config_dirs() if config_dirs is None else config_dirs
+    read = {"gog": gog_games, "epic": epic_games}.get(store)
+    if read is None or not app_name:
+        return None
     for config_dir in dirs:
-        for game in gog_games(Path(config_dir)):
+        for game in read(Path(config_dir)):
             if game.app_name == str(app_name) and game.install_path.is_dir():
                 return game
     return None
+
+
+def find_gog_game(app_name: str, config_dirs: Iterable[Path] | None = None) -> GogGame | None:
+    """The GOG game with this product id, from the first Heroic that has it
+    installed in a folder that still exists."""
+    return find_game("gog", app_name, config_dirs)

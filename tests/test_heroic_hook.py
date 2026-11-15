@@ -69,7 +69,7 @@ def make_heroic(tmp_path: Path, *, wrappers=(), flatpak=False) -> GogGame:
 def render(game: GogGame, instance: Path) -> str:
     return hook.render(game, game_name="Cyberpunk 2077", instance=instance, game_exe="Cyberpunk2077.exe",
                        prefer_argument="-modded", direct_args=["run", "-a", "--launcher-skip -modded", "Z:/x.exe"],
-                       disable_command="modsync cyberpunk hook disable")
+                       disable_command="modsync cyberpunk hook disable", dll_overrides=("winmm", "version"))
 
 
 @pytest.fixture
@@ -396,10 +396,11 @@ def test_a_failed_heroic_check_is_an_error_not_closed():
 
 def test_the_cyberpunk_script_names_the_game_folder_and_no_profile(tmp_path):
     from modsync import cyberpunk
+    from modsync.mo2games import heroic as heroic_store
     from tests.test_cyberpunk import make_game, make_instance
 
     game = make_game(tmp_path)
-    text = cyberpunk.hook_script(game, make_instance(tmp_path))
+    text = heroic_store.hook_script(cyberpunk.GAME, game, make_instance(tmp_path))
 
     assert f"game_dir={shlex.quote(str(game.install_path))}" in text
     assert "game_exe=Cyberpunk2077.exe" in text and "prefer=-modded" in text

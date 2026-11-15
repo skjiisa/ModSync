@@ -1206,61 +1206,123 @@ def _dfu_hook(args: list[str]) -> int:
 
 
 def cyberpunk(args: list[str]) -> int:
-    """Cyberpunk 2077 from GOG through Heroic, modded with MO2."""
+    """Cyberpunk 2077, modded with MO2: 'modsync games cyberpunk2077' under its older name."""
+    from modsync import cyberpunk as module
+
+    return _managed_game(module.GAME, args)
+
+
+def games(args: list[str]) -> int:
+    """The games ModSync runs Mod Organizer 2 for (modsync.mo2games)."""
+    from modsync import mo2games
+
+    if not args or args == ["list"] or args == ["list", "--all"]:
+        return _games_list(everything=args == ["list", "--all"])
+    game = mo2games.get(args[0])
+    if game is None:
+        print(f"ModSync knows no game called {args[0]!r}. 'modsync games list --all' shows every key.")
+        return 2
+    return _managed_game(game, args[1:])
+
+
+def _games_list(*, everything: bool) -> int:
+    from modsync import mo2games
+    from modsync.games import STORE_NAMES
+
+    here = {game.key for game in mo2games.here()}
+    shown = [game for game in mo2games.all_games().values() if everything or game.key in here]
+    if not shown:
+        print("None of the games ModSync knows are installed in Steam or Heroic here.")
+        print("'modsync games list --all' shows every game it knows.")
+        return 1
+    width = max(len(game.key) for game in shown)
+    for game in shown:
+        if game.key not in here:
+            stores = ", ".join(STORE_NAMES[s] for s in game.game.stores)
+            print(f"{game.key:<{width}}  {game.name}  (not installed; {stores})")
+            continue
+        found = game.find_game()
+        instance = game.find_instance()
+        where = STORE_NAMES[found.store] if found is not None else "not installed"
+        mo2 = str(instance) if instance is not None else "no MO2 instance"
+        print(f"{game.key:<{width}}  {game.name}  ({where}; {mo2})")
+    if not everything:
+        print("\n'modsync games <key> status' shows one; 'modsync games list --all' every game ModSync knows.")
+    return 0
+
+
+def _managed_game(game, args: list[str]) -> int:
     sub = args[0] if args else ""
     rest = args[1:]
     if sub == "status" and not rest:
-        return _cyberpunk_status()
+        return _managed_status(game)
     if sub == "use" and len(rest) == 1:
-        return _cyberpunk_use(rest[0])
+        return _managed_use(game, rest[0])
     if sub == "install" and len(rest) <= 1:
-        return _cyberpunk_install(rest[0] if rest else None)
+        return _managed_install(game, rest[0] if rest else None)
     if sub in ("open", "play") and not rest:
-        return _cyberpunk_launch(play=sub == "play")
+        return _managed_launch(game, play=sub == "play")
     if sub == "hook" and len(rest) == 1 and rest[0] in ("enable", "disable", "status"):
-        return _cyberpunk_hook(rest[0])
+        return _managed_hook(game, rest[0])
+    cmd = game.command
+    pad = " " * max(0, 34 - len(cmd) - 2)
     print(
         "usage:\n"
-        "  modsync cyberpunk status          Cyberpunk 2077 in Heroic (GOG) and its MO2 instance\n"
-        "  modsync cyberpunk install [<dir>] install MO2 for it (default ~/ModOrganizer2-cyberpunk2077)\n"
-        "  modsync cyberpunk use <dir>       use this MO2 instance for Cyberpunk\n"
-        "  modsync cyberpunk open            open its Mod Organizer 2 with Heroic's Proton\n"
-        "  modsync cyberpunk play            play through MO2 (CET and RED4ext load; REDmod deploys first)\n"
-        "  modsync cyberpunk hook enable | disable | status\n"
-        "                                    make Heroic's Play button on the game play through MO2"
+        f"  {cmd} status          {pad}{game.name} in its store and its MO2 instance\n"
+        f"  {cmd} install [<dir>] {pad}install MO2 for it (default {_tilde(game.default_instance_dir())})\n"
+        f"  {cmd} use <dir>       {pad}use this MO2 instance for it\n"
+        f"  {cmd} open            {pad}open its Mod Organizer 2 in the game's own prefix\n"
+        f"  {cmd} play            {pad}play through MO2\n"
+        f"  {cmd} hook enable | disable | status\n"
+        f"  {' ' * len(cmd)}                 {pad}make the store's own Play button on the game play through MO2"
     )
     return 2
 
 
-def _cyberpunk_status() -> int:
-    from modsync import cyberpunk
+def _tilde(path: Path) -> str:
+    try:
+        return "~/" + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
 
-    game = cyberpunk.find_game()
+
+def _managed_status(mg) -> int:
+    from modsync.games import STORE_NAMES
+
+    game = mg.find_game()
     if game is None:
-        print("Cyberpunk 2077 (GOG):  not installed in Heroic")
+        print(f"{mg.name}:".ljust(22) + f" not installed in {mg.where_to_get()}")
     else:
-        print(f"Cyberpunk 2077 (GOG):  {game.install_path}")
-        print(f"  GOG build:           {game.version or 'unknown'}{' (pinned in Heroic)' if game.pinned else ''}")
-        print(f"  Prefix:              {game.prefix}" + ("" if game.drive_c else "  (not created yet — launch it once from Heroic)"))
-        if game.wine is not None:
-            print(f"  Runs with:           {game.wine.name or game.wine.bin} ({game.wine.type})")
-    instance = cyberpunk.find_instance()
+        launcher = "Steam" if game.store == "steam" else "Heroic"
+        print(f"{mg.name} ({STORE_NAMES[game.store]}):".ljust(22) + f" {game.install_path}")
+        if game.version:
+            what = "Steam build:" if game.store == "steam" else f"{STORE_NAMES[game.store]} build:"
+            print(f"  {what:<21}{game.version}{' (pinned in Heroic)' if game.pinned else ''}")
+        print(f"  Prefix:              {game.prefix}"
+              + ("" if game.drive_c else f"  (not created yet — launch it once from {launcher})"))
+        wine = getattr(game, "wine", None)
+        if wine is not None:
+            print(f"  Runs with:           {wine.name or wine.bin} ({wine.type})")
+    instance = mg.find_instance()
     if instance is None:
-        print("MO2 instance:          none ('modsync cyberpunk use <dir>')")
+        print(f"MO2 instance:          none ('{mg.command} install' or '{mg.command} use <dir>')")
         return 1
-    problem = cyberpunk.instance_problem(instance)
-    chosen = " (chosen with 'modsync cyberpunk use')" if instance == cyberpunk.chosen_instance() else ""
+    problem = mg.instance_problem(instance)
+    chosen = f" (chosen with '{mg.command} use')" if instance == mg.chosen_instance() else ""
     print(f"MO2 instance:          {instance}{chosen}")
     if problem:
         print(f"  ! {problem}")
-    hook = cyberpunk.hook_status()
+    elif not mg.setup_finished(instance):
+        print(f"  ! {mg.setup_missing} '{mg.command} install {instance}' finishes its setup.")
+    hook = mg.hook_status()
     if hook is not None:
-        print(f"Play in Heroic:        {hook.summary()}")
+        launcher = "Steam" if game.store == "steam" else "Heroic"
+        print(f"Play in {launcher}:".ljust(22) + f" {hook.summary()}")
     from modsync.state import State
     from modsync.sync import folders
 
     st = State.load()
-    key = cyberpunk.MODS_FOLDER.key
+    key = mg.folder.key
     if folders.stopping(key, st):
         print("Mods sync:             stopping (once Syncthing answers)")
     elif key in st.game_folders:
@@ -1268,26 +1330,24 @@ def _cyberpunk_status() -> int:
     elif key in st.held_folders:
         print(f"Mods sync:             a copy is kept for other machines ('modsync sync share {key}' "
               "syncs them here instead)")
-    elif cyberpunk.chosen_instance() is None:
-        print("Mods sync:             off (only for an instance from 'modsync cyberpunk install' or 'use')")
+    elif mg.chosen_instance() is None:
+        print(f"Mods sync:             off (only for an instance from '{mg.command} install' or 'use')")
     else:
         print(f"Mods sync:             off ('modsync sync share {key}' turns it on)")
-    version = cyberpunk.version_problem(game)
+    version = mg.version_problem(game)
     if version:
         print(f"  ! {version}")
     return 0 if game is not None and not problem else 1
 
 
-def _cyberpunk_use(path: str) -> int:
-    from modsync import cyberpunk
-
+def _managed_use(mg, path: str) -> int:
     from modsync.service import ModSyncService
 
     service = ModSyncService()
     try:
-        for note in service.use_cyberpunk_instance(path):
+        for note in service.use_game_instance(mg, path):
             print(note)
-    except (cyberpunk.CyberpunkError, RuntimeError) as e:
+    except RuntimeError as e:
         print(f"error: {e}")
         return 1
     finally:
@@ -1295,56 +1355,53 @@ def _cyberpunk_use(path: str) -> int:
     return 0
 
 
-def _cyberpunk_install(dest: str | None) -> int:
-    import sys
-
-    from modsync import cyberpunk
-
-    target = Path(dest).expanduser() if dest else cyberpunk.default_instance_dir()
-    print(f"Installing Mod Organizer 2 for Cyberpunk 2077 to {target} … (this can take several minutes)")
+def _managed_install(mg, dest: str | None) -> int:
+    target = Path(dest).expanduser() if dest else mg.default_instance_dir()
+    print(f"Installing Mod Organizer 2 for {mg.name} to {target} … (this can take several minutes)")
     try:
-        instance = cyberpunk.install_mo2(target, lambda line: print(f"  {line}", file=sys.stderr))
-    except (cyberpunk.CyberpunkError, RuntimeError, OSError) as e:
+        instance = mg.install_mo2(target, lambda line: print(f"  {line}", file=sys.stderr))
+    except (RuntimeError, OSError) as e:
         print(f"error: {e}")
         return 1
     print(f"Installed and now in use: {instance}")
-    print("Open MO2 with 'modsync cyberpunk open' to add mods, or play with 'modsync cyberpunk play'.")
+    print(f"Open MO2 with '{mg.command} open' to add mods, or play with '{mg.command} play'.")
     return 0
 
 
-def _cyberpunk_hook(action: str) -> int:
-    from modsync import cyberpunk
-
+def _managed_hook(mg, action: str) -> int:
+    game = mg.find_game()
+    launcher = "Steam" if game is not None and game.store == "steam" else "Heroic"
     if action == "status":
-        hook = cyberpunk.hook_status()
-        print(f"Play in Heroic: {hook.summary() if hook else 'Cyberpunk 2077 is not installed in Heroic'}")
-        if hook is not None and hook.enabled:
-            print(f"  script: {hook.script}")
+        hook = mg.hook_status()
+        missing = f"{mg.name} is not installed in {mg.where_to_get()}"
+        print(f"Play in {launcher}: {hook.summary() if hook else missing}")
+        script = getattr(hook, "script", None)
+        if hook is not None and hook.enabled and script is not None:
+            print(f"  script: {script}")
         return 0
     try:
         if action == "enable":
-            for line in cyberpunk.enable_hook():
+            for line in mg.enable_hook():
                 print(line)
         else:
-            print(cyberpunk.disable_hook())
-    except (cyberpunk.CyberpunkError, OSError) as e:
+            print(mg.disable_hook())
+    except (RuntimeError, OSError) as e:
         print(f"error: {e}")
         return 1
     return 0
 
 
-def _cyberpunk_launch(*, play: bool) -> int:
-    from modsync import cyberpunk
+def _managed_launch(mg, *, play: bool) -> int:
     from modsync.mo2.launch import Launcher
 
-    for note in cyberpunk.refresh_hook():
+    for note in mg.refresh_hook():
         print(note)
-    version = cyberpunk.version_problem()
+    version = mg.version_problem()
     if version:
         print(f"warning: {version}")
     try:
-        print(cyberpunk.launch(Launcher(), play=play))
-    except (cyberpunk.CyberpunkError, RuntimeError, OSError) as e:
+        print(mg.launch(Launcher(), play=play))
+    except (RuntimeError, OSError) as e:
         print(f"error: {e}")
         return 1
     return 0
@@ -1498,6 +1555,11 @@ def _launch_hub(args: list[str]) -> int:
     handoff = os.fdopen(os.dup(1), "wb")
     os.dup2(2, 1)
     with handoff:
+        from modsync import mo2games
+
+        managed = mo2games.for_steam(appid)
+        if managed is not None:
+            return _managed_hub(managed, handoff)
         opened, reason = _open_for_download(appid, handoff)
         if opened:
             return launchhook.EXIT_CONTINUE
@@ -1511,6 +1573,44 @@ def _launch_hub(args: list[str]) -> int:
             print(f"ModSync window unavailable (PySide6 missing: {exc}); continuing the launch.")
             return launchhook.EXIT_CONTINUE
         return run_hub(appid=appid, through=through, handoff=handoff, reason=reason)
+
+
+def _managed_hub(mg, handoff) -> int:
+    """Steam's launch of a game from the table (modsync.mo2games): hand the
+    hook MO2's launch, without a window. A note ModSync left says which one
+    (a Nexus download's link, or its own Play or Open MO2); a plain Play in
+    Steam plays through MO2. With no MO2 instance for the game, or when MO2's
+    launch can't be worked out, the launch goes on as Steam had it: ModSync
+    never keeps a game from starting. The user hears why."""
+    import logging
+
+    from modsync import launchhook, nxm
+    from modsync.logging_setup import configure
+    from modsync.mo2 import downloads, steam_downloads
+
+    configure("hub", ["launch", "hub", f"--appid={mg.game.appid}"])
+    log = logging.getLogger(__name__)
+    try:
+        note = steam_downloads.take_request(mg.game)
+    except Exception:  # noqa: BLE001 — a note it can't read is no reason to keep the game from starting
+        log.exception("Steam launch: couldn't read the note ModSync left for %s", mg.name)
+        note = None
+    try:
+        if note is None and mg.steam_instance() is None:
+            log.info("Steam launch: no MO2 instance for %s; continuing as Steam had it", mg.name)
+            return launchhook.EXIT_CONTINUE
+        if note is not None and note not in (downloads.PLAY, downloads.OPEN):
+            plan = mg.steam_plan(download=note, prepare=True)
+        else:
+            plan = mg.steam_plan(play=note != downloads.OPEN, prepare=True)
+        handoff.write(launchhook.encode_handoff(plan))
+        handoff.flush()
+    except Exception as exc:  # noqa: BLE001 — whatever it is, the game still starts
+        log.exception("Steam launch: couldn't hand %s to Mod Organizer 2", mg.name)
+        nxm.notify(f"{mg.name} is starting without Mod Organizer 2: {exc}")
+        return launchhook.EXIT_CONTINUE
+    log.info("Steam launch: %s through MO2 without the window: %s", plan.target, plan.command)
+    return launchhook.EXIT_CONTINUE
 
 
 def _open_for_download(appid: int | None, handoff) -> tuple[bool, str]:

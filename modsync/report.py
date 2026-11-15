@@ -9,7 +9,6 @@ from pathlib import Path
 
 from modsync import gameversion, launchhook, platforms
 from modsync.games import CYBERPUNK, SKYRIM_SE
-from modsync.heroic import library as heroic
 from modsync.mo2 import discover as mo2_discover
 from modsync.mo2 import instance as mo2_instance
 from modsync.mo2 import launch as mo2_launch
@@ -40,7 +39,7 @@ def build() -> Report:
     if not roots:
         line("✗ No Steam installation found.")
         line()
-        _heroic_section(plat, line)
+        _games_section(plat, line)
         return Report(out.getvalue(), False)
 
     line("Steam roots:")
@@ -69,7 +68,7 @@ def build() -> Report:
         line("  ✗ not installed")
     line()
 
-    _heroic_section(plat, line)
+    _games_section(plat, line)
 
     usvfs_messages: dict[Path, str] = {}
 
@@ -150,34 +149,62 @@ def build() -> Report:
     return Report(out.getvalue(), True)
 
 
-def _heroic_section(plat: platforms.Platform, line) -> None:
-    """Heroic and the GOG games ModSync supports, when Heroic is installed."""
+def _games_section(plat: platforms.Platform, line) -> None:
+    """Heroic's config folders, and the games ModSync runs Mod Organizer 2 for
+    the same way (modsync.mo2games) that Steam or Heroic has here. Cyberpunk
+    2077 is listed whenever Heroic is installed, found or not."""
+    from modsync import mo2games
+    from modsync.games import STORE_NAMES
+
     config_dirs = plat.heroic_config_dirs()
-    if not config_dirs:
-        return
-    line("Heroic config:")
-    for d in config_dirs:
-        line(f"  • {d}")
-    line()
-    game = heroic.find_gog_game(CYBERPUNK.gog_id, config_dirs)
-    line(f"{CYBERPUNK.name} (GOG {CYBERPUNK.gog_id}, Heroic):")
-    if game is None:
-        line("  ✗ not installed")
+    if config_dirs:
+        line("Heroic config:")
+        for d in config_dirs:
+            line(f"  • {d}")
         line()
+    try:
+        shown = {game.key: game for game in mo2games.here()}
+    except Exception as exc:  # noqa: BLE001 — the rest of the report still stands
+        line(f"  ! the other games couldn't be looked for: {exc}")
+        shown = {}
+    if config_dirs:
+        shown.setdefault(CYBERPUNK.key, mo2games.all_games()[CYBERPUNK.key])
+    if not shown:
         return
-    line(f"  ✓ installed: {game.install_path}")
-    build = game.version or "(unknown)"
-    line(f"  • GOG build: {build}{' (pinned in Heroic)' if game.pinned else ''}")
-    if game.drive_c is None:
-        line(f"  • prefix: {game.prefix}  (not created yet — launch the game once from Heroic)")
-    else:
-        line(f"  • prefix: {game.prefix}")
-    if game.wine is not None:
-        line(f"  • runs with: {game.wine.name or game.wine.bin} ({game.wine.type})")
+    for managed in shown.values():
+        installs = managed.installs()
+        if not installs:
+            line(f"{managed.name}:")
+            line(f"  ✗ not installed in {managed.where_to_get()}")
+        for game in installs:
+            store = STORE_NAMES[game.store]
+            if game.store == "steam":
+                line(f"{managed.name} ({game.app_name}):")
+            else:
+                line(f"{managed.name} ({store} {game.app_name}, Heroic):")
+            launcher = "Steam" if game.store == "steam" else "Heroic"
+            line(f"  ✓ installed: {game.install_path}")
+            if game.store != "steam" or game.version:
+                build = game.version or "(unknown)"
+                line(f"  • {store} build: {build}{' (pinned in Heroic)' if game.pinned else ''}")
+            if game.drive_c is None:
+                line(f"  • prefix: {game.prefix}  (not created yet — launch the game once from {launcher})")
+            else:
+                line(f"  • prefix: {game.prefix}")
+            wine = getattr(game, "wine", None)
+            if wine is not None:
+                line(f"  • runs with: {wine.name or wine.bin} ({wine.type})")
+        instance = managed.find_instance()
+        if instance is not None:
+            problem = managed.instance_problem(instance)
+            line(f"  {'!' if problem else '•'} MO2 instance: {instance}" + (f"  ({problem})" if problem else ""))
+        elif installs:
+            line(f"  • MO2 instance: none ('{managed.command} install')")
+        line()
     from modsync import nxm
 
     downloads = nxm.status()
-    line(f"  {'•' if downloads.active or not downloads.enabled else '!'} Nexus downloads (nxm://): {downloads.summary()}")
+    line(f"{'•' if downloads.active or not downloads.enabled else '!'} Nexus downloads (nxm://): {downloads.summary()}")
     line()
 
 
