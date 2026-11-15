@@ -32,7 +32,8 @@ import re
 import subprocess
 import threading
 import zipfile
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 from typing import Callable
 
@@ -70,15 +71,48 @@ class Overview:
     chosen: bool  # handed to ModSync (install or use): only that one syncs
     instance_problem: str | None
     hook: object | None  # the store's Play hook: its ``enabled`` says whether Play goes through MO2
-    mods: str  # "on" | "off" | "stopping"
+    mods: str  # "on" | "off" | "stopping" | "kept" (a copy kept here for the other machines)
     version: tuple[str, str] | None  # the game here: (patch, build)
     version_problem: str | None
     prefix_ready: bool = False  # the store has made the game's prefix (read here, off the UI thread)
     needs_setup: bool = False  # the instance's setup stopped part way
+    # The paired machines that sync the game's mods (by name): the ones that
+    # offer them, and the ones a copy kept here is shared with.
+    machines: list[str] = field(default_factory=list)
+    kept_bytes: int | None = None  # how much the copy kept here takes
+    kept_versions: list[tuple[str, str]] = field(default_factory=list)  # what the kept mods are for
+
+    @property
+    def elsewhere(self) -> bool:
+        """The game's mods sync on another machine: offered, or kept here for one."""
+        return bool(self.machines) or self.mods == "kept"
 
 
 def is_instance(path: Path) -> bool:
     return (path / "ModOrganizer.exe").is_file()
+
+
+_SIZES: dict[Path, tuple[float, int]] = {}
+_SIZE_TTL = 60.0  # a kept copy can hold tens of thousands of files: walked at most once a minute
+
+
+def tree_bytes(root: Path) -> int | None:
+    """How much a folder takes, None when it can't be read."""
+    now = time.monotonic()
+    cached = _SIZES.get(root)
+    if cached is not None and now - cached[0] < _SIZE_TTL:
+        return cached[1]
+    if not root.is_dir():
+        return None
+    total = 0
+    for top, _dirs, files in os.walk(root):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(top, name)).st_size
+            except OSError:
+                pass
+    _SIZES[root] = (now, total)
+    return total
 
 
 def host_which(name: str) -> str | None:
@@ -577,6 +611,19 @@ class ManagedGame:
         chosen = self.chosen_instance()
         return chosen if chosen is not None and self.instance_problem(chosen) is None else None
 
+    def kept_root(self) -> Path | None:
+        """Where a copy of the game's mods is kept here for the other machines
+        (see modsync.sync.folders.hold), or None."""
+        from modsync.state import State
+
+        kept = State.load().held_folders.get(self.folder.key)
+        return Path(kept) if kept else None
+
+    def _records_root(self) -> Path | None:
+        """Where the synced version records are: the instance that syncs,
+        else the copy kept here, which holds the same files."""
+        return self._synced_instance() or self.kept_root()
+
     def version_exe(self, game) -> Path | None:
         """The program whose version is the game's. A launcher's isn't."""
         exe = self.game.exe_for(game.store)
@@ -632,14 +679,14 @@ class ManagedGame:
     def vault_versions(self, instance: Path | None = None) -> list[tuple[str, str]]:
         """Every version the synced records name: two machines that each
         started sharing before they met leave a conflict copy of the record too."""
-        instance = instance or self._synced_instance()
+        instance = instance or self._records_root()
         if instance is None:
             return []
         paths = [instance / self.vault_record, *sorted(instance.glob(self.record_conflicts))]
         return list(dict.fromkeys(v for p in paths if (v := self._read_record(p))))
 
     def vault_version(self, instance: Path | None = None) -> tuple[str, str] | None:
-        instance = instance or self._synced_instance()
+        instance = instance or self._records_root()
         return self._read_record(instance / self.vault_record) if instance else None
 
     def version_problem(self, game=None, instance: Path | None = None) -> str | None:
@@ -692,15 +739,21 @@ class ManagedGame:
 
     # --- for the app ------------------------------------------------------------------
 
-    def overview(self, *, hook: bool = True) -> Overview:
-        """``hook``: also read the Play hook (the store's settings for the game)."""
+    def overview(self, *, hook: bool = True, machines: list[str] | None = None) -> Overview:
+        """``hook``: also read the Play hook (the store's settings for the
+        game). ``machines``: the paired machines that sync the game's mods,
+        from ModSyncService.games_elsewhere (only Syncthing knows them)."""
         from modsync.state import State
         from modsync.sync import folders
 
         game, instance = self.find_game(), self.find_instance()
         st = State.load()
         key = self.folder.key
-        mods = "stopping" if folders.stopping(key, st) else "on" if key in st.game_folders else "off"
+        kept = st.held_folders.get(key)
+        if folders.stopping(key, st):
+            mods = "stopping"
+        else:
+            mods = "on" if key in st.game_folders else "kept" if kept else "off"
         status = None
         if hook and game is not None:
             try:
@@ -713,7 +766,10 @@ class ManagedGame:
         return Overview(game, instance, chosen, problem, status, mods,
                         self.game_version(game) if game else None, self.version_problem(game) if game else None,
                         prefix_ready=ready,
-                        needs_setup=instance is not None and problem is None and not self.setup_finished(instance))
+                        needs_setup=instance is not None and problem is None and not self.setup_finished(instance),
+                        machines=list(machines or ()),
+                        kept_bytes=tree_bytes(Path(kept)) if kept else None,
+                        kept_versions=self.vault_versions(Path(kept)) if kept else [])
 
 
 # --- the games -----------------------------------------------------------------------
@@ -760,6 +816,20 @@ def for_folder(sync_key: str) -> ManagedGame | None:
 def for_nexus(slug: str) -> list[ManagedGame]:
     """The games Nexus calls ``slug``: editions of a game share one."""
     return [g for g in all_games().values() if g.game.nexus_slug == slug]
+
+
+def listed(elsewhere: dict[str, list[str]] | None = None) -> list[ManagedGame]:
+    """The games the app's switcher lists: set up here (an MO2 instance for
+    them, chosen or MO2-LINT's), kept here for other machines, or synced on
+    a paired machine (``elsewhere``, by synced folder). The others are a
+    choice under "Add a game…"."""
+    from modsync.state import State
+
+    st = State.load()
+    elsewhere = elsewhere or {}
+    return [game for game in all_games().values()
+            if game.folder.key in st.held_folders or elsewhere.get(game.folder.key)
+            or game.find_instance() is not None]
 
 
 def here() -> list[ManagedGame]:

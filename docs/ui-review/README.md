@@ -225,11 +225,26 @@ is set to Daggerfall Unity, which also syncs the saves around the game.
 ## Other games
 
 A game from the table of games ModSync runs Mod Organizer 2 for
-(`modsync games list --all`) joins the switcher once Steam or Heroic has it
-installed. Cyberpunk 2077 is offered either way. With more than five games
-the list scrolls inside the sheet.
+(`modsync games list --all`) joins the switcher when it has mods somewhere:
+an MO2 instance here, a copy kept here for another machine, or a paired
+machine that syncs them. Each row says how it stands; a kept copy names the
+machine it's for and its size. With more than five games the list scrolls
+inside the sheet.
 
 ![Switching to a game from the table](game-switch-table.png)
+
+"Add a game…", the switcher's last row, lists the table's other games:
+those Steam or Heroic has installed first, then the rest with the stores
+that sell them. Choosing one opens its page.
+
+![Adding a game](game-add.png)
+
+A game kept here for another machine, but not installed, has a page too.
+The blue action installs it in Steam, the sync row says whom the copy is
+for and stops keeping it, and the line under the title says which game
+version the mods are set up for.
+
+![A game kept here for the Steam Deck](game-kept.png)
 
 Every such game has the same page. The rows say where the store installed
 the game, which MO2 instance is in use, what the store's Play button does,

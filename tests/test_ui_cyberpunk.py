@@ -34,25 +34,28 @@ def no_disk(self):
 class CyberpunkUiTests(UiTestCase):
     def open_sheet(self, ov):
         """Home showing Cyberpunk, with ``ov`` as what's set up for the rest of the test."""
-        for p in (patch.object(cyberpunk.GAME, "overview", lambda hook=True: ov),
+        for p in (patch.object(cyberpunk.GAME, "overview", lambda hook=True, machines=None: ov),
                   patch.object(GogGame, "drive_c", property(no_disk))):
             p.start()
             self.addCleanup(p.stop)
         window = self.window()
-        window.switch_game("cyberpunk")
+        window.show_game("cyberpunk")  # as "Add a game…" does when it isn't listed yet
         self.settle(3)
         return window, window.pages["cyberpunk"]
 
-    def test_the_picker_offers_cyberpunk_before_heroic_has_it(self):
+    def test_before_heroic_has_it_cyberpunk_is_under_add_a_game(self):
         window = self.window()  # the test machine has no Heroic
         self.settle(3)
         InputRouter.instance().dispatch(Action.AUX)
         self.settle(2)
         sheet = window.top_overlay
         self.assertIsInstance(sheet, GameSheet)
-        row = sheet.rows["cyberpunk"]
-        self.assertEqual(row.badge.text(), "Not installed")
-        self.assertIn("Heroic Games Launcher", row.description)
+        self.assertNotIn("cyberpunk", sheet.rows)
+        sheet.choose("add-game")
+        self.settle(2)
+        added = window.top_overlay
+        self.assertEqual(added.title.text(), "Add a game")
+        self.assertIn("From Steam, GOG, Epic.", added.rows["cyberpunk"].description)
 
     def test_reopening_on_cyberpunk_that_isnt_here_opens_on_skyrim(self):
         State.update(home_game="cyberpunk")
@@ -64,7 +67,7 @@ class CyberpunkUiTests(UiTestCase):
     def test_home_reopens_on_cyberpunk_when_heroic_has_it(self):
         State.update(home_game="cyberpunk")
         ov = overview()
-        with patch.object(cyberpunk.GAME, "overview", lambda hook=True: ov), \
+        with patch.object(cyberpunk.GAME, "overview", lambda hook=True, machines=None: ov), \
                 patch.object(GogGame, "drive_c", property(no_disk)):
             window = self.window()
             self.settle(3)

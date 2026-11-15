@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
@@ -70,9 +71,8 @@ TAB_KEYS = ("home", "sync", "system")
 # (modsync.mo2games), with a ManagedGamePage under its own key.
 GAMES = (("skyrim", "home", "Skyrim"), ("daggerfall", "daggerfall", "Daggerfall Unity"))
 GAME_PAGES = {key: page for key, page, _name in GAMES}
-# The table's games the picker offers whether or not they're installed; the
-# rest appear once Steam or Heroic has them.
-ALWAYS_OFFERED = ("cyberpunk",)
+# The switcher's last row, which lists every other game from the table.
+ADD_GAME = "add-game"
 _GAME_POLLS = 8  # how many polls apart the other games are looked for
 _SWITCH_NAME_MAX = 26  # a longer name is cut short in the switcher, never in the picker
 
@@ -87,20 +87,42 @@ def dfu_here(ov: dfu.Overview | None) -> bool:
 
 
 def managed_here(ov: mo2games.Overview | None) -> bool:
-    """A game from the table is on this machine: Steam or Heroic installed it."""
-    return ov is not None and ov.game is not None
+    """A game from the table belongs here: Steam or Heroic installed it, it
+    has an MO2 instance here, a copy of its mods is kept here, or a paired
+    machine syncs them (what mo2games.listed lists, and installed)."""
+    return ov is not None and (ov.game is not None or ov.instance is not None or ov.elsewhere)
 
 
-def look_for_managed(skip: str) -> dict[str, mo2games.Overview]:
-    """How each of the table's games on this machine stands, by its key in the
-    app, plus the ones the picker always offers. ``skip`` is the one shown,
-    which reads itself."""
-    wanted = {game.ui_key: game for game in mo2games.here()}
-    for key in ALWAYS_OFFERED:
+@dataclass
+class GameLook:
+    """The table's games as the switcher sees them, read off the UI thread."""
+
+    overviews: dict[str, mo2games.Overview]  # the games it lists, by key in the app (the one shown left out)
+    installed: dict[str, str]  # every game Steam or Heroic has here, by key in the app: the store's name
+
+
+def look_for_managed(skip: str, service: ModSyncService, known: tuple[str, ...] = ()) -> GameLook:
+    """Which of the table's games the switcher lists (set up here, kept here,
+    or synced on a paired machine, see mo2games.listed) and how each stands,
+    and which are installed here, for "Add a game…". ``known`` are the ones
+    it lists already, read again too, so one that no longer qualifies doesn't
+    keep showing how it stood. ``skip`` is the one shown, which reads itself."""
+    from modsync.games import STORE_NAMES
+
+    elsewhere = service.games_elsewhere()
+    wanted = {game.ui_key: game for game in mo2games.listed(elsewhere)}
+    for key in known:
         game = mo2games.for_ui(key)
         if game is not None:
             wanted.setdefault(key, game)
-    return {key: game.overview(hook=False) for key, game in wanted.items() if key != skip}
+    overviews = {key: game.overview(hook=False, machines=elsewhere.get(game.folder.key, []))
+                 for key, game in wanted.items() if key != skip}
+    installed = {}
+    for game in mo2games.here():
+        found = game.installs()
+        if found:
+            installed[game.ui_key] = STORE_NAMES[found[0].store]
+    return GameLook(overviews, installed)
 
 
 def app_mark(size: int) -> QWidget:
@@ -224,15 +246,16 @@ class MainWindow(QMainWindow):
         self._busy: set[str] = set()
         self._rebuild_pending = False
         self._current = "home"
-        # The table's games Home can show, by their key in the app: the ones
-        # always offered, the one it was left on, and those found on this machine.
+        # The table's games Home can show, by their key in the app: the one it
+        # was left on, the ones the switcher lists (see look_for_managed) and
+        # any chosen under "Add a game…" since the window opened.
         self.managed: dict[str, mo2games.ManagedGame] = {}
         self.managed_overviews: dict[str, mo2games.Overview] = {}
+        self.installed_here: dict[str, str] = {}  # the table's games Steam or Heroic has here: store name
         saved = self.service.state.home_game
-        for key in (*ALWAYS_OFFERED, saved):
-            game = mo2games.for_ui(key) if key else None
-            if game is not None:
-                self.managed[key] = game
+        game = mo2games.for_ui(saved) if saved else None
+        if game is not None:
+            self.managed[saved] = game
         # Steam's Play button opened this for Skyrim: only Skyrim is shown.
         self.game = saved if steam_launch is None and (saved in GAME_PAGES or saved in self.managed) else "skyrim"
         # Reopened on a game other than Skyrim: until the first read says it's
@@ -426,7 +449,8 @@ class MainWindow(QMainWindow):
             return
         if self.game != "daggerfall":
             worker.run_async(dfu.overview, hook=False, on_done=self.dfu_checked, on_failed=lambda _e: None)
-        worker.run_async(look_for_managed, self.game, on_done=self._managed_found, on_failed=lambda _e: None)
+        worker.run_async(look_for_managed, self.game, self.service, tuple(self.managed),
+                         on_done=self._managed_found, on_failed=lambda _e: None)
 
     def game_here(self, game: str) -> bool:
         if game == "daggerfall":
@@ -435,12 +459,13 @@ class MainWindow(QMainWindow):
             return managed_here(self.managed_overviews.get(game))
         return True
 
-    def _managed_found(self, found: dict[str, mo2games.Overview]) -> None:
-        """The table's games on this machine were read: each one new here is
-        offered from now on."""
+    def _managed_found(self, look: GameLook) -> None:
+        """The table's games were read: each one the switcher lists is offered
+        from now on."""
         if not shiboken6.isValid(self):
             return
-        for key, ov in found.items():
+        self.installed_here = look.installed
+        for key, ov in look.overviews.items():
             game = mo2games.for_ui(key)
             if game is not None:
                 self._offer(game)
@@ -491,14 +516,45 @@ class MainWindow(QMainWindow):
                 *((key, game.name, *game_summary(game, self.managed_overviews.get(key)))
                   for key, game in self.managed.items())]
 
+    def add_game_choices(self) -> list[tuple[str, str, str, str, str]]:
+        """The table's games the switcher doesn't list: the ones installed
+        here first, then every other one, by name."""
+        from modsync.games import STORE_NAMES
+
+        rest = [game for game in mo2games.all_games().values() if game.ui_key not in self.managed]
+        rest.sort(key=lambda g: (g.ui_key not in self.installed_here, g.name.lower()))
+        choices = []
+        for game in rest:
+            store = self.installed_here.get(game.ui_key)
+            if store:
+                choices.append((game.ui_key, game.name, "Installed", "off", f"In {store}. Set up mods for it here."))
+            else:
+                stores = ", ".join(STORE_NAMES[s] for s in game.game.stores)
+                choices.append((game.ui_key, game.name, "", "off", f"From {stores}."))
+        return choices
+
     def open_game_picker(self) -> None:
         if not self.switchable or self.setup is not None or self.overlays:
             return
         # Nothing to switch to while no other game is here: focus stays, so X then A
         # doesn't head for Steam's install dialog.
         here = self.game != "skyrim" or any(self.game_here(key) for key in self.game_keys() if key != "skyrim")
-        GameSheet(self, self.game_choices(), self.game, lambda key: self.switch_game(key),
-                  start=None if here else self.game).open()
+        extra = (ADD_GAME, "Add a game…", "Another game ModSync can set up Mod Organizer 2 for.")
+        GameSheet(self, self.game_choices(), self.game, self._picked,
+                  start=None if here else self.game, extra=extra).open()
+
+    def _picked(self, key: str) -> None:
+        if key == ADD_GAME:
+            self.open_add_game()
+        else:
+            self.switch_game(key)
+
+    def open_add_game(self) -> None:
+        """Every game from the table the switcher doesn't list; the one chosen
+        is shown, and stays in the switcher while the window is open."""
+        if not self.switchable or self.setup is not None or self.overlays:
+            return
+        GameSheet(self, self.add_game_choices(), "", self.show_game, title="Add a game", accept="Open").open()
 
     def switch_game(self, game: str, *, focus: bool = True) -> None:
         """Show ``game`` on Home and go there. Remembered for next time."""

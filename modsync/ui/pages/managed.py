@@ -11,6 +11,11 @@ sync on and off here. The blue action installs MO2 until there is an instance
 existing installation…" picks an MO2 instance set up for the game some other
 way. Everything shown comes from one read off the UI thread
 (``ManagedGame.overview``); a read that an action has overtaken is dropped.
+
+A game that isn't installed here can still have a page: when a paired
+machine syncs its mods, or a copy of them is kept here for the other
+machines. The page then says which machines those are and how much the
+copy takes, keeps or stops keeping it, and offers to install the game.
 """
 
 from __future__ import annotations
@@ -20,7 +25,8 @@ import time
 from pathlib import Path
 
 import shiboken6
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 
 from modsync import steamos
 from modsync.games import STORE_NAMES
@@ -33,7 +39,7 @@ from modsync.ui.pages import Page
 from modsync.ui.pages.daggerfall import _short
 from modsync.ui.widgets import HeroTile, StatusRow, Tile, label
 
-_SYNC_WORDS = {"on": ("On", "ok"), "off": ("Off", "off"), "stopping": ("Stopping", "busy")}
+_SYNC_WORDS = {"on": ("On", "ok"), "off": ("Off", "off"), "stopping": ("Stopping", "busy"), "kept": ("Kept", "ok")}
 _TOOL_LINE = re.compile(r"^\s*(\d{4}-\d\d-\d\d |\$ |$)")  # MO2-LINT's log lines and commands
 
 
@@ -58,16 +64,45 @@ def where_to_install(mg: ManagedGame) -> str:
     return "Install it from Steam."
 
 
+def machines_text(names: list[str]) -> str:
+    """"Steam Deck", "Steam Deck and Laptop", "Steam Deck, Laptop and Desktop"."""
+    if not names:
+        return "your other machines"
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def size_text(size: int | None) -> str:
+    if size is None:
+        return ""
+    if size >= 1e9:
+        return f"{size / 1e9:.1f} GB"
+    return f"{max(size, 1) / 1e6:.0f} MB" if size >= 1e6 else "under 1 MB"
+
+
+def kept_text(ov: Overview) -> str:
+    """"For Steam Deck · 3.2 GB"."""
+    size = size_text(ov.kept_bytes)
+    return f"For {machines_text(ov.machines)}" + (f" · {size}" if size else "")
+
+
 def game_summary(mg: ManagedGame, ov: Overview | None) -> tuple[str, str, str]:
     """How the game stands, as the game picker shows it: value word, tone, detail.
     ``None`` before it has been read."""
     if ov is None:
         return "Checking", "off", ""
     if ov.game is None:
+        if ov.mods == "kept":
+            return "Kept", "ok", kept_text(ov) + "."
+        if ov.machines:
+            return "Not here", "off", f"Modded on {machines_text(ov.machines)}."
         return "Not installed", "off", where_to_install(mg)
     if not ov.prefix_ready:
         return "Not set up", "off", f"Launch it once from {launcher_of(ov.game)}."
     if ov.instance is None:
+        if ov.mods == "kept":
+            return "Kept", "ok", "Install Mod Organizer 2 for it to use the mods kept here."
+        if ov.machines:
+            return "No mods yet", "off", f"Modded on {machines_text(ov.machines)}. Install Mod Organizer 2 for it."
         return "No mods yet", "off", "Install Mod Organizer 2 for it."
     if ov.instance_problem or ov.version_problem:
         return "Needs a look", "warn", ov.instance_problem or ov.version_problem
@@ -92,10 +127,14 @@ class ManagedGamePage(Page):
         self._focus_on_load = False
         self._shown_at = 0.0
         self._reads = 0  # the latest read's number: older ones are dropped
+        self._pending = 0  # reads under way: a poll waits for them rather than overtaking them
         self.head = self.header(mg.name, mg.summary)
         self.note = label("", "warning")
         self.note.hide()
         self.content_layout.addWidget(self.note)
+        self.info = label("", "secondary")  # what the mods kept here are for, before the game is installed
+        self.info.hide()
+        self.content_layout.addWidget(self.info)
 
         left, right = self.columns(1, 1)
         left.setSpacing(4)
@@ -112,6 +151,8 @@ class ManagedGamePage(Page):
         self.mods_row.clicked.connect(self._toggle_sync)
         left.addStretch(1)
 
+        self.store_tile = HeroTile(f"Install {mg.name} in Steam", "", "download")
+        self.store_tile.clicked.connect(self._open_store)
         self.install_tile = HeroTile("Install Mod Organizer 2", mg.install_note(), "download")
         self.install_tile.clicked.connect(self._install)
         self.play = HeroTile(f"Play {mg.name}", "Through Mod Organizer 2, with your mods.", "play")
@@ -122,7 +163,7 @@ class ManagedGamePage(Page):
                                  "folder", chevron=True)
         self.use_existing.clicked.connect(self._choose_existing)
         self.work = label("", "secondary")
-        for widget in (self.install_tile, self.play, self.open_mo2, self.use_existing, self.work):
+        for widget in (self.store_tile, self.install_tile, self.play, self.open_mo2, self.use_existing, self.work):
             right.addWidget(widget)
             widget.hide()
         right.addStretch(1)
@@ -139,19 +180,37 @@ class ManagedGamePage(Page):
 
     # --- reading ---
     def refresh(self) -> None:
+        """Read everything again. A read under way is overtaken: refresh is
+        for after an action, or when the page opens. Polls go through
+        :meth:`poll`, which waits for one under way, so a slow Syncthing
+        (asked which machines sync the game) can't keep the page unread."""
         self._reads += 1
+        self._pending += 1
         read = self._reads
 
+        def landed() -> bool:
+            if not shiboken6.isValid(self):  # gone with its window
+                return False
+            self._pending -= 1
+            return True
+
         def done(ov: Overview) -> None:
-            # Gone with its window (Qt drops only bound methods' connections by
-            # itself), or overtaken by a newer read or an action that changed what it read.
-            if shiboken6.isValid(self) and read == self._reads and not self._working:
+            # Overtaken by a newer read, or by an action that changed what it read.
+            if landed() and read == self._reads and not self._working:
                 self._show(ov)
 
-        worker.run_async(self.mg.overview, on_done=done, on_failed=lambda e: self.host.notify(f"⚠ {e}"))
+        def failed(error: str) -> None:
+            if landed():
+                self.host.notify(f"⚠ {error}")
+
+        def look() -> Overview:
+            machines = self.service.games_elsewhere().get(self.mg.folder.key, [])
+            return self.mg.overview(machines=machines)
+
+        worker.run_async(look, on_done=done, on_failed=failed)
 
     def poll(self) -> None:
-        if not self._working and self.isVisible():
+        if not self._working and self.isVisible() and not self._pending:
             self.refresh()
 
     def hints(self):
@@ -209,7 +268,9 @@ class ManagedGamePage(Page):
                     game.version if game.store != "steam" and game.version else "Installed")
                 pinned = ", kept on this version by Heroic" if game.pinned else ""
                 self.game_row.set_state(version, "ok", f"{_short(game.install_path)}{pinned}")
-        if ov.instance is None:
+        if ov.instance is None and game is None:
+            self.mo2_row.set_state("Not installed", "off", f"Install {mg.short} first, then Mod Organizer 2 for it.")
+        elif ov.instance is None:
             self.mo2_row.set_state("Not installed", "off", "Install it with the blue button.")
         elif ov.instance_problem:
             self.mo2_row.set_state("Needs a look", "warn", ov.instance_problem)
@@ -219,19 +280,17 @@ class ManagedGamePage(Page):
             self.mo2_row.set_state("Installed", "ok", _short(ov.instance))
         hook = ov.hook
         self.hook_row.set_state(*self._hook_words(ov))
-        word, tone = _SYNC_WORDS[ov.mods]
-        if ov.mods == "off" and ov.instance is not None and not ov.chosen:
-            detail = "Press to use this instance here and sync its mods with your paired machines."
-        else:
-            saves = mg.saves_note or (f"Saves sync through {launcher_of(game)}, as they do without mods."
-                                      if game is not None else "")
-            detail = {"on": f"Your mods sync with your paired machines. {saves}".strip()
-                      if self.service.reload_state().paired else "No machine is paired yet. Pair one under Sync.",
-                      "off": "Press to sync your mods with your paired machines.",
-                      "stopping": "Finishes once Syncthing answers."}[ov.mods]
-        self.mods_row.set_state(word, tone, detail)
+        self.mods_row.set_state(*self._mods_words(ov))
         self.note.setText(ov.version_problem or "")
         self.note.setVisible(bool(ov.version_problem))
+        kept_for = ", ".join(v[0] if v[0] == v[1] else f"{v[0]} (build {v[1]})" for v in ov.kept_versions)
+        self.info.setText(f"The mods kept here are set up for {mg.name} {kept_for}." if game is None and kept_for else "")
+        self.info.setVisible(bool(self.info.text()))
+        self.store_tile.set_description(
+            f"Your mods from {machines_text(ov.machines)} are already kept here." if ov.mods == "kept" else
+            f"Your mods from {machines_text(ov.machines)} come over once Mod Organizer 2 is installed for it."
+            if ov.machines else "Then install Mod Organizer 2 for it here.")
+        self.store_tile.setVisible(game is None and bool(mg.game.appid) and not self._working)
         ready = game is not None and ov.prefix_ready
         has = ov.instance is not None and not ov.instance_problem
         finishing = has and ov.needs_setup
@@ -263,17 +322,19 @@ class ManagedGamePage(Page):
         busy = self.host.busy or self._working
         ready = ov is not None and ov.game is not None and ov.prefix_ready
         has = ready and ov.instance is not None and not ov.instance_problem
+        self.store_tile.setEnabled(not busy)
         self.install_tile.setEnabled(ready and not busy)
         self.play.setEnabled(has and not busy)
         self.open_mo2.setEnabled(has and not busy)
         self.use_existing.setEnabled(ov is not None and not busy)
         self.mo2_row.setEnabled(ov is not None and not busy)
         self.hook_row.setEnabled(has and not busy)
-        # Stopping needs nothing to work; starting needs a usable instance.
-        self.mods_row.setEnabled(not busy and ov is not None and (has or ov.mods != "off"))
+        # Stopping needs nothing to work; starting needs a usable instance, or
+        # (keeping a copy for the other machines) another machine that syncs it.
+        self.mods_row.setEnabled(not busy and ov is not None and (has or ov.mods != "off" or bool(ov.machines)))
 
     def preferred_focus(self):
-        for tile in (self.install_tile, self.play):
+        for tile in (self.store_tile, self.install_tile, self.play):
             if tile.isVisible() and tile.isEnabled():
                 return tile
         return self.game_row
@@ -360,12 +421,59 @@ class ManagedGamePage(Page):
         else:
             self._run(lambda: " ".join(self.mg.enable_hook()), message=f"Pointing {launcher}'s Play button at MO2…")
 
+    def _mods_words(self, ov: Overview) -> tuple[str, str, str]:
+        """The mods sync row: value word, tone, detail. Off, on (synced with
+        this machine's MO2), kept (a copy for the other machines), stopping."""
+        mg, game = self.mg, ov.game
+        word, tone = _SYNC_WORDS[ov.mods]
+        machines = machines_text(ov.machines)
+        has = ov.instance is not None and not ov.instance_problem
+        if ov.mods == "stopping":
+            return word, tone, "Finishes once Syncthing answers."
+        if ov.mods == "kept":
+            size = size_text(ov.kept_bytes)
+            if has:
+                return word, tone, (f"A copy is kept here for {machines}. Press to sync your mods with this "
+                                    "Mod Organizer 2 instead; they download again from your other machines.")
+            return word, tone, (f"Kept here for {machines}" + (f" ({size})" if size else "")
+                                + ", so they sync through this machine. Press to stop keeping it.")
+        if ov.mods == "on":
+            if not self.service.reload_state().paired:
+                return word, tone, "No machine is paired yet. Pair one under Sync."
+            saves = mg.saves_note or (f"Saves sync through {launcher_of(game)}, as they do without mods."
+                                      if game is not None else "")
+            return word, tone, f"Your mods sync with your paired machines. {saves}".strip()
+        if has and not ov.chosen:
+            return word, tone, "Press to use this instance here and sync its mods with your paired machines."
+        if has:
+            return word, tone, "Press to sync your mods with your paired machines."
+        if ov.machines:
+            return "Off", "off", (f"Modded on {machines}. Press to keep a copy here, so they sync through "
+                                  "this machine.")
+        return word, tone, "Install Mod Organizer 2 for it first."
+
+    def _open_store(self) -> None:
+        """Steam's install dialog for the game. This page notices it on its next read."""
+        if self.mg.game.appid:
+            QDesktopServices.openUrl(QUrl(f"steam://install/{self.mg.game.appid}"))
+            self.host.notify(f"Steam opens to install {self.mg.name}. This page updates once it's installed.")
+
     def _toggle_sync(self) -> None:
         ov = self.overview
-        if ov is None or (ov.mods == "off" and ov.instance is None):
+        if ov is None:
             return
         key = self.mg.folder.key
-        if ov.mods == "off":
+        has = ov.instance is not None and not ov.instance_problem
+        if ov.mods == "kept" and not has:
+            self._confirm_stop_keeping()
+            return
+        if ov.mods == "off" and not has:
+            if ov.machines:
+                self._run(self.service.hold_game_folder, key, message="Keeping a copy of the mods…",
+                          on_done=lambda _root: f"A copy of your {self.mg.short} mods is kept here for "
+                                                f"{machines_text(ov.machines)}.")
+            return
+        if ov.mods in ("off", "kept"):
             def share():
                 if not ov.chosen:  # found, not handed over: pressing here hands it over
                     self.mg.use_instance(ov.instance)
@@ -377,6 +485,23 @@ class ManagedGamePage(Page):
             self._run(self.service.stop_game_folder, key, message="Stopping mods sync…",
                       on_done=lambda done: (f"{self.mg.short} mods no longer sync here. Nothing was deleted."
                                             if done else "Mods sync stops once Syncthing answers."))
+
+    def _confirm_stop_keeping(self) -> None:
+        name = self.mg.short
+
+        def chosen(choice: str | None) -> None:
+            if choice == "stop":
+                self._run(self.service.stop_game_folder, self.mg.folder.key, message="Stopping…",
+                          on_done=lambda done: (f"{name}'s mods are no longer kept here. Nothing was deleted."
+                                                if done else "It stops once Syncthing answers."))
+
+        self.host.confirm(
+            f"Stop keeping {name}'s mods?",
+            f"This machine keeps {name}'s mods for your other machines; the game isn't set up here. Stopped, "
+            "they sync them with each other only while both are on. The copy's files stay on this machine. "
+            "Turning 'Keep games not installed here' off and on again keeps it again.",
+            [("stop", "Stop keeping it", "", "danger", "stop"), ("cancel", "Cancel", "", "normal", "close")],
+            chosen, default="cancel")
 
     def _launch(self, *, play: bool) -> None:
         ov = self.overview

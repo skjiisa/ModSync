@@ -684,3 +684,81 @@ def test_status_says_where_the_game_and_its_mo2_are(machine, capsys):
     out = capsys.readouterr().out
     assert f"MO2 instance:          {instance}" in out and "Play in Steam:" in out
     assert "modsync sync share starfield-mo2" in out
+
+
+# --- games on the other machines (the switcher, kept copies) -------------------------
+
+
+def test_the_service_says_which_machines_sync_each_game(machine):
+    """Offers from paired machines, and the machines a copy kept here is
+    shared with. Forgotten machines, and folders that aren't a game's, are
+    left out; with no Syncthing running nothing is started to find out."""
+    from modsync.service import ModSyncService
+    from modsync.state import State
+    from tests.test_game_folders import FakeSyncthing
+
+    st = FakeSyncthing()
+    st.devices.update({"DECK": {"deviceID": "DECK", "name": "Steam Deck"},
+                       "LAPTOP": {"deviceID": "LAPTOP", "name": ""},
+                       "OLD": {"deviceID": "OLD", "name": "Old PC"}})
+    st.pending_folders = {
+        "modsync-starfield-mo2": {"offeredBy": {"DECK": {}, "OLD": {}}},
+        "modsync-cp2077-mo2": {"offeredBy": {"LAPTOP": {}}},
+        "abcde-12345": {"offeredBy": {"DECK": {}}},  # Skyrim's vault: not a game's folder
+    }
+    st.folders = {"modsync-fallout4-mo2": {"id": "modsync-fallout4-mo2", "devices": [
+        {"deviceID": "ME"}, {"deviceID": "DECK"}]}}
+    State.update(paired=True, held_folders={"fallout4-mo2": "/held/modsync-fallout4-mo2"},
+                 forgotten_devices=["OLD"])
+    service = ModSyncService(manager=st)
+
+    assert service.games_elsewhere() == {"starfield-mo2": ["Steam Deck"], "cp2077-mo2": ["LAPTOP"],
+                                         "fallout4-mo2": ["Steam Deck"]}
+    st.running = False
+    st.attach = lambda: False
+    assert service.games_elsewhere() == {}
+    State.update(paired=False, held_folders={})
+    st.running = True
+    assert service.games_elsewhere() == {}  # nothing syncs and nothing is paired: Syncthing isn't asked
+
+
+def test_the_switcher_lists_games_set_up_kept_or_synced_elsewhere(machine):
+    """Installed isn't enough: Starfield and The Witcher 3 are installed on
+    this machine, but only a game with mods somewhere is listed."""
+    from modsync.state import State
+
+    assert mo2games.listed() == []
+    starfield().use_instance(make_instance(machine.tmp, "Starfield"))
+    State.update(held_folders={"fallout4-mo2": "/held/modsync-fallout4-mo2"})
+    keys = {g.key for g in mo2games.listed({"oblivion-mo2": ["Steam Deck"], "morrowind-mo2": []})}
+    assert keys == {"starfield", "fallout4", "oblivion"}
+
+
+def test_a_kept_copy_shows_on_the_games_overview(machine):
+    from modsync.state import State
+
+    vegas = mo2games.get("falloutnv")  # not installed here
+    kept = machine.tmp / "held" / vegas.folder.folder_id
+    (kept / "mods/A Mod").mkdir(parents=True)
+    (kept / "mods/A Mod/plugin.esp").write_bytes(b"x" * 2048)
+    (kept / vegas.vault_record).write_text(json.dumps({"game_version": "1.4.0.525", "build": "1.4.0.525"}))
+    State.update(held_folders={vegas.folder.key: str(kept)})
+
+    ov = vegas.overview(machines=["Steam Deck"])
+
+    assert ov.game is None and ov.mods == "kept" and ov.elsewhere
+    assert ov.machines == ["Steam Deck"]
+    assert ov.kept_bytes >= 2048
+    assert ov.kept_versions == [("1.4.0.525", "1.4.0.525")]
+    assert vegas.vault_version() == ("1.4.0.525", "1.4.0.525")  # the records come from the copy kept here
+    assert not mo2games.get("oblivion").overview().elsewhere
+
+
+def test_the_games_command_lists_kept_copies_too(machine, capsys):
+    from modsync.__main__ import main
+    from modsync.state import State
+
+    State.update(held_folders={"fallout4-mo2": "/held/modsync-fallout4-mo2"})
+    assert main(["games"]) == 0
+    out = capsys.readouterr().out
+    assert "fallout4" in out and "not installed; Steam, GOG, Epic; a copy of its mods is kept here" in out
