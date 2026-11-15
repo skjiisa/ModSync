@@ -94,6 +94,7 @@ SYNCED_DIRS = (*(f"{_ASSETS}/{d}" for d in USER_ASSET_DIRS), "PortableAppdata/Mo
 KEYBINDS = "PortableAppdata/KeyBinds.txt"  # DFU's key bindings; never synced as they are
 SHARED_KEYBINDS = "modsync-dfu-keybinds.txt"  # their synced copy, which DFU never reads
 KEYBINDS_SYNCED = "PortableAppdata/.modsync-keybinds.json"  # the bindings both last held, here; never synced
+KEYBINDS_LOCK = "PortableAppdata/.modsync-keybinds.lock"  # held by whatever ModSync changes the bindings
 
 # How Steam runs an x86 Linux game on ARM: FEX-Emu, in the Steam Linux Runtime
 # (4.0, else 3.0) for its libraries. The launch hook template looks for the same.
@@ -1015,7 +1016,10 @@ def launch(inst: Install) -> str:
     report = sync_saves()
     if report.changed:
         log.info("before playing: %s", report.summary())
-    sync_keybinds(inst)
+    try:
+        sync_keybinds(inst)
+    except (OSError, DfuError) as exc:  # never in the way of playing
+        log.warning("could not sync the key bindings before playing: %s", exc)
     if background.in_flatpak():
         cmd = ["flatpak-spawn", "--host", f"--directory={inst.path}",
                *(f"--env={k}={v}" for k, v in extra_env.items()), *cmd]
@@ -1165,7 +1169,15 @@ def set_controller_bindings(inst: Install) -> str:
     if is_running():
         # DFU keeps its bindings in memory and writes them out again when it closes.
         raise DfuError("Close Daggerfall Unity first; it would undo the change.")
-    sync_keybinds(inst)  # another machine's change first, so this one builds on it
+    with _keybinds_lock(inst):
+        # Another machine's change first, so this one builds on it; this one goes out after.
+        _sync_keybinds(inst)
+        done = _set_controller_bindings(inst)
+        _sync_keybinds(inst)
+    return done
+
+
+def _set_controller_bindings(inst: Install) -> str:
     path = keybinds_file(inst)
     old = path.read_bytes() if path.is_file() else None
     data = _read_keybinds(path)
@@ -1204,7 +1216,6 @@ def set_controller_bindings(inst: Install) -> str:
     os.replace(tmp, path)
     log.info("set the suggested controller bindings in %s (%d primary bindings moved off controller keys)",
              path, len(taken))
-    sync_keybinds(inst)
     return "Daggerfall Unity has the suggested controller bindings, on its Secondary bindings."
 
 
@@ -1237,12 +1248,20 @@ def _keybinds_digest(path: Path) -> str | None:
     return hashlib.sha256(raw).hexdigest()
 
 
-def _copy_whole(source: Path, dest: Path) -> None:
+def _copy_whole(source: Path, dest: Path, *, unless_changed_from: str | None = None) -> str | None:
     """``source`` to ``dest`` in one step, with its modification time (which
-    decides between two versions Syncthing finds changed apart)."""
+    decides between two versions Syncthing finds changed apart). Returns the
+    digest of what was copied. With ``unless_changed_from``, only while
+    ``dest`` still holds those bindings (Syncthing may have brought in
+    another version meanwhile): None, and nothing changed, otherwise."""
     tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
     shutil.copy2(source, tmp)
+    copied = _keybinds_digest(tmp)
+    if unless_changed_from is not None and _keybinds_digest(dest) != unless_changed_from:
+        tmp.unlink()
+        return None
     os.replace(tmp, dest)
+    return copied
 
 
 def _machine_tag() -> str:
@@ -1255,6 +1274,43 @@ def _machine_tag() -> str:
     return base64.b32encode(hashlib.sha256(socket.gethostname().encode()).digest()).decode()[:7]
 
 
+def _conflict_copy(source: Path, beside: Path) -> Path:
+    """Copy ``source`` to a new conflict copy of ``beside``, named the way
+    Syncthing names its own. Never over another: a name taken (two in one
+    second) moves on a second."""
+    stem, ext = beside.name.rsplit(".", 1)
+    when = time.time()
+    for step in range(3600):
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(when + step))
+        copy = beside.with_name(f"{stem}.sync-conflict-{stamp}-{_machine_tag()}.{ext}")
+        try:
+            with open(copy, "xb") as out, open(source, "rb") as src:
+                shutil.copyfileobj(src, out)
+        except FileExistsError:
+            continue
+        shutil.copystat(source, copy)
+        return copy
+    raise DfuError(f"Can't keep a copy of {source}: too many conflict copies beside {beside}.")
+
+
+@contextmanager
+def _keybinds_lock(inst: Install):
+    """Held around each look at the bindings that may change them, by every
+    ModSync process (the Flatpak's and a native one share an install), so
+    one never decides on what another is changing."""
+    if fcntl is None:
+        yield
+        return
+    path = inst.path / KEYBINDS_LOCK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def sync_keybinds(inst: Install, *, playing: bool = False) -> str:
     """Carry key-binding changes between ``inst``'s KeyBinds.txt and their
     synced copy, while mods sync is on here and DFU is closed. A change on
@@ -1262,11 +1318,24 @@ def sync_keybinds(inst: Install, *, playing: bool = False) -> str:
     use and the version here as a conflict copy beside it, which every
     machine is then asked about (modsync.sync.conflicts). Returns what it
     did, "" for nothing."""
+    if not _keybinds_sync_here(inst):
+        return ""
+    with _keybinds_lock(inst):
+        return _sync_keybinds(inst, playing=playing)
+
+
+def _keybinds_sync_here(inst: Install) -> bool:
+    """Whether mods sync is on here, in ``inst``."""
     from modsync.sync import folders
 
     st = State.load()
     root = st.game_folders.get(MODS_FOLDER.key)
-    if root is None or Path(root) != inst.path or folders.stopping(MODS_FOLDER.key, st):
+    return root is not None and Path(root) == inst.path and not folders.stopping(MODS_FOLDER.key, st)
+
+
+def _sync_keybinds(inst: Install, *, playing: bool = False) -> str:
+    """:func:`sync_keybinds`, with :func:`_keybinds_lock` held."""
+    if not _keybinds_sync_here(inst):
         return ""
     with _free_to_sync(inst, playing) as busy:
         if busy:
@@ -1281,29 +1350,30 @@ def _carry_keybinds(inst: Install) -> str:
         last = json.loads(noted.read_text(encoding="utf-8")).get("synced")
     except (OSError, ValueError, AttributeError):
         last = None
-    done = ""
     if here is None and there is None:
         return ""
+    done, synced = "", here
     if here == there:
         pass
     elif there is None or (here is not None and there == last):
-        _copy_whole(local, shared)
+        # Only over the version just looked at: one Syncthing brings in meanwhile is
+        # never replaced unseen. The next look finds it, and both changed: a conflict.
+        synced = _copy_whole(local, shared, unless_changed_from=there)
+        if synced is None:
+            return ""
         done = "Shared this machine's key bindings."
     elif here is None or here == last:
         local.parent.mkdir(parents=True, exist_ok=True)
-        _copy_whole(shared, local)
+        synced = _copy_whole(shared, local)
         done = "Took the key bindings from your other machines."
     else:
         # Changed on both sides since they last agreed (or never agreed here).
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        copy = inst.path / f"{SHARED_KEYBINDS.removesuffix('.txt')}.sync-conflict-{stamp}-{_machine_tag()}.txt"
-        shutil.copy2(local, copy)
-        _copy_whole(shared, local)
+        copy = _conflict_copy(local, shared)
+        synced = _copy_whole(shared, local)
         done = "Your key bindings changed here and on another machine; ModSync asks which to keep."
         log.warning("key bindings changed here and elsewhere; this machine's are in %s", copy)
     if done:
         log.info("%s", done)
-    synced = _keybinds_digest(local)
     if synced != last:
         noted.parent.mkdir(parents=True, exist_ok=True)
         noted.write_text(json.dumps({"synced": synced}) + "\n", encoding="utf-8")

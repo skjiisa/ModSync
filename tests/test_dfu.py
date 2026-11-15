@@ -1188,7 +1188,7 @@ class ControllerBindingsTests(unittest.TestCase):
         self.inst = dfu.Install(Path(tmp.name))
         self.inst.data_dir.mkdir()
         self.file = self.inst.data_dir / "KeyBinds.txt"
-        for p in (patch.object(dfu, "is_running", lambda: False), patch.object(dfu, "sync_keybinds", lambda *a, **k: "")):
+        for p in (patch.object(dfu, "is_running", lambda: False), patch.object(dfu, "_sync_keybinds", lambda *a, **k: "")):
             p.start()
             self.addCleanup(p.stop)
 
@@ -1432,6 +1432,59 @@ class KeyBindsSyncTests(unittest.TestCase):
         shared = self.read(self.shared)["secondaryActionKeyBinds"]
         self.assertEqual(shared, {"Keypad8": "MoveForwards", **dfu.controller_bindings()})
         self.assertEqual(self.conflict_copies(), [])
+
+    def test_a_version_arriving_while_sharing_is_never_replaced_unseen(self):
+        """Syncthing brings in another machine's bindings between the look and the copy:
+        they stay, and the next look finds both changed."""
+        self.local.write_text(self.binds())
+        dfu.sync_keybinds(self.inst)
+        self.local.write_text(self.binds({"F": "CastSpell"}))
+        arrived = self.binds({"JoystickButton1": "CastSpell"})
+        real_copy = dfu.shutil.copy2
+
+        def copy_then_arrive(src, dst, *a, **k):
+            real_copy(src, dst, *a, **k)
+            self.shared.write_text(arrived)
+
+        with patch.object(dfu.shutil, "copy2", copy_then_arrive):
+            self.assertEqual(dfu.sync_keybinds(self.inst), "")
+        self.assertEqual(self.shared.read_text(), arrived)
+        self.assertIn("asks which to keep", dfu.sync_keybinds(self.inst))
+        (copy,) = self.conflict_copies()
+        self.assertEqual(self.read(copy)["secondaryActionKeyBinds"], {"F": "CastSpell"})
+        self.assertEqual(self.read(self.local)["secondaryActionKeyBinds"], {"JoystickButton1": "CastSpell"})
+
+    def test_controller_setup_holds_the_lock_throughout(self):
+        """A status read in another process (or the Flatpak's ModSync) waits for it, so it can't
+        note the new bindings as synced before they are."""
+        import fcntl
+        lock_path = self.inst.path / dfu.KEYBINDS_LOCK
+        seen = []
+        real = dfu._set_controller_bindings
+
+        def check(inst):
+            with open(lock_path, "a") as other:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            seen.append(True)
+            return real(inst)
+
+        with patch.object(dfu, "_set_controller_bindings", check):
+            dfu.set_controller_bindings(self.inst)
+        self.assertEqual(seen, [True])
+        self.assertEqual(self.read(self.shared)["secondaryActionKeyBinds"], dfu.controller_bindings())
+
+    def test_two_conflicts_in_one_second_keep_both(self):
+        first, second = self.inst.path / "a.txt", self.inst.path / "b.txt"
+        first.write_text("first")
+        second.write_text("second")
+        with patch.object(dfu.time, "time", lambda: 1_800_000_000.0):
+            a = dfu._conflict_copy(first, self.shared)
+            b = dfu._conflict_copy(second, self.shared)
+        self.assertNotEqual(a, b)
+        self.assertEqual((a.read_text(), b.read_text()), ("first", "second"))
+        from modsync.sync import conflicts
+        self.assertEqual({c.path for c in conflicts.find(self.inst.path, ())}, {a, b})
 
     def test_the_folders_tidy_syncs_them(self):
         self.local.write_text(self.binds())
