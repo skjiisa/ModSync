@@ -1287,8 +1287,7 @@ def _cyberpunk_launch(*, play: bool) -> int:
     if version:
         print(f"warning: {version}")
     try:
-        plan = cyberpunk.build_plan(cyberpunk.find_instance(), cyberpunk.find_game(), play=play)
-        print(Launcher().start(plan))
+        print(cyberpunk.launch(Launcher(), play=play))
     except (cyberpunk.CyberpunkError, RuntimeError, OSError) as e:
         print(f"error: {e}")
         return 1

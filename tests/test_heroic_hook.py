@@ -80,7 +80,7 @@ def scene(tmp_path):
     (instance / "ModOrganizer.ini").write_text("[General]\ngameName=Cyberpunk 2077\n")
     game = make_heroic(tmp_path)
     script = executable(tmp_path / "play.sh", render(game, instance))
-    return {"tmp": tmp_path, "instance": instance, "script": script, "game_dir": game.install_path,
+    return {"tmp": tmp_path, "instance": instance, "script": script, "game": game, "game_dir": game.install_path,
             "umu": executable(tmp_path / "bin/umu-run", RECORDER),
             "other": executable(tmp_path / "bin/gamemoderun", WRAPPER),
             "exe": str(game.install_path / "REDprelauncher.exe"), "record": tmp_path / "record.jsonl"}
@@ -147,7 +147,7 @@ LINK = "nxm://cyberpunk2077/mods/2987/files/168466?key=k&expires=1&user_id=2"
 
 
 def note(scene) -> Path:
-    return scene["tmp"] / ".config/heroic/modsync" / f"download-{APP}.txt"
+    return scene["tmp"] / ".config/heroic/modsync" / f"launch-{APP}.txt"
 
 
 @pytest.mark.parametrize("program", ["exe", "redirector"])
@@ -176,14 +176,55 @@ def test_a_stale_or_odd_note_is_dropped_and_the_game_plays(scene, case):
     note(scene).parent.mkdir(parents=True)
     note(scene).write_text((LINK if case == "stale" else "--help") + "\n")
     if case == "stale":
-        old = note(scene).stat().st_mtime - hook.DOWNLOAD_TTL - 5
+        old = note(scene).stat().st_mtime - hook.NOTE_TTL - 5
         os.utime(note(scene), (old, old))
 
     calls, said = run(scene, str(scene["umu"]), scene["exe"])
 
     assert calls[0]["argv"][1] == "run"
-    assert "ignoring a download link" in said
+    assert ("over 180s ago" if case == "stale" else "doesn't know: --help") in said
     assert not note(scene).exists()
+
+
+@pytest.mark.parametrize("program", ["exe", "redirector"])
+def test_modsyncs_play_and_open_do_that_whichever_option_heroic_ran(scene, program):
+    (scene["instance"] / "ModOrganizer.ini").write_text(EXECUTABLES)
+    note(scene).parent.mkdir(parents=True)
+    exe = scene["exe"] if program == "exe" else str(scene["game_dir"] / "mo2-redirector.exe")
+
+    hook.leave_request(scene["game"], hook.PLAY)
+    calls, said = run(scene, str(scene["umu"]), exe)
+    assert calls[-1]["argv"][1:] == ["run", "-e", "My Cyberpunk, renamed"]
+    assert not note(scene).exists()
+
+    hook.leave_request(scene["game"], hook.OPEN)
+    calls, said = run(scene, str(scene["umu"]), exe)
+    assert calls[-1]["argv"] == [f"{scene['instance']}/ModOrganizer.exe"]
+    assert "opening Mod Organizer 2" in said
+    assert not note(scene).exists()
+
+
+@pytest.mark.parametrize("case", ["original requested", "instance missing", "no game program"])
+def test_a_launch_that_skips_mo2_drops_the_note_it_was_for(scene, case):
+    """Else an Open left for it would turn the next plain Play into opening MO2,
+    and ModSync would wait for an MO2 that isn't coming."""
+    (scene["instance"] / "ModOrganizer.ini").write_text(EXECUTABLES)
+    note(scene).parent.mkdir(parents=True)
+    hook.leave_request(scene["game"], hook.OPEN)
+    env = {"MODSYNC_ORIGINAL_GAME": "1"} if case == "original requested" else {}
+    if case == "instance missing":
+        (scene["instance"] / "ModOrganizer.exe").rename(scene["instance"] / "away.exe")
+    exe = "/elsewhere/Cyberpunk2077.exe" if case == "no game program" else scene["exe"]
+
+    calls, said = run(scene, str(scene["umu"]), exe, env=env)
+
+    assert calls[-1]["argv"] == [exe]
+    assert "is dropped" in said
+    assert not note(scene).exists() and not note(scene).with_suffix(".taken").exists()
+    if case == "instance missing":
+        (scene["instance"] / "away.exe").rename(scene["instance"] / "ModOrganizer.exe")
+    calls, _ = run(scene, str(scene["umu"]), scene["exe"])  # the next plain Play plays
+    assert calls[-1]["argv"][1:] == ["run", "-e", "My Cyberpunk, renamed"]
 
 
 @pytest.mark.parametrize("case", ["original requested", "instance missing", "no game program"])
@@ -379,4 +420,4 @@ def test_disable_drops_a_download_link_left_behind(tmp_path, closed_heroic):
     hook.enable(game, "script", tmp_path / "MO2")
     hook.leave_download(game, "nxm://x")
     hook.disable(game)
-    assert not hook.download_note(game).exists()
+    assert not hook.launch_note(game).exists()
