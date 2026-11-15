@@ -144,9 +144,13 @@ class ProcessRunning(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         fex = Path(tmp.name) / "FEX"
-        fex.symlink_to(shutil.which("sleep"))
+        # bash, which ignores its argv[0]: a multi-call sleep (uutils, as on Ubuntu
+        # 26.04) would take it for the command to run and exit at once. The ": "
+        # keeps bash from exec'ing sleep, which would change the comm.
+        fex.symlink_to(shutil.which("bash"))
         # As FEX runs it: comm "FEX", argv[0] the program, with a space in its folder.
-        self.proc = subprocess.Popen(["/games/Daggerfall Unity/DaggerfallUnity.x86_64", "30"], executable=fex)
+        self.proc = subprocess.Popen(["/games/Daggerfall Unity/DaggerfallUnity.x86_64", "-c", "sleep 30; :"],
+                                     executable=fex)
         self.addCleanup(self.proc.wait)
         self.addCleanup(self.proc.kill)
 
