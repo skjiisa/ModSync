@@ -33,6 +33,13 @@ All notable changes to ModSync are documented here. The format follows
 - `modsync doctor` lists each of those games that Steam or Heroic has, with
   its prefix and MO2 instance.
 - The game switcher scrolls when more than five games are on a machine.
+- A machine can keep games that aren't installed on it, so machines that are
+  never on at the same time still sync through it. "Keep games not
+  installed here" on the Sync page (or `modsync sync hold all`) keeps a
+  copy of every game's folder another machine offers; `modsync sync hold
+  <folder>` keeps one. The copies are receive-only and nothing on that
+  machine uses them. A home server with no games installed can do this
+  too. Skyrim's MO2 vault isn't covered yet.
 - Nexus Mods downloads for Skyrim Special Edition reach its Mod Organizer 2,
   as Cyberpunk 2077's do. Turning Steam's launch hook on also makes ModSync
   the handler for `nxm://` links. While the hook is on and Steam is running,

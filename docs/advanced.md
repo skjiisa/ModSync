@@ -171,6 +171,7 @@ modsync mo2 status | use <dir> | install <dest>
 modsync mo2 usvfs status | apply | restore   # MO2 2.5.2's ARM64 workaround, see usvfs-arm64.md
 modsync game status | downgrade <version> | restore | pin | unpin | skse
 modsync sync create <instance-dir> | join <code> <instance-dir> [--merge]
+modsync sync hold <folder> | all | off   # keep games not installed here, see below
 modsync serve                       # foreground loop; what the background service runs
 modsync service install [--linger] | status | uninstall
 modsync firewall status | allow | remove   # ModSync's ports in ufw or firewalld
@@ -421,6 +422,45 @@ stopping and is let go the next time ModSync reaches Syncthing. Leaving the
 vault keeps the paired machines while a game's folder still syncs with them. If a game moves to another place on one machine, its folder there is
 removed from Syncthing and added again at the new place, with its settings. This way, files missing
 at the new place arrive from the others instead of being deleted on every machine.
+
+### Keeping games not installed here
+
+Two machines only sync while both are on. A third machine that is on most of
+the time, such as a desktop or a home server, can pass changes between them.
+It keeps a copy of a game's folder even when that game isn't set up there.
+With "Keep games not installed here" on the Sync page (or `modsync sync hold
+all`), a Steam Deck and a laptop that are never on together still get each
+other's changes, because each syncs with the machine that is left on.
+
+With it on, a machine keeps a copy of every game's folder a paired machine
+offers whose game isn't set up there, now and later. A game that is set up
+there syncs where the game is, as before. To keep one folder only, run
+`modsync sync hold <folder>`, for example `modsync sync hold dfu-mods`.
+
+The copies go in `held/` under ModSync's data folder, one per folder, named
+after its Syncthing id. They are receive-only: whatever changes in them on
+this machine is never sent anywhere. Nothing on this machine uses them, so
+the game's own steps don't run on them. A copy doesn't write the version
+record, doesn't move saves into a game, and doesn't ask about conflicts. The
+machines that play the game settle conflicts. A copy takes as much space as
+the folder does on the other machines, `downloads/` included.
+
+To stop keeping one game, choose it under Games on the Sync page, or run
+`modsync sync stop <folder>`. Its files stay, and it isn't taken up again.
+Turning "Keep games not installed here" off and on again (`modsync sync hold
+off`, then `all`) takes up again the copies stopped this way. `modsync sync
+hold off` keeps the copies already here, but takes up no new games.
+
+If the game is set up on that machine later, turning its sync on (on the
+game's page, or `modsync sync share <folder>`) syncs the folder where the
+game is from then on. The kept copy's files stay in `held/` until you delete
+them, and the game's files arrive again from the other machines.
+
+A machine with nothing installed pairs by entering another machine's code
+with `modsync sync join <code>`, then runs `modsync sync hold all` and
+`modsync service install --linger`. Linger starts the background service at
+boot, before anyone logs in. Skyrim's MO2 vault isn't kept this way yet; the
+games' folders are.
 
 ### Copying from another machine
 
@@ -1152,7 +1192,8 @@ Without the app window it applies a queued Steam pin or launch-hook switch the
 moment Steam exits, notices when Steam updates the game, and keeps a vault
 syncing if one exists. If the service initially shares the app's process, it
 starts a replacement on its next poll after the app closes, and transfers
-resume. Both machines still need to be awake and connected.
+resume. Both machines still need to be awake and connected, unless a third
+one keeps the games for them (see "Keeping games not installed here").
 
 Under Settings, "Run in background" shows whether the service is running,
 inactive, failed or off. Open the ModSync Steam shortcut to check it in

@@ -55,7 +55,7 @@ def _folder_page(key: str) -> str | None:
 
 def _folder_words(fs: folders.FolderStatus) -> tuple[str, str, str]:
     """How one of a game's folders stands: value word, tone, detail."""
-    where = _short(fs.path)
+    where = "Kept here for your other machines." if fs.held else _short(fs.path)
     if fs.stopping:
         return "Stopping", "busy", "Finishes once Syncthing answers."
     if fs.conflicts:
@@ -391,7 +391,8 @@ class SyncPage(Page):
                               ("For the games' folders only. " if state.has_instance else "")
                               + "Enter the PIN it shows, or paste its code.", "devices", chevron=True)
         self.join_tile.clicked.connect(self.toggle_pair_join)
-        tiles = [self.pair_tile, self.code_tile, self.join_tile]
+        self.hold_tile = self._hold_tile()
+        tiles = [self.pair_tile, self.code_tile, self.join_tile, self.hold_tile]
         if not state.has_instance:
             self.choose_first = Tile("Sync Skyrim's Mod Organizer 2", "Pick or install MO2 first, then share it "
                                      "from here.", "box", size="compact", chevron=True)
@@ -449,6 +450,7 @@ class SyncPage(Page):
             return
         self._show_games(status.game_folders)
         self._show_devices(status.devices)
+        self._show_hold()
 
     def _games_panel(self) -> Panel:
         panel = Panel()
@@ -485,16 +487,96 @@ class SyncPage(Page):
         self._no_games.setVisible(not statuses)
         for fs in statuses:
             row = self._game_rows.get(fs.spec.key)
+            if row is not None and row.property("held") != fs.held:
+                # Kept, or used here since (or the other way round): what choosing it does changes.
+                self.games.removeWidget(row)
+                discard(self._game_rows.pop(fs.spec.key))
+                row = None
             if row is None:
                 row = StatusRow(fs.spec.label.removesuffix(" (ModSync)"), "sync")
+                row.setProperty("held", fs.held)
                 page = _folder_page(fs.spec.key)
-                if page is not None:
+                if fs.held:
+                    row.clicked.connect(lambda _=False, spec=fs.spec: self.stop_holding(spec))
+                elif page is not None:
                     row.clicked.connect(lambda _=False, p=page: self.host.show_game(p))
                 self._game_rows[fs.spec.key] = row
                 self.games.addWidget(row)
             row.set_state(*_folder_words(fs))
         if self.live:  # the vault's page shows them only when there are any
             self.games_panel.setVisible(bool(statuses))
+
+    # --- copies kept for other machines --------------------------------------------
+    def _hold_tile(self) -> Tile:
+        tile = Tile("Keep games not installed here", "", "box", status=True)
+        tile.clicked.connect(self.toggle_hold_all)
+        self._show_hold(tile)
+        return tile
+
+    def _show_hold(self, tile: Tile | None = None) -> None:
+        tile = tile or getattr(self, "hold_tile", None)
+        if tile is None or not shiboken6.isValid(tile):
+            return
+        on = self.service.state.hold_all
+        tile.set_badge("On" if on else "Off", "ok" if on else "off")
+        tile.set_description("Your other machines sync through this one, even when they aren't on together."
+                             if on else "Let your other machines sync through this one when they aren't on "
+                             "at the same time.")
+
+    def toggle_hold_all(self) -> None:
+        self.service.reload_state()  # 'modsync sync hold' may have changed it meanwhile
+        self._show_hold()
+        if self.service.state.hold_all:
+            self._set_hold_all(False)
+            return
+
+        def chosen(key: str | None) -> None:
+            if key == "on":
+                self._set_hold_all(True)
+
+        self.host.confirm(
+            "Keep games not installed here?",
+            "This machine keeps a copy of the mods and saves your other machines sync, also for games that "
+            "aren't set up here, and passes changes between them. A machine left on lets a Steam Deck and a "
+            "desktop sync without being on at the same time. The copies take as much space as those games' "
+            "mods. Nothing here uses them. To leave one game out, choose it under Games.",
+            [("on", "Keep them", "", "primary", "check"), ("cancel", "Cancel", "", "normal", "close")],
+            chosen, default="on")
+
+    def _set_hold_all(self, on: bool) -> None:
+        def done(taken: list) -> None:
+            if not shiboken6.isValid(self):
+                return
+            self._show_hold()
+            if not on:
+                self.host.notify("Games offered from now on aren't kept here. The copies kept already stay.", "ok")
+            elif taken:
+                self.host.notify(f"Keeping {len(taken)} game folder{'' if len(taken) == 1 else 's'} for your "
+                                 "other machines.", "ok")
+            else:
+                self.host.notify("Games your other machines sync are kept here once they offer them.", "ok")
+            self.refresh()
+
+        worker.run_async(self.service.hold_all_games, on, on_done=done,
+                         on_failed=lambda m: self.host.notify(f"⚠ {m}"))
+
+    def stop_holding(self, spec: folders.FolderSpec) -> None:
+        name = spec.label.removesuffix(" (ModSync)")
+
+        def chosen(key: str | None) -> None:
+            if key == "stop":
+                worker.run_async(self.service.stop_game_folder, spec.key,
+                                 on_done=lambda _: (self.host.notify(f"Stopped keeping {name}.", "ok"),
+                                                    self.refresh()),
+                                 on_failed=lambda m: self.host.notify(f"⚠ {m}"))
+
+        self.host.confirm(
+            f"Stop keeping {name}?",
+            f"This machine keeps {name} for your other machines; the game isn't set up here. Stopped, they "
+            "sync it with each other only while both are on. The copy's files stay on this machine. Turning "
+            "'Keep games not installed here' off and on again keeps it again.",
+            [("stop", "Stop keeping it", "", "danger", "stop"), ("cancel", "Cancel", "", "normal", "close")],
+            chosen, default="cancel")
 
     def _hand_focus_on(self, row, rows) -> None:
         """Don't leave the focus on a row on its way out."""
@@ -556,6 +638,9 @@ class SyncPage(Page):
                                         "play", role="primary")
                 self.resume_tile.clicked.connect(lambda: self.set_paused(False))
                 tiles.insert(0, self.resume_tile)
+        if not state.copying:
+            self.hold_tile = self._hold_tile()
+            tiles.append(self.hold_tile)
         open_ui = Tile("Open Syncthing UI", "The sync engine's own page, in your browser.", "globe", size="compact")
         open_ui.clicked.connect(self.open_ui)
         tiles.append(open_ui)
@@ -631,6 +716,7 @@ class SyncPage(Page):
             self.conflicts_tile.set_description("MO2 uses the newer version of each. Choose which to keep.")
         self._show_devices(status.devices)
         self._show_games(status.game_folders)
+        self._show_hold()  # 'modsync sync hold' may have changed it meanwhile
 
         if status.copy is not None:
             self._show_copy(status)
