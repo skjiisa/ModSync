@@ -391,8 +391,21 @@ def main():
                              return_value=gameversion.VersionCheck(ready.installed, ready.expected)):
             w = window_for(State(**configured), steam=steam, mode="gamepad")
             capture(w, "launch-countdown")
-        steam.decision = 0
-        w.close()
+            home = w.pages["home"]  # the wait is over: what shows until the window closes
+            home._countdown.stop()
+            home._countdown_state = "starting"
+            home.cover.start()
+            capture(w, "launch-starting")
+            steam.decision = 0
+            w.close()
+            # With a finger: no legends, and a tap anywhere but Play now stops it.
+            steam = launchhook.SteamLaunch(SKYRIM_SE, "GE-Proton10-34")
+            router.pointer = "touch"
+            w = window_for(State(**configured), steam=steam, mode="mouse")
+            capture(w, "launch-countdown-touch")
+            router.pointer = "mouse"
+            steam.decision = 0
+            w.close()
 
         w = window_for(State(), mode="gamepad")
         w.start_setup()

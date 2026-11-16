@@ -233,6 +233,7 @@ class FollowupReviewTests(UiTestCase):
         from PySide6.QtTest import QTest
 
         State(instance_path=str(self.tmp)).save()
+        launchhook.set_play_mode("wait")  # counting down, the first press would only stop it
         window = self.window(steam=launchhook.SteamLaunch(SKYRIM_SE))
         home = window.pages["home"]
         self.assertIs(window.focusWidget(), home.play)

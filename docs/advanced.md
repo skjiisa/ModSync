@@ -698,11 +698,11 @@ What happens next is up to "When you press Play in Steam" under Settings (or
 `modsync launch mode`):
 
 - **Count down** (the default): once Home has checked the game, MO2 and
-  sync and nothing needs a decision, Play says "Starting in 5…" and presses
-  itself after five seconds. Pressing anything first (a button, a key, a
-  click) stops it and leaves the window waiting; A or Enter on Play starts
-  at once. Changes still arriving from another machine hold the countdown
-  until they're in.
+  sync and nothing needs a decision, a countdown takes over the window and
+  Skyrim starts after five seconds. Pressing anything else first (a button,
+  a key, a click or a tap) stops it and leaves the window waiting on Home;
+  A or Enter (or Play now) starts at once. Changes still arriving from
+  another machine hold the countdown until they're in.
 - **Play right away**: no window. The hook's `modsync launch hub` makes the
   same checks without one and, when nothing needs attention, hands back
   Play's launch straight away (before an MO2 instance is chosen, it goes on
