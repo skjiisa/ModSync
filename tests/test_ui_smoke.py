@@ -626,7 +626,10 @@ class CountdownTests(UiTestCase):
             self.assertFalse(home.cover.isVisible())
             QTest.keyRelease(focus, Qt.Key.Key_Control)
             self.settle()
-        self.assertIs(window.page, home)
+            self.assertIs(window.page, home)
+            QTest.keyClick(window.focusWidget(), Qt.Key.Key_E)  # a press of its own, straight after
+            self.settle()
+        self.assertIsNot(window.page, home)
         self.assertIsNone(window.steam_launch.decision)
 
     def test_a_launch_that_fails_brings_home_back_with_play_focused(self):

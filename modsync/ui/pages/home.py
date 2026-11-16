@@ -16,7 +16,7 @@ from modsync import launchhook
 from modsync.games import SKYRIM_SE
 from modsync.service import GameStatus, SyncStatus
 from modsync.ui.countdown import CountdownCover
-from modsync.ui.input import TAP_S, Action
+from modsync.ui.input import Action
 from modsync.ui.pages import Page
 from modsync.ui.widgets import HeroTile, StatusRow, Tile, label
 
@@ -69,7 +69,9 @@ class HomePage(Page):
         # Focus may leave Home while the cover is up (Play is disabled while the
         # launch is handed over), so the window asks here first too.
         host.action_guard = self._countdown_action if self.cover is not None else None
-        self._swallow_tabs_until = 0.0  # a bumper tap that stopped it acts on release: not as well
+        # A press that stopped it was made in this span (monotonic times). A
+        # bumper tap made then acts on its release, which mustn't act as well.
+        self._stopped_by: tuple[float, float] | None = None
         self._sync_ready = not state.syncing  # syncing: once a status says nothing is still arriving
         # ModSync has been in front (under gamescope it may never say so)
         self._was_active = QGuiApplication.applicationState() == Qt.ApplicationState.ApplicationActive
@@ -412,7 +414,9 @@ class HomePage(Page):
             return True
         # Steam Input's bumpers are Ctrl and Alt taps, sent on release: the
         # press stopped the countdown already.
-        return action in (Action.PREV_TAB, Action.NEXT_TAB) and time.monotonic() < self._swallow_tabs_until
+        tap = self.host.router.tap_press
+        return (action in (Action.PREV_TAB, Action.NEXT_TAB) and tap is not None and self._stopped_by is not None
+                and self._stopped_by[0] <= tap <= self._stopped_by[1])
 
     def handle_action(self, action: Action) -> bool:
         if self._countdown_action(action):
@@ -529,7 +533,7 @@ class HomePage(Page):
             # Any press stays here; A on Play has started it already. While ModSync
             # has never said it's in front (gamescope may not), a controller press
             # may be meant for it, so that stays too.
-            self._swallow_tabs_until = router.last_input + TAP_S
+            self._stopped_by = (self._countdown_started, router.last_input)
             self._stop_countdown()
             return
         if self._was_active and QGuiApplication.applicationState() != Qt.ApplicationState.ApplicationActive:
