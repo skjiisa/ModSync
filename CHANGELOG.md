@@ -21,8 +21,9 @@ All notable changes to ModSync are documented here. The format follows
   controller bindings sit side by side, so one set works on every machine.
   ModSync copies them in and out of DFU's `KeyBinds.txt` only while DFU is
   closed, so DFU never writes old bindings back over new ones. When two
-  machines change them before they sync, `modsync sync conflicts` lists
-  which actions differ, and you keep one version or the other.
+  machines change them before they sync, the Sync page (or `modsync sync
+  conflicts`) lists which actions differ, and you keep one version or the
+  other.
 - A synced file's conflict copies now go with it when a game moves to
   another folder or takes over a kept copy.
 - While the background service is on, a desktop session (Desktop Mode on
@@ -221,6 +222,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Fixed
 
+- A conflict in a game's folder, such as Daggerfall Unity's key bindings or
+  load order changed on two machines, could only be settled from the command
+  line. The Sync page showed it on the game's row, but choosing the row
+  opened the game's Home. Now the row, and the "changed on two machines"
+  tile, which counts these too, ask which version to keep, as they do for
+  Mod Organizer 2's files.
 - Forgetting Skyrim's Mod Organizer 2 instance kept the other games, but
   also cleared the machines forgotten here (so they could come back), the
   folders paused for a game (so they stayed paused), and the record that

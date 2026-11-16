@@ -2,9 +2,11 @@
 
 from unittest.mock import patch
 
+from modsync import dfu
 from modsync.pairing_code import PairingCode
 from modsync.service import CopyProgress, DeviceStatus, LaunchCheck, ModSyncService, SyncStatus
 from modsync.state import State
+from modsync.sync.folders import FolderStatus
 from tests.ui_support import UiTestCase
 
 CODE = PairingCode("A" * 56, "modsync-abc", "Desktop").encode()
@@ -241,6 +243,38 @@ class LiveSyncTests(UiTestCase):
         archived = sorted(p.name for p in (self.tmp / ".modsync-conflicts").rglob("*") if p.is_file())
         self.assertEqual(archived, ["modlist.txt", "plugins.txt", f"x.{STAMP}.ini"])
         self.assertEqual(len(list((self.tmp / ".modsync-conflicts").iterdir())), 2)  # one folder per decision
+
+    def test_conflicts_in_a_games_folder_are_reviewed_with_the_instances(self):
+        profile = self.tmp / "profiles" / "Default"
+        profile.mkdir(parents=True)
+        (profile / "modlist.txt").write_text("+Mine\n")
+        (profile / f"modlist.{STAMP}.txt").write_text("+Theirs\n")
+        game = self.tmp / "dfu"  # beside what the instance's search looks in
+        mods = game / "PortableAppdata" / "Mods"
+        mods.mkdir(parents=True)
+        (mods / "a.json").write_text("1")
+        (mods / f"a.{STAMP}.json").write_text("2")
+        window, sync = self._window(game_folders={"dfu-mods": str(game)})
+        fs = FolderStatus(dfu.MODS_FOLDER, str(game), "idle", 100.0, conflicts=1)
+        sync.on_status(self.status(conflicts=1, game_folders=[fs]))
+        self.assertEqual(sync.conflicts_tile.text(), "2 files were changed on two machines")
+        self.assertEqual(sync.conflicts_tile.description, "One version of each is in use. Choose which to keep.")
+        self.assertEqual(window.pages["home"].sync_row.badge.text(), "Conflict")  # Skyrim's own only
+        with patch.object(dfu, "is_running", lambda: False):
+            sync._game_rows["dfu-mods"].click()  # that folder's first
+            self.settle()
+            sheet = window.top_overlay
+            self.assertEqual(sheet.title.text(), "PortableAppdata/Mods/a.json")
+            self.assertIn("in Daggerfall Unity mods changed on two machines", sheet.text.text())
+            self.assertIn("1 more after this", sheet.text.text())
+            sheet.choose("current")
+            self.settle(4)
+            self.assertEqual(window.top_overlay.title.text(), "Profile Default")  # then the instance's
+            window.top_overlay.choose("current")
+            self.settle(4)
+        self.assertEqual((mods / "a.json").read_text(), "1")
+        self.assertFalse((mods / f"a.{STAMP}.json").exists())
+        self.assertIn("No conflicts left", window.last_message)
 
     def test_set_aside_files_can_be_deleted(self):
         archive = self.tmp / ".modsync-before-join" / "20261004-101500"

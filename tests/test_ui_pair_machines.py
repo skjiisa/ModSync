@@ -2,6 +2,8 @@
 folders pairs from the app, shows its own code and PIN, and lists the paired
 machines and each game's folder."""
 
+import json
+from pathlib import Path
 from unittest.mock import patch
 
 from modsync import dfu
@@ -61,6 +63,25 @@ class NothingSyncedTests(UiTestCase):
         self.assertIn("games' folders only", sync.join_tile.description)
         self.assertTrue(sync._code.startswith("MODSYNC2-"))
 
+    def test_a_games_conflict_comes_before_the_mo2_choice(self):
+        State(instance_path=str(self.tmp), game_folders={"dfu-mods": str(self.tmp / "dfu")},
+              held_folders={"0123456789abcdef": str(self.tmp / "held")}).save()
+        with patch.object(ModSyncService, "status", lambda self: _status()), \
+                patch.object(ModSyncService, "my_pairing_code", lambda self: PairingCode("ME" * 28, "", "ModSync")):
+            window = self.window()
+            sync = window.pages["sync"]
+            self.settle()
+        self.assertIsNotNone(sync.use_kept)
+        self.assertIs(sync.preferred_focus(), sync.use_kept)  # nothing waiting: the MO2 choice
+        fs = FolderStatus(dfu.MODS_FOLDER, str(self.tmp / "dfu"), "idle", 100.0, conflicts=1)
+        sync._on_machine_status(_status([fs]))
+        self.assertIs(sync.preferred_focus(), sync.conflicts_tile)
+        roles = [t.property("tileRole") for t in (sync.conflicts_tile, sync.use_kept, sync.pair_tile)]
+        self.assertEqual(roles, ["primary", "normal", "normal"])  # one blue action
+        sync._on_machine_status(_status([FolderStatus(dfu.MODS_FOLDER, str(self.tmp / "dfu"), "idle", 100.0)]))
+        self.assertIs(sync.preferred_focus(), sync.use_kept)
+        self.assertEqual(sync.use_kept.property("tileRole"), "primary")
+
 
 class GamesOnlyTests(UiTestCase):
     def setUp(self):
@@ -111,6 +132,45 @@ class GamesOnlyTests(UiTestCase):
         sync._on_machine_status(_status())
         self.assertEqual(sync._game_rows, {})
         self.assertTrue(sync._no_games.isVisibleTo(sync))
+
+    def test_a_folder_conflict_is_settled_from_its_row(self):
+        root = Path(self.mods)
+        root.mkdir()
+        ours, theirs = {"actionKeyBinds": {"Space": "Jump"}}, {"actionKeyBinds": {"J": "Jump"}}
+        (root / dfu.SHARED_KEYBINDS).write_text(json.dumps(ours))
+        other = root / "modsync-dfu-keybinds.sync-conflict-20261115-205857-AAAAAAA.txt"
+        other.write_text(json.dumps(theirs))
+        self.status = _status([FolderStatus(dfu.MODS_FOLDER, self.mods, "idle", 100.0, conflicts=1)])
+        stop = patch.object(dfu, "is_running", lambda: False)
+        stop.start()
+        self.addCleanup(stop.stop)
+        window = self.window()
+        sync = window.pages["sync"]
+        self.settle()
+        self.assertTrue(sync.conflicts_tile.isVisibleTo(sync))
+        self.assertEqual(sync.conflicts_tile.text(), "1 file was changed on two machines")
+        self.assertEqual(sync.conflicts_tile.property("tileRole"), "primary")
+        self.assertEqual(sync.pair_tile.property("tileRole"), "normal")  # one blue action
+        self.assertIs(sync.preferred_focus(), sync.conflicts_tile)
+        row = sync._game_rows["dfu-mods"]
+        self.assertEqual(row.description, "A file changed on two machines. Choose which version to keep.")
+        with patch.object(window, "switch_game") as switch:
+            row.click()  # the choice, not the game's page
+            self.settle()
+        switch.assert_not_called()
+        sheet = window.top_overlay
+        self.assertEqual(sheet.title.text(), "Daggerfall Unity's key bindings")
+        self.assertIn("Primary bindings that differ: Jump.", sheet.text.text())
+        self.assertIn(".modsync-conflicts", sheet.tiles["current"].description)
+        sheet.choose("other")
+        self.settle(4)
+        self.assertEqual(json.loads((root / dfu.SHARED_KEYBINDS).read_text()), theirs)
+        # DFU's own file follows at once, not at the next look.
+        self.assertEqual(json.loads((root / dfu.KEYBINDS).read_text()), theirs)
+        self.assertFalse(other.exists())
+        archived = [p.name for p in (root / ".modsync-conflicts").rglob("*") if p.is_file()]
+        self.assertEqual(archived, [dfu.SHARED_KEYBINDS])
+        self.assertIn("No conflicts left", window.last_message)
 
     def test_a_kept_copy_shows_as_kept_and_choosing_it_offers_to_stop_keeping_it(self):
         window = self.window()
