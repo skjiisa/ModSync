@@ -949,8 +949,9 @@ runs.
 DFU warns by itself when a save needs mods this machine is missing. The
 version check under "Syncing Daggerfall Unity's mods" covers DFU itself.
 
-DFU only has an x86_64 build. On the Steam Frame it would have to run under
-emulation, which is untested (#110). DFU's developers don't support builds or setups from third parties,
+DFU only has an x86_64 build. On the Steam Frame it runs under FEX, as
+described above, and plays well there, synced saves and mods included
+(#110). DFU's developers don't support builds or setups from third parties,
 so report problems with a ModSync-installed DFU to ModSync.
 
 ### Controller bindings
