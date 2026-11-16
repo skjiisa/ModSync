@@ -34,6 +34,12 @@
   <url type="homepage">https://github.com/skjiisa/ModSync</url>
   <url type="bugtracker">https://github.com/skjiisa/ModSync/issues</url>
   <releases>
+    <release version="2.1.0~beta2" date="2026-11-16" type="development">
+      <url>https://github.com/skjiisa/ModSync/releases/tag/v2.1.0-beta2</url>
+      <description>
+        <p>Mod Organizer 2 for any game MO2-LINT knows, in Steam or the Heroic Games Launcher, starting with Cyberpunk 2077 from GOG, with each game's mods synced. Machines can keep the games they don't run for the others. Steam's Play counts down before starting any game ModSync runs, Nexus Mods downloads reach each game's MO2, and the background service is lighter, pauses while a game runs and shows a tray icon.</p>
+      </description>
+    </release>
     <release version="2.1.0~beta1" date="2026-11-04" type="development">
       <url>https://github.com/skjiisa/ModSync/releases/tag/v2.1.0-beta1</url>
       <description>
