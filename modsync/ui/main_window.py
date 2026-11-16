@@ -1001,8 +1001,12 @@ class MainWindow(QMainWindow):
         return True  # AUX / ALT with nothing to do here
 
     def refresh_hints(self) -> None:
+        cover = getattr(self.pages.get("home"), "cover", None)
+        covered = cover.hints() if alive(cover) else None
         if self.overlays:
             hints = self.overlays[-1].hints()
+        elif covered is not None:
+            hints = covered  # Home's countdown sheet
         elif self.setup is not None:
             hints = self.setup.hints()
         else:

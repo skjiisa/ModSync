@@ -495,10 +495,13 @@ class CountdownTests(UiTestCase):
         self.settle()
 
     def test_play_starts_by_itself_after_the_countdown(self):
+        from modsync.ui.input import Action
+
         window = self._window()
         home = window.pages["home"]
-        self.assertTrue(home.cover.isVisible())  # over the whole window
-        self.assertEqual(home.cover.geometry(), window.shell.rect())
+        self.assertTrue(home.cover.isVisible())  # over everything but the hint bar, as sheets are
+        self.assertEqual(home.cover.geometry().bottom(), window.shell.rect().bottom() - window.hintbar.height())
+        self.assertIn(([Action.BACK], "Stop"), home.cover.hints())
         self.assertEqual(home.cover.seconds, 1)
         self.assertIn("SKSE", home.cover.detail)
         self.assertIsNone(window.steam_launch.decision)

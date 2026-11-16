@@ -55,9 +55,9 @@ Missing SKSE keeps Play as the default Steam launch choice.
 
 ![Steam launch with optional SKSE](launch-skse-optional.png)
 
-With nothing to decide, a countdown takes over the window and Skyrim starts
-by itself after five seconds. B, Esc or any other button, key, click or tap
-stops it and leaves the window on Home. A or Enter plays at once.
+With nothing to decide, a countdown opens over the dimmed Home and Skyrim
+starts by itself after five seconds. B, Esc or any other button, key, click
+or tap closes it and leaves Home as it was. A or Enter plays at once.
 
 ![Steam launch counting down](launch-countdown.png)
 

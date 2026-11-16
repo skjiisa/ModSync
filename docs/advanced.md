@@ -698,8 +698,8 @@ What happens next is up to "When you press Play in Steam" under Settings (or
 `modsync launch mode`):
 
 - **Count down** (the default): once Home has checked the game, MO2 and
-  sync and nothing needs a decision, a countdown takes over the window and
-  Skyrim starts after five seconds. Pressing anything else first (a button,
+  sync and nothing needs a decision, a countdown opens over Home and Skyrim
+  starts after five seconds. Pressing anything else first (a button,
   a key, a click or a tap) stops it and leaves the window waiting on Home;
   A or Enter (or Play now) starts at once. Changes still arriving from
   another machine hold the countdown until they're in.

@@ -62,7 +62,7 @@ class HomePage(Page):
         self._countdown.timeout.connect(self._tick)
         self.cover: CountdownCover | None = None
         if self._countdown_state != "off":
-            self.cover = CountdownCover(host.shell, host.router, SKYRIM_SE.name)
+            self.cover = CountdownCover(host, SKYRIM_SE.name)
             self.cover.stop.connect(lambda: self._stop_countdown())
             self.cover.play_now.connect(self._start_now)
             self.destroyed.connect(self.cover.deleteLater)  # it lives on the window, not the page
@@ -497,7 +497,7 @@ class HomePage(Page):
         self._countdown.stop()
         self._countdown_state = state
         if self.cover is not None:
-            self.cover.hide()
+            self.cover.dismiss()
 
     def _start_now(self) -> None:
         """The wait is over, or Play now was chosen: what the Play tile does."""
