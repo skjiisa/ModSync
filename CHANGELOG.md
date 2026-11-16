@@ -187,6 +187,12 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Changed
 
+- The countdown before Steam's Play starts Skyrim is a sheet over the dimmed
+  window. It shows the seconds left in large type, a bar filling up, and the
+  two ways out: Stop (B, Esc, or any other button, key, click or tap) and
+  Play now (A or Enter). Stopping closes it and leaves Home as it was, so B
+  no longer goes on to ask about quitting. It used to be a line on the Play
+  tile.
 - The background service does much less while it runs, for the Steam Deck.
   It wakes every 30 seconds instead of every 5. It still wakes every 5 while
   a Steam pin or launch-hook switch waits for Steam to exit, or while a copy

@@ -82,6 +82,10 @@ typography:
     fontFamily: "system-ui, sans-serif"
     fontSize: "30pt"
     fontWeight: 700
+  countdown:
+    fontFamily: "system-ui, sans-serif"
+    fontSize: "120pt"
+    fontWeight: 700
   mono:
     fontFamily: "monospace"
     fontSize: "10pt"
@@ -289,6 +293,7 @@ A cool charcoal ramp with white legends, one saturated blue taken from the app i
 - **Tab label** (600, 12.5pt) and **Hint label** (600, 11.5pt): section tabs and hint-bar actions.
 - **Legend** (11pt base, printed at 78-82% inside the cap or disc): controller and key legends.
 - **Field** (400, 15pt), **Key cap** (700, 15pt; special keys 600, 11.5pt), **Digit** (700, 30pt): text entry, the on-screen keyboard and the PIN cells.
+- **Countdown** (700, 120pt): the seconds left before Steam's Play starts the game. Only the countdown sheet uses it.
 
 ### Named Rules
 **The Weight Not Tracking Rule.** Hierarchy comes from size and weight only. No uppercase labels, no letter-spacing, no eyebrows above titles.
@@ -337,6 +342,11 @@ Text-only tabs, 36px tall inside a 40px slot, 18px side padding, 12.5pt semibold
 Home shows one game at a time. The top bar has a switcher between the wordmark and the tabs, whether or not the other games are installed yet: the X legend, then a Row Slate control, 40px slot, 4px corners, the game's short name in 12.5pt semibold Legend White and the row chevron turned to point down in Muted Grey. It is as wide as the longest game name, so the tabs never move when the game changes. Hover lifts it to Lifted Slate, press sinks it to Well, focus lights it white with Ink text. It is filled where tabs are not, because it changes what Home shows rather than where you are. Left from the first tab reaches it; up from a page still goes to the current tab.
 
 Choosing it (or X anywhere at the top level) opens the **Switch game** sheet: one status row per game with its dot, full name, detail and value word, and a Legend White check in the end slot of the game shown now. Focus starts on another game, so X then A switches. A game that isn't on this machine is still listed, Not installed in Muted Grey with what to do first in one line, but focus then stays on the game shown now (A reads Stay), so X then A never heads for an install by accident. Its Home leads with getting it: for Daggerfall, the blue action opens Steam's install dialog for the free *The Elder Scrolls II: Daggerfall*, a toast says so, and the Steam row reads Waiting for Steam until the game is there. Choosing a game lands on Home and is remembered for next time, but ModSync reopens on Skyrim while the remembered game isn't on this machine. A window opened by a game's Steam Play button shows only that game and no switcher.
+
+### Countdown sheet (CountdownCover)
+When Steam's Play opened the window and nothing needs a decision, the game starts by itself after five seconds, and this sheet opens over the dimmed window like any other sheet: the 67% black scrim over everything but the hint bar, an opaque Night panel up to 720px wide with 6px corners. Home stays faintly visible behind it, every readiness row green, which is why it can start by itself, and is exactly where Stop leaves you. The sheet answers three questions top to bottom: what starts ("Skyrim Special Edition starts in", Title), when (the seconds left in the 120pt Countdown figure, "seconds" beside it in 18pt semibold Secondary Grey), and how (a full-width 10px meter whose Deck Icon Blue fill grows to the right as the wait runs out, with Play's description under it in Secondary Grey).
+
+Along its bottom sit the two ways out as Row Slate choices (92px, 4px corners), Stop on the left and wider, Play now on the right: each prints its controller legend and key cap at 30px ("B / Esc", "A / Enter"), an 18pt bold title and one line on what else does the same. Neither is lit, because a lit row is where A goes and here A always plays; neither is blue, because the filling meter is this sheet's blue. The hint bar names the same two, Play now and Stop; with a mouse or a finger it keeps only Stop, as it leaves out every choice made by tapping the screen itself. Any press but A only closes the sheet; the d-pad does not move between the choices. With a mouse or a finger the legends drop out, the choices tint on hover and press, and a click or tap anywhere but Play now stops it. Once the wait runs out (or Play now), the choices and hints go, the meter stays full and the title reads "Starting Skyrim Special Edition…" until the window closes.
 
 ### Hint bar (HintBar, HintButton)
 Bar Charcoal, 52px. With a controller or keyboard, each hint is the controller legend(s), a Muted Grey "/", the keyboard key cap(s), then an 11.5pt semibold Secondary Grey label. On a machine with no controller only the key caps show, and a hint no key performs is left out. Short of room, the bar drops the device name, then the key caps. With a mouse or touch, hints become plain text buttons: Legend White on Row Slate with 4px corners, Lifted Slate under the pointer, no legends. Either way, clicking or tapping a hint performs it.

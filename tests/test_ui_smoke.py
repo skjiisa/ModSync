@@ -495,9 +495,15 @@ class CountdownTests(UiTestCase):
         self.settle()
 
     def test_play_starts_by_itself_after_the_countdown(self):
+        from modsync.ui.input import Action
+
         window = self._window()
         home = window.pages["home"]
-        self.assertIn("Starting in 1…", home.play.description)
+        self.assertTrue(home.cover.isVisible())  # over everything but the hint bar, as sheets are
+        self.assertEqual(home.cover.geometry().bottom(), window.shell.rect().bottom() - window.hintbar.height())
+        self.assertIn(([Action.BACK], "Stop"), home.cover.hints())
+        self.assertEqual(home.cover.seconds, 1)
+        self.assertIn("SKSE", home.cover.detail)
         self.assertIsNone(window.steam_launch.decision)
         self.wait(1.0)
         self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
@@ -508,12 +514,53 @@ class CountdownTests(UiTestCase):
 
         window = self._window()
         home = window.pages["home"]
-        self.assertIn("Starting in", home.play.description)
+        self.assertTrue(home.cover.isVisible())
         InputRouter.instance().dispatch(Action.DOWN)
         self.wait(1.0)
         self.assertIsNone(window.steam_launch.decision)
-        self.assertNotIn("Starting in", home.play.description)
+        self.assertFalse(home.cover.isVisible())
         self.assertTrue(window.isVisible())
+
+    def test_b_only_stops_it(self):
+        from modsync.ui.input import Action, InputRouter
+
+        window = self._window()
+        home = window.pages["home"]
+        InputRouter.instance().dispatch(Action.BACK)
+        self.wait(1.0)
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertFalse(home.cover.isVisible())
+        self.assertEqual(window.overlays, [])  # B on Home would ask about quitting: not this time
+        self.assertIs(window.focusWidget(), home.play)
+
+    def test_a_plays_now(self):
+        from modsync.ui.input import Action, InputRouter
+
+        with patch("modsync.ui.pages.home.COUNTDOWN_S", 30):
+            window = self._window()
+        InputRouter.instance().dispatch(Action.ACCEPT)
+        self.settle()
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+        self.assertIs(window.steam_launch.plan, self.plan)
+
+    def test_a_click_stops_it_and_play_now_plays(self):
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+
+        with patch("modsync.ui.pages.home.COUNTDOWN_S", 30):
+            window = self._window()
+            home = window.pages["home"]
+            QTest.mouseClick(home.cover, Qt.MouseButton.LeftButton, pos=QPoint(400, 300))
+            self.wait(0.3)
+            self.assertFalse(home.cover.isVisible())
+            self.assertIsNone(window.steam_launch.decision)
+            window.close()
+            window = self._window()
+            home = window.pages["home"]
+            play = home.cover._choices()[1]
+            QTest.mouseClick(home.cover, Qt.MouseButton.LeftButton, pos=play.center().toPoint())
+            self.settle()
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
 
     def test_a_key_that_does_nothing_still_stays(self):
         from PySide6.QtCore import Qt
@@ -537,7 +584,7 @@ class CountdownTests(UiTestCase):
             router.pad_button("back", False)
             self.wait(1.0)
         self.assertIsNone(window.steam_launch.decision)
-        self.assertNotIn("Starting in", home.play.description)
+        self.assertFalse(home.cover.isVisible())
 
     def test_going_to_another_window_stays(self):
         from PySide6.QtCore import Qt
@@ -548,14 +595,14 @@ class CountdownTests(UiTestCase):
         home._on_app_state(Qt.ApplicationState.ApplicationInactive)
         self.wait(1.0)
         self.assertIsNone(window.steam_launch.decision)
-        self.assertNotIn("Starting in", home.play.description)
+        self.assertFalse(home.cover.isVisible())
 
     def test_a_repair_keeps_it_waiting(self):
         with patch.object(ModSyncService, "prefix_runtime_problems", lambda self: ["msvcp140.dll 14.29"]):
             window = self._window()
         self.wait(1.0)
         self.assertIsNone(window.steam_launch.decision)
-        self.assertNotIn("Starting in", window.pages["home"].play.description)
+        self.assertFalse(window.pages["home"].cover.isVisible())
 
     def test_changes_still_arriving_hold_it_until_they_are_in(self):
         State(instance_path=str(self.tmp), folder_id="modsync-1").save()
@@ -564,16 +611,81 @@ class CountdownTests(UiTestCase):
         sync.on_status(SyncStatus("ME", "modsync-1", True, "syncing", 64.0, []))
         self.wait(1.0)
         self.assertIsNone(window.steam_launch.decision)
-        self.assertNotIn("Starting in", home.play.description)
+        self.assertFalse(home.cover.isVisible())
         sync.on_status(SyncStatus("ME", "modsync-1", True, "idle", 100.0, []))
-        self.assertIn("Starting in", home.play.description)
+        self.assertTrue(home.cover.isVisible())
+
+    def test_a_bumper_tap_that_stops_it_does_nothing_else(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        with patch("modsync.ui.pages.home.COUNTDOWN_S", 30):
+            window = self._window()
+            home = window.pages["home"]
+            window.activateWindow()
+            focus = window.focusWidget()
+            QTest.keyPress(focus, Qt.Key.Key_Control)  # Steam Input's LB: a Ctrl tap, acted on at release
+            self.wait(0.1)
+            self.assertFalse(home.cover.isVisible())
+            QTest.keyRelease(focus, Qt.Key.Key_Control)
+            self.settle()
+            self.assertIs(window.page, home)
+            QTest.keyClick(window.focusWidget(), Qt.Key.Key_E)  # a press of its own, straight after
+            self.settle()
+        self.assertIsNot(window.page, home)
+        self.assertIsNone(window.steam_launch.decision)
+
+    def test_a_launch_that_fails_brings_home_back_with_play_focused(self):
+        import threading
+
+        from PySide6.QtTest import QTest
+
+        from modsync.ui.input import Action, InputRouter
+
+        release = threading.Event()
+
+        def slow_failure(*_a, **_k):
+            release.wait(5)
+            raise RuntimeError("MO2 has not been told which game it manages.")
+
+        with patch("modsync.ui.pages.home.COUNTDOWN_S", 30), \
+                patch.object(ModSyncService, "prepare_mo2", side_effect=slow_failure):
+            window = self._window()
+            home = window.pages["home"]
+            InputRouter.instance().dispatch(Action.ACCEPT)
+            QTest.qWait(200)  # not settle(): that waits for the launch to fail
+            self.assertEqual(home._countdown_state, "starting")
+            self.assertIsNot(window.focusWidget(), home.play)
+            InputRouter.instance().dispatch(Action.RIGHT)  # focus left Play while it was disabled
+            InputRouter.instance().dispatch(Action.NEXT_TAB)
+            release.set()
+            self.wait(0.3)
+        self.assertIs(window.page, home)
+        self.assertFalse(home.cover.isVisible())
+        self.assertIs(window.focusWidget(), home.play)
+        self.assertIsNone(window.steam_launch.decision)
+
+    def test_a_question_before_playing_brings_home_back(self):
+        from types import SimpleNamespace
+
+        State(instance_path=str(self.tmp), folder_id="modsync-1").save()
+        check = SimpleNamespace(blocked="", warnings=["Files changed on two machines."])
+        with patch.object(ModSyncService, "launch_check", return_value=check):
+            window = self.window(steam=launchhook.SteamLaunch(SKYRIM_SE, "GE-Proton10-34"))
+            home = window.pages["home"]
+            window.pages["sync"].on_status(SyncStatus("ME", "modsync-1", True, "idle", 100.0, []))
+            self.assertTrue(home.cover.isVisible())
+            self.wait(1.0)
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertFalse(home.cover.isVisible())
+        self.assertEqual(window.top_overlay.title.text(), "Play anyway?")
 
     def test_wait_for_me_never_counts_down(self):
         launchhook.set_play_mode("wait")
         window = self._window()
         self.wait(1.0)
         self.assertIsNone(window.steam_launch.decision)
-        self.assertNotIn("Starting in", window.pages["home"].play.description)
+        self.assertIsNone(window.pages["home"].cover)
 
     def test_opened_after_play_right_away_says_why_and_waits(self):
         launchhook.set_play_mode("play")

@@ -179,6 +179,7 @@ class InputRouter(QObject):
         self.last_input = 0.0  # monotonic time of the last press of any kind
         self.last_pad_press = 0.0  # …of a controller button, also while another app is in front
         self.pointer = "mouse"  # "mouse" or "touch": which kind drove the last pointer press
+        self.tap_press: float | None = None  # while a Ctrl/Alt tap's action is dispatched: when it was pressed
         self._pad_seen = False  # SDL reported a button press at some point
         app.installEventFilter(self)
 
@@ -347,7 +348,11 @@ class InputRouter(QObject):
         if pad_press is not None and pad_press[0] == "pad" and abs(pad_press[1] - tap[1]) < DEDUPE_S:
             return False
         if not self._duplicate(action, "key"):
-            self.dispatch(action)
+            self.tap_press = tap[1]
+            try:
+                self.dispatch(action)
+            finally:
+                self.tap_press = None
         return False
 
     # --- dispatch ---------------------------------------------------------------------
@@ -387,7 +392,7 @@ class InputRouter(QObject):
                 others = event.modifiers() & ~own & ~Qt.KeyboardModifier.KeypadModifier
                 alone = others == Qt.KeyboardModifier.NoModifier
                 if not event.isAutoRepeat():
-                    self._tap = (key, time.monotonic()) if alone else None
+                    self._tap = (key, self.last_input) if alone else None  # the press's own time
                 return False
             self._tap = None
             action = key_action(event, focus, self.family)

@@ -55,10 +55,21 @@ Missing SKSE keeps Play as the default Steam launch choice.
 
 ![Steam launch with optional SKSE](launch-skse-optional.png)
 
-With nothing to decide, Play counts down and starts by itself unless anything
-is pressed first.
+With nothing to decide, a countdown opens over the dimmed Home and Skyrim
+starts by itself after five seconds. B, Esc or any other button, key, click
+or tap closes it and leaves Home as it was. A or Enter plays at once.
 
 ![Steam launch counting down](launch-countdown.png)
+
+With a mouse or a finger the legends drop out, and tapping anywhere but Play
+now stops it.
+
+![Steam launch counting down, touch](launch-countdown-touch.png)
+
+Once the wait is over, or Play now is chosen, the choices go until the window
+closes and Steam starts the game.
+
+![Steam launch starting](launch-starting.png)
 
 Copying a setup waits for the source's game-version record before offering
 version-dependent repairs. The waiting state survives reopening the app.

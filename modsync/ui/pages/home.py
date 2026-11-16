@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QProgressBar, QVBoxLayout
 from modsync import launchhook
 from modsync.games import SKYRIM_SE
 from modsync.service import GameStatus, SyncStatus
+from modsync.ui.countdown import CountdownCover
 from modsync.ui.input import Action
 from modsync.ui.pages import Page
 from modsync.ui.widgets import HeroTile, StatusRow, Tile, label
@@ -50,14 +51,27 @@ class HomePage(Page):
             self.content_layout.addWidget(self.steam_note)
         # Steam's Play set to "countdown": once the checks are in and nothing needs
         # attention, Play presses itself after COUNTDOWN_S unless anything is pressed.
-        # "pending" until it can start, "running", then "off" for good.
+        # "pending" until it can start, "running" under the cover, "starting" once
+        # it has pressed Play, then "off" for good.
         self._countdown_state = ("pending" if steam is not None and not steam.reason
                                  and launchhook.play_mode() == "countdown" else "off")
         self._countdown_end = 0.0
         self._countdown_started = 0.0
         self._countdown = QTimer(self)
-        self._countdown.setInterval(200)
+        self._countdown.setInterval(33)  # the cover's meter fills smoothly
         self._countdown.timeout.connect(self._tick)
+        self.cover: CountdownCover | None = None
+        if self._countdown_state != "off":
+            self.cover = CountdownCover(host, SKYRIM_SE.name)
+            self.cover.stop.connect(lambda: self._stop_countdown())
+            self.cover.play_now.connect(self._start_now)
+            self.destroyed.connect(self.cover.deleteLater)  # it lives on the window, not the page
+        # Focus may leave Home while the cover is up (Play is disabled while the
+        # launch is handed over), so the window asks here first too.
+        host.action_guard = self._countdown_action if self.cover is not None else None
+        # A press that stopped it was made in this span (monotonic times). A
+        # bumper tap made then acts on its release, which mustn't act as well.
+        self._stopped_by: tuple[float, float] | None = None
         self._sync_ready = not state.syncing  # syncing: once a status says nothing is still arriving
         # ModSync has been in front (under gamescope it may never say so)
         self._was_active = QGuiApplication.applicationState() == Qt.ApplicationState.ApplicationActive
@@ -158,7 +172,7 @@ class HomePage(Page):
         right.addLayout(actions)
         self.finish_layout()
         self._play_description = self.play.description
-        self._play_now = self._play_description  # what Play says while no countdown runs
+        self._play_now = self._play_description  # what Play says, and the countdown under the number
 
         self.mo2_row.set_state("Ready" if state.has_instance else "Not chosen", "ok" if state.has_instance else "warn",
                                state.instance_label if state.has_instance else "Install MO2 or choose an existing setup.")
@@ -290,8 +304,7 @@ class HomePage(Page):
         if isinstance(self.play, HeroTile):
             self.play.set_role("normal" if title and not optional else "primary")
         self._play_now = risk or self._play_description
-        if self._countdown_state != "running":
-            self.play.set_description(self._play_now)
+        self.play.set_description(self._play_now)
         if (self.host.page is self and self.host.scope() is self.host.chrome
                 and self.host.router.mode != "mouse"):
             if title and not optional and not was_recommended and self.host.focusWidget() is self.play and self.host.untouched:
@@ -388,7 +401,26 @@ class HomePage(Page):
     def hints(self):
         return [([Action.ALT], "Check again")]
 
+    def _countdown_action(self, action: Action) -> bool:
+        """The cover's choices: A plays now, anything else only stops it (B
+        never goes on to ask about quitting). True when the press is used up."""
+        if self._countdown_state == "running":
+            if action == Action.ACCEPT:
+                self._start_now()
+            else:
+                self._stop_countdown()
+            return True
+        if self._countdown_state == "starting":
+            return True
+        # Steam Input's bumpers are Ctrl and Alt taps, sent on release: the
+        # press stopped the countdown already.
+        tap = self.host.router.tap_press
+        return (action in (Action.PREV_TAB, Action.NEXT_TAB) and tap is not None and self._stopped_by is not None
+                and self._stopped_by[0] <= tap <= self._stopped_by[1])
+
     def handle_action(self, action: Action) -> bool:
+        if self._countdown_action(action):
+            return True
         if action == Action.ALT:
             self.recheck()
             return True
@@ -418,6 +450,9 @@ class HomePage(Page):
                 if tile is not None:
                     tile.setEnabled(not busy)
             self._count_down()
+            if self._countdown_state == "starting":
+                # After the busy flag settles: a sync check hands over to the launch itself.
+                QTimer.singleShot(0, self, self._launch_settled)
             return
         launcher = self.service.launcher
         if self.open_mo2 is not None:
@@ -434,7 +469,7 @@ class HomePage(Page):
 
     def _count_down(self) -> None:
         """Start the countdown once it can; stop it while it can't."""
-        if self._countdown_state == "off":
+        if self._countdown_state in ("off", "starting"):
             return
         if not self.host.untouched and self._countdown_state == "pending":
             self._countdown_state = "off"  # pressed before it started: the user has taken over
@@ -455,13 +490,39 @@ class HomePage(Page):
         this one, so the countdown would start the game behind the user's back."""
         if app_state == Qt.ApplicationState.ApplicationActive:
             self._was_active = True
-        elif self._was_active and self._countdown_state != "off":
+        elif self._was_active and self._countdown_state in ("pending", "running"):
             self._stop_countdown()
 
     def _stop_countdown(self, state: str = "off") -> None:
         self._countdown.stop()
         self._countdown_state = state
-        self.play.set_description(self._play_now)
+        if self.cover is not None:
+            self.cover.dismiss()
+
+    def _start_now(self) -> None:
+        """The wait is over, or Play now was chosen: what the Play tile does."""
+        if self._countdown_state != "running":
+            return
+        self._countdown.stop()
+        self._countdown_state = "starting"
+        self.cover.start()
+        if self.service.state.has_instance:
+            self.host.launch(play=True)  # the sync check included
+        else:
+            self.host.decide_launch(launchhook.EXIT_CONTINUE)
+        self._launch_settled()
+
+    def _launch_settled(self) -> None:
+        """Back to Home once the launch has stopped short of Steam (a sync
+        question, or an error to read); the window closes otherwise."""
+        steam = self.host.steam_launch
+        if (self._countdown_state == "starting" and not self.host.launching
+                and (steam is None or steam.decision is None)):
+            self._stop_countdown()
+            # Disabled meanwhile, Play lost focus to whatever Qt chose; no press
+            # under the cover moved it on purpose.
+            if self.host.scope() is self.host.chrome and self.play.isEnabled():
+                self.play.setFocus()
 
     def _tick(self) -> None:
         if self._countdown_state != "running":
@@ -472,6 +533,7 @@ class HomePage(Page):
             # Any press stays here; A on Play has started it already. While ModSync
             # has never said it's in front (gamescope may not), a controller press
             # may be meant for it, so that stays too.
+            self._stopped_by = (self._countdown_started, router.last_input)
             self._stop_countdown()
             return
         if self._was_active and QGuiApplication.applicationState() != Qt.ApplicationState.ApplicationActive:
@@ -482,11 +544,6 @@ class HomePage(Page):
             return
         left = self._countdown_end - time.monotonic()
         if left > 0:
-            seconds = int(left) + 1
-            self.play.set_description(f"Starting in {seconds}… Press any button to stay here.")
+            self.cover.count(int(left) + 1, 1 - left / COUNTDOWN_S, self._play_now)
             return
-        self._stop_countdown()
-        if self.service.state.has_instance:
-            self.host.launch(play=True)  # what the Play tile does, sync check included
-        else:
-            self.host.decide_launch(launchhook.EXIT_CONTINUE)
+        self._start_now()
