@@ -16,7 +16,7 @@ from modsync import launchhook
 from modsync.games import SKYRIM_SE
 from modsync.service import GameStatus, SyncStatus
 from modsync.ui.countdown import CountdownCover
-from modsync.ui.input import Action
+from modsync.ui.input import TAP_S, Action
 from modsync.ui.pages import Page
 from modsync.ui.widgets import HeroTile, StatusRow, Tile, label
 
@@ -66,6 +66,10 @@ class HomePage(Page):
             self.cover.stop.connect(lambda: self._stop_countdown())
             self.cover.play_now.connect(self._start_now)
             self.destroyed.connect(self.cover.deleteLater)  # it lives on the window, not the page
+        # Focus may leave Home while the cover is up (Play is disabled while the
+        # launch is handed over), so the window asks here first too.
+        host.action_guard = self._countdown_action if self.cover is not None else None
+        self._swallow_tabs_until = 0.0  # a bumper tap that stopped it acts on release: not as well
         self._sync_ready = not state.syncing  # syncing: once a status says nothing is still arriving
         # ModSync has been in front (under gamescope it may never say so)
         self._was_active = QGuiApplication.applicationState() == Qt.ApplicationState.ApplicationActive
@@ -395,16 +399,23 @@ class HomePage(Page):
     def hints(self):
         return [([Action.ALT], "Check again")]
 
-    def handle_action(self, action: Action) -> bool:
+    def _countdown_action(self, action: Action) -> bool:
+        """The cover's choices: A plays now, anything else only stops it (B
+        never goes on to ask about quitting). True when the press is used up."""
         if self._countdown_state == "running":
-            # The cover's choices: A plays now, anything else only stops it (B
-            # never goes on to ask about quitting).
             if action == Action.ACCEPT:
                 self._start_now()
             else:
                 self._stop_countdown()
             return True
         if self._countdown_state == "starting":
+            return True
+        # Steam Input's bumpers are Ctrl and Alt taps, sent on release: the
+        # press stopped the countdown already.
+        return action in (Action.PREV_TAB, Action.NEXT_TAB) and time.monotonic() < self._swallow_tabs_until
+
+    def handle_action(self, action: Action) -> bool:
+        if self._countdown_action(action):
             return True
         if action == Action.ALT:
             self.recheck()
@@ -504,6 +515,10 @@ class HomePage(Page):
         if (self._countdown_state == "starting" and not self.host.launching
                 and (steam is None or steam.decision is None)):
             self._stop_countdown()
+            # Disabled meanwhile, Play lost focus to whatever Qt chose; no press
+            # under the cover moved it on purpose.
+            if self.host.scope() is self.host.chrome and self.play.isEnabled():
+                self.play.setFocus()
 
     def _tick(self) -> None:
         if self._countdown_state != "running":
@@ -514,6 +529,7 @@ class HomePage(Page):
             # Any press stays here; A on Play has started it already. While ModSync
             # has never said it's in front (gamescope may not), a controller press
             # may be meant for it, so that stays too.
+            self._swallow_tabs_until = router.last_input + TAP_S
             self._stop_countdown()
             return
         if self._was_active and QGuiApplication.applicationState() != Qt.ApplicationState.ApplicationActive:

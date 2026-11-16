@@ -23,6 +23,7 @@ import time
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from typing import Callable
 
 import shiboken6
 
@@ -243,6 +244,9 @@ class MainWindow(QMainWindow):
         self.pages: dict[str, Page] = {}
         self.tabs: dict[str, TabButton] = {}
         self.setup: SetupFlow | None = None
+        # Sees every action first while something covers the whole window
+        # (Home's countdown), wherever focus has gone meanwhile.
+        self.action_guard: Callable[[Action], bool] | None = None
         self._busy: set[str] = set()
         self._rebuild_pending = False
         self._current = "home"
@@ -918,6 +922,8 @@ class MainWindow(QMainWindow):
             self.page.focus_default()
 
     def handle_action(self, action: Action) -> bool:
+        if self.action_guard is not None and self.action_guard(action):
+            return True
         focus = self.focusWidget()
         scope = self.scope()
         inside = alive(focus) and (focus is scope or scope.isAncestorOf(focus))

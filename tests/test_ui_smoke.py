@@ -612,6 +612,53 @@ class CountdownTests(UiTestCase):
         sync.on_status(SyncStatus("ME", "modsync-1", True, "idle", 100.0, []))
         self.assertTrue(home.cover.isVisible())
 
+    def test_a_bumper_tap_that_stops_it_does_nothing_else(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        with patch("modsync.ui.pages.home.COUNTDOWN_S", 30):
+            window = self._window()
+            home = window.pages["home"]
+            window.activateWindow()
+            focus = window.focusWidget()
+            QTest.keyPress(focus, Qt.Key.Key_Control)  # Steam Input's LB: a Ctrl tap, acted on at release
+            self.wait(0.1)
+            self.assertFalse(home.cover.isVisible())
+            QTest.keyRelease(focus, Qt.Key.Key_Control)
+            self.settle()
+        self.assertIs(window.page, home)
+        self.assertIsNone(window.steam_launch.decision)
+
+    def test_a_launch_that_fails_brings_home_back_with_play_focused(self):
+        import threading
+
+        from PySide6.QtTest import QTest
+
+        from modsync.ui.input import Action, InputRouter
+
+        release = threading.Event()
+
+        def slow_failure(*_a, **_k):
+            release.wait(5)
+            raise RuntimeError("MO2 has not been told which game it manages.")
+
+        with patch("modsync.ui.pages.home.COUNTDOWN_S", 30), \
+                patch.object(ModSyncService, "prepare_mo2", side_effect=slow_failure):
+            window = self._window()
+            home = window.pages["home"]
+            InputRouter.instance().dispatch(Action.ACCEPT)
+            QTest.qWait(200)  # not settle(): that waits for the launch to fail
+            self.assertEqual(home._countdown_state, "starting")
+            self.assertIsNot(window.focusWidget(), home.play)
+            InputRouter.instance().dispatch(Action.RIGHT)  # focus left Play while it was disabled
+            InputRouter.instance().dispatch(Action.NEXT_TAB)
+            release.set()
+            self.wait(0.3)
+        self.assertIs(window.page, home)
+        self.assertFalse(home.cover.isVisible())
+        self.assertIs(window.focusWidget(), home.play)
+        self.assertIsNone(window.steam_launch.decision)
+
     def test_a_question_before_playing_brings_home_back(self):
         from types import SimpleNamespace
 
