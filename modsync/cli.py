@@ -1016,7 +1016,7 @@ def dfu(args: list[str]) -> int:
         "  modsync dfu hook enable | disable    make Steam's Play button on Daggerfall start Daggerfall Unity\n"
         "  modsync dfu controller               set Daggerfall Unity's suggested controller bindings\n"
         "  modsync dfu startup show | skip      open DFU's startup screen before the game, or go straight\n"
-        "        to Daggerfall's main menu (holding a key as it starts opens it anyway)\n"
+        "        to Daggerfall's main menu\n"
         "  modsync dfu saves                    sync the saves now (Play in Steam does it before and after)\n"
         "  modsync dfu follow                   point it at Steam's Daggerfall data if its own is gone\n"
         "        (after Steam moved Daggerfall to another library; Play in Steam does it too)"
@@ -1075,7 +1075,7 @@ def _dfu_status() -> int:
     print(f"  Controller:         {controller}")
     startup = ("opens before the game ('modsync dfu startup skip' goes straight to the main menu)"
                if dfu.shows_startup_screen(inst)
-               else "skipped; hold a key as it starts to open it ('modsync dfu startup show' brings it back)")
+               else "skipped ('modsync dfu startup show' brings it back for mods and settings)")
     print(f"  Startup screen:     {startup}")
     print(f"Play in Steam:        {dfu.hook_status().summary()}")
     from modsync.state import State

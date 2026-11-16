@@ -395,10 +395,12 @@ def configure(inst: Install, dagger: Path) -> None:
 
 
 # DFU's startup screen, where the mod list and its settings are, opens before
-# the game while this is on (DFU's default), or whenever a key is held as DFU
-# starts. Turning it off skips straight to Daggerfall's main menu, which also
-# sidesteps a freeze seen on the Steam Frame after Play on the startup screen.
-# It's in settings.ini, so it's set per machine.
+# the game while this is on (DFU's default). Turning it off skips straight to
+# Daggerfall's main menu, which also sidesteps a freeze seen on the Steam Frame
+# after Play on the startup screen. DFU 1.1.1 also opens it when a key is held
+# as it starts (Input.anyKey in SceneControl.Start), but holding Shift or Space
+# didn't on the Steam Frame, so ModSync never points there. It's in
+# settings.ini, so it's set per machine.
 _STARTUP_SCREEN = ("GUI", "ShowOptionsAtStart")
 
 
@@ -420,7 +422,7 @@ def set_startup_screen(inst: Install, show: bool) -> str:
     if show:
         return "Daggerfall Unity opens its startup screen first again."
     return ("Daggerfall Unity now starts at Daggerfall's main menu. "
-            "Hold a key while it starts to open the startup screen.")
+            "To change mods or settings, show its startup screen again.")
 
 
 def _fetch(cache_dir: Path, progress: engine.ProgressFn | None) -> Path:

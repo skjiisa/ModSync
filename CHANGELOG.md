@@ -8,11 +8,10 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Added
 
-- Daggerfall Unity's Home has a Startup screen row that turns DFU's own
-  startup screen (mods and settings) off and on. Off, DFU goes straight to
-  Daggerfall's main menu, and holding a key while it starts still opens the
-  startup screen. On the Steam Frame this avoids an occasional freeze after
-  Play on that screen. `modsync dfu startup show | skip` does the same, and
+- Daggerfall Unity's Home has a Skip startup screen row. On, DFU goes
+  straight to Daggerfall's main menu instead of its own startup screen (mods
+  and settings); turn it off to change those again. On the Steam Frame this
+  avoids an occasional freeze after Play on that screen. `modsync dfu startup show | skip` does the same, and
   `modsync dfu status` shows which it is.
 - Daggerfall Unity's Home has a Controller row. It opens the controller
   layout suggested in DFU's wiki, every button of it, drawn as your
