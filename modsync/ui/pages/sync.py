@@ -404,10 +404,10 @@ class SyncPage(Page):
             if self.conflicts_tile.isVisibleTo(self):
                 return self.conflicts_tile
             return self.resume_tile or self.pair_tile
+        if self.conflicts_tile.isVisibleTo(self):
+            return self.conflicts_tile  # before the MO2 choice too: a game's folder is waiting on it
         if self.service.state.has_instance:
             return getattr(self, "use_kept", None) or self.share
-        if self.conflicts_tile.isVisibleTo(self):
-            return self.conflicts_tile
         return self.pair_tile if self.service.state.syncs_anything else self.join_tile
 
     # --- pairing without a vault ------------------------------------------------------
@@ -477,8 +477,11 @@ class SyncPage(Page):
         self.pair_tile.setVisible(hosts)
         self.code_tile.setVisible(hosts)
         self.ui_tile.setVisible(st.active)
-        # One blue action: reviewing conflicts while any wait.
+        # One blue action: reviewing conflicts while any wait, even beside the MO2 choice.
         waiting = self.conflicts_tile.isVisibleTo(self)
+        use_kept = getattr(self, "use_kept", None)
+        if use_kept is not None:
+            use_kept.set_role("normal" if waiting else "primary")
         self.pair_tile.set_role("primary" if hosts and not st.has_instance and not waiting else "normal")
         self.join_tile.set_role("primary" if not hosts and not st.has_instance and not waiting else "normal")
         if hosts and not self._code_requested:

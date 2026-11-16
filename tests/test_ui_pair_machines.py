@@ -63,6 +63,25 @@ class NothingSyncedTests(UiTestCase):
         self.assertIn("games' folders only", sync.join_tile.description)
         self.assertTrue(sync._code.startswith("MODSYNC2-"))
 
+    def test_a_games_conflict_comes_before_the_mo2_choice(self):
+        State(instance_path=str(self.tmp), game_folders={"dfu-mods": str(self.tmp / "dfu")},
+              held_folders={"0123456789abcdef": str(self.tmp / "held")}).save()
+        with patch.object(ModSyncService, "status", lambda self: _status()), \
+                patch.object(ModSyncService, "my_pairing_code", lambda self: PairingCode("ME" * 28, "", "ModSync")):
+            window = self.window()
+            sync = window.pages["sync"]
+            self.settle()
+        self.assertIsNotNone(sync.use_kept)
+        self.assertIs(sync.preferred_focus(), sync.use_kept)  # nothing waiting: the MO2 choice
+        fs = FolderStatus(dfu.MODS_FOLDER, str(self.tmp / "dfu"), "idle", 100.0, conflicts=1)
+        sync._on_machine_status(_status([fs]))
+        self.assertIs(sync.preferred_focus(), sync.conflicts_tile)
+        roles = [t.property("tileRole") for t in (sync.conflicts_tile, sync.use_kept, sync.pair_tile)]
+        self.assertEqual(roles, ["primary", "normal", "normal"])  # one blue action
+        sync._on_machine_status(_status([FolderStatus(dfu.MODS_FOLDER, str(self.tmp / "dfu"), "idle", 100.0)]))
+        self.assertIs(sync.preferred_focus(), sync.use_kept)
+        self.assertEqual(sync.use_kept.property("tileRole"), "primary")
+
 
 class GamesOnlyTests(UiTestCase):
     def setUp(self):
