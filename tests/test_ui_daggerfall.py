@@ -376,6 +376,31 @@ class DaggerfallUiTests(UiTestCase):
         self.settle(2)
         self.assertIn("Replaces the controller buttons you bound", window.top_overlay.tiles["go"].desc.text())
 
+    def test_the_startup_screen_row_skips_it_and_brings_it_back(self):
+        window, page = self.open_sheet(overview(installed=True))
+        self.assertEqual(page.startup_row.badge.text(), "Shown")
+        self.assertEqual(page.play.desc.text(), "Its startup screen opens first: mods and settings.")
+        skipped = dataclasses.replace(overview(installed=True), startup_screen=False)
+        with patch.object(dfu, "set_startup_screen", return_value="Skipped.") as set_it, \
+                patch.object(dfu, "overview", lambda hook=True: skipped):
+            page.startup_row.click()
+            self.settle(4)
+        set_it.assert_called_once()
+        self.assertEqual(set_it.call_args.args[0].path, Path("/games/Daggerfall Unity"))
+        self.assertIs(set_it.call_args.args[1], False)
+        self.assertEqual(window.messages[-1], "Skipped.")
+        self.assertEqual(page.startup_row.badge.text(), "Skipped")
+        self.assertIn("Hold a key while it starts", page.startup_row.description)
+        self.assertEqual(page.play.desc.text(), "Starts at Daggerfall's main menu.")
+        with patch.object(dfu, "set_startup_screen", return_value="Shown.") as set_it:
+            page.startup_row.click()
+            self.settle(4)
+        self.assertIs(set_it.call_args.args[1], True)
+
+    def test_the_startup_screen_row_needs_an_install(self):
+        window, page = self.open_sheet(overview())
+        self.assertFalse(page.startup_row.isEnabled())
+
     def test_the_controller_row_needs_an_install(self):
         _window, page = self.open_sheet(overview())
         self.assertFalse(page.controller_row.isEnabled())

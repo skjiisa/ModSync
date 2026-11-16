@@ -997,6 +997,8 @@ def dfu(args: list[str]) -> int:
         return _dfu_hook(rest)
     if sub == "controller" and not rest:
         return _dfu_controller()
+    if sub == "startup" and rest in (["show"], ["skip"]):
+        return _dfu_startup(rest[0] == "show")
     if sub == "saves" and set(rest) <= {"--quiet", "--playing"}:
         return _dfu_saves(quiet="--quiet" in rest, playing="--playing" in rest)
     if sub == "follow":
@@ -1013,6 +1015,8 @@ def dfu(args: list[str]) -> int:
         "  modsync dfu use <dir>                use a Daggerfall Unity that's already installed\n"
         "  modsync dfu hook enable | disable    make Steam's Play button on Daggerfall start Daggerfall Unity\n"
         "  modsync dfu controller               set Daggerfall Unity's suggested controller bindings\n"
+        "  modsync dfu startup show | skip      open DFU's startup screen before the game, or go straight\n"
+        "        to Daggerfall's main menu (holding a key as it starts opens it anyway)\n"
         "  modsync dfu saves                    sync the saves now (Play in Steam does it before and after)\n"
         "  modsync dfu follow                   point it at Steam's Daggerfall data if its own is gone\n"
         "        (after Steam moved Daggerfall to another library; Play in Steam does it too)"
@@ -1069,6 +1073,10 @@ def _dfu_status() -> int:
     controller = ("the suggested bindings (Secondary)" if dfu.has_controller_bindings(inst)
                   else "as Daggerfall Unity has them ('modsync dfu controller' sets the suggested ones)")
     print(f"  Controller:         {controller}")
+    startup = ("opens before the game ('modsync dfu startup skip' goes straight to the main menu)"
+               if dfu.shows_startup_screen(inst)
+               else "skipped; hold a key as it starts to open it ('modsync dfu startup show' brings it back)")
+    print(f"  Startup screen:     {startup}")
     print(f"Play in Steam:        {dfu.hook_status().summary()}")
     from modsync.state import State
     from modsync.sync import folders
@@ -1200,6 +1208,21 @@ def _dfu_follow(*, quiet: bool, launching: Path | None = None) -> int:
         print(f"Daggerfall Unity's data had moved; pointed it at {moved}")
     elif not quiet:
         print(f"Daggerfall Unity uses {inst.daggerfall_path() or 'no Daggerfall data yet'}; nothing to change.")
+    return 0
+
+
+def _dfu_startup(show: bool) -> int:
+    from modsync import dfu
+
+    inst = _dfu_install_in_use()
+    if inst is None:
+        print("Daggerfall Unity isn't installed.")
+        return 1
+    try:
+        print(dfu.set_startup_screen(inst, show))
+    except dfu.DfuError as exc:
+        print(exc)
+        return 1
     return 0
 
 

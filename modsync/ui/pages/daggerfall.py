@@ -12,7 +12,9 @@ installation…") picks a Daggerfall Unity the user installed themselves (see
 ``dfu.adopt``), whatever state the one in use is in. The Controller row
 opens DFU's suggested controller layout, every button of it, and sets it up
 on DFU's Secondary bindings (see ``dfu.set_controller_bindings``); once it is
-set, the same sheet is the reference for which button does what.
+set, the same sheet is the reference for which button does what. The Startup
+screen row turns DFU's own startup screen (mods and settings) on and off;
+off, DFU starts at Daggerfall's main menu (see ``dfu.set_startup_screen``).
 """
 
 from __future__ import annotations
@@ -62,6 +64,16 @@ _CONTROLLER_WORDS = {
     "suggested": ("Suggested", "ok", "Uses the suggested controller bindings."),
     "own": ("Your own", "off", "View the suggested controller layout."),
     "none": ("Not set up", "off", "View the suggested controller layout."),
+}
+
+# The Startup screen row and the Play tile's detail, by Overview.startup_screen.
+_STARTUP_WORDS = {
+    True: ("Shown", "ok", "Opens first, for mods and settings. Press to skip it."),
+    False: ("Skipped", "off", "Hold a key while it starts to open it. Press to show it."),
+}
+_PLAY_DETAIL = {
+    True: "Its startup screen opens first: mods and settings.",
+    False: "Starts at Daggerfall's main menu.",
 }
 
 # The suggested layout as the sheet lists it: columns of groups, each a heading
@@ -244,8 +256,9 @@ class DaggerfallPage(Page):
         self.mods_row = StatusRow("Mods sync", "sync")
         self.saves_row = StatusRow("Saves sync", "sync")
         self.controller_row = StatusRow("Controller", "gamepad")
+        self.startup_row = StatusRow("Startup screen", "menu")
         for row in (self.data_row, self.install_row, self.hook_row, self.mods_row, self.saves_row,
-                    self.controller_row):
+                    self.controller_row, self.startup_row):
             row.set_state("Checking", "off")
             left.addWidget(row)
         self.data_row.clicked.connect(self._open_steam_page)
@@ -254,6 +267,7 @@ class DaggerfallPage(Page):
         self.mods_row.clicked.connect(lambda: self._toggle_sync(dfu.MODS_FOLDER))
         self.saves_row.clicked.connect(lambda: self._toggle_sync(dfu.SAVES_FOLDER))
         self.controller_row.clicked.connect(self._show_controller_layout)
+        self.startup_row.clicked.connect(self._toggle_startup_screen)
         left.addStretch(1)
 
         self.steam_tile = HeroTile("Install Daggerfall in Steam",
@@ -265,7 +279,7 @@ class DaggerfallPage(Page):
         self.use_existing = Tile("Use an existing installation…", "Pick the folder Daggerfall Unity is in.",
                                  "folder", chevron=True)
         self.use_existing.clicked.connect(self._choose_existing)
-        self.play = HeroTile("Play Daggerfall Unity", "Its startup screen opens first: mods and settings.", "play")
+        self.play = HeroTile("Play Daggerfall Unity", _PLAY_DETAIL[True], "play")
         self.play.clicked.connect(self._play)
         self.mods_folder = Tile("Open the mods folder", "", "folder", size="compact")
         self.mods_folder.clicked.connect(self._open_mods_folder)
@@ -377,6 +391,11 @@ class DaggerfallPage(Page):
         else:
             word, tone, detail = _CONTROLLER_WORDS[ov.controller]
             self.controller_row.set_state(word, tone, detail)
+        if inst is None:
+            self.startup_row.set_state("Shown", "off", "Daggerfall Unity's own screen for mods and settings.")
+        else:
+            self.startup_row.set_state(*_STARTUP_WORDS[ov.startup_screen])
+        self.play.set_description(_PLAY_DETAIL[ov.startup_screen])
         notes = [n for n in (ov.emulation_problem, ov.version_problem) if n]
         self.note.setText(" ".join(notes))
         self.note.setVisible(bool(notes))
@@ -414,7 +433,7 @@ class DaggerfallPage(Page):
         self.install_row.setEnabled((ready or choosing) and not busy)
         self.use_existing.setEnabled(ov is not None and not busy)
         self.play.setEnabled(has and not busy)
-        for row in (self.hook_row, self.mods_row, self.saves_row, self.controller_row):
+        for row in (self.hook_row, self.mods_row, self.saves_row, self.controller_row, self.startup_row):
             row.setEnabled(has and not busy)
 
     def preferred_focus(self):
@@ -582,6 +601,14 @@ class DaggerfallPage(Page):
         if ov is None or ov.install is None:
             return
         self._run(dfu.launch, ov.install, message="Starting Daggerfall Unity…")
+
+    def _toggle_startup_screen(self) -> None:
+        ov = self.overview
+        if ov is None or ov.install is None:
+            return
+        show = not ov.startup_screen
+        self._run(dfu.set_startup_screen, ov.install, show,
+                  message="Turning on the startup screen…" if show else "Skipping the startup screen…")
 
     def _show_controller_layout(self) -> None:
         ov = self.overview

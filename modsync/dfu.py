@@ -14,7 +14,8 @@ patches it). Two files make it ours to manage:
 * ``PortableAppdata/settings.ini`` gets one key, ``MyDaggerfallPath``, pointing
   at Steam's data. DFU fills in every other setting from its defaults. Its
   startup screen (``ShowOptionsAtStart``) is left on: that's where the mod list
-  and DFU's settings are edited.
+  and DFU's settings are edited. The app can turn it off and on again (see
+  :func:`set_startup_screen`).
 
 Mods go in ``DaggerfallUnity_Data/StreamingAssets/Mods``. Steam's own Play
 button on Daggerfall can start it, through the launch hook
@@ -391,6 +392,35 @@ def configure(inst: Install, dagger: Path) -> None:
     (inst.path / "Portable.txt").touch()
     write_daggerfall_path(inst.settings_ini, dagger)
     log.info("pointed Daggerfall Unity in %s at %s", inst.path, dagger)
+
+
+# DFU's startup screen, where the mod list and its settings are, opens before
+# the game while this is on (DFU's default), or whenever a key is held as DFU
+# starts. Turning it off skips straight to Daggerfall's main menu, which also
+# sidesteps a freeze seen on the Steam Frame after Play on the startup screen.
+# It's in settings.ini, so it's set per machine.
+_STARTUP_SCREEN = ("GUI", "ShowOptionsAtStart")
+
+
+def shows_startup_screen(inst: Install) -> bool:
+    """Whether ``inst`` opens its startup screen before the game."""
+    value = read_setting(inst.settings_ini, *_STARTUP_SCREEN)
+    return value is None or value.lower() != "false"
+
+
+def set_startup_screen(inst: Install, show: bool) -> str:
+    """Have ``inst`` open its startup screen before the game, or go straight to
+    Daggerfall's main menu. Returns what changed."""
+    if is_running():
+        # DFU writes settings.ini back when it exits, over this change.
+        raise DfuError("Close Daggerfall Unity first; it would undo the change when it exits.")
+    section, key = _STARTUP_SCREEN
+    write_settings(inst.settings_ini, section, {key: show})
+    log.info("%s Daggerfall Unity's startup screen in %s", "showing" if show else "skipping", inst.settings_ini)
+    if show:
+        return "Daggerfall Unity opens its startup screen first again."
+    return ("Daggerfall Unity now starts at Daggerfall's main menu. "
+            "Hold a key while it starts to open the startup screen.")
 
 
 def _fetch(cache_dir: Path, progress: engine.ProgressFn | None) -> Path:
@@ -920,6 +950,7 @@ class Overview:
     configured_ok: bool = False  # DFU would accept the data the install uses (Steam's or its own copy)
     emulation_problem: str | None = None  # why it can't run on this machine (an ARM one without FEX)
     controller: str = "none"  # its controller bindings: see controller_state
+    startup_screen: bool = True  # DFU's startup screen opens before the game
 
     @property
     def stale_path(self) -> bool:
@@ -959,7 +990,8 @@ def overview(*, hook: bool = True) -> Overview:
                     sync_state(MODS_FOLDER), sync_state(SAVES_FOLDER),
                     version_problem(inst) if inst else None, inst.version if inst else None, configured_ok,
                     emulation_problem(inst) if inst else None,
-                    controller_state(inst) if inst else "none")
+                    controller_state(inst) if inst else "none",
+                    shows_startup_screen(inst) if inst else True)
 
 
 def setup(dest: Path | str | None = None, *, progress: engine.ProgressFn | None = None) -> tuple[Installed, str | None]:
