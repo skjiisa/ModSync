@@ -370,3 +370,65 @@ class ManagedGameUiTests(UiTestCase):
         window = self.window()
         self.settle(3)
         self.assertIs(window.page, window.pages["mo2-starfield"])
+
+
+class ManagedSteamLaunchTests(UiTestCase):
+    """Steam's Play on a game from the table opened the window: it shows only
+    that game, counts down like Skyrim's, and Play hands MO2's launch back."""
+
+    def setUp(self):
+        super().setUp()
+        self.game = mo2games.get("starfield")
+        self.plan = object()
+        for p in (patch("modsync.ui.countdown.COUNTDOWN_S", 0.6),
+                  patch.object(mo2games, "for_steam", lambda appid: self.game if appid == 1716740 else None),
+                  patch.object(self.game, "steam_plan", side_effect=lambda **kw: (self.plan, kw))):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def launch(self, ov):
+        p = patch.object(self.game, "overview", lambda hook=True, machines=None: ov)
+        p.start()
+        self.addCleanup(p.stop)
+        window = self.window(steam=launchhook.SteamLaunch(self.game.game, "proton_experimental"))
+        self.settle(3)
+        page = window.pages["mo2-starfield"]
+        self.assertIs(window.page, page)
+        self.assertFalse(window.topbar.game_switch.isVisibleTo(window))
+        self.assertTrue(page.cancel_launch.isVisible())
+        self.assertFalse(page.use_existing.isVisible())
+        return window, page
+
+    def wait(self, ms):
+        from PySide6.QtTest import QTest
+
+        QTest.qWait(ms)
+        self.settle()
+
+    def test_it_counts_down_then_hands_back_mo2s_play(self):
+        window, page = self.launch(overview(hook_status=hook(on=True)))
+        self.assertTrue(page.countdown.cover.isVisible())
+        self.assertEqual(page.countdown.cover.game, "Starfield")
+        self.wait(1000)
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+        plan, kw = window.steam_launch.plan
+        self.assertIs(plan, self.plan)
+        self.assertEqual(kw, {"play": True, "prepare": True})
+
+    def test_open_mo2_hands_back_mo2_itself(self):
+        window, page = self.launch(overview(hook_status=hook(on=True)))
+        InputRouter.instance().dispatch(Action.BACK)  # stops the countdown, nothing else
+        self.settle()
+        self.assertEqual(window.overlays, [])
+        page.open_mo2.click()
+        self.settle(3)
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+        self.assertEqual(window.steam_launch.plan[1], {"play": False, "prepare": True})
+
+    def test_mo2_that_needs_finishing_keeps_it_waiting(self):
+        ov = overview(hook_status=hook(on=True))
+        ov.needs_setup = True
+        window, page = self.launch(ov)
+        self.wait(1000)
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertFalse(page.countdown.cover.isVisible())

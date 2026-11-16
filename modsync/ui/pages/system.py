@@ -332,8 +332,9 @@ class SystemPage(Page):
 
         self.host.confirm(
             "When you press Play in Steam",
-            "Whichever you choose, ModSync opens and waits when the game, Mod Organizer 2 or sync needs a "
-            "decision first. \"Cancel launch\" in ModSync always returns to Steam.",
+            "For every game ModSync's launch hook is on for. ModSync waits instead of counting down "
+            "while the game, Mod Organizer 2 or sync needs a decision first, and for Skyrim it opens "
+            "for that even set to play right away. \"Cancel launch\" in ModSync always returns to Steam.",
             [(mode, title, launchhook.describe_play_mode(mode), "primary" if mode == current else "normal", icon)
              for mode, (_badge, icon, title) in self._PLAY_MODES.items()],
             chosen, default=current)

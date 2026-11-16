@@ -66,10 +66,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-TEMPLATE_VERSION = 9  # 2: the MO2 launch the window hands back; 3: a native program; 4: DFU's saves around it;
+TEMPLATE_VERSION = 10  # 2: the MO2 launch the window hands back; 3: a native program; 4: DFU's saves around it;
 # 5: a newer setup (state.EXIT_NEWER_STATE) ends the launch; 6: DFU follows Daggerfall to another library;
 # 7: an x86-64 DFU through Steam's FEX on ARM; 8: MODSYNC_ORIGINAL_GAME skips ModSync for Skyrim too;
-# 9: a handoff can set environment variables (HANDOFF_ENV_TAG)
+# 9: a handoff can set environment variables (HANDOFF_ENV_TAG); 10: the hub before a native program too
 TEMPLATE_DIR = Path(__file__).parent / "steam" / "launchhook_template"
 MARKER = ".modsync-launch-hook"  # only directories carrying this are ever removed
 
@@ -108,9 +108,10 @@ def hook_game(appid: int) -> Game:
     return HOOK_GAMES.get(appid, SKYRIM_SE)
 
 
-def windowless(appid: int) -> bool:
-    """A game from the table (modsync.mo2games): Play goes through MO2 with
-    no ModSync window, whatever the play mode."""
+def table_game(appid: int) -> bool:
+    """A game from the table (modsync.mo2games): Play goes through MO2, and
+    ``modsync launch hub`` works out MO2's launch itself (opening the window
+    to count down or wait, as Steam's Play is set to)."""
     return appid not in GAMES and appid != DAGGERFALL.appid and appid in HOOK_GAMES
 
 
@@ -311,10 +312,12 @@ def set_play_mode(mode: str) -> None:
     tmp.replace(path)
 
 
-def describe_play_mode(mode: str, game: Game = SKYRIM_SE) -> str:
+def describe_play_mode(mode: str) -> str:
+    """For every game Steam's Play opens ModSync for (Skyrim, Daggerfall
+    Unity and the games from the table)."""
     return {
-        "countdown": f"ModSync opens, then starts {game.name} after a few seconds unless you press something.",
-        "play": f"{game.name} starts right away. ModSync opens only when something needs attention.",
+        "countdown": "ModSync opens, then starts the game after a few seconds unless you press something.",
+        "play": "The game starts right away. For Skyrim, ModSync opens when something needs a decision first.",
         "wait": "ModSync opens and waits for you to choose.",
     }[mode]
 
@@ -404,7 +407,7 @@ class LaunchHookStatus:
         if self.enabled and self.native:
             if not Path(self.native).exists():
                 return f"On, but {self.native} is missing, so Play starts the original {g}."
-            return f"On. Steam's Play button on {g} starts {_native_name(self.native)}."
+            return f"On. Steam's Play button on {g} {_play_words(_native_name(self.native))}."
         if self.enabled:
             if not self.underlying_exists:
                 return (
@@ -416,8 +419,8 @@ class LaunchHookStatus:
                     f"On. It still runs under the hook's old name, which keeps Steam Cloud from syncing "
                     f"{g} saves. Open ModSync or run 'modsync launch enable' to update it."
                 )
-            if windowless(self.game.appid):
-                return f"On. Steam's Play button plays {g} through Mod Organizer 2, as Steam's own launch."
+            if table_game(self.game.appid):
+                return f"On. Steam's Play button {_play_words(f'{g} through Mod Organizer 2')}, as Steam's own launch."
             mode = play_mode()
             if mode == "play":
                 return (f"On. Steam's Play button starts {g} through ModSync, which opens only when "
@@ -440,6 +443,16 @@ class LaunchHookStatus:
         if self.other_launcher:
             return f"Off. Steam's Play button starts {g} with {self.other_launcher}."
         return f"Off. Steam's Play button starts {g} directly."
+
+
+def _play_words(target: str) -> str:
+    """What Steam's Play does for a game whose launch ModSync works out
+    without asking (Daggerfall Unity, a game from the table), as it is set."""
+    return {
+        "countdown": f"opens ModSync, which starts {target} after a few seconds",
+        "play": f"starts {target} right away",
+        "wait": f"opens ModSync, which waits for you, then starts {target}",
+    }[play_mode()]
 
 
 def _native_name(native: str | Path) -> str:
@@ -843,7 +856,7 @@ def _enable(appid: int, *, through: str | None, command: list[str], native: Path
 
     hands = describe_target(underlying.name, underlying.display_name)
     play = f"Play starts {_native_name(native)}" if native else f"Play opens ModSync, then continues to {hands}"
-    if windowless(appid):
+    if table_game(appid):
         native, play = None, "Play goes through Mod Organizer 2"
     log.info("launch hook enabled for %s: hands off to %s (%s); Steam had %s; steam running: %s",
              appid, underlying.name, underlying.path, current or "(default)", shortcuts.steam_is_running())
@@ -854,7 +867,7 @@ def _enable(appid: int, *, through: str | None, command: list[str], native: Path
     renaming = current == legacy_tool_id(appid)
     if shortcuts.steam_is_running():
         Pending("select", appid, {"name": ours, "config": "", "priority": "250"}).save()
-        if (native or windowless(appid)) and not renaming:
+        if (native or table_game(appid)) and not renaming:
             return (
                 f"Launch hook installed; {play[0].lower()}{play[1:]}. Steam is running, so the switch is "
                 f"queued. {steamos.steam_restart_hint()} You can also pick "
@@ -876,7 +889,7 @@ def _enable(appid: int, *, through: str | None, command: list[str], native: Path
     _drop_legacy(env, appid, ours)
     if renaming:
         return f"Launch hook renamed so Steam Cloud syncs {game.name} saves again."
-    if native or windowless(appid):
+    if native or table_game(appid):
         return f"Launch hook enabled. Start Steam and press Play on {game.name}: {play[0].lower()}{play[1:]}."
     return f"Launch hook enabled; it continues to {hands}. Start Steam and press Play on {game.name}."
 
@@ -900,7 +913,7 @@ def disable(appid: int = SKYRIM_SE.appid) -> str:
         if shortcuts.steam_is_running():
             Pending("restore", appid, previous, remove_tool=True).save()
             until = f"starts {_native_name(record.native)}" if record and record.native else (
-                "goes through Mod Organizer 2" if windowless(appid) else "opens ModSync")
+                "goes through Mod Organizer 2" if table_game(appid) else "opens ModSync")
             return (
                 f"Steam is running, so restoring the previous launcher is queued. {steamos.steam_restart_hint()} "
                 f"Until then Play still {until} for {game.name}. You can also pick the previous "
@@ -952,7 +965,7 @@ def _apply(env: SteamEnv, pending: Pending) -> str | None:
             record = load_record(env.tool_dir(appid), appid)
             if record and record.native:
                 return f"Launch hook selected. Play on {hook_game(appid).name} now starts {_native_name(record.native)}."
-            if windowless(appid):
+            if table_game(appid):
                 return f"Launch hook selected. Play on {hook_game(appid).name} now goes through Mod Organizer 2."
             return "Launch hook selected for the game. Play now opens ModSync first."
         cfg.set_compat_entry(appid, pending.mapping)

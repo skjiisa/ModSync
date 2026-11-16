@@ -26,8 +26,10 @@ from PySide6.QtCore import QObject, QRectF, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPainter
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QProgressBar, QVBoxLayout, QWidget
 
-from modsync import dfu
+from modsync import dfu, launchhook
+from modsync.games import DAGGERFALL
 from modsync.ui import icons, theme, worker
+from modsync.ui.countdown import Countdown
 from modsync.ui.input import Action
 from modsync.ui.overlays import FolderSheet, Overlay
 from modsync.ui.pages import Page
@@ -286,8 +288,16 @@ class DaggerfallPage(Page):
         self.mods_folder.clicked.connect(self._open_mods_folder)
         self.work = label("", "secondary")
         self.work_bar = QProgressBar()
-        for widget in (self.steam_tile, self.install_tile, self.play, self.mods_folder, self.use_existing,
-                       self.work, self.work_bar):
+        # Steam's Play on Daggerfall opened the window: Play carries on with
+        # Steam's launch, which starts Daggerfall Unity; Cancel launch ends it.
+        steam = host.steam_launch
+        self.steam = steam if steam is not None and steam.game.appid == DAGGERFALL.appid else None
+        self.cancel_launch = Tile("Cancel launch", "Back to Steam without starting the game.", "close",
+                                  size="compact")
+        self.cancel_launch.clicked.connect(lambda: host.decide_launch(launchhook.EXIT_CANCEL))
+        self.cancel_launch.setVisible(self.steam is not None)
+        for widget in (self.steam_tile, self.install_tile, self.play, self.cancel_launch, self.mods_folder,
+                       self.use_existing, self.work, self.work_bar):
             right.addWidget(widget)
         self.steam_tile.hide()
         self.install_tile.hide()
@@ -298,6 +308,8 @@ class DaggerfallPage(Page):
         self.work_bar.hide()
         right.addStretch(1)
         self.finish_layout()
+        self.countdown = Countdown(self, DAGGERFALL, "Daggerfall Unity", play=self.play, ready=self._can_count_down,
+                                   start=self.steam_play, detail=lambda: self.play.description)
         host.busyChanged.connect(self._update_enabled)
 
     def showEvent(self, event) -> None:  # noqa: N802
@@ -321,11 +333,25 @@ class DaggerfallPage(Page):
         return [([Action.ALT], "Check again")]
 
     def handle_action(self, action: Action) -> bool:
+        if self.countdown.handle(action):
+            return True
         if action == Action.ALT:
             if not self._working:
                 self.refresh()
             return True
         return False
+
+    # --- Steam's Play ---
+    def _can_count_down(self) -> bool:
+        """Read, installed, and nothing on the page asks for a decision first."""
+        ov = self.overview
+        return (ov is not None and ov.install is not None and not ov.emulation_problem and not ov.version_problem
+                and not ov.stale_path and not (ov.problems and not ov.configured_ok))
+
+    def steam_play(self) -> None:
+        """What Play does while Steam waits: Steam's launch carries on, and
+        its hook starts Daggerfall Unity."""
+        self.host.decide_launch(launchhook.EXIT_CONTINUE)
 
     @staticmethod
     def summary(ov: dfu.Overview | None) -> tuple[str, str, str]:
@@ -403,13 +429,14 @@ class DaggerfallPage(Page):
         self.steam_tile.setVisible(inst is None and ov.dagger is None and not self._working)
         self.install_tile.setVisible(inst is None and ov.dagger is not None and not self._working)
         # Always there, so another install can be chosen whatever state this one is in.
-        self.use_existing.setVisible(not self._working)
+        self.use_existing.setVisible(not self._working and self.steam is None)
         self.use_existing.setText("Use another installation…" if inst is not None else "Use an existing installation…")
         self.play.setVisible(inst is not None and not self._working)
         self.mods_folder.setVisible(inst is not None)
         if inst is not None:
             self.mods_folder.set_description(_short(inst.mods_dir))
         self._update_enabled()
+        self.countdown.check()
         if self._focus_on_load:
             # Shown before this was read: the blue action wasn't there to take focus.
             self._focus_on_load = False
@@ -436,6 +463,10 @@ class DaggerfallPage(Page):
         self.play.setEnabled(has and not busy)
         for row in (self.hook_row, self.mods_row, self.saves_row, self.controller_row, self.startup_row):
             row.setEnabled(has and not busy)
+        self.cancel_launch.setEnabled(not self.host.busy)
+        if self.steam is not None:
+            self.hook_row.setEnabled(False)  # Steam is waiting on it
+            self.countdown.settle()
 
     def preferred_focus(self):
         if self.steam_tile.isVisible():
@@ -600,6 +631,9 @@ class DaggerfallPage(Page):
     def _play(self) -> None:
         ov = self.overview
         if ov is None or ov.install is None:
+            return
+        if self.steam is not None:
+            self.steam_play()
             return
         self._run(dfu.launch, ov.install, message="Starting Daggerfall Unity…")
 

@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from modsync import __version__, dfu, launchhook, mo2games
-from modsync.games import SKYRIM_SE
+from modsync.games import DAGGERFALL, SKYRIM_SE
 from modsync.state import State
 from modsync.service import ModSyncService
 from modsync.ui import nav, theme, worker
@@ -260,11 +260,12 @@ class MainWindow(QMainWindow):
         game = mo2games.for_ui(saved) if saved else None
         if game is not None:
             self.managed[saved] = game
-        # Steam's Play button opened this for Skyrim: only Skyrim is shown.
-        self.game = saved if steam_launch is None and (saved in GAME_PAGES or saved in self.managed) else "skyrim"
+        # Steam's Play button opened this for a game: only that game is shown.
+        self.game = (self.steam_game_key() if steam_launch is not None
+                     else saved if saved in GAME_PAGES or saved in self.managed else "skyrim")
         # Reopened on a game other than Skyrim: until the first read says it's
         # still on this machine, the window may open on Skyrim instead.
-        self._restored = self.game != "skyrim"
+        self._restored = steam_launch is None and self.game != "skyrim"
         self.dfu_overview: dfu.Overview | None = None
         self._game_polls = 0
         self._call.connect(lambda fn: fn())
@@ -305,6 +306,8 @@ class MainWindow(QMainWindow):
             self.notify(f"Test mode: choosing \"{auto}\" automatically in a moment.")
             if auto == "cancel":
                 decide = partial(self.decide_launch, launchhook.EXIT_CANCEL)
+            elif self.game != "skyrim":
+                decide = self.page_of(self.game).steam_play
             elif self.service.state.has_instance:
                 decide = partial(self.launch, play=True, checked=True)  # what the Play tile does
             else:
@@ -332,6 +335,7 @@ class MainWindow(QMainWindow):
         self.pages["mods"].repairsChecked.connect(self.mo2Checked)
 
     def _clear_pages(self) -> None:
+        self.action_guard = None  # the new pages' countdown sets its own
         for page in self.pages.values():
             page.shutdown()
             self.stack.removeWidget(page)
@@ -399,8 +403,24 @@ class MainWindow(QMainWindow):
     @property
     def switchable(self) -> bool:
         """Every game can be picked, installed or not: its Home says how to get
-        it. A window Steam's Play button opened for Skyrim shows only Skyrim."""
+        it. A window Steam's Play button opened for a game shows only that game."""
         return self.steam_launch is None
+
+    def steam_game_key(self) -> str:
+        """The game Steam's Play opened this window for, as Home knows it.
+        One from the table gets its page, as the picker would give it."""
+        appid = self.steam_launch.game.appid
+        if appid == DAGGERFALL.appid:
+            return "daggerfall"
+        game = mo2games.for_steam(appid) if appid != SKYRIM_SE.appid else None
+        if game is None:
+            return "skyrim"
+        self.managed[game.ui_key] = game
+        return game.ui_key
+
+    def page_of(self, game: str) -> Page:
+        """The page that is ``game``'s Home."""
+        return self.pages[GAME_PAGES.get(game, game)]
 
     def game_keys(self) -> list[str]:
         """Every game Home can show, in the picker's order."""
@@ -564,7 +584,7 @@ class MainWindow(QMainWindow):
         """Show ``game`` on Home and go there. Remembered for next time."""
         if game not in self.game_keys() or self.setup is not None or self.overlays:
             return
-        if game != "skyrim" and self.steam_launch is not None:
+        if game != self.game and self.steam_launch is not None:
             return
         order = self.game_keys()
         step = order.index(game) - order.index(self.game)
@@ -819,6 +839,17 @@ class MainWindow(QMainWindow):
         worker.run_async(self.service.launch_mo2, play=play, on_done=self._on_launched,
                          on_failed=self._on_launch_failed)
 
+    def hand_back(self, prepare: Callable[[], "LaunchPlan"], message: str) -> None:
+        """Steam waiting on a game other than Skyrim: ``prepare`` (on a worker)
+        makes the launch the hook runs in place of the game's own, then the
+        window closes so Steam carries on with it."""
+        if self.busy or self.steam_launch is None or self.steam_launch.decision is not None:
+            return
+        self.set_busy("launch", True)
+        self.notify(message)
+        worker.run_async(prepare, on_done=lambda plan: self._on_prepared((plan, "")),
+                         on_failed=self._on_launch_failed)
+
     def _on_launch_checked(self, play: bool, check) -> None:
         self.set_busy("launch", False)
         if check is None or not (check.blocked or check.warnings):
@@ -1001,7 +1032,8 @@ class MainWindow(QMainWindow):
         return True  # AUX / ALT with nothing to do here
 
     def refresh_hints(self) -> None:
-        cover = getattr(self.pages.get("home"), "cover", None)
+        shown = self.pages.get(GAME_PAGES.get(self.game, self.game))  # the game's Home
+        cover = getattr(getattr(shown, "countdown", None), "cover", None)
         covered = cover.hints() if alive(cover) else None
         if self.overlays:
             hints = self.overlays[-1].hints()

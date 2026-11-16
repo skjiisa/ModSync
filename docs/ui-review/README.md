@@ -71,6 +71,13 @@ closes and Steam starts the game.
 
 ![Steam launch starting](launch-starting.png)
 
+Steam's Play counts down the same way for Daggerfall Unity and the games
+from MO2-LINT's list, over that game's page, with Cancel launch under Play.
+
+![Daggerfall Unity counting down](countdown-daggerfall.png)
+
+![Starfield counting down](countdown-table.png)
+
 Copying a setup waits for the source's game-version record before offering
 version-dependent repairs. The waiting state survives reopening the app.
 

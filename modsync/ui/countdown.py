@@ -1,25 +1,33 @@
 """The countdown before Steam's Play starts a game.
 
 When Steam's Play opens ModSync and nothing needs a decision, the game starts
-by itself after a few seconds (see ``launchhook.play_mode``). Meanwhile a sheet
+by itself after a few seconds (see ``launchhook.play_mode``). :class:`Countdown`
+runs it for the page of the game Steam is starting. Meanwhile a sheet
 sits over the dimmed window, the way ModSync's other sheets do, and says what
 is about to start, when, and how to stop it. The hint bar stays clear of it
 and names the same two choices.
 
-It never takes focus: the page underneath keeps it, and decides what each
-press means (see ``HomePage.handle_action``). A click or tap is handled here,
+It never takes focus: the page underneath keeps it, and the countdown decides
+what each press means (``Countdown.handle``). A click or tap is handled here,
 the moment it lands.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter
+import time
+from typing import TYPE_CHECKING, Callable
+
+from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QGuiApplication, QPainter
 from PySide6.QtWidgets import QWidget
 
+from modsync import launchhook
 from modsync.ui import icons, theme
 from modsync.ui.input import Action
 from modsync.ui.widgets import ACTION_GLYPH, RADIUS
+
+if TYPE_CHECKING:
+    from modsync.games import Game
 
 SHEET_W = 720  # the widest sheets ModSync shows
 PAD_X, PAD_Y = 36, 32
@@ -296,3 +304,159 @@ class CountdownCover(QWidget):
         p.setPen(theme.color("secondary"))
         p.drawText(QRectF(x, ty + title_fm.height() + 2, text_w, hint_fm.lineSpacing() * hint_lines),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap, hint)
+
+
+COUNTDOWN_S = 5  # how long before Play presses itself
+
+
+class Countdown(QObject):
+    """Steam's Play set to "countdown", for the page of the game Steam is
+    starting: once ``ready()`` says nothing needs a decision, the sheet counts
+    down and ``start()`` runs what the page's Play does, unless anything is
+    pressed first. Its state is "pending" until it can start, "running" under
+    the sheet, "starting" once it has pressed Play, then "off" for good.
+
+    The page calls :meth:`check` whenever what ``ready()`` reads may have
+    changed, :meth:`settle` when the window's busy flag changes, and
+    :meth:`handle` first in its ``handle_action``."""
+
+    def __init__(self, page, game: "Game", name: str, *, play, ready: Callable[[], bool],
+                 start: Callable[[], None], detail: Callable[[], str]) -> None:
+        super().__init__(page)
+        self.page = page
+        self.host = host = page.host
+        self.play = play  # the page's Play tile: counting down needs it there and enabled
+        self.ready, self.start_play, self.detail = ready, start, detail
+        steam = host.steam_launch
+        self.state = ("pending" if steam is not None and steam.game.appid == game.appid and not steam.reason
+                      and launchhook.play_mode() == "countdown" else "off")
+        self._end = self._started = 0.0
+        # A press that stopped it was made in this span (monotonic times). A
+        # bumper tap made then acts on its release, which mustn't act as well.
+        self._stopped_by: tuple[float, float] | None = None
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)  # the sheet's meter fills smoothly
+        self._timer.timeout.connect(self._tick)
+        self.cover: CountdownCover | None = None
+        # ModSync has been in front (under gamescope it may never say so)
+        self._was_active = QGuiApplication.applicationState() == Qt.ApplicationState.ApplicationActive
+        if self.state == "off":
+            return
+        self.cover = CountdownCover(host, name)
+        self.cover.stop.connect(lambda: self.stop())
+        self.cover.play_now.connect(self.start_now)
+        page.destroyed.connect(self.cover.deleteLater)  # it lives on the window, not the page
+        # Focus may leave the page while the sheet is up (Play is disabled while
+        # the launch is handed over), so the window asks here first too.
+        host.action_guard = self.handle
+        QGuiApplication.instance().applicationStateChanged.connect(self.on_app_state)
+
+    @property
+    def running(self) -> bool:
+        return self.state == "running"
+
+    def handle(self, action: Action) -> bool:
+        """The sheet's choices: A plays now, anything else only stops it (B
+        never goes on to ask about quitting). True when the press is used up."""
+        if self.state == "running":
+            if action == Action.ACCEPT:
+                self.start_now()
+            else:
+                self.stop()
+            return True
+        if self.state == "starting":
+            return True
+        # Steam Input's bumpers are Ctrl and Alt taps, sent on release: the
+        # press stopped the countdown already.
+        tap = self.host.router.tap_press
+        return (action in (Action.PREV_TAB, Action.NEXT_TAB) and tap is not None and self._stopped_by is not None
+                and self._stopped_by[0] <= tap <= self._stopped_by[1])
+
+    def _can(self) -> bool:
+        host = self.host
+        return (self.ready() and not host.busy and self.play.isVisible() and self.play.isEnabled()
+                and host.page is self.page and host.scope() is host.chrome)
+
+    def check(self) -> None:
+        """Start the countdown once it can; stop it while it can't."""
+        if self.state in ("off", "starting"):
+            return
+        if not self.host.untouched and self.state == "pending":
+            self.state = "off"  # pressed before it started: the user has taken over
+            return
+        if not self._can():
+            if self.state == "running":
+                self.stop("pending")
+            return
+        if self.state == "pending":
+            self.state = "running"
+            self._started = time.monotonic()
+            self._end = self._started + COUNTDOWN_S
+            self._timer.start()
+            self._tick()
+
+    def settle(self) -> None:
+        """The window's busy flag changed."""
+        self.check()
+        if self.state == "starting":
+            # After the flag settles: a sync check hands over to the launch itself.
+            QTimer.singleShot(0, self, self._launch_settled)
+
+    def on_app_state(self, app_state) -> None:
+        """Going to another window counts as a press: presses there never reach
+        this one, so the countdown would start the game behind the user's back."""
+        if app_state == Qt.ApplicationState.ApplicationActive:
+            self._was_active = True
+        elif self._was_active and self.state in ("pending", "running"):
+            self.stop()
+
+    def stop(self, state: str = "off") -> None:
+        self._timer.stop()
+        self.state = state
+        if self.cover is not None:
+            self.cover.dismiss()
+
+    def start_now(self) -> None:
+        """The wait is over, or Play now was chosen: what the Play tile does."""
+        if self.state != "running":
+            return
+        self._timer.stop()
+        self.state = "starting"
+        self.cover.start()
+        self.start_play()
+        self._launch_settled()
+
+    def _launch_settled(self) -> None:
+        """Back to the page once the launch has stopped short of Steam (a
+        question, or an error to read); the window closes otherwise."""
+        steam = self.host.steam_launch
+        if self.state == "starting" and not self.host.launching and (steam is None or steam.decision is None):
+            self.stop()
+            # Disabled meanwhile, Play lost focus to whatever Qt chose; no press
+            # under the sheet moved it on purpose.
+            if self.host.scope() is self.host.chrome and self.play.isEnabled():
+                self.play.setFocus()
+
+    def _tick(self) -> None:
+        if self.state != "running":
+            return
+        router = self.host.router
+        if router.last_input >= self._started or (
+                not self._was_active and router.last_pad_press >= self._started):
+            # Any press stays here; A on Play has started it already. While ModSync
+            # has never said it's in front (gamescope may not), a controller press
+            # may be meant for it, so that stays too.
+            self._stopped_by = (self._started, router.last_input)
+            self.stop()
+            return
+        if self._was_active and QGuiApplication.applicationState() != Qt.ApplicationState.ApplicationActive:
+            self.stop()  # gone to another window
+            return
+        if not self._can():
+            self.stop("pending")
+            return
+        left = self._end - time.monotonic()
+        if left > 0:
+            self.cover.count(int(left) + 1, 1 - left / COUNTDOWN_S, self.detail())
+            return
+        self.start_now()
