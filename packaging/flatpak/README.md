@@ -42,24 +42,41 @@ square in Qt and KDE apps.
 flatpak install -y flathub org.kde.Platform//6.11 org.kde.Sdk//6.11 io.qt.PySide.BaseApp//6.11
 
 # Build and install into the user installation.
-flatpak-builder --user --install --force-clean \
-    --state-dir="$HOME/.cache/modsync-flatpak/state" \
-    "$HOME/.cache/modsync-flatpak/build" \
-    packaging/flatpak/io.github.skjiisa.ModSync.yaml
+scripts/build_flatpak.sh
 
 flatpak run io.github.skjiisa.ModSync
 ```
 
-Keep the build directory outside the repository, otherwise the `dir` source
-copies it into itself. Put the state directory next to the build directory.
-flatpak-builder refuses to run when its state directory (by default
-`.flatpak-builder` inside the repository) is on a different filesystem than the
-build directory.
+`scripts/build_flatpak.sh` needs `flatpak-builder`, from your distribution's
+`flatpak-builder` package or from Flathub (`flatpak install flathub
+org.flatpak.Builder`). It uses whichever is installed. `--no-install` builds
+without installing, `--bundle FILE` also writes a single-file bundle to copy
+to another machine, and any other argument goes to flatpak-builder.
 
-`flatpak-builder` comes from your distribution's `flatpak-builder` package or
-from Flathub (`flatpak install flathub org.flatpak.Builder`). With the Flathub
-one, run `flatpak run org.flatpak.Builder` in place of `flatpak-builder` with
-the same arguments.
+The script is this command, run from `~/.cache/modsync-flatpak` (or
+`$MODSYNC_FLATPAK_CACHE`):
+
+```sh
+flatpak-builder --user --install --force-clean build \
+    /path/to/checkout/packaging/flatpak/io.github.skjiisa.ModSync.yaml
+```
+
+The directory it runs from decides which cache it uses. flatpak-builder
+caches every module it builds and rebuilds from the first one that changed.
+The `modsync` module is last and always rebuilt, because a `dir` source has
+no checksum. With
+`--state-dir`, flatpak-builder files the cache under the manifest's absolute
+path, so each checkout or git worktree has its own cache and its first build
+compiles everything again. Without `--state-dir`, it files the cache under
+the manifest's file name and keeps it in `.flatpak-builder` in the current
+directory. Run from one fixed directory, every checkout uses the same cache.
+The build directory also stays outside the repository, where the `dir` source
+would copy it into itself.
+
+On a 16-core desktop, a build and install after a source change takes about
+4 seconds, whichever checkout it runs from. A build with an empty cache takes
+about 35 seconds. That happens after `flatpak update` brings a new
+`io.qt.PySide.BaseApp`. A manifest change rebuilds from the module it touches.
 
 ## Release bundle
 
@@ -78,20 +95,17 @@ only. Tags with a suffix such as `v1.0.0-rc1` become pre-releases. The version
 in the tag must equal the one in `pyproject.toml` and `modsync/__init__.py`
 (`1.0.0rc1` for `v1.0.0-rc1`).
 
-To build the same bundle locally, add `--repo` to the build and export it:
+To build the same bundle locally:
 
 ```sh
-flatpak-builder --force-clean --repo="$HOME/.cache/modsync-flatpak/repo" \
-    --state-dir="$HOME/.cache/modsync-flatpak/state" \
-    "$HOME/.cache/modsync-flatpak/build" \
-    packaging/flatpak/io.github.skjiisa.ModSync.yaml
-flatpak build-bundle "$HOME/.cache/modsync-flatpak/repo" ModSync.flatpak \
-    io.github.skjiisa.ModSync \
-    --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+scripts/build_flatpak.sh --no-install --bundle ModSync.flatpak
 ```
 
+That adds `--repo` to the build and exports the result with `flatpak
+build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo`.
 `--runtime-repo` lets a machine without the KDE runtime fetch it from Flathub
-when the bundle is installed. Bundles are unsigned and do not update
+when the bundle is installed. Compressing the bundle takes about 20 seconds.
+Bundles are unsigned and do not update
 themselves. Users install the newer release's file over the old one. A hosted
 OSTree repository on GitHub Pages would give `flatpak update` if that ever
 matters. It would need a GPG signing key in the Actions secrets.
@@ -106,9 +120,12 @@ matters. It would need a GPG signing key in the Actions secrets.
   against the Qt already in `org.kde.Platform`, so the app does not ship a
   second copy of Qt. The PyPI wheels bundle one, and `flatpak-pip-generator`
   refuses them for that reason. ModSync only imports QtCore, QtGui and
-  QtWidgets, so `cleanup-commands` strip every other binding and the Qt
-  developer tools the base app carries. The final app is about 100 MB instead
-  of about 350 MB.
+  QtWidgets, so the first module, `baseapp-trim`, strips every other binding
+  and the Qt developer tools the base app carries. The final app is about
+  100 MB instead of about 350 MB. The trimming is a module and not
+  `cleanup-commands` because flatpak-builder scans and commits all of `/app`
+  after each module. That takes about 5 seconds per module with the base
+  app's full 1 GB in place, and about 1 second once it is trimmed.
 - **Pinned Python wheels.** `python3-modules.yaml` (httpx, qrcode,
   platformdirs, spake2 with cryptography and cffi) and `python3-hatchling.yaml`
   (the build backend, build only) are generated by `flatpak-pip-generator`, so
