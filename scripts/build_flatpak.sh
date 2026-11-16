@@ -24,6 +24,9 @@ cache=${MODSYNC_FLATPAK_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/modsync-flatpak}
 
 install=1
 bundle=
+# The branch and architecture of the build, for --bundle to export the same ref.
+branch=master
+arch=
 passthrough=()
 while [ $# -gt 0 ]; do
     case $1 in
@@ -37,6 +40,20 @@ while [ $# -gt 0 ]; do
         -h | --help)
             sed -n '2,9s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"
             exit 0
+            ;;
+        --default-branch=*)
+            branch=${1#--default-branch=}
+            passthrough+=("$1")
+            ;;
+        --arch=*)
+            arch=${1#--arch=}
+            passthrough+=("$1")
+            ;;
+        --default-branch | --arch)
+            [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
+            passthrough+=("$1=$2")
+            if [ "$1" = --arch ]; then arch=$2; else branch=$2; fi
+            shift
             ;;
         *) passthrough+=("$1") ;;
     esac
@@ -55,6 +72,7 @@ fi
 
 mkdir -p "$cache"
 cd "$cache"
+cache=$PWD
 
 # Builds share the state and build directories, so they run one at a time.
 exec 9> "$cache/.lock"
@@ -71,8 +89,9 @@ start=$SECONDS
 "${builder[@]}" "${args[@]}" "${passthrough[@]}" build "$manifest"
 
 if [ -n "$bundle" ]; then
-    flatpak build-bundle "$cache/repo" "$bundle" "$APP_ID" \
-        --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+    flatpak build-bundle ${arch:+--arch="$arch"} \
+        --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+        "$cache/repo" "$bundle" "$APP_ID" "$branch"
     echo "Wrote $bundle"
 fi
 
