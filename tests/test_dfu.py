@@ -165,6 +165,44 @@ class SettingsIni(unittest.TestCase):
         self.assertIsNone(dfu.read_daggerfall_path(self.tmp / "missing.ini"))
 
 
+class StartupScreen(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.inst = dfu.Install(self.tmp)
+        running = patch.object(dfu, "is_running", lambda: False)
+        running.start()
+        self.addCleanup(running.stop)
+
+    def test_shown_until_turned_off(self):
+        self.assertTrue(dfu.shows_startup_screen(self.inst))  # before DFU first wrote settings.ini
+        dfu.write_daggerfall_path(self.inst.settings_ini, Path("/d"))
+        self.assertTrue(dfu.shows_startup_screen(self.inst))
+        self.assertIn("main menu", dfu.set_startup_screen(self.inst, False))
+        self.assertFalse(dfu.shows_startup_screen(self.inst))
+        self.assertEqual(self.inst.settings_ini.read_text(),
+                         "[Daggerfall]\nMyDaggerfallPath = /d\n\n[GUI]\nShowOptionsAtStart = False\n")
+        self.assertIn("startup screen first again", dfu.set_startup_screen(self.inst, True))
+        self.assertTrue(dfu.shows_startup_screen(self.inst))
+
+    def test_reads_and_rewrites_what_dfu_wrote(self):
+        """DFU's own key, as its "Always show this window" box writes it, among its other settings."""
+        self.inst.settings_ini.parent.mkdir(parents=True)
+        text = "[GUI]\nShowOptionsAtStart = True\nShowQuestJournalClocksAsCountdown = False\n"
+        self.inst.settings_ini.write_text(text)
+        dfu.set_startup_screen(self.inst, False)
+        self.assertEqual(self.inst.settings_ini.read_text(), text.replace("= True", "= False"))
+        self.inst.settings_ini.write_text("[GUI]\nShowOptionsAtStart = false\n")
+        self.assertFalse(dfu.shows_startup_screen(self.inst))
+
+    def test_not_while_dfu_runs(self):
+        """DFU writes settings.ini back when it exits, over the change."""
+        with patch.object(dfu, "is_running", lambda: True):
+            with self.assertRaisesRegex(dfu.DfuError, "Close Daggerfall Unity"):
+                dfu.set_startup_screen(self.inst, False)
+        self.assertFalse(self.inst.settings_ini.exists())
+
+
 class DisplayResolution(unittest.TestCase):
     XRANDR = (
         "Screen 0: minimum 16 x 16, current 5360 x 1543, maximum 32767 x 32767\n"
@@ -1070,6 +1108,23 @@ class AdoptExisting(unittest.TestCase):
         with redirect_stdout(out):
             self.assertEqual(cli.dfu(["use", str(self.tmp)]), 1)
         self.assertIn("no Daggerfall Unity", out.getvalue())
+
+    def test_the_cli_skips_the_startup_screen_and_status_says_so(self):
+        dfu.write_daggerfall_path(self.inst.settings_ini, self.steam)
+        (self.inst.path / "Portable.txt").touch()
+        State.update(dfu_path=str(self.inst.path))
+        out = io.StringIO()
+        with redirect_stdout(out), patch.object(dfu, "hook_status", _hook_off), \
+                patch.object(dfu, "is_running", lambda: False):
+            self.assertEqual(cli.dfu(["status"]), 0)
+            self.assertIn("Startup screen:     opens before the game", out.getvalue())
+            self.assertEqual(cli.dfu(["startup", "skip"]), 0)
+            self.assertFalse(dfu.shows_startup_screen(self.inst))
+            self.assertEqual(cli.dfu(["status"]), 0)
+            self.assertIn("Startup screen:     skipped", out.getvalue())
+            self.assertEqual(cli.dfu(["startup", "show"]), 0)
+            self.assertTrue(dfu.shows_startup_screen(self.inst))
+            self.assertEqual(cli.dfu(["startup", "maybe"]), 2)
 
     def test_the_cli_status_accepts_its_own_copy_of_the_data(self):
         gog = _dagger(self.tmp / "gog")

@@ -73,6 +73,13 @@ through Steam's FEX and Steam Linux Runtime 4.0, as other x86 Linux games
 do on the Frame. When you press Play on Daggerfall, Steam first asks for
 Full Screen or Windowed. Either one starts Daggerfall Unity.
 
+Sometimes Daggerfall Unity freezes after you press Play on its startup
+screen. It stays on that screen's last picture and never recovers, so quit it
+from Steam. The cause is in the emulated graphics stack, not in ModSync. If it
+keeps happening, turn on **Skip startup screen** on Daggerfall Unity's Home
+to go straight to Daggerfall's main menu. To change mods or settings later,
+turn it off again.
+
 ## Changes that need Steam closed: reboot instead
 
 Some settings only take effect while Steam is closed:

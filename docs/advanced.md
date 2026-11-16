@@ -180,7 +180,7 @@ modsync firewall status | allow | remove   # ModSync's ports in ufw or firewalld
 modsync steam shortcut [--remove]   # add ModSync as a non-Steam game, or remove it
 modsync launch status | enable [--through <tool>] | disable
 modsync launch mode [countdown | play | wait]   # what Steam's Play does once ModSync opens, see below
-modsync dfu status | install [<dest>] | use <dir> | hook enable | disable | controller   # Daggerfall Unity, see below
+modsync dfu status | install [<dest>] | use <dir> | hook enable | disable | controller | startup show | skip   # Daggerfall Unity, see below
 modsync games [list [--all]]        # the other games ModSync runs MO2 for, see "Other games"
 modsync games <key> status | install [<dir>] | use <dir> | open | play | hook enable | disable | status
 modsync nxm status | enable | disable   # Nexus downloads for the games ModSync runs, see "Nexus downloads"
@@ -785,7 +785,15 @@ say so, and Play in Steam starts the original game. Install them from the
 Tools section of Steam's library.
 
 DFU's startup screen still opens. That's where the mod list and DFU's own
-settings are edited. Mods go in
+settings are edited. To go straight to Daggerfall's main menu instead, turn
+on **Skip startup screen** on Daggerfall Unity's Home, or run `modsync dfu
+startup skip`. This sets `ShowOptionsAtStart` in `settings.ini`, the same as
+unchecking "Always show this window" on the startup screen, so it applies to
+this machine only. To change mods or settings later, turn the row off again,
+or run `modsync dfu startup show`. DFU is meant to open the startup screen
+when a key is held as it starts, but holding Shift didn't on the Steam
+Frame.
+Mods go in
 `DaggerfallUnity_Data/StreamingAssets/Mods`. Use the Linux build of a mod
 where one is offered.
 
