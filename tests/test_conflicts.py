@@ -69,6 +69,25 @@ class ConflictTests(unittest.TestCase):
         (c,) = conflicts.find(self.inst)
         self.assertEqual(conflicts.differences(c), ["The contents differ (2 bytes in use, 3 in the other)."])
 
+    def test_describes_daggerfall_key_bindings_by_action(self):
+        import json
+        base = {"axisActionKeyBinds": {"Axis1": "MovementHorizontal"}, "axisActionInversions": {"CameraVertical": "False"}}
+        self.write("modsync-dfu-keybinds.txt", json.dumps({
+            **base, "actionKeyBinds": {"W": "MoveForwards", "Space": "Jump"},
+            "secondaryActionKeyBinds": {"JoystickButton1": "CastSpell", "JoystickButton3": "Jump"}}))
+        other = self.write(f"modsync-dfu-keybinds.{STAMP}.txt", json.dumps({
+            **base, "actionKeyBinds": {"W": "MoveForwards", "J": "Jump"}, "secondaryActionKeyBinds": {}}))
+        (c,) = conflicts.find(self.inst, ())
+        self.assertEqual(conflicts.differences(c), ["Primary bindings that differ: Jump.",
+                                                    "Secondary bindings that differ: CastSpell, Jump."])
+        other.write_text(json.dumps({**base, "axisActionInversions": {"CameraVertical": "True"},
+                                     "actionKeyBinds": {"W": "MoveForwards", "Space": "Jump"},
+                                     "secondaryActionKeyBinds": {"JoystickButton1": "CastSpell",
+                                                                 "JoystickButton3": "Jump"}}))
+        self.assertEqual(conflicts.differences(c), ["Also different: inverted axes."])
+        other.write_text("not json")
+        self.assertTrue(conflicts.differences(c)[0].startswith("The contents differ ("))
+
     def test_describes_an_ini_difference_by_setting(self):
         self.write("mods/Tweaks/SKSE/Plugins/tweaks.ini",
                    "; tweaks\n[General]\nbFast = 1\nfScale=1.0\n[Extra]\niMine=3\n")

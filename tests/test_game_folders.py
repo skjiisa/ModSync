@@ -1599,3 +1599,54 @@ class SyncEvents(GameFolderBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConflictCopiesMove(unittest.TestCase):
+    """A synced file's conflict copies sync too and still wait for a choice: they go
+    wherever the folder's content goes."""
+
+    STAMP = "sync-conflict-20261115-120000-ABCDEFG"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.base = Path(tmp.name)
+        self.spec = folders.FolderSpec("test-mods", "Test mods (ModSync)", lambda: None, ("/*",),
+                                       content=("mods", "binds.txt"))
+
+    def fill(self, root: Path) -> None:
+        (root / "mods").mkdir(parents=True)
+        (root / "mods" / "a.dfmod").write_text("a")
+        (root / "binds.txt").write_text("in use")
+        (root / f"binds.{self.STAMP}.txt").write_text("other")
+        (root / f"other.{self.STAMP}.txt").write_text("not ours")
+
+    def test_listed_with_their_file(self):
+        self.fill(self.base / "old")
+        self.assertEqual(folders._synced_paths(self.spec, self.base / "old"),
+                         ["mods", "binds.txt", f"binds.{self.STAMP}.txt"])
+
+    def test_carried_over_to_a_new_place(self):
+        old, new = self.base / "old", self.base / "new"
+        self.fill(old)
+        new.mkdir()
+        folders._carry_over(self.spec, old, new)
+        self.assertEqual((new / f"binds.{self.STAMP}.txt").read_text(), "other")
+        self.assertFalse((new / f"other.{self.STAMP}.txt").exists())
+
+    def test_moved_in_from_a_kept_copy(self):
+        kept, root = self.base / "kept", self.base / "game"
+        self.fill(kept)
+        root.mkdir()
+        moved = folders._use_kept(self.spec, kept, root)
+        self.assertEqual((root / f"binds.{self.STAMP}.txt").read_text(), "other")
+        self.assertEqual(len(moved), 3)
+
+    def test_a_conflict_copy_alone_is_something_of_its_own(self):
+        """A game folder holding only a copy still waiting for a choice doesn't take the
+        kept copy's files over it: they download again instead."""
+        root = self.base / "game"
+        root.mkdir()
+        self.assertTrue(folders._empty_here(self.spec, root))
+        (root / f"binds.{self.STAMP}.txt").write_text("waiting")
+        self.assertFalse(folders._empty_here(self.spec, root))

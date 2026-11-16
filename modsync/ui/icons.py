@@ -389,3 +389,83 @@ def paint_glyph(p: QPainter, key: str, rect: QRectF, style: str, label_font: QFo
     p.setFont(f)
     p.drawText(inner, Qt.AlignmentFlag.AlignCenter, label)
     p.restore()
+
+
+# --- any button on a pad, for a game's controller layout --------------------------
+#
+# Buttons are named as on an Xbox pad ("A", "LB", "LT", "L3", "Start",
+# "Select", "D-Up" ...), and printed the way the pad in use prints them: the
+# PlayStation face symbols and L1/L2 shoulder names on a PlayStation pad.
+
+PAD_FACE = {"A": "accept", "B": "back", "X": "aux", "Y": "alt"}
+PAD_CAPS = {"xbox": {"LB": "LB", "RB": "RB", "LT": "LT", "RT": "RT", "L3": "L3", "R3": "R3"},
+            "playstation": {"LB": "L1", "RB": "R1", "LT": "L2", "RT": "R2", "L3": "L3", "R3": "R3"}}
+PAD_DPAD = {"D-Up": (0, -1), "D-Down": (0, 1), "D-Left": (-1, 0), "D-Right": (1, 0)}
+
+
+def pad_button_width(button: str, style: str, height: float, metrics_font: QFont) -> float:
+    """How wide ``paint_pad_button`` draws ``button`` at ``height``."""
+    if button in PAD_CAPS["xbox"]:
+        from PySide6.QtGui import QFontMetricsF
+
+        f = QFont(metrics_font)
+        f.setPointSizeF(metrics_font.pointSizeF() * 0.78)
+        f.setBold(True)
+        caps = PAD_CAPS.get(style, PAD_CAPS["xbox"])
+        return max(height * 1.3, QFontMetricsF(f).horizontalAdvance(caps[button]) + height * 0.6)
+    return height
+
+
+def paint_pad_button(p: QPainter, button: str, rect: QRectF, style: str, label_font: QFont) -> None:
+    """Draw ``button`` on the dark ground: face buttons as ``paint_glyph``
+    does, shoulders and stick clicks as small caps, a d-pad direction as the
+    cross with that arm lit, Start and Select (Menu and View) as their discs."""
+    if style not in PAD_CAPS:
+        style = "xbox"
+    if button in PAD_FACE:
+        paint_glyph(p, PAD_FACE[button], rect, style, label_font)
+        return
+    if button == "Start":
+        paint_glyph(p, "menu", rect, style, label_font)
+        return
+    p.save()
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    if button in PAD_CAPS[style]:
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(theme.color("border"))
+        p.drawRoundedRect(rect, 4, 4)
+        p.setPen(theme.color("text"))
+        f = QFont(label_font)
+        f.setPointSizeF(label_font.pointSizeF() * 0.78)
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, PAD_CAPS[style][button])
+    elif button == "Select":
+        # The View button: two overlapping windows on a disc.
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(theme.color("border"))
+        p.drawEllipse(rect)
+        c, s = rect.center(), rect.height() * 0.15
+        p.setPen(QPen(theme.color("text"), max(1.3, rect.height() / 16)))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(QRectF(c.x() - s * 1.35, c.y() - s * 1.1, s * 1.9, s * 1.5), 1, 1)
+        p.setBrush(theme.color("border"))
+        p.drawRoundedRect(QRectF(c.x() - s * 0.55, c.y() - s * 0.4, s * 1.9, s * 1.5), 1, 1)
+    elif button in PAD_DPAD:
+        # The whole cross, dimmed, with the arm to press lit.
+        c = rect.center()
+        s = rect.height() / 2
+        arm = s * 0.32
+        cross = QPainterPath()
+        cross.addRoundedRect(QRectF(c.x() - arm, c.y() - s, arm * 2, s * 2), 2, 2)
+        cross.addRoundedRect(QRectF(c.x() - s, c.y() - arm, s * 2, arm * 2), 2, 2)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(theme.color("disabled"))
+        p.drawPath(cross.simplified())
+        dx, dy = PAD_DPAD[button]
+        reach = s - arm
+        lit = (QRectF(c.x() - arm, c.y() - s if dy < 0 else c.y() + arm, arm * 2, reach) if dy
+               else QRectF(c.x() - s if dx < 0 else c.x() + arm, c.y() - arm, reach, arm * 2))
+        p.setBrush(theme.color("text"))
+        p.drawRoundedRect(lit, 2, 2)
+    p.restore()

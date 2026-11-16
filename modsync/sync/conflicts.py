@@ -28,6 +28,7 @@ took (``ModSyncService._conflict_count``).
 from __future__ import annotations
 
 import filecmp
+import json
 import os
 import re
 import shutil
@@ -213,6 +214,10 @@ def differences(conflict: Conflict) -> list[str]:
         lines = _ini_differences(conflict)
         if lines:
             return lines
+    if "keybinds" in conflict.original.name.lower():  # Daggerfall Unity's key bindings
+        lines = _keybind_differences(conflict)
+        if lines:
+            return lines
     return [f"The contents differ ({here.st_size:,} bytes in use, {there.st_size:,} in the other)."]
 
 
@@ -231,6 +236,47 @@ def _ini(path: Path) -> dict[tuple[str, str], tuple[str, str]]:
             key = key.strip()
             values[(section.lower(), key.lower())] = (f"[{section}] {key}" if section else key, value.strip())
     return values
+
+
+# What else Daggerfall Unity's KeyBinds.txt holds besides the two sets of bindings.
+_KEYBIND_SETTINGS = {"axisActionKeyBinds": "stick axes", "axisActionInversions": "inverted axes",
+                     "joystickUIKeyBinds": "controller buttons in menus",
+                     "removedPrimaryActions": "unbound Primary actions"}
+
+
+def _keybinds(path: Path) -> dict | None:
+    """Daggerfall Unity's key bindings as read from ``path``, or None when it
+    isn't such a file."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("actionKeyBinds"), dict):
+        return None
+    return data
+
+
+def _actions(binds: object) -> dict[str, str]:
+    """action → key, from a set of bindings (key → action)."""
+    return {str(action): key for key, action in binds.items()} if isinstance(binds, dict) else {}
+
+
+def _keybind_differences(conflict: Conflict) -> list[str]:
+    """The actions bound differently in each set, and the other settings that
+    differ; nothing when either side isn't readable."""
+    here, there = _keybinds(conflict.original), _keybinds(conflict.path)
+    if here is None or there is None:
+        return []
+    lines = []
+    for name, field in (("Primary", "actionKeyBinds"), ("Secondary", "secondaryActionKeyBinds")):
+        a, b = _actions(here.get(field)), _actions(there.get(field))
+        actions = sorted(x for x in a.keys() | b.keys() if a.get(x) != b.get(x))
+        if actions:
+            lines.append(f"{name} bindings that differ: {_listing(actions)}.")
+    other = [label for field, label in _KEYBIND_SETTINGS.items() if here.get(field) != there.get(field)]
+    if other:
+        lines.append(f"Also different: {_listing(other)}.")
+    return lines or ["Both versions bind the same keys."]
 
 
 def _ini_differences(conflict: Conflict) -> list[str]:

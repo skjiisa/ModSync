@@ -180,7 +180,7 @@ modsync firewall status | allow | remove   # ModSync's ports in ufw or firewalld
 modsync steam shortcut [--remove]   # add ModSync as a non-Steam game, or remove it
 modsync launch status | enable [--through <tool>] | disable
 modsync launch mode [countdown | play | wait]   # what Steam's Play does once ModSync opens, see below
-modsync dfu status | install [<dest>] | use <dir> | hook enable | disable   # Daggerfall Unity, see below
+modsync dfu status | install [<dest>] | use <dir> | hook enable | disable | controller   # Daggerfall Unity, see below
 modsync games [list [--all]]        # the other games ModSync runs MO2 for, see "Other games"
 modsync games <key> status | install [<dir>] | use <dir> | open | play | hook enable | disable | status
 modsync nxm status | enable | disable   # Nexus downloads for the games ModSync runs, see "Nexus downloads"
@@ -840,13 +840,19 @@ paths:
   `Movies`, `Presets`, `QuestPacks`, `SoundFonts` and `WorldData`.
 - `PortableAppdata/Mods`, which holds the load order and on/off switches
   (`GameData/Mods.json`) and each mod's settings.
+- `modsync-dfu-keybinds.txt`, a copy of the key bindings. DFU keeps two
+  sets, Primary and Secondary, and both work at once, so keyboard and mouse
+  on one and a controller on the other serve every machine (see "Controller
+  bindings" below).
 - `modsync-dfu-vault.json`, which records the DFU version the mods are for.
   `modsync dfu status` warns when this machine runs a different version.
 
 The program, the files DFU ships itself (`Quests`, `Text`, `Tables` and the
-like), `settings.ini`, key bindings and saves stay on each machine.
+like), `settings.ini` (resolution and other settings for the machine) and
+saves stay on each machine.
 
-If two machines change the load order or a mod's settings before they sync,
+If two machines change the load order, a mod's settings or the key bindings
+before they sync,
 Syncthing keeps the newer file and sets the other aside. `modsync sync
 conflicts` lists those files under names like
 `dfu-mods:PortableAppdata/Mods/GameData/Mods.json`. To settle one, close DFU
@@ -935,6 +941,50 @@ version check under "Syncing Daggerfall Unity's mods" covers DFU itself.
 DFU only has an x86_64 build. On the Steam Frame it would have to run under
 emulation, which is untested (#110). DFU's developers don't support builds or setups from third parties,
 so report problems with a ModSync-installed DFU to ModSync.
+
+### Controller bindings
+
+The Controller row on Daggerfall Unity's Home opens the controller layout
+suggested in DFU's wiki
+([Setting Up Controls](https://github.com/Interkarma/daggerfall-unity/wiki/Setting-Up-Controls)),
+every button of it, grouped and printed as your controller prints them:
+B casts a spell, RT swings the weapon, Start pauses, and holding LT reaches
+more (LT + A recasts, LT + Y opens the inventory, and so on). The wiki's L2
+and R2 are the bumpers. "Use this layout" sets it up (`modsync dfu
+controller` from a terminal). Once it's set, the row reads Suggested and the
+same sheet is a reference card, with "Set it up again" to put back buttons
+changed in DFU. Controller buttons you bound yourself show as Your own, and
+the sheet says the layout replaces them.
+
+The layout also turns up the right stick's look speed
+(`JoystickLookSensitivity` in `settings.ini`) from DFU's 1, about 120° a
+second at full tilt, to 2.5. Only a speed still at DFU's default changes; to
+tune it in the game, open Pause, Controls, Joystick. `settings.ini` never
+syncs, so each machine raises its own once the layout reaches it.
+
+They go on DFU's Secondary bindings, as the wiki suggests, so the keyboard
+and mouse keep the Primary ones. Controller buttons bound anywhere before
+are unbound, as DFU's own Controls screen does when you rebind one. The file
+as it was is kept as `PortableAppdata/KeyBinds.modsync-backup.txt`. Close DFU
+first: it would write its own bindings back.
+
+With mods sync on, the bindings sync too, so every paired machine gets the
+controller bindings and keeps the keyboard ones beside them. DFU reads
+`PortableAppdata/KeyBinds.txt` when it starts and writes it back when it
+quits, so a change arriving while it ran would be undone. That file
+therefore never syncs as it is. Its copy, `modsync-dfu-keybinds.txt` at the
+top of the install, does, and ModSync carries changes between the two only
+while DFU is closed: when it checks sync status, before Play in ModSync,
+and around Play in Steam. Bindings are compared by what they bind, so DFU
+rewriting the file changes nothing. If they changed on two machines before
+syncing, the synced copy stays in use and this machine's version waits
+beside it as a conflict, which `modsync sync conflicts` describes by the
+actions that differ, settled like the load order's (above). The backup
+stays on this machine. The names are those of an Xbox-layout controller, as
+Steam Input presents any controller to a game it starts, the Deck's own
+controls included. If Steam gives Daggerfall a keyboard-and-mouse layout,
+pick a gamepad one in its controller settings. DFU's wiki also suggests the
+Click weapon swing mode for controllers, on its startup screen.
 
 ## Other games
 

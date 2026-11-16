@@ -9,7 +9,10 @@ saves sync on and off on this machine. The blue action gets Daggerfall from
 Steam until Steam has it, then installs Daggerfall Unity, then plays it.
 "Use an existing installation…" (once one is in use, "Use another
 installation…") picks a Daggerfall Unity the user installed themselves (see
-``dfu.adopt``), whatever state the one in use is in.
+``dfu.adopt``), whatever state the one in use is in. The Controller row
+opens DFU's suggested controller layout, every button of it, and sets it up
+on DFU's Secondary bindings (see ``dfu.set_controller_bindings``); once it is
+set, the same sheet is the reference for which button does what.
 """
 
 from __future__ import annotations
@@ -17,16 +20,16 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QProgressBar
+from PySide6.QtCore import QObject, QRectF, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QPainter
+from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QProgressBar, QVBoxLayout, QWidget
 
 from modsync import dfu
-from modsync.ui import worker
+from modsync.ui import icons, theme, worker
 from modsync.ui.input import Action
-from modsync.ui.overlays import FolderSheet
+from modsync.ui.overlays import FolderSheet, Overlay
 from modsync.ui.pages import Page
-from modsync.ui.widgets import HeroTile, StatusRow, Tile, label
+from modsync.ui.widgets import HeroTile, Panel, StatusRow, Tile, label
 
 BUSY_KEY = "dfu"
 _SYNC_WORDS = {"on": ("On", "ok"), "off": ("Off", "off"), "stopping": ("Stopping", "busy")}
@@ -52,6 +55,159 @@ def _hook_on(hook) -> bool:
     if hook is not None and hook.pending is not None:
         return hook.pending.action == "select"
     return hook is not None and hook.enabled
+
+
+# The Controller row: value word, tone, detail, by dfu.controller_state.
+_CONTROLLER_WORDS = {
+    "suggested": ("Suggested", "ok", "Uses the suggested controller bindings."),
+    "own": ("Your own", "off", "View the suggested controller layout."),
+    "none": ("Not set up", "off", "View the suggested controller layout."),
+}
+
+# The suggested layout as the sheet lists it: columns of groups, each a heading
+# and its actions (DFU's name, what to call it). Every action in
+# dfu.CONTROLLER_LAYOUT appears once.
+LAYOUT_COLUMNS = (
+    (("Magic", (("CastSpell", "Cast spell"), ("RecastSpell", "Recast spell"),
+                ("UseMagicItem", "Use magic item"))),
+     ("Combat", (("ReadyWeapon", "Ready weapon"), ("SwingWeapon", "Swing weapon"),
+                 ("SwitchHand", "Switch hand")))),
+    (("Moving", (("Jump", "Jump"), ("Crouch", "Crouch"), ("Sneak", "Sneak"), ("Run", "Run"),
+                 ("AutoRun", "Autorun"), ("Transport", "Transport"))),),
+    (("Interacting", (("ActivateCenterObject", "Activate"), ("TalkMode", "Talk mode"), ("InfoMode", "Info mode"),
+                      ("GrabMode", "Grab mode"), ("StealMode", "Steal mode"))),
+     ("Character", (("Status", "Status"), ("CharacterSheet", "Character sheet"), ("Inventory", "Inventory")))),
+    (("Maps and notes", (("AutoMap", "Automap"), ("TravelMap", "Travel map"), ("LogBook", "Logbook"),
+                         ("NoteBook", "Notebook"))),
+     ("Game", (("Rest", "Rest"), ("Escape", "Pause"), ("QuickSave", "Quicksave"), ("QuickLoad", "Quickload")))),
+)
+
+
+class ButtonCombo(QWidget):
+    """The buttons for one action, printed as the pad in use prints them:
+    "B", or "LT + A" for a combo (hold the first, press the second)."""
+
+    HEIGHT = 24
+
+    def __init__(self, buttons: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.buttons = [b.strip() for b in buttons.split("+")]
+        self.setAccessibleName(" plus ".join(self.buttons))
+
+    def _style(self) -> str:
+        from modsync.ui.widgets import _router
+
+        router = _router()
+        return router.pad_style if router is not None else "xbox"
+
+    def _parts(self) -> list[tuple[str, float]]:
+        style, f = self._style(), theme.font(11)
+        parts: list[tuple[str, float]] = []
+        for i, button in enumerate(self.buttons):
+            if i:
+                parts.append(("+", 16.0))
+            parts.append((button, icons.pad_button_width(button, style, self.HEIGHT, f)))
+        return parts
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(int(sum(w for _, w in self._parts())) + 2, self.HEIGHT + 4)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        style, f = self._style(), theme.font(11)
+        parts = self._parts()
+        x = self.width() - sum(w for _, w in parts)  # right-aligned, like a row's value
+        top = (self.height() - self.HEIGHT) / 2
+        for part, w in parts:
+            rect = QRectF(x, top, w, self.HEIGHT)
+            if part == "+":
+                p.setPen(theme.color("muted"))
+                p.setFont(theme.font(12))
+                p.drawText(rect, Qt.AlignmentFlag.AlignCenter, "+")
+            else:
+                icons.paint_pad_button(p, part, rect, style, f)
+            x += w
+
+
+class ControllerLayoutSheet(Overlay):
+    """Daggerfall Unity's suggested controller layout, every button of it,
+    and setting it up. ``state`` is dfu.controller_state; once the layout is
+    set, this is where to look up a button, and setting it up again is the
+    second choice."""
+
+    def __init__(self, host, state: str, synced: bool, on_set) -> None:
+        super().__init__(host, "Controller layout", width=1120)
+        self._on_set = on_set
+        intro = "Your keyboard and mouse keep working."
+        if synced:
+            intro += " The layout syncs to your paired machines with your mods."
+        self.text = label(intro, "secondary")
+        self.body.addWidget(self.text)
+
+        buttons = dict(dfu.CONTROLLER_LAYOUT)
+        panel = Panel(margins=20, spacing=0)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(36)
+        grid.setVerticalSpacing(0)
+        self.combos: dict[str, ButtonCombo] = {}
+        for col, groups in enumerate(LAYOUT_COLUMNS):
+            column = QVBoxLayout()
+            column.setSpacing(2)
+            for i, (heading, actions) in enumerate(groups):
+                if i:
+                    column.addSpacing(14)
+                head = label(heading, "heading", wrap=False)
+                column.addWidget(head)
+                column.addSpacing(4)
+                for action, name in actions:
+                    row = QHBoxLayout()
+                    row.setSpacing(12)
+                    row.addWidget(label(name, wrap=False))
+                    row.addStretch(1)
+                    combo = ButtonCombo(buttons[action])
+                    self.combos[action] = combo
+                    row.addWidget(combo)
+                    column.addLayout(row)
+            column.addStretch(1)
+            grid.addLayout(column, 0, col)
+            grid.setColumnStretch(col, 1)
+        panel.layout_.addLayout(grid)
+        self.body.addWidget(panel)
+
+        self.tiles: dict[str, Tile] = {}
+        choices = []
+        if state == "suggested":
+            choices = [("close", "Close", "", "normal", "close"),
+                       ("go", "Set it up again", "Puts back any of these you changed in Daggerfall Unity.",
+                        "normal", "gamepad")]
+        else:
+            replaces = ("Replaces the controller buttons you bound." if state == "own"
+                        else "Your current bindings are kept in a copy.")
+            choices = [("go", "Use this layout", replaces, "primary", "check"),
+                       ("close", "Cancel", "", "normal", "close")]
+        self._default = choices[0][0]
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        for key, name, description, role, icon in choices:
+            tile = Tile(name, description, icon, role=role, size="compact")
+            tile.clicked.connect(lambda _checked=False, k=key: self.choose(k))
+            self.tiles[key] = tile
+            row.addWidget(tile, 1)
+        self.body.addLayout(row)
+
+    def accept_hint(self) -> str:
+        focus = self.host.focusWidget()
+        return focus.text() if focus in self.tiles.values() else "Select"
+
+    def choose(self, key: str) -> None:
+        if self._done:
+            return
+        self.dismiss()
+        if key == "go":
+            self._on_set()
+
+    def focus_default(self) -> None:
+        self.tiles[self._default].setFocus(Qt.FocusReason.OtherFocusReason)
 
 
 class _ProgressBridge(QObject):
@@ -87,7 +243,9 @@ class DaggerfallPage(Page):
         self.hook_row = StatusRow("Steam's Play button", "rocket")
         self.mods_row = StatusRow("Mods sync", "sync")
         self.saves_row = StatusRow("Saves sync", "sync")
-        for row in (self.data_row, self.install_row, self.hook_row, self.mods_row, self.saves_row):
+        self.controller_row = StatusRow("Controller", "gamepad")
+        for row in (self.data_row, self.install_row, self.hook_row, self.mods_row, self.saves_row,
+                    self.controller_row):
             row.set_state("Checking", "off")
             left.addWidget(row)
         self.data_row.clicked.connect(self._open_steam_page)
@@ -95,6 +253,7 @@ class DaggerfallPage(Page):
         self.hook_row.clicked.connect(self._toggle_hook)
         self.mods_row.clicked.connect(lambda: self._toggle_sync(dfu.MODS_FOLDER))
         self.saves_row.clicked.connect(lambda: self._toggle_sync(dfu.SAVES_FOLDER))
+        self.controller_row.clicked.connect(self._show_controller_layout)
         left.addStretch(1)
 
         self.steam_tile = HeroTile("Install Daggerfall in Steam",
@@ -213,6 +372,11 @@ class DaggerfallPage(Page):
                       "off": f"Press to sync your {what} with your paired machines.",
                       "stopping": "Finishes once Syncthing answers."}[state]
             row.set_state(word, tone, detail)
+        if inst is None:
+            self.controller_row.set_state("Not set up", "off", "Daggerfall Unity's suggested layout, once it's installed.")
+        else:
+            word, tone, detail = _CONTROLLER_WORDS[ov.controller]
+            self.controller_row.set_state(word, tone, detail)
         notes = [n for n in (ov.emulation_problem, ov.version_problem) if n]
         self.note.setText(" ".join(notes))
         self.note.setVisible(bool(notes))
@@ -250,7 +414,7 @@ class DaggerfallPage(Page):
         self.install_row.setEnabled((ready or choosing) and not busy)
         self.use_existing.setEnabled(ov is not None and not busy)
         self.play.setEnabled(has and not busy)
-        for row in (self.hook_row, self.mods_row, self.saves_row):
+        for row in (self.hook_row, self.mods_row, self.saves_row, self.controller_row):
             row.setEnabled(has and not busy)
 
     def preferred_focus(self):
@@ -418,6 +582,19 @@ class DaggerfallPage(Page):
         if ov is None or ov.install is None:
             return
         self._run(dfu.launch, ov.install, message="Starting Daggerfall Unity…")
+
+    def _show_controller_layout(self) -> None:
+        ov = self.overview
+        if ov is None or ov.install is None or self.host.busy or self._working:
+            return
+        ControllerLayoutSheet(self.host, ov.controller, ov.mods == "on", self._set_controller).open()
+
+    def _set_controller(self) -> None:
+        ov = self.overview
+        if ov is None or ov.install is None:
+            return
+        self._run(dfu.set_controller_bindings, ov.install, message="Setting up the controller layout…",
+                  on_done=lambda _said: "Controller layout set. Daggerfall Unity uses it from its next start.")
 
     def _open_mods_folder(self) -> None:
         if self.overview is None or self.overview.install is None:

@@ -995,6 +995,8 @@ def dfu(args: list[str]) -> int:
         return _dfu_use(rest[0])
     if sub == "hook":
         return _dfu_hook(rest)
+    if sub == "controller" and not rest:
+        return _dfu_controller()
     if sub == "saves" and set(rest) <= {"--quiet", "--playing"}:
         return _dfu_saves(quiet="--quiet" in rest, playing="--playing" in rest)
     if sub == "follow":
@@ -1010,6 +1012,7 @@ def dfu(args: list[str]) -> int:
         "        (run it again to repair an install)\n"
         "  modsync dfu use <dir>                use a Daggerfall Unity that's already installed\n"
         "  modsync dfu hook enable | disable    make Steam's Play button on Daggerfall start Daggerfall Unity\n"
+        "  modsync dfu controller               set Daggerfall Unity's suggested controller bindings\n"
         "  modsync dfu saves                    sync the saves now (Play in Steam does it before and after)\n"
         "  modsync dfu follow                   point it at Steam's Daggerfall data if its own is gone\n"
         "        (after Steam moved Daggerfall to another library; Play in Steam does it too)"
@@ -1063,6 +1066,9 @@ def _dfu_status() -> int:
         print("  Runs through:       Steam's FEX and Steam Linux Runtime (it's an x86-64 program)")
     mods = sorted(inst.mods_dir.rglob("*.dfmod")) if inst.mods_dir.is_dir() else []
     print(f"  Mods:               {len(mods)} in {inst.mods_dir}")
+    controller = ("the suggested bindings (Secondary)" if dfu.has_controller_bindings(inst)
+                  else "as Daggerfall Unity has them ('modsync dfu controller' sets the suggested ones)")
+    print(f"  Controller:         {controller}")
     print(f"Play in Steam:        {dfu.hook_status().summary()}")
     from modsync.state import State
     from modsync.sync import folders
@@ -1197,9 +1203,32 @@ def _dfu_follow(*, quiet: bool, launching: Path | None = None) -> int:
     return 0
 
 
+def _dfu_controller() -> int:
+    from modsync import dfu
+
+    inst = _dfu_install_in_use()
+    if inst is None:
+        print("Daggerfall Unity isn't installed.")
+        return 1
+    try:
+        print(dfu.set_controller_bindings(inst))
+    except dfu.DfuError as exc:
+        print(exc)
+        return 1
+    return 0
+
+
 def _dfu_saves(*, quiet: bool, playing: bool = False) -> int:
     from modsync import dfu
 
+    inst = dfu.current_install()
+    if inst is not None:
+        try:  # the key bindings too: the Play hook runs this just before and after DFU
+            moved = dfu.sync_keybinds(inst, playing=playing)
+            if moved:
+                print(moved)
+        except Exception as exc:  # run by the Play hook: say so, never block the game
+            print(f"Key bindings didn't sync: {exc}")
     try:
         report = dfu.sync_saves(playing=playing)
     except Exception as exc:  # run by the Play hook: say so, never block the game

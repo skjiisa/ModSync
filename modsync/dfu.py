@@ -28,8 +28,12 @@ Linux Runtime container (see :func:`emulator`). The launch hook does the same.
 :mod:`modsync.sync.folders`): one Syncthing folder rooted at the install,
 allowing only what users add (the folders under ``StreamingAssets`` that DFU
 ships empty but for a readme) and ``PortableAppdata/Mods``, where DFU keeps
-the load order (``GameData/Mods.json``) and each mod's settings. Everything
-DFU ships itself, its ``settings.ini`` and key bindings, and saves stay out.
+the load order (``GameData/Mods.json``) and each mod's settings, and
+:data:`SHARED_KEYBINDS`, the key bindings (keyboard and controller both: DFU
+keeps a Primary and a Secondary set, both in use at once), which ModSync
+copies to and from DFU's own ``KeyBinds.txt`` while DFU is closed (see
+:func:`sync_keybinds`). Everything DFU ships itself, its ``settings.ini``
+(resolution and other machine-specific settings) and saves stay out.
 """
 
 from __future__ import annotations
@@ -44,6 +48,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -86,6 +91,10 @@ USER_ASSET_DIRS = ("Mods", "Textures", "Sound", "Books", "Movies", "Presets", "Q
                    "WorldData")
 _ASSETS = "DaggerfallUnity_Data/StreamingAssets"
 SYNCED_DIRS = (*(f"{_ASSETS}/{d}" for d in USER_ASSET_DIRS), "PortableAppdata/Mods")
+KEYBINDS = "PortableAppdata/KeyBinds.txt"  # DFU's key bindings; never synced as they are
+SHARED_KEYBINDS = "modsync-dfu-keybinds.txt"  # their synced copy, which DFU never reads
+KEYBINDS_SYNCED = "PortableAppdata/.modsync-keybinds.json"  # the bindings both last held, here; never synced
+KEYBINDS_LOCK = "PortableAppdata/.modsync-keybinds.lock"  # held by whatever ModSync changes the bindings
 
 # How Steam runs an x86 Linux game on ARM: FEX-Emu, in the Steam Linux Runtime
 # (4.0, else 3.0) for its libraries. The launch hook template looks for the same.
@@ -758,19 +767,23 @@ MODS_FOLDER = FolderSpec(
     path=_install_root,
     ignore=(
         "// Managed by ModSync. Syncs Daggerfall Unity's mods, the files users add under",
-        "// StreamingAssets, and the load order and mod settings in PortableAppdata/Mods.",
-        "// Never the program, the files DFU ships itself, settings.ini, key bindings or saves.",
+        "// StreamingAssets, the load order and mod settings in PortableAppdata/Mods, and",
+        "// the key bindings. Never the program, the files DFU ships itself, settings.ini or saves.",
         "",
         *(f"!/{d}" for d in SYNCED_DIRS),
+        f"!/{SHARED_KEYBINDS}",
+        # The other version when two machines changed the bindings apart, so ModSync
+        # can offer the choice on every machine (modsync.sync.conflicts).
+        f"!/{SHARED_KEYBINDS.removesuffix('.txt')}.sync-conflict-*.txt",
         f"!/{VAULT_RECORD}",
         "",
         "// Everything else. Syncthing still looks inside these for the folders above.",
         "/*",
     ),
-    content=(*SYNCED_DIRS, VAULT_RECORD),
+    content=(*SYNCED_DIRS, SHARED_KEYBINDS, VAULT_RECORD),
     on_share=_record_vault_version,
     in_use=lambda: is_running(),  # looked up when asked, so tests and callers see the live check
-    tidy=lambda root: set_aside_mod_copies(root),
+    tidy=lambda root: (set_aside_mod_copies(root), sync_keybinds(Install(root))),
 )
 
 
@@ -906,6 +919,7 @@ class Overview:
     version: str | None = None  # the install's DFU version, read with the rest
     configured_ok: bool = False  # DFU would accept the data the install uses (Steam's or its own copy)
     emulation_problem: str | None = None  # why it can't run on this machine (an ARM one without FEX)
+    controller: str = "none"  # its controller bindings: see controller_state
 
     @property
     def stale_path(self) -> bool:
@@ -944,7 +958,8 @@ def overview(*, hook: bool = True) -> Overview:
     return Overview(dagger, problems, inst, configured, status,
                     sync_state(MODS_FOLDER), sync_state(SAVES_FOLDER),
                     version_problem(inst) if inst else None, inst.version if inst else None, configured_ok,
-                    emulation_problem(inst) if inst else None)
+                    emulation_problem(inst) if inst else None,
+                    controller_state(inst) if inst else "none")
 
 
 def setup(dest: Path | str | None = None, *, progress: engine.ProgressFn | None = None) -> tuple[Installed, str | None]:
@@ -1001,6 +1016,10 @@ def launch(inst: Install) -> str:
     report = sync_saves()
     if report.changed:
         log.info("before playing: %s", report.summary())
+    try:
+        sync_keybinds(inst)
+    except (OSError, DfuError) as exc:  # never in the way of playing
+        log.warning("could not sync the key bindings before playing: %s", exc)
     if background.in_flatpak():
         cmd = ["flatpak-spawn", "--host", f"--directory={inst.path}",
                *(f"--env={k}={v}" for k, v in extra_env.items()), *cmd]
@@ -1031,3 +1050,441 @@ def open_mods_folder() -> Path:
         raise DfuError("Daggerfall Unity isn't installed.")
     inst.mods_dir.mkdir(parents=True, exist_ok=True)
     return inst.mods_dir
+
+
+# --- controller bindings ----------------------------------------------------------
+#
+# Daggerfall Unity's wiki suggests a controller layout ("Setting Up Controls"),
+# built on the key combos it supports since 1.0 (LT + A, say), and suggests
+# putting it on the Secondary bindings so keyboard and mouse keep the Primary
+# ones. ModSync writes it there, in PortableAppdata/KeyBinds.txt, and the
+# bindings sync with the mods (sync_keybinds): both sets work at once, so one
+# file serves a machine played with a controller and one played with a keyboard.
+#
+# DFU's KeyBinds.txt maps a key's name to an action's name. Its names for a
+# controller are Unity's, as Unity's input on Linux reads an Xbox-layout pad
+# (what Steam Input presents, the Deck's own controls included):
+# buttons are JoystickButton<n>, and a direction of an axis is
+# JoystickAxis<n>Button0 (positive) or JoystickAxis<n>Button1 (negative).
+# A combo is "<modifier> + <key>". The wiki names the bumpers L2 and R2: LT
+# and RT are the triggers there, and L3 and R3 the sticks.
+
+KEYBINDS_BACKUP = "KeyBinds.modsync-backup.txt"  # the bindings before the last change; never synced
+
+PAD = {
+    "A": "JoystickButton0", "B": "JoystickButton1", "X": "JoystickButton2", "Y": "JoystickButton3",
+    "LB": "JoystickButton4", "RB": "JoystickButton5", "Select": "JoystickButton6", "Start": "JoystickButton7",
+    "L3": "JoystickButton9", "R3": "JoystickButton10",
+    "LT": "JoystickAxis3Button0", "RT": "JoystickAxis6Button0",
+    "D-Left": "JoystickAxis7Button1", "D-Right": "JoystickAxis7Button0",
+    "D-Up": "JoystickAxis8Button1", "D-Down": "JoystickAxis8Button0",
+}
+
+# The wiki's layout, in its order: DFU's action name, and the buttons ("LT + A" is a combo).
+CONTROLLER_LAYOUT = (
+    ("CastSpell", "B"),
+    ("RecastSpell", "LT + A"),
+    ("UseMagicItem", "LT + B"),
+    ("ReadyWeapon", "X"),
+    ("SwingWeapon", "RT"),
+    ("SwitchHand", "RB"),
+    ("Status", "D-Down"),
+    ("CharacterSheet", "D-Up"),
+    ("Inventory", "LT + Y"),
+    ("Jump", "Y"),
+    ("Crouch", "L3"),
+    ("AutoRun", "LB"),
+    ("Run", "LT + LB"),
+    ("Rest", "Select"),
+    ("Transport", "R3"),
+    ("StealMode", "LT + D-Down"),
+    ("GrabMode", "LT + D-Up"),
+    ("InfoMode", "LT + D-Left"),
+    ("TalkMode", "LT + D-Right"),
+    ("ActivateCenterObject", "A"),
+    ("Sneak", "LT + L3"),
+    ("LogBook", "LT + RB"),
+    ("NoteBook", "LT + X"),
+    ("AutoMap", "D-Left"),
+    ("TravelMap", "D-Right"),
+    ("Escape", "Start"),
+    ("QuickSave", "LT + Start"),
+    ("QuickLoad", "LT + Select"),
+)
+
+
+# The right stick's look speed that goes with the layout. DFU's own default, 1,
+# turns about 120 degrees a second at full tilt, which is slow on a stick; its
+# slider (Pause, Controls, Joystick) goes from 0.1 to 4. Set only over DFU's
+# default: a speed the player chose stays. It's in settings.ini, which never
+# syncs, so each machine sets it once the layout is there (_carry_keybinds).
+LOOK_SENSITIVITY = 2.5
+_DFU_LOOK_SENSITIVITY = 1.0
+
+
+def look_sensitivity(inst: Install) -> float | None:
+    """``inst``'s right-stick look speed (None: DFU's default, not written yet)."""
+    value = read_setting(inst.settings_ini, "Controls", "JoystickLookSensitivity")
+    try:
+        return float(value) if value is not None else None
+    except ValueError:
+        return None
+
+
+def _raise_look_sensitivity(inst: Install) -> bool:
+    """Set :data:`LOOK_SENSITIVITY` where the look speed is still DFU's default."""
+    current = look_sensitivity(inst)
+    if current is not None and current != _DFU_LOOK_SENSITIVITY:
+        return False
+    write_settings(inst.settings_ini, "Controls", {"JoystickLookSensitivity": LOOK_SENSITIVITY})
+    log.info("raised the right stick's look speed in %s to %s", inst.settings_ini, LOOK_SENSITIVITY)
+    return True
+
+
+def _key_name(buttons: str) -> str:
+    """DFU's name for ``buttons``: one button, or a combo as DFU writes it."""
+    return " + ".join(PAD[b.strip()] for b in buttons.split("+"))
+
+
+def controller_bindings() -> dict[str, str]:
+    """The suggested layout as KeyBinds.txt holds it: key name → action."""
+    return {_key_name(buttons): action for action, buttons in CONTROLLER_LAYOUT}
+
+
+def _modifiers() -> set[str]:
+    """Keys the layout holds down for combos. DFU won't bind one of these on
+    its own: it would fire every time a combo starts."""
+    return {_key_name(buttons.split("+")[0]) for _, buttons in CONTROLLER_LAYOUT if "+" in buttons}
+
+
+def keybinds_file(inst: Install) -> Path:
+    return inst.path / KEYBINDS
+
+
+def _read_keybinds(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        raise DfuError(f"Can't read Daggerfall Unity's key bindings in {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise DfuError(f"Daggerfall Unity's key bindings in {path} aren't in a form ModSync knows.")
+    return data
+
+
+def has_controller_bindings(inst: Install) -> bool:
+    """Whether every binding of the suggested layout is on ``inst``'s Secondary bindings."""
+    try:
+        secondary = _read_keybinds(keybinds_file(inst)).get("secondaryActionKeyBinds")
+    except DfuError:
+        return False
+    if not isinstance(secondary, dict):
+        return False
+    return all(secondary.get(key) == action for key, action in controller_bindings().items())
+
+
+def controller_state(inst: Install) -> str:
+    """``inst``'s controller bindings: "suggested" (the layout is all there),
+    "own" (other controller buttons are bound, by the player) or "none"."""
+    if has_controller_bindings(inst):
+        return "suggested"
+    try:
+        data = _read_keybinds(keybinds_file(inst))
+    except DfuError:
+        return "none"
+    for field_ in ("actionKeyBinds", "secondaryActionKeyBinds"):
+        binds = data.get(field_)
+        if isinstance(binds, dict) and any("Joystick" in str(key) for key in binds):
+            return "own"
+    return "none"
+
+
+def set_controller_bindings(inst: Install) -> str:
+    """Put the suggested controller layout on ``inst``'s Secondary bindings, as
+    DFU's own Controls screen would bind each one: an action's old Secondary
+    binding goes, and so does whatever else held its key, on either side, or
+    used one of its buttons as a combo's modifier the way DFU won't accept.
+    Keyboard and mouse bindings, and Secondary bindings the layout doesn't
+    use, stay. The file as it was is kept in :data:`KEYBINDS_BACKUP`. The
+    right stick's look speed goes up to :data:`LOOK_SENSITIVITY` if it is
+    still DFU's default (settings.ini, which stays on this machine).
+
+    A missing KeyBinds.txt (DFU not started yet) is made with only these:
+    DFU fills in its defaults around them when it starts."""
+    closed_first = "Close Daggerfall Unity first; it would undo the change."
+    if is_running():
+        # DFU keeps its bindings in memory and writes them out again when it closes.
+        raise DfuError(closed_first)
+    # Checked again once nothing else may change the bindings, and kept so until done:
+    # DFU may have started while this waited, and Steam's Play waits for this.
+    with _keybinds_lock(inst), _free_to_sync(inst, False) as busy:
+        if busy:
+            raise DfuError(closed_first)
+        syncing = _keybinds_sync_here(inst)
+        if syncing:  # another machine's change first, so this one builds on it
+            _carry_keybinds(inst)
+        done = _set_controller_bindings(inst)
+        if syncing:
+            _carry_keybinds(inst)
+        # settings.ini, which DFU writes back when it quits: under the same guard.
+        if _raise_look_sensitivity(inst):
+            done += f" The right stick looks around faster ({LOOK_SENSITIVITY:g})."
+    return done
+
+
+def _set_controller_bindings(inst: Install) -> str:
+    path = keybinds_file(inst)
+    old = path.read_bytes() if path.is_file() else None
+    data = _read_keybinds(path)
+    before = json.loads(json.dumps(data))
+    wanted = controller_bindings()
+    actions = set(wanted.values())
+    # DFU flags a key bound on its own that is also a combo's modifier, on
+    # either side: so the layout's combo modifier (LT) goes, and so does any
+    # combo kept from before whose modifier the layout binds on its own.
+    drop = set(wanted) | _modifiers()
+    alone = {k for k in wanted if " + " not in k}
+
+    def clashes(key: str) -> bool:
+        return key in drop or key.split(" + ")[0].strip() in alone
+
+    def kept(binds, *, secondary: bool) -> dict[str, str]:
+        if not isinstance(binds, dict):
+            return {}
+        return {k: v for k, v in binds.items() if not clashes(k) and not (secondary and v in actions)}
+
+    primary = kept(data.get("actionKeyBinds"), secondary=False)
+    secondary = kept(data.get("secondaryActionKeyBinds"), secondary=True)
+    taken = [k for k in data.get("actionKeyBinds") or {} if clashes(k)]
+    secondary.update(wanted)
+    data["actionKeyBinds"] = primary
+    data["secondaryActionKeyBinds"] = secondary
+    data.setdefault("removedPrimaryActions", [])
+    data.setdefault("$version", "v1")
+    if old is not None and data == before:
+        return "Daggerfall Unity already has the suggested controller bindings."
+    inst.data_dir.mkdir(parents=True, exist_ok=True)
+    if old is not None:
+        (inst.data_dir / KEYBINDS_BACKUP).write_bytes(old)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, indent=4) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    log.info("set the suggested controller bindings in %s (%d primary bindings moved off controller keys)",
+             path, len(taken))
+    return "Daggerfall Unity has the suggested controller bindings, on its Secondary bindings."
+
+
+# --- syncing the key bindings ---------------------------------------------------
+#
+# DFU reads KeyBinds.txt when it starts, writes it again at once, and writes
+# what it holds in memory once more when it quits. Syncthing replacing the
+# file while DFU runs (a window keeps ModSync's folders going during play)
+# would be undone by that last write, and the undoing would sync back to
+# every machine as a newer change. So the file never syncs as it is: its
+# copy in the mods folder, SHARED_KEYBINDS, does, and sync_keybinds carries
+# changes between the two only while DFU is closed. KEYBINDS_SYNCED notes the
+# bindings both last held here, so a change on either side is told from a
+# change on both. Bindings are compared by their content, not their bytes:
+# DFU's own rewrites change nothing.
+
+
+def _keybinds_digest(path: Path) -> str | None:
+    """What ``path``'s bindings are, as a digest; None when it isn't there."""
+    import hashlib
+
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return None
+    try:
+        raw = json.dumps(json.loads(raw.decode("utf-8-sig")), sort_keys=True).encode()
+    except ValueError:
+        pass  # compared as bytes
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _copy_whole(source: Path, dest: Path) -> str | None:
+    """``source`` to ``dest`` in one step, with its modification time (which
+    decides between two versions Syncthing finds changed apart). Returns the
+    digest of what was copied."""
+    tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+    shutil.copy2(source, tmp)
+    copied = _keybinds_digest(tmp)
+    os.replace(tmp, dest)
+    return copied
+
+
+def _publish(source: Path, dest: Path, expected: str | None) -> str | None:
+    """``source`` to ``dest``, the synced copy, only over the version just
+    looked at (``expected``; None: there was none). Syncthing may bring in
+    another version at any moment, and a check followed by a replace could
+    land on it unseen, so neither step here can overwrite: the version in
+    place moves aside in one step and is checked there, and the new one goes
+    in as a hard link, which fails if anything took the name meanwhile.
+    Returns the digest of what was published, or None when another version
+    got there first (it stays; the next look finds both changed and asks)."""
+    tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+    aside = dest.with_name(f".{dest.name}.{os.getpid()}.old")
+    shutil.copy2(source, tmp)
+    copied = _keybinds_digest(tmp)
+    try:
+        if expected is not None:
+            try:
+                os.rename(dest, aside)
+            except FileNotFoundError:
+                return None  # gone meanwhile: another change, looked at next time
+            if _keybinds_digest(aside) != expected:
+                _put_back(aside, dest)
+                return None
+        try:
+            os.link(tmp, dest)
+        except FileExistsError:
+            # Arrived meanwhile: it stays. What was set aside is older than it.
+            aside.unlink(missing_ok=True)
+            return None
+        except OSError:  # a filesystem without hard links: the same, by exclusive creation
+            try:
+                with open(dest, "xb") as out, open(tmp, "rb") as src:
+                    shutil.copyfileobj(src, out)
+            except FileExistsError:
+                aside.unlink(missing_ok=True)
+                return None
+            shutil.copystat(tmp, dest)
+        aside.unlink(missing_ok=True)
+        return copied
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _put_back(aside: Path, dest: Path) -> None:
+    """Return a version :func:`_publish` set aside, unless another took its place."""
+    try:
+        os.link(aside, dest)
+    except FileExistsError:
+        log.info("the synced key bindings changed again meanwhile; %s is older and goes", aside.name)
+    except OSError:
+        if not dest.exists():
+            os.replace(aside, dest)
+            return
+    aside.unlink(missing_ok=True)
+
+
+def _machine_tag() -> str:
+    """This machine in a conflict copy's name, which takes seven of base32's
+    letters where Syncthing puts the first of its device id's."""
+    import base64
+    import hashlib
+    import socket
+
+    return base64.b32encode(hashlib.sha256(socket.gethostname().encode()).digest()).decode()[:7]
+
+
+def _conflict_copy(source: Path, beside: Path) -> Path:
+    """Copy ``source`` to a new conflict copy of ``beside``, named the way
+    Syncthing names its own. Never over another: a name taken (two in one
+    second) moves on a second."""
+    stem, ext = beside.name.rsplit(".", 1)
+    when = time.time()
+    for step in range(3600):
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(when + step))
+        copy = beside.with_name(f"{stem}.sync-conflict-{stamp}-{_machine_tag()}.{ext}")
+        try:
+            with open(copy, "xb") as out, open(source, "rb") as src:
+                shutil.copyfileobj(src, out)
+        except FileExistsError:
+            continue
+        shutil.copystat(source, copy)
+        return copy
+    raise DfuError(f"Can't keep a copy of {source}: too many conflict copies beside {beside}.")
+
+
+@contextmanager
+def _keybinds_lock(inst: Install):
+    """Held around each look at the bindings that may change them, by every
+    ModSync process (the Flatpak's and a native one share an install), so
+    one never decides on what another is changing."""
+    if fcntl is None:
+        yield
+        return
+    path = inst.path / KEYBINDS_LOCK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def sync_keybinds(inst: Install, *, playing: bool = False) -> str:
+    """Carry key-binding changes between ``inst``'s KeyBinds.txt and their
+    synced copy, while mods sync is on here and DFU is closed. A change on
+    one side goes to the other; a change on both keeps the synced copy in
+    use and the version here as a conflict copy beside it, which every
+    machine is then asked about (modsync.sync.conflicts). Returns what it
+    did, "" for nothing."""
+    if not _keybinds_sync_here(inst):
+        return ""
+    with _keybinds_lock(inst):
+        return _sync_keybinds(inst, playing=playing)
+
+
+def _keybinds_sync_here(inst: Install) -> bool:
+    """Whether mods sync is on here, in ``inst``."""
+    from modsync.sync import folders
+
+    st = State.load()
+    root = st.game_folders.get(MODS_FOLDER.key)
+    return root is not None and Path(root) == inst.path and not folders.stopping(MODS_FOLDER.key, st)
+
+
+def _sync_keybinds(inst: Install, *, playing: bool = False) -> str:
+    """:func:`sync_keybinds`, with :func:`_keybinds_lock` held."""
+    if not _keybinds_sync_here(inst):
+        return ""
+    with _free_to_sync(inst, playing) as busy:
+        if busy:
+            return ""
+        return _carry_keybinds(inst)
+
+
+def _carry_keybinds(inst: Install) -> str:
+    local, shared, noted = inst.path / KEYBINDS, inst.path / SHARED_KEYBINDS, inst.path / KEYBINDS_SYNCED
+    here, there = _keybinds_digest(local), _keybinds_digest(shared)
+    try:
+        last = json.loads(noted.read_text(encoding="utf-8")).get("synced")
+    except (OSError, ValueError, AttributeError):
+        last = None
+    if here is None and there is None:
+        return ""
+    done, synced = "", here
+    if here == there:
+        pass
+    elif there is None or (here is not None and there == last):
+        # Only over the version just looked at: one Syncthing brings in meanwhile is
+        # never replaced unseen. The next look finds it, and both changed: a conflict.
+        synced = _publish(local, shared, there)
+        if synced is None:
+            return ""
+        done = "Shared this machine's key bindings."
+    elif here is None or here == last:
+        local.parent.mkdir(parents=True, exist_ok=True)
+        synced = _copy_whole(shared, local)
+        done = "Took the key bindings from your other machines."
+    else:
+        # Changed on both sides since they last agreed (or never agreed here).
+        copy = _conflict_copy(local, shared)
+        synced = _copy_whole(shared, local)
+        done = "Your key bindings changed here and on another machine; ModSync asks which to keep."
+        log.warning("key bindings changed here and elsewhere; this machine's are in %s", copy)
+    if done:
+        log.info("%s", done)
+    if has_controller_bindings(inst):
+        # The layout arrived from another machine (or is here already): its look speed
+        # goes with it, though settings.ini never syncs.
+        _raise_look_sensitivity(inst)
+    if synced != last:
+        noted.parent.mkdir(parents=True, exist_ok=True)
+        noted.write_text(json.dumps({"synced": synced}) + "\n", encoding="utf-8")
+    return done
