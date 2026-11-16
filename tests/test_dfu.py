@@ -738,6 +738,17 @@ class Launch(unittest.TestCase):
 
         self.assertIsNone(steam_downloads.take_request(DAGGERFALL))  # no launch will take it
 
+    def test_directly_when_the_note_cant_be_left(self):
+        from modsync.mo2 import steam_downloads
+
+        with patch.object(dfu, "is_running", return_value=False), patch.object(dfu, "hook_status", lambda: self._hook(True)), \
+                patch.object(dfu, "sync_saves", return_value=dfu_saves.Report()), \
+                patch.object(dfu.background, "in_flatpak", return_value=False), \
+                patch.object(steam_downloads, "ask_steam", side_effect=PermissionError("read-only")), \
+                patch.object(dfu.subprocess, "Popen") as popen:
+            self.assertEqual(dfu.launch(self.inst), "Starting Daggerfall Unity.")
+        popen.assert_called_once()
+
     def test_directly_otherwise_with_the_saves_synced_first(self):
         order = []
         with patch.object(dfu, "is_running", return_value=False), patch.object(dfu, "hook_status", lambda: self._hook(False)), \

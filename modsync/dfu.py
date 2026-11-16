@@ -1043,8 +1043,8 @@ def launch(inst: Install) -> str:
             # The note tells the hub Play was pressed here already: no window, no countdown.
             steam_downloads.ask_steam(DAGGERFALL, downloads.PLAY)
             return "Starting Daggerfall Unity through Steam."
-        except RuntimeError as exc:
-            log.warning("%s; starting DFU directly", exc)
+        except (RuntimeError, OSError) as exc:  # the note couldn't be left, or Steam asked
+            log.warning("couldn't start Daggerfall Unity through Steam (%s); starting it directly", exc)
     cmd = [str(inst.executable)]
     extra_env = {}
     if needs_emulation(inst.executable):
