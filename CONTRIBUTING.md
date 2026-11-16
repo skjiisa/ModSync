@@ -70,15 +70,14 @@ In short:
 
 ```sh
 flatpak install -y flathub org.kde.Platform//6.11 org.kde.Sdk//6.11 io.qt.PySide.BaseApp//6.11
-flatpak-builder --user --install --force-clean \
-    --state-dir="$HOME/.cache/modsync-flatpak/state" \
-    "$HOME/.cache/modsync-flatpak/build" \
-    packaging/flatpak/io.github.skjiisa.ModSync.yaml
+scripts/build_flatpak.sh
 flatpak run io.github.skjiisa.ModSync
 ```
 
-If `flatpak-builder` is not installed natively, `flatpak run
-org.flatpak.Builder` takes its place. To run the same packaging checks as CI:
+The script builds with `flatpak-builder`, or with Flathub's
+`org.flatpak.Builder` when that is the one installed, and keeps one build
+cache for every checkout and worktree. After the first build, a rebuild takes
+a few seconds. To run the same packaging checks as CI:
 
 ```sh
 desktop-file-validate packaging/flatpak/io.github.skjiisa.ModSync.desktop

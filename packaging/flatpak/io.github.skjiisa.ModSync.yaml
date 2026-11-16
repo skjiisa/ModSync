@@ -2,12 +2,12 @@
 #
 # Local build (any Linux with flatpak + flatpak-builder):
 #   flatpak install -y flathub org.kde.Platform//6.11 org.kde.Sdk//6.11 io.qt.PySide.BaseApp//6.11
-#   flatpak-builder --user --install --force-clean \
-#       /tmp/modsync-flatpak-build packaging/flatpak/io.github.skjiisa.ModSync.yaml
+#   scripts/build_flatpak.sh
 #   flatpak run io.github.skjiisa.ModSync
 #
-# Keep the build dir OUTSIDE the source tree (/tmp above) so the `dir` source
-# below doesn't recurse into it.
+# The script runs flatpak-builder from ~/.cache/modsync-flatpak, so the build
+# dir stays outside the source tree (the `dir` source below would copy it into
+# itself) and every checkout shares one module cache. README.md has the details.
 #
 # The build is fully offline: every Python wheel is
 # pinned by URL + sha256 in python3-modules.yaml / python3-hatchling.yaml
@@ -70,19 +70,26 @@ cleanup:
   - '*.a'
   - '*.la'
 
-# `cleanup:` only covers files our own modules installed; what the BaseApp
-# pre-populated has to be removed by hand.
-cleanup-commands:
-  - /app/cleanup-BaseApp.sh
-  # The shiboken/LLVM toolchain for compiling bindings, which ModSync never does.
-  - rm -rf /app/bin/shiboken6* /app/lib/libLLVM* /app/lib/libclang* /app/lib/python*/site-packages/shiboken6_generator* /app/mkspecs /app/include
-  # PySide6 modules ModSync doesn't import (Qt3D, QtMultimedia, QtQuick, ...).
-  - cd /app/lib/python*/site-packages/PySide6 && for m in Qt*.abi3.so; do case "$m" in QtCore.*|QtGui.*|QtWidgets.*) ;; *) rm -f "$m" "${m%.abi3.so}.pyi" ;; esac; done
-  # Qt developer tools (designer, qml*, lupdate, ...), binding-generator inputs
-  # and the private ffmpeg copy that only QtMultimedia used.
-  - cd /app/lib/python*/site-packages/PySide6 && rm -rf Qt assistant balsam balsamui designer lrelease lupdate qmlformat qmllint qmlls qsb include glue typesystems
-
 modules:
+  # --- Trim the BaseApp, first ---------------------------------------------------
+  # io.qt.PySide.BaseApp is about 1 GB and ModSync ships about a tenth of it.
+  # flatpak-builder scans and commits all of /app after every module, so the
+  # trimming is the first module and not `cleanup-commands`. Each later module
+  # then handles 100 MB instead of 1 GB. flatpak-builder caches the result
+  # like any other module, so a rebuild after a source change skips it.
+  - name: baseapp-trim
+    buildsystem: simple
+    build-commands:
+      # The BaseApp's own script, steered by BASEAPP_* in build-options.
+      - /app/cleanup-BaseApp.sh
+      # The shiboken/LLVM toolchain for compiling bindings, which ModSync never does.
+      - rm -rf /app/bin/shiboken6* /app/lib/libLLVM* /app/lib/libclang* /app/lib/python*/site-packages/shiboken6_generator* /app/mkspecs /app/include
+      # PySide6 modules ModSync doesn't import (Qt3D, QtMultimedia, QtQuick, ...).
+      - cd /app/lib/python*/site-packages/PySide6 && for m in Qt*.abi3.so; do case "$m" in QtCore.*|QtGui.*|QtWidgets.*) ;; *) rm -f "$m" "${m%.abi3.so}.pyi" ;; esac; done
+      # Qt developer tools (designer, qml*, lupdate, ...), binding-generator inputs
+      # and the private ffmpeg copy that only QtMultimedia used.
+      - cd /app/lib/python*/site-packages/PySide6 && rm -rf Qt assistant balsam balsamui designer lrelease lupdate qmlformat qmllint qmlls qsb include glue typesystems
+
   # --- Bundled Syncthing (pinned static binary) --------------------------------
   - name: syncthing
     buildsystem: simple
@@ -106,6 +113,13 @@ modules:
   # modsync/downgrade/). Not yet exercised in a Flatpak build.
   - name: xdelta3
     buildsystem: autotools
+    # Only the xdelta3 program. A plain `make`, and `make install` after it,
+    # also compile the regression test and four more variants that are never
+    # installed, which takes ten times as long.
+    make-args: [xdelta3]
+    no-make-install: true
+    post-install:
+      - install -Dm755 xdelta3 /app/bin/xdelta3
     sources:
       - type: archive
         url: https://github.com/jmacd/xdelta-gpl/releases/download/v3.1.0/xdelta3-3.1.0.tar.gz
@@ -114,7 +128,7 @@ modules:
   - name: 7zip
     buildsystem: simple
     build-commands:
-      - make -C CPP/7zip/Bundles/Alone2 -f makefile.gcc
+      - make -j${FLATPAK_BUILDER_N_JOBS} -C CPP/7zip/Bundles/Alone2 -f makefile.gcc
       - install -Dm755 CPP/7zip/Bundles/Alone2/_o/7zz /app/bin/7zz
     sources:
       - type: archive
@@ -153,3 +167,5 @@ modules:
           - .git
           - .venv
           - scratch
+          # Agent worktrees, each a full copy of the repository.
+          - .claude
