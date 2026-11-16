@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import socket
 import threading
+from dataclasses import dataclass, field
 from functools import partial
+from pathlib import Path
 
 import shiboken6
 
@@ -61,8 +63,7 @@ def _folder_words(fs: folders.FolderStatus) -> tuple[str, str, str]:
     if fs.conflicts:
         n = fs.conflicts
         return (f"{n} conflict{'' if n == 1 else 's'}", "warn",
-                f"{'A file' if n == 1 else f'{n} files'} changed on two machines. The newer version is in use, "
-                "and the other is kept next to it.")
+                f"{'A file' if n == 1 else f'{n} files'} changed on two machines. Choose which version to keep.")
     state = fs.state
     if state is None:
         return "Starting", "off", where
@@ -79,6 +80,24 @@ def _folder_words(fs: folders.FolderStatus) -> tuple[str, str, str]:
             return "Up to date", "ok", where
         return f"{pct}% here", "off", "The rest arrives once a machine that has it is online."
     return state.capitalize(), "off", where
+
+
+def _game_conflicts(statuses: list[folders.FolderStatus]) -> int:
+    """Conflicts waiting in the games' folders used here (a kept copy's are
+    settled by the machines that play)."""
+    return sum(fs.conflicts for fs in statuses if not fs.held)
+
+
+@dataclass
+class _NextConflict:
+    """What the review asks about next: a group of conflicts in the MO2
+    instance (``spec`` None) or one in a game's folder, how each differs, and
+    how many wait in all."""
+    total: int = 0
+    spec: folders.FolderSpec | None = None
+    root: str = ""
+    group: list = field(default_factory=list)
+    differences: list[list[str]] = field(default_factory=list)
 
 
 def _validate_code(text: str) -> str | None:
@@ -387,6 +406,8 @@ class SyncPage(Page):
             return self.resume_tile or self.pair_tile
         if self.service.state.has_instance:
             return getattr(self, "use_kept", None) or self.share
+        if self.conflicts_tile.isVisibleTo(self):
+            return self.conflicts_tile
         return self.pair_tile if self.service.state.syncs_anything else self.join_tile
 
     # --- pairing without a vault ------------------------------------------------------
@@ -424,7 +445,8 @@ class SyncPage(Page):
                               + "Enter the PIN it shows, or paste its code.", "devices", chevron=True)
         self.join_tile.clicked.connect(self.toggle_pair_join)
         self.hold_tile = self._hold_tile()
-        tiles = [self.pair_tile, self.code_tile, self.join_tile, self.hold_tile]
+        self.conflicts_tile = self._conflicts_tile("primary")
+        tiles = [self.conflicts_tile, self.pair_tile, self.code_tile, self.join_tile, self.hold_tile]
         if not state.has_instance:
             self.choose_first = Tile("Sync Skyrim's Mod Organizer 2", "Pick or install MO2 first, then share it "
                                      "from here.", "box", size="compact", chevron=True)
@@ -455,8 +477,10 @@ class SyncPage(Page):
         self.pair_tile.setVisible(hosts)
         self.code_tile.setVisible(hosts)
         self.ui_tile.setVisible(st.active)
-        self.pair_tile.set_role("primary" if hosts and not st.has_instance else "normal")
-        self.join_tile.set_role("primary" if not hosts and not st.has_instance else "normal")
+        # One blue action: reviewing conflicts while any wait.
+        waiting = self.conflicts_tile.isVisibleTo(self)
+        self.pair_tile.set_role("primary" if hosts and not st.has_instance and not waiting else "normal")
+        self.join_tile.set_role("primary" if not hosts and not st.has_instance and not waiting else "normal")
         if hosts and not self._code_requested:
             self._code_requested = True
             self._load_code()
@@ -480,6 +504,8 @@ class SyncPage(Page):
     def _on_machine_status(self, status: SyncStatus) -> None:
         if not shiboken6.isValid(self) or self.live:
             return
+        self._show_conflicts(0, _game_conflicts(status.game_folders))
+        self._update_machine()
         self._show_games(status.game_folders)
         self._show_devices(status.devices)
         self._show_hold()
@@ -527,16 +553,29 @@ class SyncPage(Page):
             if row is None:
                 row = StatusRow(fs.spec.label.removesuffix(" (ModSync)"), "sync")
                 row.setProperty("held", fs.held)
-                page = _folder_page(fs.spec.key)
-                if fs.held and (page is None or page == "daggerfall"):
-                    row.clicked.connect(lambda _=False, spec=fs.spec: self.stop_holding(spec))
-                elif page is not None:  # a kept copy of an MO2 game's mods: its page keeps or stops it
-                    row.clicked.connect(lambda _=False, p=page: self.host.show_game(p))
+                row.clicked.connect(lambda _=False, key=fs.spec.key: self._game_row_chosen(key))
                 self._game_rows[fs.spec.key] = row
                 self.games.addWidget(row)
+            row.setProperty("conflicts", fs.conflicts)
             row.set_state(*_folder_words(fs))
         if self.live:  # the vault's page shows them only when there are any
             self.games_panel.setVisible(bool(statuses))
+
+    def _game_row_chosen(self, key: str) -> None:
+        """A game's folder was chosen: its conflicts while any wait, else its
+        page (a kept copy: stopping it, or the page that keeps or stops it)."""
+        row = self._game_rows.get(key)
+        spec = folders.spec_for(key)
+        if row is None or spec is None:
+            return
+        if row.property("conflicts"):
+            self.review_conflicts(key)
+            return
+        page = _folder_page(key)
+        if row.property("held") and (page is None or page == "daggerfall"):
+            self.stop_holding(spec)
+        elif page is not None:
+            self.host.show_game(page)
 
     # --- copies kept for other machines --------------------------------------------
     def _hold_tile(self) -> Tile:
@@ -635,10 +674,7 @@ class SyncPage(Page):
 
         state = self.service.state
         self._built_copying = state.copying
-        self.conflicts_tile = Tile("Files changed on two machines", "", "warning",
-                                   role="normal" if state.sync_paused else "primary", chevron=True)
-        self.conflicts_tile.clicked.connect(self.review_conflicts)
-        self.conflicts_tile.setVisible(False)
+        self.conflicts_tile = self._conflicts_tile("normal" if state.sync_paused else "primary")
         right.addWidget(self.conflicts_tile)
         self.set_aside_tile = None
         if state.set_aside:
@@ -738,14 +774,10 @@ class SyncPage(Page):
         return status
 
     def on_status(self, status: SyncStatus) -> None:
-        self.conflicts_tile.setVisible(bool(status.conflicts))
+        waiting = self._show_conflicts(status.conflicts, _game_conflicts(status.game_folders))
         if self.resume_tile is None and not self._built_copying:
             # One blue action: reviewing conflicts while any wait, pairing otherwise.
-            self.pair_tile.set_role("normal" if status.conflicts else "primary")
-        if status.conflicts:
-            n = status.conflicts
-            self.conflicts_tile.setText(f"{n} file{' was' if n == 1 else 's were'} changed on two machines")
-            self.conflicts_tile.set_description("MO2 uses the newer version of each. Choose which to keep.")
+            self.pair_tile.set_role("normal" if waiting else "primary")
         self._show_devices(status.devices)
         self._show_games(status.game_folders)
         self._show_hold()  # 'modsync sync hold' may have changed it meanwhile
@@ -992,25 +1024,57 @@ class SyncPage(Page):
             chosen, default="cancel")
 
     # --- review: conflicts and set-aside files ---
-    def review_conflicts(self) -> None:
-        worker.run_async(self._find_next_conflict, on_done=self._next_conflict,
+    def _conflicts_tile(self, role: str) -> Tile:
+        tile = Tile("Files changed on two machines", "", "warning", role=role, chevron=True)
+        tile.clicked.connect(lambda _=False: self.review_conflicts())
+        tile.setVisible(False)
+        return tile
+
+    def _show_conflicts(self, mo2: int, games: int) -> bool:
+        """Offer the review while conflicts wait, in the MO2 instance or the
+        games' folders. Returns whether any do."""
+        n = mo2 + games
+        self.conflicts_tile.setVisible(bool(n))
+        if n:
+            self.conflicts_tile.setText(f"{n} file{' was' if n == 1 else 's were'} changed on two machines")
+            self.conflicts_tile.set_description(
+                "MO2 uses the newer version of each. Choose which to keep." if not games else
+                "One version of each is in use. Choose which to keep.")
+        return bool(n)
+
+    def review_conflicts(self, first: str | None = None) -> None:
+        """Ask about each conflict in turn: the ones in the game folder
+        ``first`` (a key) first, then the MO2 instance's, then the other games'."""
+        worker.run_async(self._find_next_conflict, first, on_done=lambda r: self._next_conflict(r, first),
                          on_failed=lambda m: self.host.notify(f"⚠ {m}"))
 
-    def _find_next_conflict(self) -> tuple[list, list, list[list[str]]]:
+    def _find_next_conflict(self, first: str | None = None) -> _NextConflict:
         """Off the GUI thread: the walk, and reading both versions to describe
         them, which for a download can mean gigabytes."""
         found = self.service.conflicts()
-        group = conflicts.related(found, found[0]) if found else []
-        return found, group, [conflicts.differences(g) for g in group]
+        games = sorted(self.service.game_conflicts(), key=lambda sc: sc[0].key != first)  # stable
+        nxt = _NextConflict(total=len(found) + len(games))
+        if games and (games[0][0].key == first or not found):
+            nxt.spec, c = games[0]
+            nxt.root = self.service.state.game_folders.get(nxt.spec.key, "")
+            nxt.group = [c]
+        elif found:
+            nxt.root = self.service.state.instance_path or ""
+            nxt.group = conflicts.related(found, found[0])
+        nxt.differences = [conflicts.differences(g) for g in nxt.group]
+        return nxt
 
-    def _next_conflict(self, result: tuple[list, list, list[list[str]]]) -> None:
+    def _next_conflict(self, nxt: _NextConflict, first: str | None = None) -> None:
         if not shiboken6.isValid(self):
             return
-        found, group, differences = result
-        if not found:
+        if not nxt.group:
             self.host.notify("No conflicts left.", "ok")
             self.refresh()
             return
+        if nxt.spec is not None:
+            self._ask_game_conflict(nxt, first)
+            return
+        group, differences = nxt.group, nxt.differences
         c = group[0]
         instance = self.service.state.instance_path or ""
         # Which machine made either change isn't known (see modsync.sync.conflicts).
@@ -1031,7 +1095,7 @@ class SyncPage(Page):
         for g, described in zip(group, differences):
             lines = "\n".join(f"•  {line}" for line in described)
             details.append(lines if len(group) == 1 else f"{g.original.name}:\n{lines}")
-        rest = len(found) - len(group)
+        rest = nxt.total - len(group)
         more = f"\n\n{rest} more after this." if rest else ""
         text = (f"{intro} MO2 uses the version in use; the other version{when} is kept next to it."
                 f"\n\n" + "\n\n".join(details) + more)
@@ -1051,6 +1115,40 @@ class SyncPage(Page):
               "primary", "check"),
              ("other", f"Use the other {files}", "The one in use goes to .modsync-conflicts in the "
               "instance. Close MO2 first.", "normal", "undo"),
+             ("later", "Decide later", "", "normal", "close")],
+            chosen, default="current")
+
+    def _ask_game_conflict(self, nxt: _NextConflict, first: str | None) -> None:
+        """Keep one version of a file in a game's folder, whole."""
+        spec, c = nxt.spec, nxt.group[0]
+        rel = c.relative(nxt.root)
+        game = spec.label.removesuffix(" (ModSync)")
+        named = spec.name_of(rel)
+        title = named or rel
+        intro = (f"{named} changed on two machines before they synced." if named else
+                 f"{rel} in {game} changed on two machines before they synced.")
+        changed = c.changed
+        when = f", last changed {changed.day} {changed:%b %H:%M}," if changed else ""
+        lines = "\n".join(f"•  {line}" for line in nxt.differences[0])
+        rest = nxt.total - 1
+        more = f"\n\n{rest} more after this." if rest else ""
+        text = (f"{intro} The game uses the version in use; the other version{when} is kept next to it."
+                f"\n\n{lines}{more}")
+        where = _short(Path(nxt.root) / conflicts.ARCHIVE_DIR)
+
+        def chosen(key: str | None) -> None:
+            if key not in ("current", "other"):
+                self.refresh()
+                return
+            worker.run_async(self.service.resolve_game_conflict, spec.key, c, key,
+                             on_done=lambda _: self.review_conflicts(first),
+                             on_failed=lambda m: self.host.notify(f"⚠ {m}"))
+
+        self.host.confirm(
+            title, text,
+            [("current", "Keep the version in use", f"The other goes to {where}.", "primary", "check"),
+             ("other", "Use the other version", f"The one in use goes to {where}. Close the game first.",
+              "normal", "undo"),
              ("later", "Decide later", "", "normal", "close")],
             chosen, default="current")
 

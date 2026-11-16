@@ -853,11 +853,14 @@ saves stay on each machine.
 
 If two machines change the load order, a mod's settings or the key bindings
 before they sync,
-Syncthing keeps the newer file and sets the other aside. `modsync sync
-conflicts` lists those files under names like
-`dfu-mods:PortableAppdata/Mods/GameData/Mods.json`. To settle one, close DFU
-and run `modsync sync conflicts keep current|other <name>`. The version not
-kept goes to `.modsync-conflicts` in the install.
+Syncthing keeps the newer file and sets the other aside. The Sync page
+counts them on the Daggerfall Unity mods row and the "changed on two
+machines" tile; choosing either asks about each in turn, saying what
+differs, and you keep the version in use or the other one. Close DFU before
+using the other one. `modsync sync conflicts` lists the same files under
+names like `dfu-mods:PortableAppdata/Mods/GameData/Mods.json`, and
+`modsync sync conflicts keep current|other <name>` settles one. The version
+not kept goes to `.modsync-conflicts` in the install.
 
 A mod file itself (`.dfmod`) changed on two machines is settled
 automatically. DFU loads every `.dfmod` it finds, so the other version could
@@ -978,8 +981,9 @@ while DFU is closed: when it checks sync status, before Play in ModSync,
 and around Play in Steam. Bindings are compared by what they bind, so DFU
 rewriting the file changes nothing. If they changed on two machines before
 syncing, the synced copy stays in use and this machine's version waits
-beside it as a conflict, which `modsync sync conflicts` describes by the
-actions that differ, settled like the load order's (above). The backup
+beside it as a conflict, described by the actions that differ and settled
+like the load order's (above). The version kept reaches `KeyBinds.txt` at
+once. The backup
 stays on this machine. The names are those of an Xbox-layout controller, as
 Steam Input presents any controller to a game it starts, the Deck's own
 controls included. If Steam gives Daggerfall a keyboard-and-mouse layout,

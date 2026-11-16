@@ -1393,10 +1393,18 @@ class ModSyncService:
             spec = folders.spec_for(key)
             if spec is None or not spec.content or folders.stopping(key, st):
                 continue
-            if spec.tidy is not None:
-                spec.tidy(Path(path))  # what the game must never see goes first
+            self._tidy_game_folder(spec, Path(path))  # what the game must never see goes first
             found += [(spec, c) for c in conflicts.find(path, spec.content)]
         return found
+
+    @staticmethod
+    def _tidy_game_folder(spec: folders.FolderSpec, root: Path) -> None:
+        if spec.tidy is None:
+            return
+        try:
+            spec.tidy(root)
+        except Exception as exc:  # the conflicts are still there to choose from
+            log.warning("could not tidy %s: %s", spec.folder_id, exc)
 
     def resolve_game_conflict(self, key: str, conflict: conflicts.Conflict, keep: str) -> Path:
         """Keep one version of a file in a game's folder, whole. The other goes
@@ -1420,6 +1428,9 @@ class ModSyncService:
             raise
         log.info("conflict on %s in %s: kept the %s version, the other is in %s",
                  conflict.relative(root), key, keep, archive)
+        # The version kept reaches what the game reads now (DFU's own key bindings),
+        # not at the next look.
+        self._tidy_game_folder(spec, root)
         return archive
 
     # --- LAN pairing (no code typing) ---

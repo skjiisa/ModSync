@@ -59,6 +59,9 @@ class FolderSpec:
     # The synced paths, relative to the folder: where conflict copies can turn
     # up, and what a move to another place carries over.
     content: tuple[str, ...] = ()
+    # What to call a synced file (by its path in ``content``) when asking which
+    # version to keep, where its name alone wouldn't say.
+    names: tuple[tuple[str, str], ...] = ()
     on_share: Callable[[Path], None] | None = None  # run on the machine that starts a new shared folder
     in_use: Callable[[], bool] | None = None  # the game is running: settling a conflict waits
     tidy: Callable[[Path], object] | None = None  # run on the folder whenever its status is read
@@ -70,6 +73,10 @@ class FolderSpec:
     @property
     def folder_id(self) -> str:
         return FOLDER_PREFIX + self.key
+
+    def name_of(self, rel: str) -> str | None:
+        """What ``names`` calls the synced file at ``rel``, if anything."""
+        return dict(self.names).get(rel)
 
     def stignore_text(self) -> str:
         return "\n".join(self.ignore) + "\n"

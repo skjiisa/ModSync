@@ -781,6 +781,8 @@ MODS_FOLDER = FolderSpec(
         "/*",
     ),
     content=(*SYNCED_DIRS, SHARED_KEYBINDS, VAULT_RECORD),
+    names=((SHARED_KEYBINDS, "Daggerfall Unity's key bindings"),
+           (VAULT_RECORD, "The Daggerfall Unity version the mods are for")),
     on_share=_record_vault_version,
     in_use=lambda: is_running(),  # looked up when asked, so tests and callers see the live check
     tidy=lambda root: (set_aside_mod_copies(root), sync_keybinds(Install(root))),
