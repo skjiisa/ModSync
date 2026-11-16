@@ -6,6 +6,19 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.1.0-beta2] - 2026-11-16
+
+More games join Skyrim and Daggerfall Unity. ModSync runs Mod Organizer 2
+for any game MO2-LINT knows, in Steam or the Heroic Games Launcher, starting
+with Cyberpunk 2077 from GOG, and syncs each game's mods. A machine can keep
+the games it doesn't run, Skyrim's mods included, so machines that are rarely
+on at the same time still sync. Steam's Play counts down before starting
+any game ModSync runs, Nexus Mods downloads reach each game's MO2, and the
+background service is lighter, pauses while a game runs and shows a tray
+icon.
+Daggerfall Unity now plays on the Steam Frame. The Steam Deck and Frame
+passes for the rest are still to come (#151).
+
 ### Added
 
 - Daggerfall Unity's Home has a Skip startup screen row. On, DFU goes
