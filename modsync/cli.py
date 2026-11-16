@@ -1661,7 +1661,9 @@ def _launch_hub(args: list[str]) -> int:
             return _managed_hub(managed, handoff, note)
         if appid == DAGGERFALL.appid:
             # The hook runs Daggerfall Unity itself once this says to continue.
-            return launchhook.EXIT_CONTINUE if straight else _hub_window(appid, through, handoff, "")
+            # Play pressed in ModSync left a note: decided already.
+            decided = _request(DAGGERFALL) is not None
+            return launchhook.EXIT_CONTINUE if straight or decided else _hub_window(appid, through, handoff, "")
         opened, reason = _open_for_download(appid, handoff)
         if opened:
             return launchhook.EXIT_CONTINUE
@@ -1688,14 +1690,19 @@ def _managed_request(mg) -> str | None:
     """What ModSync left for this launch of a game from the table (its own
     Play or Open MO2, or a Nexus download's link), taken once; None for a
     plain Play in Steam."""
+    return _request(mg.game)
+
+
+def _request(game) -> str | None:
+    """What ModSync left for this Steam launch of ``game``, taken once."""
     import logging
 
     from modsync.mo2 import steam_downloads
 
     try:
-        return steam_downloads.take_request(mg.game)
+        return steam_downloads.take_request(game)
     except Exception:  # noqa: BLE001 — a note it can't read is no reason to keep the game from starting
-        logging.getLogger(__name__).exception("Steam launch: couldn't read the note ModSync left for %s", mg.name)
+        logging.getLogger(__name__).exception("Steam launch: couldn't read the note ModSync left for %s", game.name)
         return None
 
 

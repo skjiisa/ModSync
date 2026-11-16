@@ -473,6 +473,12 @@ def test_daggerfalls_play_opens_the_window_unless_set_to_play_right_away(machine
     args = ["--appid", str(DAGGERFALL.appid), "--through", "proton_experimental"]
     with patch.object(cli, "_hub_window", return_value=10) as window:
         assert cli._launch_hub(args) == 10  # Cancel launch in the window
+        # Play pressed in ModSync leaves a note first:
+        path = steam_downloads.note_path(DAGGERFALL)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(downloads.PLAY + "\n")
+        assert cli._launch_hub(args) == launchhook.EXIT_CONTINUE  # decided already: no second window
+        assert not path.exists()
         launchhook.set_play_mode("play")
         assert cli._launch_hub(args) == launchhook.EXIT_CONTINUE  # the hook starts DFU
     window.assert_called_once()

@@ -1036,10 +1036,15 @@ def launch(inst: Install) -> str:
         log.warning("could not point Daggerfall Unity at Steam's data: %s", exc)
     st = hook_status()
     if st.enabled and st.native == str(inst.executable):
-        result = background.run_host(["xdg-open", f"steam://rungameid/{DAGGERFALL_APPID}"], timeout=15)
-        if result.returncode == 0:
+        from modsync.games import DAGGERFALL
+        from modsync.mo2 import downloads, steam_downloads
+
+        try:
+            # The note tells the hub Play was pressed here already: no window, no countdown.
+            steam_downloads.ask_steam(DAGGERFALL, downloads.PLAY)
             return "Starting Daggerfall Unity through Steam."
-        log.warning("xdg-open steam:// failed (%s); starting DFU directly", result.returncode)
+        except RuntimeError as exc:
+            log.warning("%s; starting DFU directly", exc)
     cmd = [str(inst.executable)]
     extra_env = {}
     if needs_emulation(inst.executable):
