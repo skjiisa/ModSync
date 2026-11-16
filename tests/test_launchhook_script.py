@@ -298,8 +298,9 @@ class RenderedScript(unittest.TestCase):
 
 @unittest.skipIf(shutil.which("bash") is None, "bash required")
 class NativeProgramScript(unittest.TestCase):
-    """Daggerfall's hook: Play execs Daggerfall Unity on the host and opens no
-    window; anything else, or the original game asked for, goes to Proton."""
+    """Daggerfall's hook: Play asks the ModSync hub first (which may count
+    down or wait), then execs Daggerfall Unity on the host; anything else, or
+    the original game asked for, goes to Proton."""
 
     run_hook = RenderedScript.run_hook
     record = RenderedScript.record
@@ -328,7 +329,8 @@ class NativeProgramScript(unittest.TestCase):
         self.assertEqual(dfu["argv"], [])  # DOSBox's arguments mean nothing to it
         self.assertEqual(dfu["cwd"], str(self.dfu.parent))
         self.assertEqual(dfu["env"]["LD_PRELOAD"], "/fake/gameoverlayrenderer.so")  # Steam's overlay
-        self.assertEqual(self.record("modsync-cmd")["argv"][:3], ["dfu", "follow", "--quiet"])  # no window, no hub
+        self.assertEqual(self.record("modsync-cmd")["argv"][:3], ["dfu", "follow", "--quiet"])  # after the hub
+        self.assertIn("opening the hub", self.log())
         self.assertIsNone(self.record("SteamLinuxRuntime_4"))
 
     def test_play_has_modsync_check_dfus_data_against_the_copy_steam_starts(self):
@@ -371,22 +373,38 @@ echo "dfu preload=${{LD_PRELOAD-}} cwd=$PWD" >> "{calls}"
 exit 3
 """)
         installed = str(self.tmp / "The Elder Scrolls Daggerfall")
-        follow = f"modsync dfu follow --quiet --from {installed} preload="  # no overlay in ModSync
+        hub = "modsync launch hub --appid 1812390 --through proton_experimental preload="  # no overlay in ModSync
+        follow = f"modsync dfu follow --quiet --from {installed} preload="
         steam = {"STEAM_COMPAT_INSTALL_PATH": installed}
         result = self.run_hook("waitforexitandrun", self.dosbox, extra_env=steam)
         self.assertEqual(result.returncode, 3, result.stderr)  # exec'd: DFU's own exit code
         self.assertEqual(calls.read_text().splitlines(),
-                         [follow, f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}"])
+                         [hub, follow, f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}"])
         calls.unlink()
         (self.dfu.parent / ".modsync-saves").touch()
         result = self.run_hook("waitforexitandrun", self.dosbox, extra_env=steam)
         self.assertEqual(result.returncode, 3, result.stderr)  # DFU's own exit code
         self.assertEqual(calls.read_text().splitlines(), [
+            hub,
             follow,
             "modsync dfu saves --quiet --playing preload=",
             f"dfu preload=/fake/gameoverlayrenderer.so cwd={self.dfu.parent}",
             "modsync dfu saves --quiet --playing preload=",
         ])
+
+    def test_cancel_in_the_hub_ends_the_launch(self):
+        for code in (10, 3):  # Cancel launch, or a setup from a newer ModSync
+            fakesteam._executable(self.modsync_dir / "modsync", f"#!/usr/bin/env bash\nexit {code}\n")
+            result = self.run_hook("waitforexitandrun", self.dosbox)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIsNone(self.record("Daggerfall Unity"))
+            self.assertIsNone(self.record("SteamLinuxRuntime_4"))  # nor the original game
+
+    def test_the_hub_runs_once_per_launch(self):
+        result = self.run_hook("waitforexitandrun", self.dosbox, extra_env={"MODSYNC_LAUNCH_HUB": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(self.record("Daggerfall Unity"))
+        self.assertNotIn("opening the hub", self.log())
 
     def test_a_failing_saves_sync_never_blocks_the_game(self):
         calls = self.tmp / "calls.log"
@@ -430,7 +448,7 @@ exit 3
         self.assertEqual(fex["env"]["STEAM_COMPAT_DATA_PATH"], str(self.tmp / "compatdata"))  # Steam's, kept
         self.assertEqual(fex["env"]["STEAM_COMPAT_TOOL_PATHS"], f"{self.fex_dir}:{slr}")
         self.assertIsNone(self.record("SteamLinuxRuntime_4"))  # FEX starts it, not the hook
-        self.assertEqual(self.record("modsync-cmd")["argv"][:3], ["dfu", "follow", "--quiet"])  # no window, no hub
+        self.assertEqual(self.record("modsync-cmd")["argv"][:3], ["dfu", "follow", "--quiet"])  # after the hub
 
     def test_on_arm_saves_sync_around_it_too(self):
         (self.dfu.parent / ".modsync-saves").touch()

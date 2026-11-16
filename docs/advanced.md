@@ -697,6 +697,10 @@ always, with "Cancel launch" below them. Play has focus, so A or Enter plays.
 What happens next is up to "When you press Play in Steam" under Settings (or
 `modsync launch mode`):
 
+The setting is for every game the hook is on for: Skyrim, Daggerfall Unity
+(see "Daggerfall Unity") and the games from MO2-LINT's list (see "Other
+games"). For Skyrim:
+
 - **Count down** (the default): once Home has checked the game, MO2 and
   sync and nothing needs a decision, a countdown opens over Home and Skyrim
   starts after five seconds. Pressing anything else first (a button,
@@ -756,8 +760,10 @@ terminal.
    the folder must be new or empty.
 3. `modsync dfu hook enable` makes Steam's own Play button on Daggerfall
    start Daggerfall Unity, also in Gaming Mode. It uses the same launch hook
-   as Skyrim (see "How the launch hook works"), but opens no ModSync window
-   first. When Steam is running, the switch waits until Steam closes.
+   as Skyrim (see "How the launch hook works"). ModSync's window opens first
+   only to count down or wait, as "When you press Play in Steam" is set; set
+   to play right away, DFU starts with no window. When Steam is running, the
+   switch waits until Steam closes.
 
 ModSync adds two things to the install:
 
@@ -1084,10 +1090,16 @@ the program MO2-LINT names for the game, through MO2.
 ### Steam's Play button
 
 `hook enable` installs the same launch hook Skyrim uses, under the game's own
-name in Steam's compatibility tools (`modsync_<appid>_proton`). For these
-games the hook opens no window. `modsync launch hub` hands MO2's Play
-straight back, and Steam runs it as the game's launch, so Steam tracks the
-session and syncs Steam Cloud saves when it ends. Steam only reads the
+name in Steam's compatibility tools (`modsync_<appid>_proton`). Pressing Play
+in Steam opens ModSync on the game's page, with "Cancel launch" under Play and
+Open Mod Organizer 2, and counts down or waits as "When you press Play in
+Steam" is set, the same as for Skyrim. The countdown waits while the page
+asks for something first: Mod Organizer 2 to finish setting up or to look at,
+or a game version the mods weren't made for. Set to play right away,
+`modsync launch hub` hands MO2's Play straight back with no window. Either
+way Steam runs MO2's launch as the game's own, so Steam tracks the session
+and syncs Steam Cloud saves when it ends. Before MO2 is installed for the
+game, Play starts the game as Steam had it, with no window. Steam only reads the
 setting while it starts, so with Steam running the change waits until Steam
 closes, as it does for Skyrim.
 
@@ -1220,6 +1232,9 @@ program, so the game stays Heroic's launch: Heroic tracks it and syncs GOG
 cloud saves when it exits. MO2-LINT's "Launch Mod Organizer" option in
 Heroic opens MO2 instead of playing. Setting `MODSYNC_ORIGINAL_GAME=1` under
 the game's environment variables in Heroic starts the game as before.
+Heroic's Play never opens ModSync's window, so it doesn't count down
+whatever "When you press Play in Steam" is set to: the hook can't reach
+ModSync from inside Heroic's Flatpak (see below).
 
 The game's program is the first `.exe` inside the game's folder in the
 command line; a launch without one runs as it was. MO2's executable for the

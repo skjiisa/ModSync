@@ -1648,45 +1648,82 @@ def _launch_hub(args: list[str]) -> int:
     os.dup2(2, 1)
     with handoff:
         from modsync import mo2games
+        from modsync.games import DAGGERFALL
 
+        # Steam's Play set to play right away goes on without the window; a
+        # test that decides by itself needs the window to decide in.
+        straight = launchhook.play_mode() == "play" and not os.environ.get("MODSYNC_HUB_AUTO_DECISION")
         managed = mo2games.for_steam(appid)
         if managed is not None:
-            return _managed_hub(managed, handoff)
+            note = _managed_request(managed)
+            if note is None and not straight and _has_instance(managed):
+                return _hub_window(appid, through, handoff, "")
+            return _managed_hub(managed, handoff, note)
+        if appid == DAGGERFALL.appid:
+            # The hook runs Daggerfall Unity itself once this says to continue.
+            return launchhook.EXIT_CONTINUE if straight else _hub_window(appid, through, handoff, "")
         opened, reason = _open_for_download(appid, handoff)
         if opened:
             return launchhook.EXIT_CONTINUE
-        if not reason and launchhook.play_mode() == "play" and not os.environ.get("MODSYNC_HUB_AUTO_DECISION"):
+        if not reason and straight:
             played, reason = _play_without_window(handoff)
             if played:
                 return launchhook.EXIT_CONTINUE
-        try:
-            from modsync.ui.app import run_hub
-        except ImportError as exc:
-            print(f"ModSync window unavailable (PySide6 missing: {exc}); continuing the launch.")
-            return launchhook.EXIT_CONTINUE
-        return run_hub(appid=appid, through=through, handoff=handoff, reason=reason)
+        return _hub_window(appid, through, handoff, reason)
 
 
-def _managed_hub(mg, handoff) -> int:
+def _hub_window(appid: int | None, through: str | None, handoff, reason: str) -> int:
+    """The window, with Steam's launch waiting on it."""
+    from modsync import launchhook
+
+    try:
+        from modsync.ui.app import run_hub
+    except ImportError as exc:
+        print(f"ModSync window unavailable (PySide6 missing: {exc}); continuing the launch.")
+        return launchhook.EXIT_CONTINUE
+    return run_hub(appid=appid, through=through, handoff=handoff, reason=reason)
+
+
+def _managed_request(mg) -> str | None:
+    """What ModSync left for this launch of a game from the table (its own
+    Play or Open MO2, or a Nexus download's link), taken once; None for a
+    plain Play in Steam."""
+    import logging
+
+    from modsync.mo2 import steam_downloads
+
+    try:
+        return steam_downloads.take_request(mg.game)
+    except Exception:  # noqa: BLE001 — a note it can't read is no reason to keep the game from starting
+        logging.getLogger(__name__).exception("Steam launch: couldn't read the note ModSync left for %s", mg.name)
+        return None
+
+
+def _has_instance(mg) -> bool:
+    """Whether a plain Play has anything for the window to count down to:
+    with no MO2 instance, the launch goes on as Steam had it."""
+    try:
+        return mg.steam_instance() is not None
+    except Exception:  # noqa: BLE001 — without the window, as before: the game still starts
+        return False
+
+
+def _managed_hub(mg, handoff, note: str | None) -> int:
     """Steam's launch of a game from the table (modsync.mo2games): hand the
-    hook MO2's launch, without a window. A note ModSync left says which one
-    (a Nexus download's link, or its own Play or Open MO2); a plain Play in
-    Steam plays through MO2. With no MO2 instance for the game, or when MO2's
-    launch can't be worked out, the launch goes on as Steam had it: ModSync
-    never keeps a game from starting. The user hears why."""
+    hook MO2's launch, without a window. ``note``, what ModSync left, says
+    which one (a Nexus download's link, or its own Play or Open MO2); a plain
+    Play in Steam, set to play right away, plays through MO2. With no MO2
+    instance for the game, or when MO2's launch can't be worked out, the
+    launch goes on as Steam had it: ModSync never keeps a game from
+    starting. The user hears why."""
     import logging
 
     from modsync import launchhook, nxm
     from modsync.logging_setup import configure
-    from modsync.mo2 import downloads, steam_downloads
+    from modsync.mo2 import downloads
 
     configure("hub", ["launch", "hub", f"--appid={mg.game.appid}"])
     log = logging.getLogger(__name__)
-    try:
-        note = steam_downloads.take_request(mg.game)
-    except Exception:  # noqa: BLE001 — a note it can't read is no reason to keep the game from starting
-        log.exception("Steam launch: couldn't read the note ModSync left for %s", mg.name)
-        note = None
     try:
         if note is None and mg.steam_instance() is None:
             log.info("Steam launch: no MO2 instance for %s; continuing as Steam had it", mg.name)

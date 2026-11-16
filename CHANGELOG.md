@@ -187,6 +187,14 @@ All notable changes to ModSync are documented here. The format follows
 
 ### Changed
 
+- Steam's Play counts down for Daggerfall Unity and the games from MO2-LINT's
+  list too, as it does for Skyrim. It opens ModSync on the game's page, with
+  Cancel launch under Play, and "When you press Play in Steam" (count down,
+  play right away, or wait for me) now applies to every game the launch
+  hook is on for. Before, those games started with no window whatever it
+  was set to. The countdown waits while the page asks for something first,
+  such as MO2 to finish setting up. Set to play right away, they start with
+  no window as before. Heroic's Play is unchanged.
 - The countdown before Steam's Play starts Skyrim is a sheet over the dimmed
   window. It shows the seconds left in large type, a bar filling up, and the
   two ways out: Stop (B, Esc, or any other button, key, click or tap) and

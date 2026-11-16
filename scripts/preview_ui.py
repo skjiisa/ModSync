@@ -137,7 +137,7 @@ def main():
         overflow = [s.horizontalScrollBar().maximum() for s in window.findChildren(QScrollArea) if s.isVisible()]
         print(f"{path}: {window.width()}×{window.height()}, horizontal overflow={overflow}")
         if name.startswith(("home", "launch")):
-            vertical = window.pages["home"].area.verticalScrollBar().maximum()
+            vertical = window.page.area.verticalScrollBar().maximum()  # the Home shown: the game's
             print(f"  Home vertical overflow={vertical}")
             if width == 1280 and vertical:
                 raise RuntimeError(f"Home needs scrolling on the Steam Deck: {name}")
@@ -230,6 +230,14 @@ def main():
                 dw.close()
                 router._pad_seen = False
                 router.controllersChanged.emit()
+        # Steam's Play on Daggerfall: its page, counting down.
+        with patch("modsync.dfu.overview", lambda hook=True: dfu_overview(True)), \
+                patch.object(dfu.Install, "version", property(lambda self: "1.1.1")):
+            steam = launchhook.SteamLaunch(DAGGERFALL, "proton_experimental")
+            dw = window_for(State(**configured), steam=steam, mode="gamepad")
+            capture(dw, "countdown-daggerfall")
+            steam.decision = 0
+            dw.close()
         # A game from the table, as Steam has it: Starfield, with MO2 installed for it.
         from modsync.mo2games.steam import SteamGame
 
@@ -272,6 +280,13 @@ def main():
                 tw.close()
                 router._pad_seen = False
                 router.controllersChanged.emit()
+        # Steam's Play on Starfield: its page, counting down.
+        with patch.object(starfield, "overview", lambda hook=True, machines=None: table_overview(True)):
+            steam = launchhook.SteamLaunch(starfield.game, "proton_experimental")
+            tw = window_for(State(**configured), steam=steam, mode="gamepad")
+            capture(tw, "countdown-table")
+            steam.decision = 0
+            tw.close()
         w.activateWindow()
         waiting = replace(game, expected=None, awaiting_vault_version=True)
         with patch.object(ModSyncService, "game_status", return_value=waiting):
@@ -392,9 +407,9 @@ def main():
             w = window_for(State(**configured), steam=steam, mode="gamepad")
             capture(w, "launch-countdown")
             home = w.pages["home"]  # the wait is over: what shows until the window closes
-            home._countdown.stop()
-            home._countdown_state = "starting"
-            home.cover.start()
+            home.countdown._timer.stop()
+            home.countdown.state = "starting"
+            home.countdown.cover.start()
             capture(w, "launch-starting")
             steam.decision = 0
             w.close()

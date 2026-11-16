@@ -535,7 +535,11 @@ class DaggerfallHook(LaunchHookBase):
         self.assertIsNone(launchhook.Record.load())  # Skyrim's record is a separate file
         st = launchhook.status(self.DF)
         self.assertTrue(st.enabled)
-        self.assertEqual(st.summary(), "On. Steam's Play button on The Elder Scrolls II: Daggerfall starts Daggerfall Unity.")
+        self.assertEqual(st.summary(), "On. Steam's Play button on The Elder Scrolls II: Daggerfall opens ModSync, "
+                                       "which starts Daggerfall Unity after a few seconds.")
+        launchhook.set_play_mode("play")
+        self.assertEqual(st.summary(), "On. Steam's Play button on The Elder Scrolls II: Daggerfall starts "
+                                       "Daggerfall Unity right away.")
         self.assertIn("Steam's default", launchhook.disable(self.DF))
         self.assertIsNone(self.df_mapping())
         self.assertFalse(self.df_dir.exists())

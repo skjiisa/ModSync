@@ -49,6 +49,34 @@ steam_app() {
     return 1
 }
 
+# Open the ModSync hub for this Play press and wait for it: sets rc (0
+# continues, 10 cancels) and handoff, the launch it hands back, if any.
+ask_hub() {
+    export MODSYNC_LAUNCH_HUB=1
+    local hub=("${modsync[@]}")
+    if [[ -f /.flatpak-info ]] && command -v flatpak-spawn >/dev/null 2>&1; then
+        hub=(flatpak-spawn --host "${modsync[@]}")   # Steam itself is a Flatpak
+    fi
+    log "opening the hub: ${hub[*]} launch hub --appid $appid --through $underlying_name"
+    # Steam preloads its overlay and points LD_LIBRARY_PATH at its runtime; both
+    # are for the game, not for a Qt app, and make the hub load the wrong Qt.
+    local saved_preload="${LD_PRELOAD-}" saved_libpath="${LD_LIBRARY_PATH-}" saved_audit="${LD_AUDIT-}"
+    unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT
+    # Its stdout carries the handoff (see below); everything else it says is logged.
+    local handoff_file
+    handoff_file=$(mktemp "$log_dir/handoff.XXXXXX" 2>/dev/null || mktemp 2>/dev/null) || handoff_file=/dev/null
+    "${hub[@]}" launch hub --appid "$appid" --through "$underlying_name" </dev/null >"$handoff_file" 2>>"$log_file"
+    rc=$?
+    handoff=()
+    if [[ "$handoff_file" != /dev/null ]]; then
+        mapfile -d '' -t handoff < "$handoff_file"
+        rm -f "$handoff_file"
+    fi
+    [[ -n "$saved_preload" ]] && export LD_PRELOAD="$saved_preload"
+    [[ -n "$saved_libpath" ]] && export LD_LIBRARY_PATH="$saved_libpath"
+    [[ -n "$saved_audit" ]] && export LD_AUDIT="$saved_audit"
+}
+
 verb="${1-}"
 
 # --- 0. a native program in place of the game --------------------------------
@@ -74,6 +102,18 @@ if [[ -n "$native" && "$verb" == "waitforexitandrun" ]]; then
         run=("$fex/fex-compat-tool" "$verb" -- "$slr/_v2-entry-point" "--verb=$verb" -- "$native")
     else
         log "WARNING: $native needs Steam's FEX and Steam Linux Runtime 4.0 on this $(uname -m) machine; starting the original game. Install them from the Tools in Steam's library."
+    fi
+    # The ModSync hub first, as for any other game: it may count down or wait
+    # for a choice (Steam's Play setting), and Cancel there ends the launch.
+    if (( ${#run[@]} )) && [[ -z "${MODSYNC_LAUNCH_HUB:-}" ]]; then
+        ask_hub
+        case "$rc" in
+            10) log "cancelled; ending the launch"; exit 0 ;;
+            3)  log "ModSync's setup is from a newer ModSync, so it refused (it said why); ending the launch"; exit 0 ;;
+            0)  log "continue" ;;
+            *)  log "hub exited with $rc; launching anyway" ;;
+        esac
+        (( ${#handoff[@]} )) && log "WARNING: ignoring a launch handed back for a native program"
     fi
     if (( ${#run[@]} )); then
         cd "${native%/*}" || exit 1
@@ -129,28 +169,7 @@ fi
 if [[ -z "$native" && "$verb" == "waitforexitandrun" && -n "${MODSYNC_ORIGINAL_GAME:-}" ]]; then
     log "MODSYNC_ORIGINAL_GAME is set; going on to $underlying_name without ModSync"
 elif [[ -z "$native" && "$verb" == "waitforexitandrun" && -z "${MODSYNC_LAUNCH_HUB:-}" ]]; then
-    export MODSYNC_LAUNCH_HUB=1
-    hub=("${modsync[@]}")
-    if [[ -f /.flatpak-info ]] && command -v flatpak-spawn >/dev/null 2>&1; then
-        hub=(flatpak-spawn --host "${modsync[@]}")   # Steam itself is a Flatpak
-    fi
-    log "opening the hub: ${hub[*]} launch hub --appid $appid --through $underlying_name"
-    # Steam preloads its overlay and points LD_LIBRARY_PATH at its runtime; both
-    # are for the game, not for a Qt app, and make the hub load the wrong Qt.
-    saved_preload="${LD_PRELOAD-}"; saved_libpath="${LD_LIBRARY_PATH-}"; saved_audit="${LD_AUDIT-}"
-    unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT
-    # Its stdout carries the handoff (see below); everything else it says is logged.
-    handoff_file=$(mktemp "$log_dir/handoff.XXXXXX" 2>/dev/null || mktemp 2>/dev/null) || handoff_file=/dev/null
-    "${hub[@]}" launch hub --appid "$appid" --through "$underlying_name" </dev/null >"$handoff_file" 2>>"$log_file"
-    rc=$?
-    handoff=()
-    if [[ "$handoff_file" != /dev/null ]]; then
-        mapfile -d '' -t handoff < "$handoff_file"
-        rm -f "$handoff_file"
-    fi
-    [[ -n "$saved_preload" ]] && export LD_PRELOAD="$saved_preload"
-    [[ -n "$saved_libpath" ]] && export LD_LIBRARY_PATH="$saved_libpath"
-    [[ -n "$saved_audit" ]] && export LD_AUDIT="$saved_audit"
+    ask_hub
     case "$rc" in
         0)  log "continue" ;;
         10) log "cancelled; ending the launch"; exit 0 ;;

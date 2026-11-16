@@ -28,11 +28,12 @@ import shiboken6
 from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 
-from modsync import steamos
+from modsync import launchhook, steamos
 from modsync.games import STORE_NAMES
 from modsync.mo2games import ManagedGame, Overview
 from modsync.steam import compattools
 from modsync.ui import worker
+from modsync.ui.countdown import Countdown
 from modsync.ui.input import Action
 from modsync.ui.overlays import FolderSheet
 from modsync.ui.pages import Page
@@ -163,11 +164,22 @@ class ManagedGamePage(Page):
                                  "folder", chevron=True)
         self.use_existing.clicked.connect(self._choose_existing)
         self.work = label("", "secondary")
-        for widget in (self.store_tile, self.install_tile, self.play, self.open_mo2, self.use_existing, self.work):
+        # Steam's Play on this game opened the window: Play and Open MO2 carry
+        # on with Steam's launch, Cancel launch ends it.
+        steam = host.steam_launch
+        self.steam = steam if steam is not None and steam.game.appid == mg.game.appid else None
+        self.cancel_launch = Tile("Cancel launch", "Back to Steam without starting the game.", "close",
+                                  size="compact")
+        self.cancel_launch.clicked.connect(lambda: host.decide_launch(launchhook.EXIT_CANCEL))
+        for widget in (self.store_tile, self.install_tile, self.play, self.open_mo2, self.cancel_launch,
+                       self.use_existing, self.work):
             right.addWidget(widget)
             widget.hide()
+        self.cancel_launch.setVisible(self.steam is not None)
         right.addStretch(1)
         self.finish_layout()
+        self.countdown = Countdown(self, mg.game, mg.name, play=self.play, ready=self._can_count_down,
+                                   start=self.steam_play, detail=lambda: self.play.description)
         host.busyChanged.connect(self._update_enabled)
 
     def showEvent(self, event) -> None:  # noqa: N802
@@ -217,6 +229,8 @@ class ManagedGamePage(Page):
         return [([Action.ALT], "Check again")]
 
     def handle_action(self, action: Action) -> bool:
+        if self.countdown.handle(action):
+            return True
         if action == Action.ALT:
             if not self._working:
                 self.refresh()
@@ -225,6 +239,17 @@ class ManagedGamePage(Page):
 
     def summary(self, ov: Overview | None) -> tuple[str, str, str]:
         return game_summary(self.mg, ov)
+
+    # --- Steam's Play ---
+    def _can_count_down(self) -> bool:
+        """Read, and nothing on the page asks for a decision first."""
+        ov = self.overview
+        return (ov is not None and ov.game is not None and ov.prefix_ready and ov.instance is not None
+                and not ov.instance_problem and not ov.needs_setup and not ov.version_problem)
+
+    def steam_play(self) -> None:
+        """What Play does while Steam waits: MO2's Play, as Steam's own launch."""
+        self._launch(play=True)
 
     def _hook_words(self, ov: Overview) -> tuple[str, str, str]:
         """The store's Play button: value word, tone, detail."""
@@ -290,7 +315,7 @@ class ManagedGamePage(Page):
             f"Your mods from {machines_text(ov.machines)} are already kept here." if ov.mods == "kept" else
             f"Your mods from {machines_text(ov.machines)} come over once Mod Organizer 2 is installed for it."
             if ov.machines else "Then install Mod Organizer 2 for it here.")
-        self.store_tile.setVisible(game is None and bool(mg.game.appid) and not self._working)
+        self.store_tile.setVisible(game is None and bool(mg.game.appid) and not self._working and self.steam is None)
         ready = game is not None and ov.prefix_ready
         has = ov.instance is not None and not ov.instance_problem
         finishing = has and ov.needs_setup
@@ -305,10 +330,12 @@ class ManagedGamePage(Page):
             if through_store else "Through Mod Organizer 2, with your mods.")
         self.play.setVisible(has and not self._working)
         self.open_mo2.setVisible(has and not self._working)
-        self.use_existing.setVisible(not self._working)
+        self.use_existing.setVisible(not self._working and self.steam is None)
+        self.cancel_launch.setVisible(self.steam is not None)
         self.use_existing.setText("Use another installation…" if ov.instance is not None
                                   else "Use an existing installation…")
         self._update_enabled()
+        self.countdown.check()
         if self._focus_on_load:
             # Shown before this was read: the blue action wasn't there to take focus.
             self._focus_on_load = False
@@ -335,6 +362,10 @@ class ManagedGamePage(Page):
         # Stopping needs nothing to work; starting needs a usable instance, or
         # (keeping a copy for the other machines) another machine that syncs it.
         self.mods_row.setEnabled(not busy and ov is not None and (has or ov.mods != "off" or bool(ov.machines)))
+        self.cancel_launch.setEnabled(not self.host.busy)
+        if self.steam is not None:
+            self.hook_row.setEnabled(False)  # Steam is waiting on it
+            self.countdown.settle()
 
     def preferred_focus(self):
         for tile in (self.store_tile, self.install_tile, self.play):
@@ -532,6 +563,11 @@ class ManagedGamePage(Page):
     def _launch(self, *, play: bool) -> None:
         ov = self.overview
         if ov is None or ov.instance is None:
+            return
+        if self.steam is not None:
+            mg = self.mg
+            self.host.hand_back(lambda: mg.steam_plan(play=play, prepare=True),
+                                f"Starting {mg.name} through MO2…" if play else "Opening Mod Organizer 2…")
             return
 
         def start() -> str:

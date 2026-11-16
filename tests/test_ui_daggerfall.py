@@ -647,3 +647,51 @@ class ExistingInstallTests(UiTestCase):
         self.assertIn("uses the copy in", page.data_row.description)
         self.assertEqual(page.install_row.badge.property("tone"), "ok")
         self.assertEqual(page.summary(ov)[:2], ("Ready", "ok"))
+
+
+class DaggerfallSteamLaunchTests(UiTestCase):
+    """Steam's Play on Daggerfall opened the window: it shows only Daggerfall
+    Unity, counts down like Skyrim's, and Play lets the hook start DFU."""
+
+    def setUp(self):
+        super().setUp()
+        p = patch("modsync.ui.countdown.COUNTDOWN_S", 0.6)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def launch(self, ov):
+        from PySide6.QtTest import QTest
+
+        with patch.object(dfu, "overview", lambda hook=True: ov):
+            window = self.window(steam=launchhook.SteamLaunch(DAGGERFALL, "proton_experimental"))
+            self.settle(3)
+            page = window.pages["daggerfall"]
+            self.assertIs(window.page, page)
+            self.assertFalse(window.topbar.game_switch.isVisibleTo(window))
+            self.assertTrue(page.cancel_launch.isVisible())
+            return window, page, QTest
+
+    def test_it_counts_down_then_hands_the_launch_on(self):
+        window, page, qtest = self.launch(overview(installed=True))
+        self.assertTrue(page.countdown.cover.isVisible())
+        self.assertEqual(page.countdown.cover.game, "Daggerfall Unity")
+        qtest.qWait(1000)
+        self.settle()
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+        self.assertIsNone(window.steam_launch.plan)  # the hook runs Daggerfall Unity itself
+
+    def test_b_stops_it_and_cancel_launch_ends_it(self):
+        window, page, _ = self.launch(overview(installed=True))
+        InputRouter.instance().dispatch(Action.BACK)
+        self.settle()
+        self.assertFalse(page.countdown.cover.isVisible())
+        self.assertEqual(window.overlays, [])
+        page.cancel_launch.click()
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CANCEL)
+
+    def test_something_to_look_at_keeps_it_waiting(self):
+        window, page, qtest = self.launch(overview(installed=True, version_problem="DFU 1.1.1 needs an update."))
+        qtest.qWait(1000)
+        self.settle()
+        self.assertIsNone(window.steam_launch.decision)
+        self.assertFalse(page.countdown.cover.isVisible())

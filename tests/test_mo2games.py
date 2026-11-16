@@ -307,7 +307,8 @@ def test_steams_play_button_goes_through_modsyncs_hook(machine):
         said = game.enable_hook()
         assert said[0] == "Launch hook enabled. Start Steam and press Play on Starfield: play goes through Mod Organizer 2."
         assert game.hook_status().summary() == (
-            "On. Steam's Play button plays Starfield through Mod Organizer 2, as Steam's own launch.")
+            "On. Steam's Play button opens ModSync, which starts Starfield through Mod Organizer 2 after a "
+            "few seconds, as Steam's own launch.")
         assert (tool / "proton").is_file() and f'appid="{STARFIELD}"' in (tool / "proton").read_text()
         assert game.hook_status().enabled
         assert STARFIELD in launchhook.hooked_appids()
@@ -371,14 +372,14 @@ class Hub:
         with patch("modsync.mo2.launch.launchhook.game_proton", return_value=None), \
                 patch("modsync.mo2.vcruntime.ensure_instance_runtime", return_value=[]), \
                 patch("modsync.logging_setup.configure"), patch.object(nxm, "notify", self.notes.append):
-            return cli._managed_hub(starfield(), self.out)
+            return cli._managed_hub(starfield(), self.out, cli._managed_request(starfield()))
 
     @property
     def fields(self) -> list[str]:
         return [f.decode() for f in self.out.getvalue().split(b"\0")[:-1]]
 
 
-def test_steams_play_plays_through_mo2_without_a_window(machine):
+def test_steams_play_set_to_play_right_away_plays_through_mo2_without_a_window(machine):
     instance = starfield().use_instance(make_instance(
         machine.tmp, "Starfield", programs(("Starfield", f"{machine.game_dir}/Starfield.exe"))))
     hub = Hub()
@@ -434,6 +435,47 @@ def test_the_hub_answers_for_a_table_game_before_skyrims_window(machine):
         assert cli._launch_hub(["--appid", str(STARFIELD), "--through", "proton_experimental"]) == 0
     assert managed.call_args.args[0] is starfield()
     skyrims.assert_not_called()
+
+
+def test_steams_play_opens_the_window_for_a_table_game_unless_set_to_play_right_away(machine):
+    starfield().use_instance(make_instance(machine.tmp, "Starfield"))
+    args = ["--appid", str(STARFIELD), "--through", "proton_experimental"]
+    with patch.object(cli, "_managed_hub", return_value=0) as managed, \
+            patch.object(cli, "_hub_window", return_value=0) as window:
+        assert cli._launch_hub(args) == 0  # counting down, the default
+        window.assert_called_once()
+        managed.assert_not_called()
+        launchhook.set_play_mode("wait")
+        assert cli._launch_hub(args) == 0
+        assert window.call_count == 2
+        launchhook.set_play_mode("play")
+        assert cli._launch_hub(args) == 0
+        assert managed.call_args.args[2] is None and window.call_count == 2
+
+
+def test_a_launch_modsync_asked_for_never_opens_the_window(machine):
+    """Its own Play or Open MO2, or a Nexus download: decided already."""
+    game = starfield()
+    game.use_instance(make_instance(machine.tmp, "Starfield"))
+    path = steam_downloads.note_path(game.game)
+    path.parent.mkdir(parents=True)
+    path.write_text(downloads.OPEN + "\n")
+    with patch.object(cli, "_managed_hub", return_value=0) as managed, \
+            patch.object(cli, "_hub_window", return_value=0) as window:
+        assert cli._launch_hub(["--appid", str(STARFIELD)]) == 0
+    window.assert_not_called()
+    assert managed.call_args.args[2] == downloads.OPEN
+
+
+def test_daggerfalls_play_opens_the_window_unless_set_to_play_right_away(machine):
+    from modsync.games import DAGGERFALL
+
+    args = ["--appid", str(DAGGERFALL.appid), "--through", "proton_experimental"]
+    with patch.object(cli, "_hub_window", return_value=10) as window:
+        assert cli._launch_hub(args) == 10  # Cancel launch in the window
+        launchhook.set_play_mode("play")
+        assert cli._launch_hub(args) == launchhook.EXIT_CONTINUE  # the hook starts DFU
+    window.assert_called_once()
 
 
 def test_a_steam_games_nexus_links_reach_its_mo2(machine):

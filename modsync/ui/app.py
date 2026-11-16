@@ -83,7 +83,7 @@ def run_hub(*, appid: int | None = None, through: str | None = None, handoff: Bi
     written to ``handoff`` for the hook to run (see ``launchhook.HANDOFF_TAG``).
     ``reason``: why it opened although Steam's Play is set to play right away."""
     from modsync import launchhook
-    from modsync.games import GAMES, SKYRIM_SE
+    from modsync.games import SKYRIM_SE
     from modsync.logging_setup import configure
     from modsync.ui.main_window import MainWindow
 
@@ -91,7 +91,7 @@ def run_hub(*, appid: int | None = None, through: str | None = None, handoff: Bi
     playing.hold_window_lock()  # the game isn't playing yet: syncing goes on until this closes
     app = _application(None)
     _start_gamepads(app)
-    launch = launchhook.SteamLaunch(GAMES.get(appid or SKYRIM_SE.appid, SKYRIM_SE), through, reason=reason)
+    launch = launchhook.SteamLaunch(launchhook.hook_game(appid or SKYRIM_SE.appid), through, reason=reason)
     window = MainWindow(steam_launch=launch)
     window.showMaximized()
     code = app.exec()  # the window's close stops polling, drains workers and its Syncthing
