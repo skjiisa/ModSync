@@ -474,6 +474,138 @@ def _sync_conflicts(args: list[str]) -> int:
     return 0
 
 
+def restore(args: list[str]) -> int:
+    """Restore points of the MO2 instance's profiles (modsync.restore_points)."""
+    sub = args[0] if args else "list"
+    rest = args[1:]
+    if sub == "list" and not rest:
+        return _restore_list()
+    if sub == "show" and len(rest) in (1, 2):
+        return _restore_show(rest[0], rest[1] if len(rest) == 2 else None)
+    if sub == "apply" and len(rest) == 2:
+        return _restore_apply(rest[0], rest[1])
+    if sub == "save" and not rest:
+        return _restore_save()
+    print(
+        "usage:\n"
+        "  modsync restore [list]                   restore points of the MO2 profiles, and archives\n"
+        "  modsync restore show <point> [<profile>] what restoring a profile would change\n"
+        "  modsync restore apply <point> <profile>  put a profile back as the restore point has it\n"
+        "  modsync restore save                     keep a restore point of the profiles now"
+    )
+    return 2
+
+
+def _restore_service():
+    from modsync.service import ModSyncService
+
+    service = ModSyncService()
+    path = service.state.instance_path
+    if not path:
+        print("No Mod Organizer 2 instance chosen yet. 'modsync mo2 use <dir>' or 'modsync mo2 install <dest>'.")
+        return None
+    if not Path(path).is_dir():
+        print(f"{path} isn't there any more (unplugged drive? moved?).")
+        return None
+    return service
+
+
+def _restore_list() -> int:
+    from modsync import restore_points as rp
+
+    service = _restore_service()
+    if service is None:
+        return 1
+    done = service.finish_interrupted_restore()
+    if done:
+        print(f"A restore was cut short earlier: {done}.\n")
+    found = service.restore_points()
+    usage = service.restore_usage()
+    saved = [p for p in found if p.kind == "point"]
+    archives = [p for p in found if p.kind != "point"]
+    print(f"{usage.points} restore point{'' if usage.points == 1 else 's'} of {service.state.instance_path}, "
+          f"{rp.size_words(usage.bytes)} in all. ModSync keeps the newest {rp.KEEP} in its data folder, "
+          "which never syncs.\n")
+    if not saved:
+        print("  None yet. 'modsync restore save' keeps one now.")
+    for p in saved:
+        print(f"  {p.id:<24} {rp.when(p):<14} {p.described:<36} {', '.join(p.profiles)}")
+    if archives:
+        print("\nArchives in the instance:")
+        for p in archives:
+            if p.restorable:
+                what = "; ".join(f"{name} ({', '.join(sorted(p.files[name]))})" for name in p.profiles)
+            else:
+                what = f"{p.other_files} file{'' if p.other_files == 1 else 's'} to open: {p.path}"
+            print(f"  {p.id:<24} {rp.when(p):<14} {p.described}\n  {'':<24} {what}")
+    print("\n'modsync restore show <point>' shows what restoring a profile would change.")
+    print(rp.LIMITS)
+    return 0
+
+
+def _restore_show(point_id: str, profile: str | None) -> int:
+    from modsync import restore_points as rp
+
+    service = _restore_service()
+    if service is None:
+        return 1
+    try:
+        point = rp.find(service.state.instance_path, point_id)
+    except rp.RestoreError as exc:
+        print(exc)
+        return 1
+    if not point.restorable:
+        print(f"{point.described}, {rp.when(point)}: nothing in it ModSync can restore. Open {point.path} and "
+              "move back what you need, inside MO2's folders.")
+        return 0
+    if profile is not None and profile not in point.files:
+        print(f"{point_id} has no profile {profile}. It has: {', '.join(point.profiles)}.")
+        return 1
+    print(f"{point.described}, {rp.when(point)}.\n")
+    for name in [profile] if profile else point.profiles:
+        print(f"{name}:")
+        for line in rp.preview_lines(service.restore_preview(point_id, name)):
+            print(f"  {line}")
+        print()
+    print(f"'modsync restore apply {point_id} <profile>' restores one. {rp.LIMITS}")
+    return 0
+
+
+def _restore_apply(point_id: str, profile: str) -> int:
+    from modsync import restore_points as rp
+
+    service = _restore_service()
+    if service is None:
+        return 1
+    try:
+        outcome = service.restore_profile(point_id, profile)
+    except (RuntimeError, OSError) as exc:
+        print(f"Nothing was restored: {exc}")
+        return 1
+    for line in rp.preview_lines(outcome.preview):
+        print(line)
+    print(f"\nRestored profile {profile} from {point_id}. Restore point {outcome.before} has it as it was "
+          f"just before, so 'modsync restore apply {outcome.before} {profile}' puts it back.")
+    if outcome.synced:
+        print("Sync is paused, so the restored files reach your other machines once you resume it."
+              if outcome.paused else "The restored files reach your other machines through sync.")
+    return 0
+
+
+def _restore_save() -> int:
+    from modsync import restore_points as rp
+
+    service = _restore_service()
+    if service is None:
+        return 1
+    point = service.save_restore_point()
+    if point is None:
+        print("There are no profiles to keep in this instance.")
+        return 1
+    print(f"Kept restore point {point.id} of {', '.join(point.profiles)}. {rp.LIMITS}")
+    return 0
+
+
 def _vault_create(args: list[str]) -> int:
     label = "Mod Organizer 2"
     positional: list[str] = []

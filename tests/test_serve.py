@@ -22,6 +22,8 @@ class FakeService:
         self.upkept = 0
         self.queued = False
         self.waits = []
+        self.restore_points = []
+        self.interrupted = ""
 
     holds_for_play = False
     pause_fails = False
@@ -47,6 +49,13 @@ class FakeService:
 
     def upkeep(self):
         self.upkept += 1
+
+    def take_restore_point(self, reason):
+        self.restore_points.append(reason)
+
+    def finish_interrupted_restore(self):
+        done, self.interrupted = self.interrupted, ""
+        return done
 
     def advance_copy(self):
         return None
@@ -93,6 +102,7 @@ class ServerTests(unittest.TestCase):
         lines, notes = [], []
         server = Server(svc, log=lines.append, notify=lambda t, b: notes.append((t, b)))
         server._detect_play = lambda: self.game  # never this machine's processes
+        server._game_running = lambda: self.game
         return svc, server, lines, notes
 
     game = False
@@ -145,6 +155,36 @@ class ServerTests(unittest.TestCase):
         now[0] = 60
         server.tick()
         self.assertEqual(svc.upkept, 2)
+
+    def test_a_restore_point_is_kept_every_five_minutes_without_a_vault_too(self):
+        svc, server, _, _ = self.make(State(instance_path="/mo2"))
+        now = [0.0]
+        server._clock = lambda: now[0]
+        for t in (0, 60, 299):
+            now[0] = t
+            server.tick()
+        self.assertEqual(svc.restore_points, ["auto"])
+        now[0] = 300
+        server.tick()
+        self.assertEqual(svc.restore_points, ["auto", "auto"])
+
+    def test_no_restore_point_while_mo2_or_a_game_runs_mid_copy_or_without_an_instance(self):
+        svc, server, _, _ = self.make(State(instance_path="/mo2"))
+        server._game_running = lambda: True  # MO2 open, a window open too: not "playing"
+        server.tick()
+        self.assertEqual(svc.restore_points, [])
+        svc, server, _, _ = self.make(State(instance_path="/mo2", folder_id="modsync-1", copy_phase="receiving"))
+        server.tick()
+        self.assertEqual(svc.restore_points, [])
+        svc, server, _, _ = self.make(State())
+        server.tick()
+        self.assertEqual(svc.restore_points, [])
+
+    def test_a_restore_cut_short_is_finished(self):
+        svc, server, lines, _ = self.make(State(instance_path="/mo2"))
+        svc.interrupted = "finished"
+        server.tick()
+        self.assertIn("  A restore was cut short: finished.", lines)
 
     def test_it_waits_long_unless_something_waits_on_steam_or_a_copy(self):
         from modsync import serve
