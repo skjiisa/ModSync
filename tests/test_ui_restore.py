@@ -155,6 +155,71 @@ class RestoreSheetTests(UiTestCase):
         self.settle()
         self.assertEqual(list(window.top_overlay.tiles), ["close"])
 
+    def test_a_restore_cut_short_is_finished_with_the_window_busy(self):
+        point = rp.capture(self.inst)
+        self.write("Default", "+Alpha\n")
+        rp.begin(self.inst, point, "Default", before=point.id)
+        State(instance_path=str(self.inst)).save()
+        window = self.window()
+        seen = []
+        real = window.service.finish_interrupted_restore
+
+        def finish():
+            seen.append(window.busy)
+            return real()
+
+        with patch.object(window.service, "finish_interrupted_restore", finish):
+            window.go("restore")
+            self.settle(6)
+        self.assertEqual(seen, [True])
+        self.assertFalse(window.busy)
+        self.assertEqual(self.modlist(), "+Alpha\n+Beta\n")
+        self.assertIn("A restore cut short earlier has been finished.", window.messages)
+
+    def test_a_preview_arriving_after_the_sheet_closed_is_dropped_and_asked_once(self):
+        rp.capture(self.inst)
+        self.write("Default", "+Alpha\n")
+        window, page = self.open_sheet()
+        page.rows[0].click()
+        page.rows[0].click()  # twice before the first answer
+        self.settle()
+        self.assertIsInstance(window.top_overlay, ConfirmSheet)
+        self.assertEqual(sum(isinstance(o, ConfirmSheet) for o in window.overlays), 1)
+        window.top_overlay.choose("cancel")
+        page.rows[0].click()
+        window.top_overlay.cancel()  # the Restore points sheet, then the MO2 one
+        window.top_overlay.cancel()
+        self.settle()
+        self.assertIsNone(window.top_overlay)
+        page.rows[0].click()  # and from a closed sheet, nothing comes
+        self.settle()
+        self.assertIsNone(window.top_overlay)
+
+    def test_long_previews_and_many_profiles_scroll_with_their_buttons_in_view(self):
+        for n in range(30):
+            self.write(f"Profile {n:02}", "+Alpha\n")
+        for n in range(40):
+            (self.inst / "profiles" / "Default" / f"extra{n:02}.ini").write_text(f"[A]\nb={n}\n")
+        rp.capture(self.inst)
+        for n in range(40):
+            (self.inst / "profiles" / "Default" / f"extra{n:02}.ini").write_text(f"[A]\nb=x{n}\n")
+        window, page = self.open_sheet()
+        page.rows[0].click()
+        self.settle()
+        picker = window.top_overlay
+        self.assertGreaterEqual(min(t.height() for t in picker.tiles.values()), 40)
+        bottom = picker.tiles["cancel"].mapTo(window, picker.tiles["cancel"].rect().bottomLeft()).y()
+        self.assertLess(bottom, window.height() - window.hintbar.height())
+        picker.tiles["profile:Default"].setFocus()
+        picker.choose("profile:Default")
+        self.settle()
+        confirm = window.top_overlay
+        self.assertIn(([Action.SCROLL_DOWN], "Scroll"), confirm.hints())
+        self.assertGreater(confirm.text_area.verticalScrollBar().maximum(), 0)
+        for key in ("restore", "cancel"):
+            tile = confirm.tiles[key]
+            self.assertLess(tile.mapTo(window, tile.rect().bottomLeft()).y(), window.height() - window.hintbar.height())
+
     def test_without_an_instance_it_says_what_comes_first(self):
         window = self.window()
         page = window.pages["restore"]
