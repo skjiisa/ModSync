@@ -703,7 +703,10 @@ class SyncPage(Page):
             self.join_tile.clicked.connect(self.toggle_pair_join)
             rescan = Tile("Rescan", "Look for changed files now.", "refresh", size="compact")
             rescan.clicked.connect(self.rescan)
-            tiles = [self.pair_tile, code, self.join_tile, rescan]
+            self.restore_tile = Tile("Restore points…", "Earlier versions of your profiles, kept on this machine.",
+                                     "undo", size="compact", chevron=True)
+            self.restore_tile.clicked.connect(lambda: self.host.go("restore"))
+            tiles = [self.pair_tile, code, self.join_tile, rescan, self.restore_tile]
             if state.sync_paused:
                 self.resume_tile = Tile("Resume syncing", "Carry over what changed on each machine meanwhile.",
                                         "play", role="primary")
