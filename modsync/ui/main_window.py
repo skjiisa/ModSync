@@ -879,7 +879,7 @@ class MainWindow(QMainWindow):
 
         text = "\n\n".join(check.warnings)
         if check.sync == "unavailable":
-            text += "\n\nSyncthing isn't running here, so ModSync can't tell what is still on its way."
+            text += "\n\nSyncthing didn't answer (or isn't running here), so more may still be on its way."
         review = (("sync", "Review conflicts", "Choose which version to keep, under Sync.", "normal", "sync")
                   if check.conflicts else
                   ("sync", "Go to Sync", "See what's arriving.", "normal", "sync"))

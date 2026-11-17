@@ -1029,8 +1029,10 @@ class ModSyncService:
         check = LaunchCheck(sync="unavailable")
         try:
             if self.manager.running or self.manager.attach():
-                check.warnings += self._arriving(synced)
-                check.sync = "known"
+                warnings, answered = self._arriving(synced)
+                check.warnings += warnings  # what one folder said stands when another's didn't answer
+                if answered:
+                    check.sync = "known"
         except Exception as exc:  # noqa: BLE001 — the conflicts on disk are still worth a look
             log.info("launch check: sync status unavailable: %s", exc)
         found = 0
@@ -1044,17 +1046,24 @@ class ModSyncService:
                                   "once. Until you choose a version under Sync, the game uses the newer one.")
         return check
 
-    def _arriving(self, synced: list[tuple[folders.FolderSpec, Path]]) -> list[str]:
-        """What Syncthing says hasn't arrived yet in these folders, as warnings."""
+    def _arriving(self, synced: list[tuple[folders.FolderSpec, Path]]) -> tuple[list[str], bool]:
+        """What Syncthing says hasn't arrived yet in these folders, as
+        warnings, and whether it answered for every one of them."""
         out = []
+        answered = True
         with self.manager.client() as client:
             me = client.my_id()
             conns = client.connections().get("connections", {})
             for spec, _root in synced:
-                folder = client.get_folder(spec.folder_id)
-                if folder.get("paused"):
-                    continue  # nothing arrives until it's resumed: waiting wouldn't bring it
-                status = client.folder_status(spec.folder_id)
+                try:
+                    folder = client.get_folder(spec.folder_id)
+                    status = None if folder.get("paused") else client.folder_status(spec.folder_id)
+                except Exception as exc:  # noqa: BLE001 — the other folders still count
+                    log.info("launch check: no status for %s: %s", spec.folder_id, exc)
+                    answered = False
+                    continue
+                if status is None:
+                    continue  # paused: nothing arrives until it's resumed, so waiting wouldn't bring it
                 need = int(status.get("needTotalItems") or 0)
                 if not need and status.get("state") not in _FOLDER_BUSY:
                     continue
@@ -1067,7 +1076,7 @@ class ModSyncService:
                 else:
                     out.append(f"{count} to {what} haven't arrived yet. What you change while playing could "
                                "clash with them.")
-        return out
+        return out, answered
 
     def play_attention(self) -> str | None:
         """Why Steam's Play should open ModSync and wait instead of playing

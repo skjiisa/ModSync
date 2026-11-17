@@ -157,6 +157,28 @@ class GameLaunchCheckTests(unittest.TestCase):
         check = self.check(FakeManager(Broken({}, {})))
         self.assertEqual((check.sync, check.warnings), ("unavailable", []))
 
+    def test_one_folder_that_doesnt_answer_keeps_what_the_others_said(self):
+        from modsync import dfu
+
+        mods, saves = self.tmp / "dfu", self.tmp / "saves"
+        mods.mkdir()
+        saves.mkdir()
+        State(game_folders={"dfu-mods": str(mods), "dfu-saves": str(saves)}).save()
+        for broken in ("modsync-dfu-saves", "modsync-dfu-mods"):  # after the one with changes, and before
+            pending = "modsync-dfu-mods" if broken == "modsync-dfu-saves" else "modsync-dfu-saves"
+
+            class Broken(FakeClient):
+                def folder_status(self, folder_id, broken=broken):
+                    if folder_id == broken:
+                        raise OSError("connection reset")
+                    return super().folder_status(folder_id)
+
+            with self.subTest(broken=broken), patch.object(dfu, "sync_keybinds", return_value=""):
+                client = Broken({}, {pending: {"state": "syncing", "needTotalItems": 7}})
+                check = self.check(FakeManager(client), keys=dfu.LAUNCH_FOLDERS)
+                self.assertEqual(check.sync, "unavailable")  # not all of it is known
+                self.assertIn("7 changes", check.attention)
+
     def test_daggerfall_checks_its_mods_and_saves(self):
         from modsync import dfu
 
@@ -220,7 +242,7 @@ class CliLaunchTests(unittest.TestCase):
             code, launch = self.run_cli(["play"], LaunchCheck(sync="unavailable"))
         self.assertEqual(code, 0)
         launch.assert_called_once()
-        self.assertIn("can't tell what is still on its way", "\n".join(str(c.args[0]) for c in out.call_args_list))
+        self.assertIn("can't tell everything", "\n".join(str(c.args[0]) for c in out.call_args_list))
 
     def test_nothing_synced_plays_without_a_word(self):
         with patch("builtins.print") as out:

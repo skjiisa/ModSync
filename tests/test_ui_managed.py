@@ -331,7 +331,7 @@ class ManagedGameUiTests(UiTestCase):
                 sheet = window.top_overlay
                 self.assertEqual(sheet.title.text(), "Open Mod Organizer 2 anyway?")
                 self.assertIn("Review conflicts", sheet.tiles["sync"].text())
-                self.assertIn("Syncthing isn't running here", sheet.text.text())
+                self.assertIn("Syncthing didn't answer", sheet.text.text())
                 sheet.choose(key)
                 self.settle(4)
                 self.assertEqual(launch.called, launches)

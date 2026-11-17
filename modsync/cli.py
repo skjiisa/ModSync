@@ -1516,8 +1516,8 @@ def _launch_sync_ok(name: str, keys, command: str, *, anyway: bool) -> bool:
         print(f"note: couldn't ask syncing about {name}: {exc}")
         return True
     if check.sync == "unavailable":
-        print("note: Syncthing isn't running here, so ModSync can't tell what is still on its way; "
-              "only files changed on two machines at once were checked.")
+        print("note: Syncthing didn't answer (or isn't running here), so ModSync can't tell everything "
+              "still on its way.")
     if check.blocked:
         print(f"error: {check.blocked}")
         return False
