@@ -925,6 +925,11 @@ SAVES_FOLDER = FolderSpec(
     on_stop=lambda: _release_saves(),
 )
 
+# What a launch checks for changes still on their way, or files changed on two
+# machines (ModSyncService.game_launch_check): a save that hasn't arrived yet is
+# one Daggerfall Unity can't load.
+LAUNCH_FOLDERS = (MODS_FOLDER.key, SAVES_FOLDER.key)
+
 
 def _release_saves() -> None:
     from modsync import dfu_saves

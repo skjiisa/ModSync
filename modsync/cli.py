@@ -1347,8 +1347,8 @@ def _managed_game(game, args: list[str]) -> int:
         return _managed_use(game, rest[0])
     if sub == "install" and len(rest) <= 1:
         return _managed_install(game, rest[0] if rest else None)
-    if sub in ("open", "play") and not rest:
-        return _managed_launch(game, play=sub == "play")
+    if sub in ("open", "play") and rest in ([], ["--anyway"]):
+        return _managed_launch(game, play=sub == "play", anyway=bool(rest))
     if sub == "hook" and len(rest) == 1 and rest[0] in ("enable", "disable", "status"):
         return _managed_hook(game, rest[0])
     cmd = game.command
@@ -1358,8 +1358,10 @@ def _managed_game(game, args: list[str]) -> int:
         f"  {cmd} status          {pad}{game.name} in its store and its MO2 instance\n"
         f"  {cmd} install [<dir>] {pad}install MO2 for it (default {_tilde(game.default_instance_dir())})\n"
         f"  {cmd} use <dir>       {pad}use this MO2 instance for it\n"
-        f"  {cmd} open            {pad}open its Mod Organizer 2 in the game's own prefix\n"
-        f"  {cmd} play            {pad}play through MO2\n"
+        f"  {cmd} open [--anyway] {pad}open its Mod Organizer 2 in the game's own prefix\n"
+        f"  {cmd} play [--anyway] {pad}play through MO2\n"
+        f"  {' ' * len(cmd)}                 {pad}(--anyway: even with mods still arriving or files changed on two\n"
+        f"  {' ' * len(cmd)}                 {pad}machines at once, which they ask about first)\n"
         f"  {cmd} hook enable | disable | status\n"
         f"  {' ' * len(cmd)}                 {pad}make the store's own Play button on the game play through MO2"
     )
@@ -1483,9 +1485,11 @@ def _managed_hook(mg, action: str) -> int:
     return 0
 
 
-def _managed_launch(mg, *, play: bool) -> int:
+def _managed_launch(mg, *, play: bool, anyway: bool = False) -> int:
     from modsync.mo2.launch import Launcher
 
+    if not _launch_sync_ok(mg.name, mg.launch_folders, f"{mg.command} {'play' if play else 'open'}", anyway=anyway):
+        return 1
     for note in mg.refresh_hook():
         print(note)
     version = mg.version_problem()
@@ -1497,6 +1501,35 @@ def _managed_launch(mg, *, play: bool) -> int:
         print(f"error: {e}")
         return 1
     return 0
+
+
+def _launch_sync_ok(name: str, keys, command: str, *, anyway: bool) -> bool:
+    """What syncing says before a launch from here, as the window's Play asks
+    it (``ModSyncService.game_launch_check``). Says what it found; whether to
+    go on. Changes still arriving, or files changed on two machines at once,
+    stop it unless ``anyway``."""
+    from modsync.service import ModSyncService
+
+    try:
+        check = ModSyncService().game_launch_check(keys)
+    except Exception as exc:  # noqa: BLE001 — as in the window: a check that fails never keeps the game from starting
+        print(f"note: couldn't ask syncing about {name}: {exc}")
+        return True
+    if check.sync == "unavailable":
+        print("note: Syncthing didn't answer (or isn't running here), so ModSync can't tell everything "
+              "still on its way.")
+    if check.blocked:
+        print(f"error: {check.blocked}")
+        return False
+    if not check.warnings:
+        return True
+    for warning in check.warnings:
+        print(f"{'warning' if anyway else 'wait'}: {warning}")
+    if anyway:
+        return True
+    print(f"\nRun '{command} --anyway' to start it now"
+          + (", or choose versions with 'modsync sync conflicts'." if check.conflicts else "."))
+    return False
 
 
 def nxm(args: list[str]) -> int:
@@ -1656,14 +1689,26 @@ def _launch_hub(args: list[str]) -> int:
         managed = mo2games.for_steam(appid)
         if managed is not None:
             note = _managed_request(managed)
-            if note is None and not straight and _has_instance(managed):
-                return _hub_window(appid, through, handoff, "")
+            if note is None and _has_instance(managed):
+                # A plain Play in Steam. Play or Open MO2 pressed in ModSync
+                # left a note, and asked syncing first: decided already.
+                reason = _sync_attention(managed.name, managed.launch_folders, appid) if straight else ""
+                if reason or not straight:
+                    return _hub_window(appid, through, handoff, reason)
             return _managed_hub(managed, handoff, note)
         if appid == DAGGERFALL.appid:
             # The hook runs Daggerfall Unity itself once this says to continue.
             # Play pressed in ModSync left a note: decided already.
-            decided = _request(DAGGERFALL) is not None
-            return launchhook.EXIT_CONTINUE if straight or decided else _hub_window(appid, through, handoff, "")
+            if _request(DAGGERFALL) is not None:
+                return launchhook.EXIT_CONTINUE
+            if straight:
+                from modsync import dfu
+
+                reason = _sync_attention("Daggerfall Unity", dfu.LAUNCH_FOLDERS, appid)
+                if not reason:
+                    return launchhook.EXIT_CONTINUE
+                return _hub_window(appid, through, handoff, reason)
+            return _hub_window(appid, through, handoff, "")
         opened, reason = _open_for_download(appid, handoff)
         if opened:
             return launchhook.EXIT_CONTINUE
@@ -1672,6 +1717,30 @@ def _launch_hub(args: list[str]) -> int:
             if played:
                 return launchhook.EXIT_CONTINUE
         return _hub_window(appid, through, handoff, reason)
+
+
+def _sync_attention(name: str, keys, appid: int | None) -> str:
+    """Steam's Play set to play right away, on a game other than Skyrim: why
+    the window should open first, from what syncing says about the game's
+    folders (as its Play in the window asks), or "". The game still starts
+    when this can't tell."""
+    import logging
+
+    from modsync.logging_setup import configure
+    from modsync.service import ModSyncService
+
+    configure("hub", ["launch", "hub", f"--appid={appid}"])
+    log = logging.getLogger(__name__)
+    try:
+        check = ModSyncService().game_launch_check(keys)
+    except Exception:  # noqa: BLE001 — ModSync never keeps a game from starting
+        log.exception("Steam launch: couldn't ask syncing about %s", name)
+        return ""
+    if check.sync == "unavailable":
+        log.info("Steam launch: Syncthing isn't running; checked %s without what it knows", name)
+    if check.attention:
+        log.info("Steam launch: opening ModSync, since %s", check.attention)
+    return check.attention
 
 
 def _hub_window(appid: int | None, through: str | None, handoff, reason: str) -> int:

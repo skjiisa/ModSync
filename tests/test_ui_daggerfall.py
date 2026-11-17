@@ -323,6 +323,25 @@ class DaggerfallUiTests(UiTestCase):
         launch.assert_called_once()
         self.assertEqual(window.messages[-1], "Starting Daggerfall Unity.")
 
+    def test_play_asks_syncing_first(self):
+        from modsync.service import LaunchCheck, ModSyncService
+
+        window, page = self.open_sheet(overview(installed=True, mods="on"))
+        conflicted = LaunchCheck(warnings=["1 file was changed on two machines at once."], sync="known",
+                                 conflicts=1)
+        with patch.object(ModSyncService, "syncs_game", return_value=True), \
+                patch.object(ModSyncService, "game_launch_check", return_value=conflicted), \
+                patch.object(dfu, "launch", return_value="Starting Daggerfall Unity.") as launch:
+            page.play.click()
+            self.settle(4)
+            sheet = window.top_overlay
+            self.assertIsInstance(sheet, ConfirmSheet)
+            self.assertIn("Review conflicts", sheet.tiles["sync"].text())
+            launch.assert_not_called()
+            sheet.choose("play")
+            self.settle(4)
+        launch.assert_called_once()
+
     def test_the_controller_row_shows_every_binding_then_sets_them(self):
         from modsync.ui.pages.daggerfall import ControllerLayoutSheet
         window, page = self.open_sheet(overview(installed=True))
@@ -688,6 +707,29 @@ class DaggerfallSteamLaunchTests(UiTestCase):
         self.assertEqual(window.overlays, [])
         page.cancel_launch.click()
         self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CANCEL)
+
+    def test_changes_still_arriving_stop_the_countdown_at_a_question(self):
+        from modsync.service import LaunchCheck, ModSyncService
+
+        arriving = LaunchCheck(warnings=["1 change to Daggerfall Unity saves haven't arrived yet."], sync="known")
+        with patch.object(ModSyncService, "syncs_game", return_value=True), \
+                patch.object(ModSyncService, "game_launch_check", return_value=arriving) as asked:
+            window, page, qtest = self.launch(overview(installed=True, saves="on"))
+            qtest.qWait(1000)
+            self.settle()
+            asked.assert_called_with(dfu.LAUNCH_FOLDERS)
+            self.assertIsNone(window.steam_launch.decision)
+            self.assertFalse(page.countdown.cover.isVisible())
+            sheet = window.top_overlay
+            self.assertEqual(sheet.title.text(), "Play anyway?")
+            sheet.choose("wait")
+            self.settle()
+            self.assertIsNone(window.steam_launch.decision)
+            page.play.click()
+            self.settle(3)
+            window.top_overlay.choose("play")
+            self.settle(3)
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
 
     def test_something_to_look_at_keeps_it_waiting(self):
         window, page, qtest = self.launch(overview(installed=True, version_problem="DFU 1.1.1 needs an update."))

@@ -307,7 +307,7 @@ class MainWindow(QMainWindow):
             if auto == "cancel":
                 decide = partial(self.decide_launch, launchhook.EXIT_CANCEL)
             elif self.game != "skyrim":
-                decide = self.page_of(self.game).steam_play
+                decide = partial(self.page_of(self.game).steam_play, checked=True)  # as Skyrim's below
             elif self.service.state.has_instance:
                 decide = partial(self.launch, play=True, checked=True)  # what the Play tile does
             else:
@@ -826,9 +826,7 @@ class MainWindow(QMainWindow):
         if self.busy or (self.steam_launch is not None and self.steam_launch.decision is not None):
             return
         if not checked and self.service.state.syncing:
-            self.set_busy("launch", True)
-            worker.run_async(self.service.launch_check, on_done=partial(self._on_launch_checked, play),
-                             on_failed=lambda _m: self._on_launch_checked(play, None))
+            self.check_launch(self.service.launch_check, partial(self.launch, play=play, checked=True), play=play)
             return
         self.set_busy("launch", True)
         self.notify("Starting Skyrim through MO2…" if play else "Opening MO2…")
@@ -850,10 +848,22 @@ class MainWindow(QMainWindow):
         worker.run_async(prepare, on_done=lambda plan: self._on_prepared((plan, "")),
                          on_failed=self._on_launch_failed)
 
-    def _on_launch_checked(self, play: bool, check) -> None:
+    def check_launch(self, check: Callable[[], "LaunchCheck"], go: Callable[[], None], *, play: bool) -> None:
+        """Ask syncing before a launch: ``check`` (on a worker) says what it
+        knows, and ``go`` launches. Nothing to say, or a check that failed,
+        launches straight away; a copy that would be set aside blocks; changes
+        still arriving, or files changed on two machines, ask first. Every game
+        launches through here, from its page and from Steam's Play."""
+        if self.busy:
+            return
+        self.set_busy("launch", True)
+        worker.run_async(check, on_done=partial(self._on_launch_checked, check, go, play),
+                         on_failed=lambda _m: self._on_launch_checked(check, go, play, None))
+
+    def _on_launch_checked(self, check_fn, go: Callable[[], None], play: bool, check) -> None:
         self.set_busy("launch", False)
         if check is None or not (check.blocked or check.warnings):
-            self.launch(play=play, checked=True)
+            go()
             return
         if check.blocked:
             self.notify(f"⚠ {check.blocked}")
@@ -861,15 +871,24 @@ class MainWindow(QMainWindow):
 
         def chosen(key: str | None) -> None:
             if key == "play":
-                self.launch(play=play, checked=True)
+                go()
+            elif key == "again":
+                self.check_launch(check_fn, go, play=play)
             elif key == "sync":
                 self.go("sync")
 
+        text = "\n\n".join(check.warnings)
+        if check.sync == "unavailable":
+            text += "\n\nSyncthing didn't answer (or isn't running here), so more may still be on its way."
+        review = (("sync", "Review conflicts", "Choose which version to keep, under Sync.", "normal", "sync")
+                  if check.conflicts else
+                  ("sync", "Go to Sync", "See what's arriving.", "normal", "sync"))
         self.confirm(
             "Play anyway?" if play else "Open Mod Organizer 2 anyway?",
-            "\n\n".join(check.warnings),
+            text,
             [("play", "Play anyway" if play else "Open MO2 anyway", "", "primary", "play"),
-             ("sync", "Go to Sync", "See what's arriving and choose versions.", "normal", "sync"),
+             ("again", "Check again", "Once it has arrived, this starts it.", "normal", "refresh"),
+             review,
              ("wait", "Not now", "", "normal", "close")],
             chosen, default="play")
 
