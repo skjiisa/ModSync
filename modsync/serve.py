@@ -4,6 +4,8 @@ It does whatever this machine's setup calls for, and nothing more:
 
 * always: apply a queued Steam pin or launch-hook switch the moment Steam exits,
   and notice when Steam has updated the game under a setup built for another version;
+* with an MO2 instance: keep a restore point of its profiles when they have
+  changed, while MO2 and the games are closed (``modsync.restore_points``);
 * only when a vault exists: keep Syncthing running, auto-accept machines that
   paired with our code, keep the games' folders tidy, and see a copy through.
 
@@ -41,6 +43,7 @@ _VERSION_CHECK_S = 60.0  # the PE header + SKSE scan are cheap but not free
 _UPKEEP_S = 60.0  # the games' folders: walks and, for DFU, a pass over the saves
 _MIN_WAKE_S = 1.0  # however many events arrive
 _PLAY_CHECK_S = 30.0  # one ps on the host
+_RESTORE_POINT_S = 300.0  # a ps, then hashing the profiles' few small files
 
 
 def notify(title: str, body: str) -> None:
@@ -67,9 +70,11 @@ class Server:
         self._version_checked_at: float | None = None
         self._upkept_at: float | None = None
         self._play_checked_at: float | None = None
+        self._restore_checked_at: float | None = None
         self._playing = False  # ModSync's folders are paused for a game
         self._paused_some = False  # and that pause found some to pause
         self._detect_play: Callable[[], bool] = playing.playing
+        self._game_running: Callable[[], bool] = playing.game_running
 
     @property
     def syncing(self) -> bool:
@@ -153,6 +158,10 @@ class Server:
         # and Steam doesn't update a game while it runs.
         if not self._playing and not self.service.state.copy_phase and self._due("_version_checked_at", _VERSION_CHECK_S):
             self._check_game_version()
+        state = self.service.state
+        if (state.has_instance and not state.copy_phase and not self._playing
+                and self._due("_restore_checked_at", _RESTORE_POINT_S)):
+            self._keep_restore_point()
         if not self.syncing or self._playing:
             return
         try:
@@ -202,6 +211,20 @@ class Server:
             except Exception as exc:
                 self.log(f"  (could not resume after the game: {exc})")
         self._playing = now and svc.holds_for_play
+
+    def _keep_restore_point(self) -> None:
+        """A restore point of the profiles if they changed, and a restore cut
+        short seen through. Not while MO2 or a game runs: MO2 may be halfway
+        through writing a profile's lists."""
+        try:
+            if self._game_running():
+                return
+            done = self.service.finish_interrupted_restore()
+            if done:
+                self.log(f"  A restore was cut short: {done}.")
+            self.service.take_restore_point("auto")
+        except Exception as exc:
+            self.log(f"  (restore point failed: {exc})")
 
     def _due(self, attr: str, every: float) -> bool:
         """Whether what ``attr`` times last ran ``every`` seconds ago or more

@@ -23,6 +23,13 @@ usage:
   modsync mo2 usvfs status | apply | restore
                                          inspect, apply, or undo the MO2 2.5.2 ARM64 fix
 
+  modsync restore [list]                 restore points of the MO2 profiles, and archives to recover from
+  modsync restore show <point> [<profile>]
+                                         what restoring a profile would change
+  modsync restore apply <point> <profile>
+                                         put a profile back as the restore point has it
+  modsync restore save                   keep a restore point of the profiles now
+
   modsync game status                    installed game version vs this setup, Steam state
   modsync game downgrade <version>       downgrade the game with community xdelta patches
   modsync game restore [--discard]       undo the downgrade: put the original files back
@@ -125,6 +132,11 @@ def _main(argv: list[str] | None) -> int:
         from modsync.cli import mo2
 
         return mo2(argv[1:])
+
+    if cmd == "restore":
+        from modsync.cli import restore
+
+        return restore(argv[1:])
 
     if cmd in {"sync", "vault"}:  # "vault" is the historical name
         from modsync.cli import vault

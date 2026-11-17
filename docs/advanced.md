@@ -171,6 +171,7 @@ modsync diagnostics                 # doctor plus recent logs, secrets redacted:
 modsync mo2 status | use <dir> | install <dest>
 modsync mo2 usvfs status | apply | restore   # MO2 2.5.2's ARM64 workaround, see usvfs-arm64.md
 modsync game status | downgrade <version> | restore | pin | unpin | skse
+modsync restore [list] | show <point> [<profile>] | apply <point> <profile> | save   # see "Restore points"
 modsync sync create <instance-dir> | join <code> <instance-dir> [--merge]
 modsync sync join kept <instance-dir> [--merge]   # join the Skyrim vault kept here, see below
 modsync sync hold <folder> | skyrim | all | off   # keep games not installed here, see below
@@ -320,6 +321,70 @@ launch ([Proton#10270](https://github.com/ValveSoftware/Proton/issues/10270)).
 Moving anything from `DriverStore` that `driverstore` lacks into
 `driverstore`, then deleting `DriverStore`, lets the move finish. Keep the
 lowercase folder: the proposed Proton fix deletes `DriverStore` outright.
+
+## Restore points
+
+ModSync keeps a history of the Mod Organizer 2 instance's profiles, so a
+mod list you broke by accident, or one that arrived broken from another
+machine, can be put back. A restore point holds every profile's
+`modlist.txt`, `plugins.txt`, `loadorder.txt`, `archives.txt` and
+`lockedorder.txt`, and the INI files in the profile's folder (MO2's
+`settings.ini`, and the game's own INIs for a profile with local settings).
+It holds nothing else. It can't bring back a mod folder deleted since, an
+older game version, or a save made with other mods. When a restored mod
+list enables mods that aren't in `mods/` any more, the preview names them,
+and MO2 shows them as missing until you install them again.
+
+ModSync takes a restore point when the profiles changed since the last one:
+
+- before Play and Open MO2, including Play started by Steam's launch hook;
+- before you choose a version of a profile's lists under "Files changed on
+  two machines";
+- before copying another machine's setup;
+- before every restore;
+- every five minutes from the background service, while MO2 and the games
+  are closed. Without the background service, only the moments above count.
+
+Restore points live in ModSync's data folder
+(`~/.local/share/modsync/restore-points/`, or the Flatpak's under
+`~/.var/app`), one folder per instance. They never sync, so each machine
+keeps its own. ModSync keeps the newest 40 per instance, up to 64 MB in all.
+It removes the oldest whole, never part of one, and always keeps the newest.
+`modsync restore` shows how many there are and their size.
+
+Restoring puts back one profile whole. Its mod list, plugins, load order and
+settings all come from the same moment, and the profile files the restore
+point didn't have are removed. Other profiles stay as they are. The profile
+ModSync selects in MO2 isn't touched, since `ModOrganizer.ini` is this
+machine's own. A restore waits until MO2, anything started from it and the
+games are closed, and until a copy from another machine has finished. Just
+before it changes anything, ModSync takes a restore point of how things are,
+so restoring that one undoes it.
+
+With a vault, ModSync pauses it in Syncthing while it writes the profile and
+resumes it afterwards, so no other machine gets half a profile. Once resumed,
+the restored files reach the other machines like any other change. A vault
+you paused yourself stays paused, and the restored files reach the others
+when you resume it.
+
+ModSync writes down what a restore is about to do before it starts. If the
+restore is cut short (a crash, a battery running out), the next time ModSync
+looks it finishes the restore, or, when the restore point it came from has
+gone, puts the profile back as it was. Then it resumes the vault, once
+Syncthing runs again.
+
+The versions you didn't keep when settling conflicts (`.modsync-conflicts/`
+in the instance) are listed too. A profile's lists in one can be restored
+like a restore point, except that only the files in the archive change. The
+files a copy from another machine set aside (`.modsync-before-join/`) are
+listed with where they are, to move back by hand.
+
+```sh
+modsync restore                          # restore points and archives, and the space they use
+modsync restore show <point> [<profile>] # what restoring each profile, or one, would change
+modsync restore apply <point> <profile>  # restore one profile
+modsync restore save                     # take a restore point now, changed or not
+```
 
 ## How sync works
 
@@ -1350,8 +1415,10 @@ yourself since is left alone. The handler is a desktop entry,
 By default ModSync only acts while the app or `modsync serve` is running.
 "Run in background" installs a `systemd --user` service that starts at login.
 Without the app window it applies a queued Steam pin or launch-hook switch the
-moment Steam exits, notices when Steam updates the game, and keeps a vault
-syncing if one exists. If the service initially shares the app's process, it
+moment Steam exits, notices when Steam updates the game, keeps a vault
+syncing if one exists, and takes a restore point of the MO2 profiles every
+five minutes when they changed and MO2 and the games are closed (see
+"Restore points"). If the service initially shares the app's process, it
 starts a replacement on its next poll after the app closes, and transfers
 resume. To stay light on a Steam Deck, it wakes every 30 seconds, or every
 5 while a Steam change waits or a copy is under way. In between, Syncthing

@@ -176,12 +176,18 @@ def _listing(names: list[str], limit: int = 6) -> str:
 def differences(conflict: Conflict) -> list[str]:
     """What differs between the version in use and the one set aside, in plain
     words. Describes, never judges: either side may be the intended one."""
-    kind = conflict.kind
+    return compare(conflict.kind, conflict.original, conflict.path)
+
+
+def compare(kind: str, here: Path, there: Path, *, ours: str = "the version in use",
+            theirs: str = "the other version") -> list[str]:
+    """What differs between two versions of one file, ``here`` (called
+    ``ours``) and ``there`` (``theirs``). ``kind`` is a ``Conflict.kind``."""
     if kind in ("modlist", "plugins"):
         reader = _modlist if kind == "modlist" else _plugins
         key = (lambda n: n) if kind == "modlist" else str.lower  # plugin names ignore case
-        here_names, here_on = reader(conflict.original)
-        there_names, there_on = reader(conflict.path)
+        here_names, here_on = reader(here)
+        there_names, there_on = reader(there)
         what = "mods" if kind == "modlist" else "plugins"
         here_on, there_on = {key(n) for n in here_on}, {key(n) for n in there_on}
         here_set, there_set = {key(n) for n in here_names}, {key(n) for n in there_names}
@@ -191,34 +197,42 @@ def differences(conflict: Conflict) -> list[str]:
         on_there = [n for n in there_names if key(n) in there_on and key(n) in here_set - here_on]
         on_here = [n for n in here_names if key(n) in here_on and key(n) in there_set - there_on]
         if only_there:
-            lines.append(f"Only in the other version: {_listing(only_there)}.")
+            lines.append(f"Only in {theirs}: {_listing(only_there)}.")
         if only_here:
-            lines.append(f"Only in the version in use: {_listing(only_here)}.")
+            lines.append(f"Only in {ours}: {_listing(only_here)}.")
         if on_there:
-            lines.append(f"Enabled only in the other version: {_listing(on_there)}.")
+            lines.append(f"Enabled only in {theirs}: {_listing(on_there)}.")
         if on_here:
-            lines.append(f"Enabled only in the version in use: {_listing(on_here)}.")
+            lines.append(f"Enabled only in {ours}: {_listing(on_here)}.")
         if [key(n) for n in here_names if key(n) in there_set] != [key(n) for n in there_names if key(n) in here_set]:
             lines.append(f"The {what} in both are in a different order.")
         return lines or [f"Both versions list the same {what} the same way."]
     if kind == "loadorder":
-        same = _read_lines(conflict.original) == _read_lines(conflict.path)
+        same = _read_lines(here) == _read_lines(there)
         return ["The load order is the same."] if same else ["The load order is different."]
     try:
-        here, there = conflict.original.stat(), conflict.path.stat()
+        here_stat, there_stat = here.stat(), there.stat()
     except OSError:
-        return ["Only the other version is left."]
-    if here.st_size == there.st_size and filecmp.cmp(conflict.original, conflict.path, shallow=False):
+        return [f"Only {theirs} is left."]
+    if here_stat.st_size == there_stat.st_size and filecmp.cmp(here, there, shallow=False):
         return ["Both versions are identical."]  # compared in chunks: downloads can be gigabytes
-    if conflict.original.suffix.lower() in INI_SUFFIXES:
-        lines = _ini_differences(conflict)
+    if here.suffix.lower() in INI_SUFFIXES:
+        lines = _ini_differences(here, there, ours, theirs)
         if lines:
             return lines
-    if "keybinds" in conflict.original.name.lower():  # Daggerfall Unity's key bindings
-        lines = _keybind_differences(conflict)
+    if "keybinds" in here.name.lower():  # Daggerfall Unity's key bindings
+        lines = _keybind_differences(here, there)
         if lines:
             return lines
-    return [f"The contents differ ({here.st_size:,} bytes in use, {there.st_size:,} in the other)."]
+    now, then = _short_labels(ours, theirs)
+    return [f"The contents differ ({here_stat.st_size:,} bytes {now}, {there_stat.st_size:,} {then})."]
+
+
+def _short_labels(ours: str, theirs: str) -> tuple[str, str]:
+    """How a value says which side it is from: "in use" and "in the other" for a conflict."""
+    if (ours, theirs) == ("the version in use", "the other version"):
+        return "in use", "in the other"
+    return f"in {ours}", f"in {theirs}"
 
 
 def _ini(path: Path) -> dict[tuple[str, str], tuple[str, str]]:
@@ -261,10 +275,10 @@ def _actions(binds: object) -> dict[str, str]:
     return {str(action): key for key, action in binds.items()} if isinstance(binds, dict) else {}
 
 
-def _keybind_differences(conflict: Conflict) -> list[str]:
+def _keybind_differences(here_path: Path, there_path: Path) -> list[str]:
     """The actions bound differently in each set, and the other settings that
     differ; nothing when either side isn't readable."""
-    here, there = _keybinds(conflict.original), _keybinds(conflict.path)
+    here, there = _keybinds(here_path), _keybinds(there_path)
     if here is None or there is None:
         return []
     lines = []
@@ -279,20 +293,22 @@ def _keybind_differences(conflict: Conflict) -> list[str]:
     return lines or ["Both versions bind the same keys."]
 
 
-def _ini_differences(conflict: Conflict) -> list[str]:
+def _ini_differences(here_path: Path, there_path: Path, ours: str = "the version in use",
+                     theirs: str = "the other version") -> list[str]:
     """Settings added, removed or changed, or nothing when either side isn't INI."""
-    here, there = _ini(conflict.original), _ini(conflict.path)
+    here, there = _ini(here_path), _ini(there_path)
     if not here or not there:
         return []
     only_there = [there[k][0] for k in there if k not in here]
     only_here = [here[k][0] for k in here if k not in there]
-    changed = [f"{here[k][0]} ({here[k][1] or 'empty'} in use, {there[k][1] or 'empty'} in the other)"
+    now, then = _short_labels(ours, theirs)
+    changed = [f"{here[k][0]} ({here[k][1] or 'empty'} {now}, {there[k][1] or 'empty'} {then})"
                for k in here if k in there and here[k][1] != there[k][1]]
     lines = []
     if only_there:
-        lines.append(f"Settings only in the other version: {_listing(only_there)}.")
+        lines.append(f"Settings only in {theirs}: {_listing(only_there)}.")
     if only_here:
-        lines.append(f"Settings only in the version in use: {_listing(only_here)}.")
+        lines.append(f"Settings only in {ours}: {_listing(only_here)}.")
     if changed:
         lines.append(f"Set differently: {_listing(changed, limit=4)}.")
     return lines or ["Both versions have the same settings, written differently."]
