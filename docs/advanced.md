@@ -362,16 +362,22 @@ before it changes anything, ModSync takes a restore point of how things are,
 so restoring that one undoes it.
 
 With a vault, ModSync pauses it in Syncthing while it writes the profile and
-resumes it afterwards, so no other machine gets half a profile. Once resumed,
+resumes it afterwards, so no other machine gets half a profile. If Syncthing
+doesn't confirm the pause, nothing is restored. A vault paused for a game
+stays paused until the restore has finished. Once resumed,
 the restored files reach the other machines like any other change. A vault
 you paused yourself stays paused, and the restored files reach the others
 when you resume it.
 
+Only one restore runs at a time, whether from the app, a command or the
+background service. A restore point that can't read or copy every profile
+file isn't kept, so a restore never takes a missing file for one to remove.
 ModSync writes down what a restore is about to do before it starts. If the
 restore is cut short (a crash, a battery running out), the next time ModSync
 looks it finishes the restore, or, when the restore point it came from has
-gone, puts the profile back as it was. Then it resumes the vault, once
-Syncthing runs again.
+gone, puts the profile back as it was. Once the files are done, only resuming
+the vault is left, so changes made after that stay. ModSync resumes the vault
+once Syncthing runs again.
 
 The versions you didn't keep when settling conflicts (`.modsync-conflicts/`
 in the instance) are listed too. A profile's lists in one can be restored

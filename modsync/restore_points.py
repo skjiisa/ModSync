@@ -141,7 +141,8 @@ class Preview:
 
     @property
     def unchanged(self) -> bool:
-        return self.exists_now and not self.changes
+        absent = self.profile not in self.point.files  # and restoring would keep it that way
+        return (self.exists_now or absent) and not self.changes
 
 
 @dataclass
@@ -177,29 +178,43 @@ def tracked(name: str) -> bool:
     return low in LIST_FILES or low.endswith(".ini")
 
 
-def _profile_files(profile: Path) -> dict[str, Path]:
+def _profile_files(profile: Path, *, strict: bool = False) -> dict[str, Path]:
+    """The tracked files in a profile folder. With ``strict``, a folder or
+    file that can't be read raises instead of being left out, so a restore
+    point never takes a file it couldn't read for one the profile lacks."""
     try:
         entries = list(profile.iterdir())
+    except FileNotFoundError:
+        return {}
     except OSError:
+        if strict:
+            raise
         return {}
     found = {}
     for path in entries:
+        if not tracked(path.name):
+            continue
         try:
-            if tracked(path.name) and path.is_file() and path.stat().st_size <= MAX_FILE:
+            if path.is_file() and path.stat().st_size <= MAX_FILE:
                 found[path.name] = path
         except OSError:
-            continue
+            if strict:
+                raise
     return found
 
 
-def current(instance: Path | str) -> dict[str, dict[str, Path]]:
-    """Every profile's tracked files as they are now."""
+def current(instance: Path | str, *, strict: bool = False) -> dict[str, dict[str, Path]]:
+    """Every profile's tracked files as they are now (see ``_profile_files``)."""
     root = profiles_dir(instance)
     try:
         folders = [p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")]
-    except OSError:
+    except FileNotFoundError:
         return {}
-    return {p.name: _profile_files(p) for p in folders}
+    except OSError:
+        if strict:
+            raise
+        return {}
+    return {p.name: _profile_files(p, strict=strict) for p in folders}
 
 
 def _digest(path: Path) -> str:
@@ -219,6 +234,29 @@ def _locked(instance: Path | str):
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             yield store
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+@contextmanager
+def transaction(instance: Path | str, *, wait: bool = True):
+    """Held for a whole restore, and for seeing one through that was cut
+    short, so two never interleave (the app, a command and the background
+    service). Yields False, holding nothing, when another process has it
+    and ``wait`` is off. Separate from ``_locked``, which each step takes."""
+    store = store_dir(instance)
+    store.mkdir(parents=True, exist_ok=True)
+    if fcntl is None:
+        yield True
+        return
+    with open(store / ".restore.lock", "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        try:
+            yield True
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
@@ -382,60 +420,66 @@ def _fingerprint(profiles: dict[str, dict[str, str]]) -> str:
     return hashlib.sha256(json.dumps(profiles, sort_keys=True).encode()).hexdigest()
 
 
-def capture(instance: Path | str, reason: str = "auto", *, force: bool = False) -> Point | None:
+class CaptureError(OSError):
+    """A profile file couldn't be read or copied, so no restore point was kept."""
+
+
+def capture(instance: Path | str, reason: str = "auto", *, force: bool = False, newest: bool = False,
+            empty: bool = False, protect: tuple[str, ...] = ()) -> Point | None:
     """Take a restore point of every profile, unless they're the same as in
-    the newest one (or ``force``). Returns the new point, or None."""
+    the newest one (or ``force``). Returns the new point, or None (with
+    ``newest``, the newest one, which is how things are now). With ``empty``
+    an instance with no profiles is kept too. Points in ``protect`` are kept
+    whatever the retention says. Raises ``CaptureError``, keeping nothing,
+    when any profile file can't be read or copied: a point missing a file
+    would delete it on restoring."""
     instance = Path(instance)
     if not instance.is_dir():
         return None
     with _locked(instance) as store:
-        return _capture(instance, store, reason, force=force)
+        return _capture(instance, store, reason, force=force, newest=newest, empty=empty, protect=protect)
 
 
-def _capture(instance: Path, store: Path, reason: str, *, force: bool = False) -> Point | None:
-    now = current(instance)
-    if not now:
+def _capture(instance: Path, store: Path, reason: str, *, force: bool, newest: bool, empty: bool,
+             protect: tuple[str, ...]) -> Point | None:
+    try:
+        now = current(instance, strict=True)
+        hashes = {profile: {name: _digest(path) for name, path in files.items()} for profile, files in now.items()}
+    except OSError as exc:
+        raise CaptureError(f"couldn't read the profiles: {exc}") from exc
+    if not now and not empty:
         return None
-    hashes: dict[str, dict[str, str]] = {}
-    for profile, files in now.items():
-        hashes[profile] = {}
-        for name, path in files.items():
-            try:
-                hashes[profile][name] = _digest(path)
-            except OSError:
-                continue
-    fingerprint = _fingerprint(hashes)
     saved = _saved(instance)
     if saved and not force:
-        newest = _read_meta(saved[0].path) or {}
-        if newest.get("fingerprint") == fingerprint:
-            return None
+        meta = _read_meta(saved[0].path) or {}
+        if meta.get("fingerprint") == _fingerprint(hashes):
+            return saved[0] if newest else None
     for leftover in store.glob(".new-*"):  # a capture cut short
         shutil.rmtree(leftover, ignore_errors=True)
     stamp = datetime.now()
     point_id = _new_id(store, stamp)
     work = store / f".new-{point_id}"
     size = 0
-    for profile, files in now.items():
-        dest = work / "profiles" / profile
-        dest.mkdir(parents=True, exist_ok=True)
-        for name in list(hashes[profile]):
-            try:
-                shutil.copy2(files[name], dest / name)
-            except OSError as exc:
-                log.warning("restore point: couldn't copy %s/%s: %s", profile, name, exc)
-                del hashes[profile][name]
-                continue
-            # What was copied, which may be newer than what was hashed.
-            hashes[profile][name] = _digest(dest / name)
-            size += (dest / name).stat().st_size
-    meta = {"schema": SCHEMA, "created": stamp.isoformat(timespec="seconds"), "reason": reason,
-            "instance": str(instance), "fingerprint": _fingerprint(hashes), "size": size,
-            "profiles": hashes, "mods": _mod_names(instance)}
-    (work / "meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
-    os.replace(work, store / point_id)
+    try:
+        (work / "profiles").mkdir(parents=True)
+        for profile, files in now.items():
+            dest = work / "profiles" / profile
+            dest.mkdir()
+            for name, path in files.items():
+                shutil.copy2(path, dest / name)
+                # What was copied, which may be newer than what was hashed.
+                hashes[profile][name] = _digest(dest / name)
+                size += (dest / name).stat().st_size
+        meta = {"schema": SCHEMA, "created": stamp.isoformat(timespec="seconds"), "reason": reason,
+                "instance": str(instance), "fingerprint": _fingerprint(hashes), "size": size,
+                "profiles": hashes, "mods": _mod_names(instance)}
+        (work / "meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+        os.replace(work, store / point_id)
+    except OSError as exc:
+        shutil.rmtree(work, ignore_errors=True)
+        raise CaptureError(f"couldn't keep the profiles: {exc}") from exc
     log.info("restore point %s (%s) of %d profile(s) in %s", point_id, reason, len(hashes), instance)
-    _prune(instance, store)
+    _prune(instance, store, protect=(*protect, point_id))
     return _load_point(store / point_id)
 
 
@@ -446,14 +490,14 @@ def _mod_names(instance: Path) -> list[str]:
         return []
 
 
-def _prune(instance: Path, store: Path) -> list[str]:
-    """Keep the newest ``KEEP`` points, within ``MAX_BYTES``, and the ones a
-    restore under way needs. Whole points only."""
+def _prune(instance: Path, store: Path, *, protect: tuple[str, ...] = ()) -> list[str]:
+    """Keep the newest ``KEEP`` points, within ``MAX_BYTES``, the ones in
+    ``protect`` and the ones a restore under way needs. Whole points only."""
     saved = _saved(instance)
-    needed = set()
+    needed = set(protect)
     journal = _read_journal(store)
     if journal is not None:
-        needed = {journal.get("point"), journal.get("before")}
+        needed |= {journal.get("point"), journal.get("before")}
     removed = []
     total = 0
     for i, point in enumerate(saved):
@@ -494,13 +538,14 @@ def preview(instance: Path | str, point: Point, profile: str) -> Preview:
     """What restoring ``profile`` from ``point`` would change, and which mods
     the restored list enables that aren't in the instance any more."""
     instance = Path(instance)
-    if profile not in point.files:
+    if profile not in point.files and not point.whole:
         raise RestoreError(f"{point.id} has no profile {profile}.")
     here_dir = profiles_dir(instance) / profile
     exists = here_dir.is_dir()
     here = _profile_files(here_dir) if exists else {}
     here_low = {name.lower(): path for name, path in here.items()}
-    wanted = point.files[profile]
+    # A whole point without the profile: it wasn't there, and restoring removes it.
+    wanted = point.files.get(profile, {})
     out = Preview(point=point, profile=profile, exists_now=exists)
     for name in sorted(wanted, key=str.lower):
         src = wanted[name]
@@ -544,12 +589,28 @@ def _write_journal(store: Path, data: dict) -> None:
 
 def _apply(instance: Path, point: Point, profile: str) -> list[str]:
     """Write ``profile``'s files from ``point`` into the instance. Each file is
-    replaced whole; doing it again gives the same result. Returns the names
-    written or removed."""
+    replaced whole; doing it again gives the same result. A whole point
+    without the profile removes it: its tracked files, and its folder once
+    empty. Returns the names written or removed."""
     target = profiles_dir(instance) / profile
-    target.mkdir(parents=True, exist_ok=True)
+    if profile not in point.files:
+        if not point.whole:
+            raise RestoreError(f"{point.id} has no profile {profile}.")
+        done = []
+        for name, path in _profile_files(target, strict=True).items():
+            path.unlink(missing_ok=True)
+            done.append(name)
+        try:
+            target.rmdir()
+        except OSError:
+            pass  # something else is in it (saves, say)
+        return done
     wanted = point.files[profile]
-    here = _profile_files(target)
+    missing = [src for src in wanted.values() if not src.is_file()]
+    if missing:
+        raise RestoreError(f"{missing[0]} is gone, so {profile} can't be restored from {point.id}.")
+    target.mkdir(parents=True, exist_ok=True)
+    here = _profile_files(target, strict=True)
     done = []
     for name, path in here.items():
         # A file of the same name in another case goes (MO2 on Linux would see both),
@@ -559,8 +620,6 @@ def _apply(instance: Path, point: Point, profile: str) -> list[str]:
             path.unlink(missing_ok=True)
             done.append(name)
     for name, src in wanted.items():
-        if not src.is_file():
-            raise RestoreError(f"{src} is gone, so {profile} can't be restored from it.")
         # Syncthing never picks up its own temporary names, should it be scanning.
         tmp = target / f".syncthing.{name}.tmp"
         shutil.copy2(src, tmp)
@@ -569,12 +628,25 @@ def _apply(instance: Path, point: Point, profile: str) -> list[str]:
     return done
 
 
-def begin(instance: Path | str, point: Point, profile: str, *, before: str, resume: str = "") -> None:
-    """Note the restore about to happen, so ``finish_interrupted`` can see it
-    through. ``before`` is the restore point of how things were; ``resume`` a
-    Syncthing folder paused for the restore."""
+def begin(instance: Path | str, point: Point, profile: str, *, before: str) -> None:
+    """Note the restore about to happen, before anything changes, so
+    ``finish`` can see it through. ``before`` is the restore point of how
+    things were. Its phase is "apply" until the profile is whole again."""
     with _locked(instance) as store:
-        _write_journal(store, {"point": point.id, "profile": profile, "before": before, "resume": resume})
+        _write_journal(store, {"point": point.id, "profile": profile, "before": before, "resume": "",
+                               "phase": "apply"})
+
+
+def note(instance: Path | str, **changes) -> None:
+    """Change the journal of the restore under way: ``resume`` once a
+    Syncthing folder is to be resumed after it, ``phase`` "done" once the
+    profile's files are as they should be (only resuming is left)."""
+    with _locked(instance) as store:
+        journal = _read_journal(store)
+        if journal is None:
+            raise RestoreError("no restore under way")
+        journal.update(changes)
+        _write_journal(store, journal)
 
 
 def apply(instance: Path | str, point: Point, profile: str) -> list[str]:
@@ -588,27 +660,15 @@ def end(instance: Path | str) -> None:
         (store / JOURNAL).unlink(missing_ok=True)
 
 
-def roll_back(instance: Path | str, before: Point, profile: str) -> None:
-    """Put ``profile`` back as ``before`` has it. A profile that wasn't there
-    then goes again (its tracked files, and its folder once empty)."""
-    instance = Path(instance)
-    if profile in before.files:
-        apply(instance, before, profile)
-        return
-    target = profiles_dir(instance) / profile
-    with _locked(instance):
-        for path in _profile_files(target).values():
-            path.unlink(missing_ok=True)
-        try:
-            target.rmdir()
-        except OSError:
-            pass  # something else is in it
-
-
 def finish(instance: Path | str, journal: dict) -> str:
-    """Finish the restore ``journal`` describes: again from its point, or,
-    when that has gone, back to how things were before. Returns what was done."""
+    """See the files of the restore ``journal`` describes through: again from
+    its point, or, when that has gone, back to how they were before. Nothing
+    when they were done already, so changes made since stay. Returns what
+    was done: "finished", "undone", "done already" or "left" (neither could
+    be read). Afterwards only resuming sync is left."""
     instance = Path(instance)
+    if journal.get("phase") == "done":
+        return "done already"
     profile = str(journal.get("profile", ""))
     for key, done in (("point", "finished"), ("before", "undone")):
         point_id = str(journal.get(key) or "")
@@ -616,22 +676,16 @@ def finish(instance: Path | str, journal: dict) -> str:
             continue
         try:
             point = find(instance, point_id)
-        except RestoreError:
-            continue
-        if key == "point" and profile not in point.files:
-            continue
-        try:
-            if key == "point":
-                apply(instance, point, profile)
-            else:
-                roll_back(instance, point, profile)
+            apply(instance, point, profile)
         except (OSError, RestoreError) as exc:
             log.warning("couldn't redo the restore of %s from %s: %s", profile, point_id, exc)
             continue
         log.info("restore of %s from %s was cut short; %s", profile, journal.get("point"), done)
+        note(instance, phase="done")
         return done
     log.warning("restore of %s was cut short and neither %s nor %s can be read; left as it is",
                 profile, journal.get("point"), journal.get("before"))
+    note(instance, phase="done")
     return "left"
 
 
@@ -655,11 +709,19 @@ def size_words(n: int) -> str:
     return f"{n / (1024 * 1024):.1f} MB"
 
 
+def profile_absent(preview: Preview) -> bool:
+    """Restoring removes the profile: the point was taken before it existed."""
+    return preview.profile not in preview.point.files
+
+
 def preview_lines(preview: Preview) -> list[str]:
     """What restoring would change, a line per change, then what it can't do."""
     if preview.unchanged:
         return [f"Profile {preview.profile} is the same now. Restoring it changes nothing."]
     lines = []
+    if profile_absent(preview):
+        return [f"Profile {preview.profile} wasn't in the instance then. Restoring removes its lists and "
+                "settings. Its folder stays if anything else is in it, such as saves."]
     if not preview.exists_now:
         lines.append(f"Profile {preview.profile} isn't in the instance now. Restoring it brings it back.")
     for change in preview.changes:

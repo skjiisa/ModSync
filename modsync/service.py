@@ -1505,43 +1505,56 @@ class ModSyncService:
 
     def restore_profile(self, point_id: str, profile: str) -> RestoreOutcome:
         """Put ``profile`` back as ``point_id`` has it, all of its files at once.
-        How things were is kept as a restore point first. While the vault syncs,
-        it is paused until the profile is whole again, so no machine gets half
-        of it; resuming sends the restored files to the others."""
+        How things were is kept as a restore point first. While the vault syncs
+        here, it is paused until the profile is whole again, so no machine gets
+        half of it; resuming sends the restored files to the others. Only one
+        restore runs at a time, across the app, commands and the background
+        service. Raises, having changed nothing, when it can't go ahead."""
         instance = self._restore_instance()
-        self.finish_interrupted_restore()
-        blocked = self.restore_blocked()
-        if blocked:
-            raise RuntimeError(blocked)
-        point = restore_points.find(instance, point_id)
-        if not point.restorable or profile not in point.files:
-            raise RuntimeError(f"{profile} can't be restored from {point_id}.")
-        preview = restore_points.preview(instance, point, profile)
-        restore_points.capture(instance, "restore")
-        saved = restore_points.points(instance, archives=False)
-        if not saved:
-            raise RuntimeError("ModSync couldn't keep the profiles as they are now, so it changed nothing.")
-        before = saved[0].id
-        st = self.reload_state()
-        folder = st.folder_id if st.syncing and not st.sync_paused and self._syncthing_here() else ""
-        restore_points.begin(instance, point, profile, before=before, resume=folder)
-        paused = self._pause_folder(folder) if folder else False
-        if folder and not paused:
-            restore_points.begin(instance, point, profile, before=before)  # nothing for it to resume
-        try:
-            restore_points.apply(instance, point, profile)
-        except Exception:
+        with restore_points.transaction(instance, wait=False) as mine:
+            if not mine:
+                raise RuntimeError("Another restore is under way. Try again once it has finished.")
+            self._finish_interrupted(instance)
+            if restore_points.pending(instance) is not None:
+                raise RuntimeError("A restore cut short earlier hasn't finished yet. Close Mod Organizer 2 and "
+                                   "the game, and make sure Syncthing runs, then try again.")
+            blocked = self.restore_blocked()
+            if blocked:
+                raise RuntimeError(blocked)
+            point = restore_points.find(instance, point_id)
+            # A whole point without the profile restores its absence: only for one there now.
+            absent = profile not in point.files
+            if (not point.restorable and not point.whole) or (absent and not (
+                    point.whole and (restore_points.profiles_dir(instance) / profile).is_dir())):
+                raise RuntimeError(f"{point_id} has no profile {profile}.")
+            preview = restore_points.preview(instance, point, profile)
             try:
-                restore_points.roll_back(instance, restore_points.find(instance, before), profile)
-            except Exception as exc:  # noqa: BLE001 - the journal stays: finish_interrupted_restore tries again
-                log.error("couldn't put %s back after a failed restore: %s", profile, exc)
+                before = restore_points.capture(instance, "restore", newest=True, empty=True, protect=(point.id,))
+            except restore_points.CaptureError as exc:
+                raise RuntimeError(f"ModSync couldn't keep the profiles as they are now, so it changed nothing "
+                                   f"({exc}).") from exc
+            if before is None:
+                raise RuntimeError("ModSync couldn't keep the profiles as they are now, so it changed nothing.")
+            restore_points.begin(instance, point, profile, before=before.id)
+            st = self.reload_state()
+            if st.syncing and self._syncthing_here():
+                self._pause_for_restore(instance, st.folder_id)
+            try:
+                restore_points.apply(instance, point, profile)
+            except Exception:
+                try:
+                    restore_points.apply(instance, before, profile)
+                except Exception as exc:  # noqa: BLE001 - the journal stays: finishing it tries again
+                    log.error("couldn't put %s back after a failed restore: %s", profile, exc)
+                    raise
+                restore_points.note(instance, phase="done")
+                self._end_restore(instance)
                 raise
-            self._end_restore(instance, folder if paused else "")
-            raise
-        self._end_restore(instance, folder if paused else "")
-        log.info("restored profile %s from %s (how it was is in %s)", profile, point_id, before)
+            restore_points.note(instance, phase="done")
+            self._end_restore(instance)
+        log.info("restored profile %s from %s (how it was is in %s)", profile, point_id, before.id)
         st = self.reload_state()
-        return RestoreOutcome(preview=preview, before=before, synced=st.syncing, paused=st.sync_paused)
+        return RestoreOutcome(preview=preview, before=before.id, synced=st.syncing, paused=st.sync_paused)
 
     def _syncthing_here(self) -> bool:
         try:
@@ -1549,34 +1562,44 @@ class ModSyncService:
         except Exception:  # noqa: BLE001 - none to pause, then
             return False
 
-    def _pause_folder(self, folder_id: str) -> bool:
-        """Pause ``folder_id`` for a restore, under the state's lock. False when
-        it was paused already (by the user, or for a game) or Syncthing didn't answer."""
-        paused = False
+    def _pause_for_restore(self, instance: Path, folder_id: str) -> None:
+        """Make sure ``folder_id`` is paused before a restore writes anything,
+        under the state's lock. One paused already (by the user, or for a game)
+        stays as it is: while the journal exists, nothing else resumes it.
+        Otherwise the journal notes it is to be resumed before it is paused,
+        so even an answer lost on the way leaves it noted. Raises, the restore
+        having changed nothing, when Syncthing can't confirm it is paused."""
 
         def pause(_st: State) -> None:
-            nonlocal paused
             with self.manager.client() as client:
                 folder = client.get_folder(folder_id)
                 if folder.get("paused"):
                     return
+                restore_points.note(instance, resume=folder_id)
                 folder["paused"] = True
                 client.put_folder(folder)
-                paused = True
+                if not client.get_folder(folder_id).get("paused"):
+                    raise RuntimeError("Syncthing didn't pause it")
 
         try:
             State.change(pause)
-        except Exception as exc:  # noqa: BLE001 - restoring a few small files goes on
+        except Exception as exc:  # noqa: BLE001 - whatever it was, nothing is written
             log.warning("couldn't pause %s for a restore: %s", folder_id, exc)
-        return paused
+            restore_points.note(instance, phase="done")  # nothing to apply, only to resume
+            self._end_restore(instance)
+            raise RuntimeError("Syncthing didn't pause syncing, so nothing was restored. Try again in a "
+                               "moment.") from exc
 
-    def _end_restore(self, instance: Path, resume: str) -> None:
-        """Resume what the restore paused, unless it should stay paused now,
-        and close the journal."""
+    def _end_restore(self, instance: Path) -> bool:
+        """Resume the folder the restore paused, unless it should stay paused
+        now, and close the journal. False, leaving the journal to try again
+        later, when Syncthing didn't answer."""
+        journal = restore_points.pending(instance) or {}
+        resume = str(journal.get("resume") or "")
         if resume:
             def go(st: State) -> None:
                 if st.folder_id != resume or st.sync_paused or resume in st.paused_for_play:
-                    return
+                    return  # the user paused it, or a game still runs: theirs to resume
                 with self.manager.client() as client:
                     folder = client.get_folder(resume)
                     if folder.get("paused"):
@@ -1587,28 +1610,37 @@ class ModSyncService:
                 State.change(go)
             except Exception as exc:  # noqa: BLE001 - the journal stays, to resume later
                 log.warning("couldn't resume %s after a restore: %s", resume, exc)
-                return
+                return False
         restore_points.end(instance)
+        return True
 
     def finish_interrupted_restore(self) -> str:
-        """See a restore that was cut short through: finish it, or put the
-        profile back as it was, once MO2 and the games are closed. Returns
-        what was done, "" when nothing was."""
+        """See a restore that was cut short through: finish its files, or put
+        them back as they were, once MO2 and the games are closed, then resume
+        sync. Returns what was done, "" when nothing was (none, or another
+        process is seeing to it)."""
         path = self.state.instance_path
-        if not path or not Path(path).is_dir():
+        if not path or not Path(path).is_dir() or restore_points.pending(path) is None:
             return ""
-        journal = restore_points.pending(path)
+        with restore_points.transaction(path, wait=False) as mine:
+            return self._finish_interrupted(Path(path)) if mine else ""
+
+    def _finish_interrupted(self, instance: Path) -> str:
+        """Under ``restore_points.transaction``."""
+        journal = restore_points.pending(instance)
         if journal is None:
             return ""
-        if self.restore_blocked():
-            return ""  # MO2 may be writing the profile: once it's closed
-        done = restore_points.finish(path, journal)
-        resume = str(journal.get("resume") or "")
-        if resume and not self._syncthing_here():
+        if journal.get("phase") != "done":
+            if self.restore_blocked():
+                return ""  # MO2 may be writing the profile: once it's closed
+            done = restore_points.finish(instance, journal)
+        else:
+            done = "done already"
+        if journal.get("resume") and not self._syncthing_here():
             # Not running here: it starts with the folder paused. Leave the
             # journal, to resume it once Syncthing runs again.
             return done
-        self._end_restore(Path(path), resume)
+        self._end_restore(instance)
         return done
 
     # --- LAN pairing (no code typing) ---
@@ -2158,9 +2190,16 @@ class ModSyncService:
         failed: list[str] = []
 
         def resume(st: State) -> None:
+            # A restore under way keeps the vault paused until its profile is
+            # whole; it stays noted here, to resume once that has finished.
+            restoring = bool(st.instance_path and restore_points.pending(st.instance_path) is not None)
+            held: list[str] = []
             with self.manager.client() as client:
                 for fid in st.paused_for_play:
                     if fid == st.folder_id and st.sync_paused:
+                        continue
+                    if fid == st.folder_id and restoring:
+                        held.append(fid)
                         continue
                     try:
                         folder = client.get_folder(fid)
@@ -2172,7 +2211,7 @@ class ModSyncService:
                         folder["paused"] = False
                         client.put_folder(folder)
                         resumed.append(fid)
-            st.paused_for_play = failed
+            st.paused_for_play = failed + held
 
         self.state = State.change(resume)
         self.holds_for_play = False

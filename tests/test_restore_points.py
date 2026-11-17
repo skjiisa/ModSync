@@ -189,18 +189,48 @@ class RestoreTests(Base):
         journal = rp.pending(self.inst)
         self.assertEqual(rp.finish(self.inst, journal), "finished")
         self.assertEqual(self.read("profiles/Default/plugins.txt"), "*Alpha.esp\n*Beta.esp\n")
+        self.assertEqual(rp.pending(self.inst)["phase"], "done")
+        # Done once: seeing it through again changes nothing made since.
+        self.write("profiles/Default/modlist.txt", "+Alpha\n+Beta\n+Gamma\n")
+        self.assertEqual(rp.finish(self.inst, rp.pending(self.inst)), "done already")
+        self.assertEqual(self.read("profiles/Default/modlist.txt"), "+Alpha\n+Beta\n+Gamma\n")
         rp.end(self.inst)
         self.assertIsNone(rp.pending(self.inst))
         # The point it came from has gone since: back to how it was.
-        self.assertEqual(rp.finish(self.inst, {"point": "20000101-000000", "profile": "Default",
-                                               "before": before.id}), "undone")
+        gone = rp.Point("20000101-000000", "point", self.tmp / "gone", None)
+        rp.begin(self.inst, gone, "Default", before=before.id)
+        self.assertEqual(rp.finish(self.inst, rp.pending(self.inst)), "undone")
         self.assertEqual(self.read("profiles/Default/modlist.txt"), "+Alpha\n")
 
-    def test_undoing_a_profile_that_wasnt_there_removes_it(self):
-        empty = rp.capture(self.inst)
+    def test_a_point_without_a_profile_removes_it(self):
+        before = rp.capture(self.inst)
         self.profile("New", modlist="+Gamma\n", plugins="*Gamma.esp\n")
-        rp.roll_back(self.inst, empty, "New")
-        self.assertFalse((self.inst / "profiles" / "New").exists())
+        self.write("profiles/New/saves/one.ess", "a save")
+        preview = rp.preview(self.inst, before, "New")
+        self.assertIn("Profile New wasn't in the instance then.", rp.preview_lines(preview)[0])
+        rp.apply(self.inst, before, "New")
+        self.assertEqual([p.name for p in (self.inst / "profiles" / "New").iterdir()], ["saves"])
+
+    def test_a_file_that_cant_be_copied_keeps_no_point(self):
+        rp.capture(self.inst)
+        self.write("profiles/Default/settings.ini", "[General]\nLocalSaves=true\n")
+        real = rp.shutil.copy2
+
+        def copy2(src, dst):
+            if Path(src).name == "settings.ini":
+                raise PermissionError("denied")
+            return real(src, dst)
+
+        with patch.object(rp.shutil, "copy2", copy2), self.assertRaises(rp.CaptureError):
+            rp.capture(self.inst)
+        self.assertEqual(len(rp.points(self.inst)), 1)
+        self.assertEqual(list(rp.store_dir(self.inst).glob(".new-*")), [])
+
+    def test_an_unreadable_profile_folder_keeps_no_point(self):
+        with patch.object(rp, "_profile_files", side_effect=PermissionError("denied")), \
+                self.assertRaises(rp.CaptureError):
+            rp.capture(self.inst)
+        self.assertEqual(rp.points(self.inst), [])
 
 
 class ArchiveTests(Base):
@@ -310,7 +340,8 @@ class ServiceTests(Base):
         point = rp.capture(self.inst)
         self.write("profiles/Default/modlist.txt", "+Alpha\n")
         before = rp.capture(self.inst, "restore")
-        rp.begin(self.inst, point, "Default", before=before.id, resume="modsync-1")
+        rp.begin(self.inst, point, "Default", before=before.id)
+        rp.note(self.inst, resume="modsync-1")
         self.manager.fake.folders["modsync-1"]["paused"] = True  # then the power went
         self.assertEqual(self.svc.finish_interrupted_restore(), "finished")
         self.assertEqual(self.read("profiles/Default/modlist.txt"), "+Alpha\n+Beta\n")
@@ -328,7 +359,8 @@ class ServiceTests(Base):
 
     def test_until_syncthing_runs_the_journal_waits_to_resume_it(self):
         point = rp.capture(self.inst)
-        rp.begin(self.inst, point, "Default", before=point.id, resume="modsync-1")
+        rp.begin(self.inst, point, "Default", before=point.id)
+        rp.note(self.inst, resume="modsync-1")
         self.manager.running = False
         self.svc.finish_interrupted_restore()
         self.assertIsNotNone(rp.pending(self.inst))
@@ -337,6 +369,102 @@ class ServiceTests(Base):
         self.svc.finish_interrupted_restore()
         self.assertFalse(self.manager.fake.folders["modsync-1"]["paused"])
         self.assertIsNone(rp.pending(self.inst))
+
+    def test_one_restore_at_a_time_and_finishing_waits_for_it(self):
+        point = rp.capture(self.inst)
+        self.write("profiles/Default/modlist.txt", "+Alpha\n")
+        rp.begin(self.inst, point, "Default", before=point.id)
+        with rp.transaction(self.inst) as mine:  # another process's restore, under way
+            self.assertTrue(mine)
+            self.assertEqual(self.svc.finish_interrupted_restore(), "")
+            with self.assertRaisesRegex(RuntimeError, "Another restore"):
+                self.svc.restore_profile(point.id, "Default")
+        self.assertEqual(self.read("profiles/Default/modlist.txt"), "+Alpha\n")
+        self.assertEqual(rp.pending(self.inst)["phase"], "apply")
+
+    def test_nothing_is_written_unless_syncthing_confirms_the_pause(self):
+        point = rp.capture(self.inst)
+        self.write("profiles/Default/modlist.txt", "+Alpha\n")
+        client = self.manager.fake
+        real = client.put_folder
+
+        def lost(folder):  # paused, but the answer never came
+            real(folder)
+            raise OSError("connection reset")
+
+        for broken in ({"get_folder": lambda fid: (_ for _ in ()).throw(OSError("refused"))},
+                       {"put_folder": lost}):
+            with self.subTest(broken=list(broken)), patch.multiple(client, **broken):
+                with self.assertRaisesRegex(RuntimeError, "nothing was restored"):
+                    self.svc.restore_profile(point.id, "Default")
+                journal = rp.pending(self.inst)
+                # Whether it paused is unknown: only resuming is left, to try again.
+                self.assertTrue(journal is None or journal == {**journal, "phase": "done", "resume": "modsync-1"})
+            self.svc.finish_interrupted_restore()
+            self.assertEqual(self.read("profiles/Default/modlist.txt"), "+Alpha\n")
+            self.assertFalse(client.folders["modsync-1"]["paused"])
+            self.assertIsNone(rp.pending(self.inst))
+
+    def test_a_resume_that_fails_is_retried_without_restoring_again(self):
+        point = rp.capture(self.inst)
+        self.write("profiles/Default/modlist.txt", "+Alpha\n")
+        real = State.change
+        calls = []
+
+        def flaky(fn):
+            calls.append(fn)
+            if len(calls) == 2:  # the resume
+                raise OSError("Syncthing went away")
+            return real(fn)
+
+        with patch.object(State, "change", flaky):
+            self.svc.restore_profile(point.id, "Default")
+        self.assertEqual(rp.pending(self.inst)["phase"], "done")
+        self.assertTrue(self.manager.fake.folders["modsync-1"]["paused"])
+        self.write("profiles/Default/modlist.txt", "+Alpha\n+Beta\n+Gamma\n")  # changed since in MO2
+        self.assertEqual(self.svc.finish_interrupted_restore(), "done already")
+        self.assertEqual(self.read("profiles/Default/modlist.txt"), "+Alpha\n+Beta\n+Gamma\n")
+        self.assertFalse(self.manager.fake.folders["modsync-1"]["paused"])
+        self.assertIsNone(rp.pending(self.inst))
+
+    def test_a_folder_paused_for_a_game_stays_paused_until_the_restore_ends(self):
+        point = rp.capture(self.inst)
+        self.write("profiles/Default/modlist.txt", "+Alpha\n")
+        State.update(paused_for_play=["modsync-1"])
+        self.manager.fake.folders["modsync-1"]["paused"] = True
+        seen = []
+        real = rp._apply
+
+        def mid_restore(instance, pt, profile):
+            self.svc.resume_after_play()  # the background service, the game having closed
+            seen.append(self.manager.fake.folders["modsync-1"]["paused"])
+            return real(instance, pt, profile)
+
+        with patch.object(rp, "_apply", mid_restore):
+            self.svc.restore_profile(point.id, "Default")
+        self.assertEqual(seen, [True])
+        self.assertEqual(State.load().paused_for_play, ["modsync-1"])
+        self.assertEqual(self.svc.resume_after_play(), ["modsync-1"])  # now it may
+
+    def test_the_point_restored_from_isnt_pruned_by_the_one_taken_first(self):
+        with patch.object(rp, "KEEP", 2):
+            oldest = rp.capture(self.inst)
+            self.write("profiles/Default/modlist.txt", "+Alpha\n")
+            rp.capture(self.inst)
+            self.write("profiles/Default/modlist.txt", "+Beta\n")
+            self.svc.restore_profile(oldest.id, "Default")
+        self.assertEqual(self.read("profiles/Default/modlist.txt"), "+Alpha\n+Beta\n")
+
+    def test_restoring_into_an_instance_with_no_profiles_can_be_undone(self):
+        point = rp.capture(self.inst)
+        for path in (self.inst / "profiles" / "Default").iterdir():
+            path.unlink()
+        (self.inst / "profiles" / "Default").rmdir()
+        outcome = self.svc.restore_profile(point.id, "Default")
+        self.assertNotEqual(outcome.before, point.id)
+        self.assertEqual(rp.find(self.inst, outcome.before).profiles, [])
+        self.svc.restore_profile(outcome.before, "Default")
+        self.assertFalse((self.inst / "profiles" / "Default").exists())
 
     def test_points_are_taken_before_playing_and_before_a_profile_conflict(self):
         from modsync.sync import conflicts
