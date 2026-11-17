@@ -516,6 +516,9 @@ def _restore_list() -> int:
     service = _restore_service()
     if service is None:
         return 1
+    done = service.finish_interrupted_restore()
+    if done:
+        print(f"A restore was cut short earlier: {done}.\n")
     found = service.restore_points()
     usage = service.restore_usage()
     saved = [p for p in found if p.kind == "point"]

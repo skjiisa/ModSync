@@ -1467,11 +1467,14 @@ class ModSyncService:
             log.warning("couldn't take a restore point (%s) of %s: %s", reason, path, exc)
 
     def restore_points(self) -> list[restore_points.Point]:
-        """Restore points and archives for the instance, newest first. Finishes
-        a restore cut short first."""
-        instance = self._restore_instance()
-        self.finish_interrupted_restore()
-        return restore_points.points(instance)
+        """Restore points and archives for the instance, newest first. Only
+        reads: a restore cut short is seen through by ``finish_interrupted_restore``."""
+        return restore_points.points(self._restore_instance())
+
+    def restore_pending(self) -> bool:
+        """A restore was cut short and hasn't been seen through yet."""
+        path = self.state.instance_path
+        return bool(path and Path(path).is_dir() and restore_points.pending(path) is not None)
 
     def restore_usage(self) -> restore_points.Usage:
         return restore_points.usage(self._restore_instance())
