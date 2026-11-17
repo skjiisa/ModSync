@@ -57,6 +57,59 @@ def example_conflicts(root: Path) -> list:
     return conflicts.find(root)
 
 
+def capture_restore_points(root: Path, window_for, capture, settle) -> None:
+    """The Restore points sheet and a restore's preview, from a scratch
+    instance with real restore points (kept under ``root`` too)."""
+    from datetime import datetime
+
+    from modsync import config, playing, restore_points
+
+    instance = root / "ModOrganizer2-SkyrimSE"
+    for mod in ("SkyUI", "Immersive Armors", "Campfire", "Frostfall"):
+        (instance / "mods" / mod).mkdir(parents=True)
+    profiles = instance / "profiles"
+
+    def lists(name: str, mods: list[str]) -> None:
+        (profiles / name).mkdir(parents=True, exist_ok=True)
+        (profiles / name / "modlist.txt").write_text("".join(f"+{m}\n" for m in mods))
+        (profiles / name / "plugins.txt").write_text("".join(f"*{m.replace(' ', '')}.esp\n" for m in mods))
+        (profiles / name / "settings.ini").write_text("[General]\nLocalSaves=false\n")
+
+    times = iter(datetime(2026, 11, d, h, m) for d, h, m in
+                 ((12, 20, 4), (13, 18, 41), (14, 21, 15), (15, 9, 2), (16, 13, 37)))
+    clock = Mock(wraps=datetime)
+    clock.now.side_effect = lambda: next(times)
+    with patch.object(config, "data_dir", return_value=root / "data"), \
+            patch.object(restore_points, "datetime", clock), \
+            patch("modsync.mo2.usvfs.in_use", return_value=False), \
+            patch.object(playing, "game_running", return_value=False):
+        clock.fromisoformat = datetime.fromisoformat
+        lists("Default", ["SkyUI", "Immersive Armors", "Frostfall", "Campfire"])
+        lists("Survival", ["SkyUI", "Frostfall", "Campfire"])
+        for reason, change in (("auto", None), ("play", ("Default", ["SkyUI", "Immersive Armors", "Frostfall"])),
+                               ("conflict", ("Survival", ["SkyUI", "Frostfall"])),
+                               ("play", ("Default", ["SkyUI", "Immersive Armors", "Frostfall", "Wet and Cold"])),
+                               ("manual", None)):
+            if change is not None:
+                lists(*change)
+            restore_points.capture(instance, reason, force=True)
+        lists("Default", ["SkyUI", "Ordinator"])
+        (instance / "mods" / "Frostfall").rmdir()
+        w = window_for(State(instance_path=str(instance), instance_label="Skyrim setup", folder_id="example"),
+                       mode="gamepad")
+        w.go("restore")
+        settle()
+        w.pages["restore"].focus_default()
+        capture(w, "restore")
+        w.pages["restore"].rows[-1].click()
+        settle()
+        w.top_overlay.choose("profile:Default")
+        capture(w, "restore-preview")
+        w.top_overlay.cancel()
+        w.top_overlay.cancel()
+        w.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("scratch/ui-review"))
@@ -441,6 +494,9 @@ def main():
         capture(w, "folder")
         w.top_overlay.cancel()
         w.close()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_restore_points(Path(tmp), window_for, capture, settle)
 
         w = window_for(State(**configured), mode="mouse")
         capture(w, "compact-mouse", width=1000)

@@ -385,6 +385,11 @@ like a restore point, except that only the files in the archive change. The
 files a copy from another machine set aside (`.modsync-before-join/`) are
 listed with where they are, to move back by hand.
 
+In the app, "Restore points…" on the Mod Organizer 2 sheet and on Sync lists
+them, newest first, with how many there are and the space they take. Choosing
+one (and a profile, when it holds several) shows what restoring it would
+change before anything is touched. Y saves one now.
+
 ```sh
 modsync restore                          # restore points and archives, and the space they use
 modsync restore show <point> [<profile>] # what restoring each profile, or one, would change

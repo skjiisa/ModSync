@@ -46,6 +46,7 @@ from modsync.ui.pages.game import GamePage
 from modsync.ui.pages.home import HomePage
 from modsync.ui.pages.managed import ManagedGamePage, game_summary
 from modsync.ui.pages.mods import ModsPage
+from modsync.ui.pages.restore import RestorePage
 from modsync.ui.pages.setup import SetupFlow
 from modsync.ui.pages.sync import SyncPage
 from modsync.ui.pages.system import SystemPage
@@ -65,7 +66,7 @@ _POLL_MS = 4000
 
 APP_ID = "io.github.skjiisa.ModSync"
 
-PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage, DaggerfallPage)
+PAGES = (HomePage, GamePage, ModsPage, SyncPage, SystemPage, DaggerfallPage, RestorePage)
 TAB_KEYS = ("home", "sync", "system")
 # The games with a page of their own that Home can show: key, the page that is
 # their Home, name in the switcher. Every other game is one from the table
@@ -798,7 +799,7 @@ class MainWindow(QMainWindow):
         busy = self.busy
         if not busy and self._rebuild_pending:
             QTimer.singleShot(0, self, self.rebuild)
-        for key in ("mods", "sync"):
+        for key in ("mods", "sync", "restore"):
             page = self.pages.get(key)
             if page is not None:
                 page.content.setEnabled(not busy)

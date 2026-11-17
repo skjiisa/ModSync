@@ -320,6 +320,10 @@ class ModsPage(Page):
         folder = Tile("Open instance folder", "", "folder", size="compact")
         folder.clicked.connect(self._open_folder)
         right.addWidget(folder)
+        self.restore_tile = Tile("Restore points…", "Put a profile back as it was earlier.", "undo",
+                                 size="compact", chevron=True)
+        self.restore_tile.clicked.connect(lambda: self.host.go("restore"))
+        right.addWidget(self.restore_tile)
         if not state.syncing:
             change = Tile("Change instance…", "Use a different MO2 folder on this machine.", "refresh", size="compact")
             change.clicked.connect(self._change)

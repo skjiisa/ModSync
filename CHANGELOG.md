@@ -20,7 +20,9 @@ All notable changes to ModSync are documented here. The format follows
   how things were as a restore point first, and pauses the vault until the
   profile is whole. One cut short is finished or undone the next time
   ModSync looks. Only profile text is kept: deleted mods, older game
-  versions and saves made with other mods are out of reach (#170).
+  versions and saves made with other mods are out of reach. In the app,
+  "Restore points…" on the Mod Organizer 2 sheet and on Sync lists them and
+  shows what a restore would change before it does anything (#170).
 
 ## [2.1.0-beta2] - 2026-11-16
 

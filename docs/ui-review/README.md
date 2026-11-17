@@ -108,6 +108,22 @@ Syncthing's conflict copies don't record who made the change.
 
 ![Conflict review](conflict-sheet.png)
 
+Restore points, opened from the Mod Organizer 2 sheet or from Sync. Each
+row says when the restore point was taken, why, and which profiles it holds.
+The panel says how many there are, how much space they take and when
+ModSync takes them, and a note says what restoring can't bring back. Y saves
+one now. Focus starts on the newest.
+
+![Restore points](restore.png)
+
+Choosing one (and a profile, when it holds several) shows what restoring
+would change before anything is touched: files that change, come back or
+go, the mods only in each version, and the mods it enables that are gone.
+Cancel has focus, so A pressed three times in a row changes nothing. While
+MO2 or a game runs, only Close is offered, with the reason.
+
+![Restore preview](restore-preview.png)
+
 Pairing with a machine found on the network, here with a mouse. With a
 controller, up and down turn each digit and left and right move between
 digits; with a mouse or touch screen, the digit row fills them in. Typed
