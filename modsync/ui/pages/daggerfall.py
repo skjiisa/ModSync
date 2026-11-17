@@ -20,6 +20,7 @@ startup screen (mods and settings), or not (see ``dfu.set_startup_screen``).
 from __future__ import annotations
 
 import time
+from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRectF, QSize, Qt, QUrl, Signal
@@ -348,10 +349,20 @@ class DaggerfallPage(Page):
         return (ov is not None and ov.install is not None and not ov.emulation_problem and not ov.version_problem
                 and not ov.stale_path and not (ov.problems and not ov.configured_ok))
 
-    def steam_play(self) -> None:
+    def steam_play(self, *, checked: bool = False) -> None:
         """What Play does while Steam waits: Steam's launch carries on, and
-        its hook starts Daggerfall Unity."""
+        its hook starts Daggerfall Unity (syncing the saves around it)."""
+        if not checked and self._check_first(partial(self.steam_play, checked=True)):
+            return
         self.host.decide_launch(launchhook.EXIT_CONTINUE)
+
+    def _check_first(self, go) -> bool:
+        """With the mods or saves syncing, ask syncing before ``go`` launches
+        (``MainWindow.check_launch``). Whether it's asking."""
+        if not self.service.syncs_game(dfu.LAUNCH_FOLDERS):
+            return False
+        self.host.check_launch(partial(self.service.game_launch_check, dfu.LAUNCH_FOLDERS), go, play=True)
+        return True
 
     @staticmethod
     def summary(ov: dfu.Overview | None) -> tuple[str, str, str]:
@@ -628,12 +639,14 @@ class DaggerfallPage(Page):
                       on_done=lambda done: (f"Daggerfall Unity {what} no longer sync here. Nothing was deleted."
                                             if done else f"{what.capitalize()} sync stops once Syncthing answers."))
 
-    def _play(self) -> None:
+    def _play(self, *, checked: bool = False) -> None:
         ov = self.overview
         if ov is None or ov.install is None:
             return
         if self.steam is not None:
             self.steam_play()
+            return
+        if not checked and self._check_first(partial(self._play, checked=True)):
             return
         self._run(dfu.launch, ov.install, message="Starting Daggerfall Unity…")
 

@@ -204,6 +204,12 @@ class ManagedGame:
     def sync_key(self) -> str:
         return f"{self.game.key}-mo2"
 
+    @property
+    def launch_folders(self) -> tuple[str, ...]:
+        """What Play and Open MO2 check first for changes still on their way,
+        or files changed on two machines (ModSyncService.game_launch_check)."""
+        return (self.folder.key,)
+
     vault_record = "modsync-game-version.json"  # which game version the synced mods are for; synced
 
     # Machine-local files playing leaves in MO2's overwrite, as .stignore

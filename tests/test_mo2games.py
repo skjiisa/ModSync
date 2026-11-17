@@ -484,6 +484,66 @@ def test_daggerfalls_play_opens_the_window_unless_set_to_play_right_away(machine
     window.assert_called_once()
 
 
+def test_play_right_away_opens_the_window_when_syncing_asks_first(machine):
+    """Steam's Play set to play right away asks what the window's Play asks."""
+    from modsync.service import LaunchCheck, ModSyncService
+
+    starfield().use_instance(make_instance(machine.tmp, "Starfield"))
+    launchhook.set_play_mode("play")
+    args = ["--appid", str(STARFIELD), "--through", "proton_experimental"]
+    arriving = LaunchCheck(warnings=["3 changes to Starfield mods haven't arrived yet."], sync="known")
+    with patch.object(cli, "_managed_hub", return_value=0) as managed, \
+            patch.object(cli, "_hub_window", return_value=10) as window, \
+            patch.object(ModSyncService, "game_launch_check", return_value=arriving) as asked:
+        assert cli._launch_hub(args) == 10
+        asked.assert_called_once_with(("starfield-mo2",))
+        assert window.call_args.args[3] == "3 changes to Starfield mods haven't arrived yet."
+        managed.assert_not_called()
+        asked.return_value = LaunchCheck(sync="unavailable")  # can't tell: as before, it plays
+        assert cli._launch_hub(args) == 0
+        assert managed.call_args.args[2] is None and window.call_count == 1
+
+
+def test_a_launch_modsync_asked_for_was_checked_already(machine):
+    from modsync.service import ModSyncService
+
+    game = starfield()
+    game.use_instance(make_instance(machine.tmp, "Starfield"))
+    launchhook.set_play_mode("play")
+    path = steam_downloads.note_path(game.game)
+    path.parent.mkdir(parents=True)
+    path.write_text(downloads.PLAY + "\n")
+    with patch.object(cli, "_managed_hub", return_value=0) as managed, \
+            patch.object(ModSyncService, "game_launch_check") as asked:
+        assert cli._launch_hub(["--appid", str(STARFIELD)]) == 0
+    asked.assert_not_called()
+    assert managed.call_args.args[2] == downloads.PLAY
+
+
+def test_daggerfall_played_right_away_asks_syncing_first(machine):
+    from modsync import dfu
+    from modsync.games import DAGGERFALL
+    from modsync.service import LaunchCheck, ModSyncService
+
+    launchhook.set_play_mode("play")
+    args = ["--appid", str(DAGGERFALL.appid), "--through", "proton_experimental"]
+    arriving = LaunchCheck(warnings=["1 change to Daggerfall Unity saves haven't arrived yet."], sync="known")
+    with patch.object(cli, "_hub_window", return_value=10) as window, \
+            patch.object(ModSyncService, "game_launch_check", return_value=arriving) as asked:
+        assert cli._launch_hub(args) == 10
+        asked.assert_called_once_with(dfu.LAUNCH_FOLDERS)
+        assert "saves haven't arrived" in window.call_args.args[3]
+        asked.return_value = LaunchCheck(sync="known")
+        assert cli._launch_hub(args) == launchhook.EXIT_CONTINUE
+        # Play pressed in ModSync asked already:
+        asked.return_value = arriving
+        path = steam_downloads.note_path(DAGGERFALL)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(downloads.PLAY + "\n")
+        assert cli._launch_hub(args) == launchhook.EXIT_CONTINUE
+    assert window.call_count == 1 and asked.call_count == 2
+
+
 def test_a_steam_games_nexus_links_reach_its_mo2(machine):
     game = starfield()
     assert not game.takes_downloads()

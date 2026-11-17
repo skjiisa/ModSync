@@ -6,6 +6,19 @@ All notable changes to ModSync are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Every game ModSync starts now checks syncing first, as Skyrim did: mods
+  (and Daggerfall Unity's saves) still arriving from another machine, or
+  files changed on two machines at once, ask before playing. The check
+  covers only that game's folders. It runs for Play and Open Mod Organizer 2
+  on the game's page, Steam's Play (after the countdown, or in place of
+  playing right away) and `modsync games <key> play` and `open`, which stop
+  unless given `--anyway`. The question gains Check again, which starts the
+  game once nothing is on its way, and Review conflicts when files need a
+  choice. Without a Syncthing running, only conflicts are checked, and the
+  question and the CLI say so. Heroic's own Play button can't ask yet (#169).
+
 ## [2.1.0-beta2] - 2026-11-16
 
 More games join Skyrim and Daggerfall Unity. ModSync runs Mod Organizer 2

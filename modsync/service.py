@@ -17,6 +17,7 @@ import shutil
 import socket
 import threading
 import time
+from collections.abc import Iterable
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -113,11 +114,21 @@ class SyncStatus:
 
 @dataclass
 class LaunchCheck:
-    """What syncing says about starting MO2 now. ``blocked`` means don't;
-    each warning is worth a "Play anyway"."""
+    """What syncing says about starting a game (or its MO2) now. ``blocked``
+    means don't; each warning is worth a "Play anyway"."""
 
     blocked: str = ""
     warnings: list[str] = field(default_factory=list)
+    # How much it knows: "off" (nothing syncs for the game here), "known"
+    # (Syncthing answered), "unavailable" (no Syncthing running here, or it
+    # didn't answer: only the conflicts on disk were looked at).
+    sync: str = "off"
+    conflicts: int = 0  # conflict copies among the warnings: worth "Review conflicts"
+
+    @property
+    def attention(self) -> str:
+        """What to say before launching, "" when nothing needs a decision."""
+        return self.blocked or (self.warnings[0] if self.warnings else "")
 
 
 @dataclass
@@ -970,11 +981,12 @@ class ModSyncService:
         except Exception as exc:
             log.info("launch check: sync status unavailable: %s", exc)
         st = self.state  # as status() just read it
+        known = "known" if status is not None else "unavailable"
         if st.copy_phase:
             source = status.copy.source if status and status.copy else "the other machine"
             return LaunchCheck(blocked=f"Mods are still being copied from {source}. Play once the copy has "
-                                       "finished, so nothing you change here is set aside with it.")
-        check = LaunchCheck()
+                                       "finished, so nothing you change here is set aside with it.", sync=known)
+        check = LaunchCheck(sync=known)
         if status is not None and not st.sync_paused and (status.need_items or status.folder_state in _FOLDER_BUSY):
             n = status.need_items
             what = f"{n} change{'' if n == 1 else 's'}" if n else "Some changes"
@@ -982,10 +994,80 @@ class ModSyncService:
                                   "now could clash with them.")
         found = self.conflicts()
         if found:
-            n = len(found)
+            n = check.conflicts = len(found)
             check.warnings.append(f"{n} file{' was' if n == 1 else 's were'} changed on two machines at once. "
                                   "Until you choose a version under Sync, MO2 uses the newer one.")
         return check
+
+    def syncs_game(self, keys: Iterable[str]) -> bool:
+        """Whether any of a game's folders (by key) syncs here, so a launch
+        is worth a :meth:`game_launch_check`. Cheap enough for the UI thread."""
+        st = State.load()
+        return any(k in st.game_folders and not folders.stopping(k, st) for k in keys)
+
+    def game_launch_check(self, keys: Iterable[str]) -> LaunchCheck:
+        """:meth:`launch_check` for a game other than Skyrim, by the keys of
+        its folders (``ManagedGame.folder``, ``dfu.LAUNCH_FOLDERS``). Only the
+        ones this machine uses for the game count: another game's folders, and
+        copies kept here for other machines, never hold it up.
+
+        Conflicts are looked for on disk. What hasn't arrived yet is what a
+        Syncthing already running here knows (the background service's, or a
+        window's); none is started for this, since one that has only just
+        started knows nothing from the others yet. Without one, ``sync`` says
+        "unavailable". A machine that isn't connected may have changes nothing
+        here knows about: none of this claims otherwise."""
+        st = self.reload_state()
+        synced = []
+        for key in dict.fromkeys(keys):
+            path = st.game_folders.get(key)
+            spec = folders.spec_for(key)
+            if path and spec is not None and not folders.stopping(key, st):
+                synced.append((spec, Path(path)))
+        if not synced:
+            return LaunchCheck()
+        check = LaunchCheck(sync="unavailable")
+        try:
+            if self.manager.running or self.manager.attach():
+                check.warnings += self._arriving(synced)
+                check.sync = "known"
+        except Exception as exc:  # noqa: BLE001 — the conflicts on disk are still worth a look
+            log.info("launch check: sync status unavailable: %s", exc)
+        found = 0
+        for spec, root in synced:
+            if spec.content:
+                self._tidy_game_folder(spec, root)  # as Sync shows them: what the game must never see goes first
+                found += len(conflicts.find(root, spec.content))
+        if found:
+            check.conflicts = found
+            check.warnings.append(f"{found} file{' was' if found == 1 else 's were'} changed on two machines at "
+                                  "once. Until you choose a version under Sync, the game uses the newer one.")
+        return check
+
+    def _arriving(self, synced: list[tuple[folders.FolderSpec, Path]]) -> list[str]:
+        """What Syncthing says hasn't arrived yet in these folders, as warnings."""
+        out = []
+        with self.manager.client() as client:
+            me = client.my_id()
+            conns = client.connections().get("connections", {})
+            for spec, _root in synced:
+                folder = client.get_folder(spec.folder_id)
+                if folder.get("paused"):
+                    continue  # nothing arrives until it's resumed: waiting wouldn't bring it
+                status = client.folder_status(spec.folder_id)
+                need = int(status.get("needTotalItems") or 0)
+                if not need and status.get("state") not in _FOLDER_BUSY:
+                    continue
+                what = spec.label.removesuffix(" (ModSync)")
+                count = f"{need} change{'' if need == 1 else 's'}" if need else "Some changes"
+                peers = [d.get("deviceID") for d in folder.get("devices", []) if d.get("deviceID") != me]
+                if need and not any(conns.get(p, {}).get("connected") for p in peers):
+                    out.append(f"{count} to {what} haven't arrived yet, and the machine that has them isn't "
+                               "connected. What you change while playing could clash with them.")
+                else:
+                    out.append(f"{count} to {what} haven't arrived yet. What you change while playing could "
+                               "clash with them.")
+        return out
 
     def play_attention(self) -> str | None:
         """Why Steam's Play should open ModSync and wait instead of playing
