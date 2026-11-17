@@ -317,6 +317,15 @@ class ServiceTests(Base):
         self.assertFalse(self.manager.fake.folders["modsync-1"]["paused"])
         self.assertIsNone(rp.pending(self.inst))
 
+    def test_a_restore_cut_short_waits_for_mo2_to_close(self):
+        point = rp.capture(self.inst)
+        self.write("profiles/Default/modlist.txt", "+Alpha\n")
+        rp.begin(self.inst, point, "Default", before=point.id)
+        with patch.object(usvfs, "in_use", return_value=True):
+            self.assertEqual(self.svc.finish_interrupted_restore(), "")
+        self.assertEqual(self.read("profiles/Default/modlist.txt"), "+Alpha\n")
+        self.assertEqual(self.svc.finish_interrupted_restore(), "finished")
+
     def test_until_syncthing_runs_the_journal_waits_to_resume_it(self):
         point = rp.capture(self.inst)
         rp.begin(self.inst, point, "Default", before=point.id, resume="modsync-1")

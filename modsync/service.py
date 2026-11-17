@@ -1592,13 +1592,16 @@ class ModSyncService:
 
     def finish_interrupted_restore(self) -> str:
         """See a restore that was cut short through: finish it, or put the
-        profile back as it was. Returns what was done, "" when none was."""
+        profile back as it was, once MO2 and the games are closed. Returns
+        what was done, "" when nothing was."""
         path = self.state.instance_path
         if not path or not Path(path).is_dir():
             return ""
         journal = restore_points.pending(path)
         if journal is None:
             return ""
+        if self.restore_blocked():
+            return ""  # MO2 may be writing the profile: once it's closed
         done = restore_points.finish(path, journal)
         resume = str(journal.get("resume") or "")
         if resume and not self._syncthing_here():
