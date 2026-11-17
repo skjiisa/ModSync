@@ -144,6 +144,17 @@ class RestoreSheetTests(UiTestCase):
             window.top_overlay.choose("open")
         self.assertTrue(opened.call_args.args[0].toLocalFile().endswith("20261001-090000"))
 
+    def test_a_point_from_before_any_profile_has_nothing_to_restore(self):
+        for path in (self.inst / "profiles" / "Default").iterdir():
+            path.unlink()
+        (self.inst / "profiles" / "Default").rmdir()
+        rp.capture(self.inst, empty=True)
+        window, page = self.open_sheet()
+        self.assertIn("No profiles", page.rows[0].description)
+        page.rows[0].click()
+        self.settle()
+        self.assertEqual(list(window.top_overlay.tiles), ["close"])
+
     def test_without_an_instance_it_says_what_comes_first(self):
         window = self.window()
         page = window.pages["restore"]

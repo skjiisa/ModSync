@@ -39,6 +39,8 @@ def _profiles(names: list[str]) -> str:
 
 def row_words(point: rp.Point) -> tuple[str, str]:
     """A row's title and description."""
+    if point.kind == "point" and not point.profiles:
+        return rp.when(point), f"{point.described}. No profiles: the instance had none then."
     if point.kind == "point":
         n = len(point.profiles)
         return rp.when(point), f"{point.described}. {'Profile' if n == 1 else 'Profiles'} {_profiles(point.profiles)}."
@@ -191,7 +193,12 @@ class RestorePage(Page):
     def choose(self, point: rp.Point) -> None:
         if self.host.busy:
             return
-        if not point.restorable:
+        if point.kind == "point" and not point.profiles:
+            self.host.confirm(
+                f"{point.described}, {rp.when(point)}",
+                "The instance had no profiles when ModSync took this restore point, so there is nothing in it "
+                "to put back.", [("close", "Close", "", "normal", "close")], lambda _key: None)
+        elif not point.restorable:
             self._open_archive(point)
         elif len(point.profiles) == 1:
             self.ask(point, point.profiles[0])
