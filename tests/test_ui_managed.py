@@ -290,6 +290,63 @@ class ManagedGameUiTests(UiTestCase):
         self.assertTrue(launch.call_args.kwargs["play"])
         self.assertEqual(window.messages[-1], "Starting Starfield through Steam…")
 
+    def test_play_asks_syncing_first_and_check_again_plays_once_clean(self):
+        from modsync.service import LaunchCheck
+
+        window, page = self.open_page(overview(mods="on"))
+        arriving = LaunchCheck(warnings=["3 changes to Starfield mods haven't arrived yet."], sync="known")
+        with patch.object(ModSyncService, "syncs_game", return_value=True), \
+                patch.object(ModSyncService, "game_launch_check", return_value=arriving) as asked, \
+                patch.object(self.game, "launch", return_value="Starting Starfield through Steam…") as launch:
+            page.play.click()
+            self.settle(4)
+            asked.assert_called_with(("starfield-mo2",))
+            sheet = window.top_overlay
+            self.assertIsInstance(sheet, ConfirmSheet)
+            self.assertEqual(sheet.title.text(), "Play anyway?")
+            self.assertEqual(list(sheet.tiles), ["play", "again", "sync", "wait"])
+            self.assertIn("haven't arrived", sheet.text.text())
+            launch.assert_not_called()
+            asked.return_value = LaunchCheck(sync="known")  # it has arrived
+            sheet.choose("again")
+            self.settle(4)
+        self.assertEqual(asked.call_count, 2)
+        self.assertTrue(launch.call_args.kwargs["play"])
+        self.assertFalse(window.busy)
+
+    def test_open_mo2_anyway_and_review_conflicts(self):
+        from modsync.service import LaunchCheck
+
+        window, page = self.open_page(overview(mods="on"))
+        conflicted = LaunchCheck(warnings=["1 file was changed on two machines at once."], sync="unavailable",
+                                 conflicts=1)
+        for key, launches in (("wait", False), ("sync", False), ("play", True)):
+            with self.subTest(key), patch.object(ModSyncService, "syncs_game", return_value=True), \
+                    patch.object(ModSyncService, "game_launch_check", return_value=conflicted), \
+                    patch.object(self.game, "launch", return_value="Opening MO2.") as launch:
+                window.switch_game("mo2-starfield")
+                self.settle(3)
+                page.open_mo2.click()
+                self.settle(4)
+                sheet = window.top_overlay
+                self.assertEqual(sheet.title.text(), "Open Mod Organizer 2 anyway?")
+                self.assertIn("Review conflicts", sheet.tiles["sync"].text())
+                self.assertIn("Syncthing didn't answer", sheet.text.text())
+                sheet.choose(key)
+                self.settle(4)
+                self.assertEqual(launch.called, launches)
+                if key == "sync":
+                    self.assertEqual(window._current, "sync")
+
+    def test_without_mods_sync_play_asks_nothing(self):
+        window, page = self.open_page(overview())
+        with patch.object(ModSyncService, "game_launch_check") as asked, \
+                patch.object(self.game, "launch", return_value="Starting Starfield through Steam…") as launch:
+            page.play.click()
+            self.settle(4)
+        asked.assert_not_called()
+        launch.assert_called_once()
+
     def test_mods_sync_uses_the_games_own_folder(self):
         window, page = self.open_page(overview())
         with patch.object(window.service, "share_game_folder", return_value=INSTANCE) as share:
@@ -424,6 +481,23 @@ class ManagedSteamLaunchTests(UiTestCase):
         self.settle(3)
         self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
         self.assertEqual(window.steam_launch.plan[1], {"play": False, "prepare": True})
+
+    def test_changes_still_arriving_stop_the_countdown_at_a_question(self):
+        from modsync.service import LaunchCheck
+
+        arriving = LaunchCheck(warnings=["3 changes to Starfield mods haven't arrived yet."], sync="known")
+        with patch.object(ModSyncService, "syncs_game", return_value=True), \
+                patch.object(ModSyncService, "game_launch_check", return_value=arriving):
+            window, page = self.launch(overview(hook_status=hook(on=True), mods="on"))
+            self.wait(1000)
+            self.assertIsNone(window.steam_launch.decision)
+            self.assertFalse(page.countdown.cover.isVisible())
+            sheet = window.top_overlay
+            self.assertEqual(sheet.title.text(), "Play anyway?")
+            sheet.choose("play")
+            self.settle(3)
+        self.assertEqual(window.steam_launch.decision, launchhook.EXIT_CONTINUE)
+        self.assertEqual(window.steam_launch.plan[1], {"play": True, "prepare": True})
 
     def test_mo2_that_needs_finishing_keeps_it_waiting(self):
         ov = overview(hook_status=hook(on=True))

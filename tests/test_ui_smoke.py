@@ -666,10 +666,10 @@ class CountdownTests(UiTestCase):
         self.assertIsNone(window.steam_launch.decision)
 
     def test_a_question_before_playing_brings_home_back(self):
-        from types import SimpleNamespace
+        from modsync.service import LaunchCheck
 
         State(instance_path=str(self.tmp), folder_id="modsync-1").save()
-        check = SimpleNamespace(blocked="", warnings=["Files changed on two machines."])
+        check = LaunchCheck(warnings=["Files changed on two machines."])
         with patch.object(ModSyncService, "launch_check", return_value=check):
             window = self.window(steam=launchhook.SteamLaunch(SKYRIM_SE, "GE-Proton10-34"))
             home = window.pages["home"]

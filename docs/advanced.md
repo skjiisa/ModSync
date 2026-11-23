@@ -591,6 +591,20 @@ behind: changes another machine has announced but this one hasn't received,
 or unresolved conflicts. Either is worth a "Play anyway?". Changes another
 machine made while it was offline can't be known until it connects again.
 
+Every other game ModSync starts asks the same about its own synced folders:
+a game from the table about its mods, Daggerfall Unity about its mods and
+its saves. Another game's folder never holds it up, and a game whose folders
+don't sync here asks nothing. The question offers Play anyway, Check again
+(which starts the game once nothing is on its way), Review conflicts or Go to
+Sync, and Not now. It comes from the game's page, from Steam's Play (after
+the countdown, or instead of playing right away), and from
+`modsync games <key> play` and `open`, which stop and say what they found
+unless given `--anyway`. Without a Syncthing running here (the background
+service's or the app's), only the conflicts on disk are looked at: the
+question says so, and none is started just to ask. Heroic's own Play button
+can't ask, because its hook can't reach ModSync (see Heroic's Play button
+below); ModSync's Play for a Heroic game asks before it hands over to Heroic.
+
 ### Pausing and leaving
 
 "Stop syncing" offers two things. **Pause** keeps the vault and Syncthing's
@@ -1055,7 +1069,7 @@ modsync games list --all            # every game ModSync knows, with its key
 modsync games <key> status
 modsync games <key> install [<dir>] # default ~/ModOrganizer2-<key>
 modsync games <key> use <dir>       # an MO2 instance set up some other way
-modsync games <key> open | play
+modsync games <key> open | play [--anyway]
 modsync games <key> hook enable | disable | status
 modsync sync share <key>-mo2        # sync its mods with every paired machine
 ```
@@ -1074,7 +1088,9 @@ modsync sync share <key>-mo2        # sync its mods with every paired machine
    ModSync applies MO2-LINT's prefix steps itself, as described under
    Cyberpunk 2077 below. An instance MO2-LINT installed earlier is found by
    itself.
-3. `open` opens MO2 and `play` plays through it.
+3. `open` opens MO2 and `play` plays through it. With the mods syncing, both
+   stop first while changes are still arriving or files were changed on two
+   machines (see "Before playing"); `--anyway` starts it regardless.
 4. `hook enable` makes the store's own Play button play through MO2.
 
 ### Which program Play runs
@@ -1095,8 +1111,11 @@ in Steam opens ModSync on the game's page, with "Cancel launch" under Play and
 Open Mod Organizer 2, and counts down or waits as "When you press Play in
 Steam" is set, the same as for Skyrim. The countdown waits while the page
 asks for something first: Mod Organizer 2 to finish setting up or to look at,
-or a game version the mods weren't made for. Set to play right away,
-`modsync launch hub` hands MO2's Play straight back with no window. Either
+or a game version the mods weren't made for. Changes still arriving, or files
+changed on two machines, are asked about once it ends (see "Before
+playing"). Set to play right away, `modsync launch hub` hands MO2's Play
+straight back with no window, unless syncing has something to ask: then the
+window opens and says why. Either
 way Steam runs MO2's launch as the game's own, so Steam tracks the session
 and syncs Steam Cloud saves when it ends. Before MO2 is installed for the
 game, Play starts the game as Steam had it, with no window. Steam only reads the
@@ -1122,7 +1141,9 @@ chosen, the app shows Steam's Play button as "Opens MO2".
 ### Heroic's Play button
 
 The hook is the wrapper described under Cyberpunk 2077 below, for any GOG or
-Epic game. Close Heroic before turning it on or off.
+Epic game. Close Heroic before turning it on or off. The wrapper can't ask
+ModSync anything, so Play pressed in Heroic doesn't check for changes still
+arriving. Play in ModSync does, before it hands the launch to Heroic.
 
 ### Syncing a game's mods
 

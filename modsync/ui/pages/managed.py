@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import time
+from functools import partial
 from pathlib import Path
 
 import shiboken6
@@ -247,9 +248,9 @@ class ManagedGamePage(Page):
         return (ov is not None and ov.game is not None and ov.prefix_ready and ov.instance is not None
                 and not ov.instance_problem and not ov.needs_setup and not ov.version_problem)
 
-    def steam_play(self) -> None:
+    def steam_play(self, *, checked: bool = False) -> None:
         """What Play does while Steam waits: MO2's Play, as Steam's own launch."""
-        self._launch(play=True)
+        self._launch(play=True, checked=checked)
 
     def _hook_words(self, ov: Overview) -> tuple[str, str, str]:
         """The store's Play button: value word, tone, detail."""
@@ -560,9 +561,16 @@ class ManagedGamePage(Page):
             [("stop", "Stop keeping it", "", "danger", "stop"), ("cancel", "Cancel", "", "normal", "close")],
             chosen, default="cancel")
 
-    def _launch(self, *, play: bool) -> None:
+    def _launch(self, *, play: bool, checked: bool = False) -> None:
+        """Play or Open MO2, here or as Steam's launch. With the game's mods
+        syncing, syncing is asked first (``MainWindow.check_launch``)."""
         ov = self.overview
         if ov is None or ov.instance is None:
+            return
+        keys = self.mg.launch_folders
+        if not checked and self.service.syncs_game(keys):
+            self.host.check_launch(partial(self.service.game_launch_check, keys),
+                                   partial(self._launch, play=play, checked=True), play=play)
             return
         if self.steam is not None:
             mg = self.mg
